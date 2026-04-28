@@ -9,8 +9,9 @@ from f8pystudio.bridge.runtime_session_controller import RuntimeSessionControlle
 class _FakeConnectionManager:
     nats_url = "nats://127.0.0.1:4222"
 
-    async def connect(self, *, context: str):
+    async def connect(self, *, context: str, allow_reconnect: bool = True):
         assert context == "connect nats for singleton guard failed"
+        assert allow_reconnect is False
         return "connection"
 
     async def singleton_guard(self, connection, *, studio_service_id: str, ping_timeout_s: float):

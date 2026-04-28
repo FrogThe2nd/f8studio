@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import inspect
 import os
 from multiprocessing.shared_memory import SharedMemory
+
+_SUPPORTS_SHARED_MEMORY_TRACK = "track" in inspect.signature(SharedMemory).parameters
 
 
 def _resource_tracker_unregister_shared_memory(shm: SharedMemory) -> None:
@@ -12,11 +15,21 @@ def _resource_tracker_unregister_shared_memory(shm: SharedMemory) -> None:
 
         try:
             rt_name = str(shm._name)  # type: ignore[attr-defined]
-        except Exception:
+        except AttributeError:
             rt_name = "/" + str(shm.name).lstrip("/")
         resource_tracker.unregister(rt_name, "shared_memory")
-    except Exception:
+    except (ImportError, OSError, ValueError):
         return
+
+
+def _open_shared_memory(*, name: str, create: bool, size: int = 0, track: bool = True) -> SharedMemory:
+    if _SUPPORTS_SHARED_MEMORY_TRACK:
+        return SharedMemory(name=name, create=create, size=int(size), track=track)
+
+    shm = SharedMemory(name=name, create=create, size=int(size))
+    if os.name == "posix" and not track:
+        _resource_tracker_unregister_shared_memory(shm)
+    return shm
 
 
 def open_shared_memory_readonly(name: str) -> SharedMemory:
@@ -27,9 +40,7 @@ def open_shared_memory_readonly(name: str) -> SharedMemory:
     if the SHM name is tracked, even when create=False. This helper unregisters the name
     to avoid breaking other processes still using the SHM.
     """
-    shm = SharedMemory(name=name, create=False)
-    _resource_tracker_unregister_shared_memory(shm)
-    return shm
+    return _open_shared_memory(name=name, create=False, track=False)
 
 
 def open_shared_memory_create(name: str, size: int) -> SharedMemory:
@@ -38,5 +49,4 @@ def open_shared_memory_create(name: str, size: int) -> SharedMemory:
 
     Note: unlinking is a separate, explicit action (call shm.unlink()).
     """
-    return SharedMemory(name=name, create=True, size=int(size))
-
+    return _open_shared_memory(name=name, create=True, size=size)

@@ -4,7 +4,7 @@ import ast
 import math
 from dataclasses import dataclass
 from types import CodeType
-from typing import Any
+from typing import Any, cast
 
 try:
     import numpy as np  # type: ignore
@@ -15,7 +15,8 @@ except ImportError:
 def sigmoid(x: Any) -> Any:
     """Standard sigmoid function: 1 / (1 + exp(-x))"""
     if np is not None and isinstance(x, (np.ndarray, np.generic)):
-        return 1.0 / (1.0 + np.exp(-x))
+        x_np = cast(Any, x)
+        return 1.0 / (1.0 + np.exp(-x_np))
     try:
         val = float(x)
         return 1.0 / (1.0 + math.exp(-val))
@@ -63,21 +64,6 @@ def is_identifier(name: str) -> bool:
         return bool(name) and name.isidentifier()
     except Exception:
         return False
-
-
-def coerce_bool(value: Any, *, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    text = str(value or "").strip().lower()
-    if text in ("1", "true", "yes", "on"):
-        return True
-    if text in ("", "0", "false", "no", "off"):
-        return False
-    return bool(default)
-
-
 def normalize_expr_code(value: Any) -> str:
     text = str("" if value is None else value)
     if "\n" not in text and "\r" not in text:

@@ -10,21 +10,21 @@ No description.
 
 ## When to Use
 
-- Use `f8.cvkit.templatematch` when you have a target with a stable, consistent appearance and you need to find its location (ROI) within a video frame or screen capture.
-- It is a fast, efficient solution for finding UI markers, anchored icons, or fixed regions in controlled camera environments.
-- Choose this when you don't need the complexity of a neural network detector and the target's scale and orientation remain relatively constant.
+- Use `f8.cvkit.templatematch` to find the best match for a known reference patch inside the frame.
+- It is well suited to buttons, icons, UI elements, and other visually stable anchors.
+- It is also a common way to initialize a region before handing off to tracking.
 
 ## Common Wiring Patterns
 
-- **Capture & Track**: Pair it with `f8.screencap` or `f8.implayer`. Use the `f8.viz.track` overlay to visually confirm where the template is being found.
-- **Workflow Integration**: Use the `Template Match Capture` plugin (if available in Studio) to interactively grab the target image from the live stream and sync it to the service's `templatePath`.
-- **Handoff to Tracking**: Set the initial search region using a fixed ROI, then use the match result to initialize a more robust continuous tracker if the target begins moving unpredictably.
+- Feed it from `f8.screencap` or `f8.implayer`.
+- Keep a visual overlay or preview attached while tuning so you can confirm the match box is landing where expected.
+- For long-lived following behavior, use "match first, then track".
 
 ## Pitfalls / Gotchas
 
-- **Appearance Shifts**: Template matching is sensitive to changes in lighting, scale, and rotation. If the target looks different than the captured template (even slightly), match confidence will drop significantly.
-- **Initial Quality**: Capturing a template that includes too much background or lacks distinct features will lead to "drifting" or false positive matches in other parts of the frame.
-- **Search Area Overhead**: Matching a large template against a full 4K frame is slow. Use the `searchRegion` property to limit the scan area to where the target is expected to appear.
+- Matching degrades quickly when the live target differs too much in scale, rotation, or lighting.
+- Template matching is not a general detector; it works best when appearance is mostly stable.
+- Threshold tuning should be evaluated against both false positives and misses, not just a single good frame.
 
 ## Service Reference
 
@@ -47,7 +47,7 @@ No description.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `templateImagePngB64` | `rw` | `true` | `false` | `string` | PNG bytes encoded as base64. |
+| `templateImagePngB64` | `rw` | `true` | `false` | `string` | PNG bytes encoded as base64. Local-only payload; cleared when exporting publish JSON. |
 | `matchThreshold` | `rw` | `true` | `true` | `number / default=0.5` | 0..1 score threshold used to emit detections. |
 | `matchingIntervalMs` | `rw` | `true` | `false` | `integer / default=200` | Minimum milliseconds between template matching passes. |
 | `shmName` | `rw` | `true` | `true` | `string` | Optional SHM name override (e.g. shm.xxx.video). |
@@ -57,7 +57,7 @@ No description.
 
 ### Key Fields That Matter
 
-- `templateImagePngB64` (Template PNG (Base64), `rw`): PNG bytes encoded as base64. Schema: `string`.
+- `templateImagePngB64` (Template PNG (Base64), `rw`): PNG bytes encoded as base64. Local-only payload; cleared when exporting publish JSON. Schema: `string`.
 - `matchThreshold` (Match Threshold, `rw`): 0..1 score threshold used to emit detections. Schema: `number / default=0.5`.
 - `matchingIntervalMs` (Matching Interval (ms), `rw`): Minimum milliseconds between template matching passes. Schema: `integer / default=200`.
 - `shmName` (Video SHM, `rw`): Optional SHM name override (e.g. shm.xxx.video). Schema: `string`.

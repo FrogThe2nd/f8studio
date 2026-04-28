@@ -4,27 +4,30 @@ import logging
 import math
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 from scipy.interpolate import Akima1DInterpolator, CubicSpline, PchipInterpolator, interp1d
 
-from f8pysdk import (
+from f8pysdk.specs import (
     F8ArrayTypeSchema,
     F8DataPortSpec,
+    F8JsonValue,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
+    F8SpecEditPolicy,
     F8StateAccess,
     F8StateSpec,
+    editable_collection_edit_policy,
     number_schema,
     string_schema,
 )
-from f8pysdk.generated import UNSET
+from f8pysdk.specs import UNSET
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import OperatorNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
-from f8pysdk.schema_helpers import array_schema, number_schema as helper_number_schema
+from f8pysdk.nodes import OperatorNode
+from f8pysdk.registry import RuntimeNodeRegistry
+from f8pysdk.specs import array_schema, number_schema as helper_number_schema
 
 from ..constants import SERVICE_CLASS
 from .wave_loop_sampler import LoopingLinearSampler
@@ -363,7 +366,7 @@ class WavePatternRuntimeNode(OperatorNode):
         self._publish_pending = True
 
     def _sync_runtime_node_state_values(self) -> None:
-        current = dict(self._runtime_node.stateValues or {})
+        current = cast(dict[str, F8JsonValue], dict(self._runtime_node.stateValues or {}))
         current["points"] = _serialize_points(self._points)
         current["maxT"] = float(self._max_t)
         current["minValue"] = float(self._min_value)
@@ -430,6 +433,7 @@ class WavePatternRuntimeNode(OperatorNode):
 WavePatternRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
+    paletteCategory=f"{SERVICE_CLASS}.motion",
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="Wave Pattern",
@@ -531,20 +535,15 @@ WavePatternRuntimeNode.SPEC = F8OperatorSpec(
             showOnNode=False,
         ),
     ],
-    editableExecInPorts=False,
-    editableExecOutPorts=False,
-    editableDataInPorts=False,
-    editableDataOutPorts=False,
-    editableStateFields=True,
+    editPolicy=F8SpecEditPolicy(stateFields=editable_collection_edit_policy()),
 )
 
 
-def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
         return WavePatternRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(WavePatternRuntimeNode.SPEC, overwrite=True)
-    return reg
+    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
+    registry.register_operator_spec(WavePatternRuntimeNode.SPEC, overwrite=True)
+    return registry

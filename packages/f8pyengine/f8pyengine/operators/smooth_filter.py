@@ -4,7 +4,9 @@ import math
 import time
 from typing import Any, Iterable
 
-from f8pysdk import (
+from f8pysdk.codec import parse_number, parse_number_sequence
+
+from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
@@ -16,8 +18,8 @@ from f8pysdk import (
     string_schema,
 )
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import OperatorNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import OperatorNode
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from ..constants import SERVICE_CLASS
 from .envelope import DoubleExponentialMovingAverage, ExponentialMovingAverage
@@ -30,40 +32,6 @@ FILTER_DEMA = "DEMA"
 FILTER_ONE_EURO = "ONEEURO"
 FILTER_CHOICES = (FILTER_NONE, FILTER_EMA, FILTER_DEMA, FILTER_ONE_EURO)
 
-
-def _coerce_number(value: Any) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return None
-    try:
-        f = float(value)
-    except Exception:
-        return None
-    if math.isnan(f) or math.isinf(f):
-        return None
-    return f
-
-
-def _coerce_sequence(value: Any) -> tuple[float, ...] | None:
-    if value is None or isinstance(value, bool):
-        return None
-    if isinstance(value, (list, tuple)):
-        if not value:
-            return ()
-        out: list[float] = []
-        for item in value:
-            num = _coerce_number(item)
-            if num is None:
-                return None
-            out.append(float(num))
-        return tuple(out)
-    num = _coerce_number(value)
-    if num is None:
-        return None
-    return (float(num),)
-
-
 def _format_output(result: Iterable[float] | None) -> Any:
     if result is None:
         return None
@@ -73,7 +41,6 @@ def _format_output(result: Iterable[float] | None) -> Any:
     if len(values) == 1:
         return values[0]
     return values
-
 
 class OneEuroFilter:
     """Adaptive One Euro filter for real-time signal smoothing."""
@@ -136,7 +103,6 @@ class OneEuroFilter:
         tau = 1.0 / (2.0 * math.pi * cutoff)
         return 1.0 / (1.0 + tau / dt)
 
-
 class SmoothFilterRuntimeNode(OperatorNode):
     """
     Per-tick smoothing filter for scalar or vector inputs.
@@ -155,14 +121,14 @@ class SmoothFilterRuntimeNode(OperatorNode):
         self._ema_alpha = self._coerce_alpha(self._initial_state.get("ema_alpha"), 0.4)
         self._dema_alpha = self._coerce_alpha(self._initial_state.get("dema_alpha"), 0.4)
         self._one_euro_min_cutoff = max(
-            1e-6, float(_coerce_number(self._initial_state.get("one_euro_min_cutoff")) or 1.5)
+            1e-6, float(parse_number(self._initial_state.get("one_euro_min_cutoff")) or 1.5)
         )
-        self._one_euro_beta = max(0.0, float(_coerce_number(self._initial_state.get("one_euro_beta")) or 0.0))
+        self._one_euro_beta = max(0.0, float(parse_number(self._initial_state.get("one_euro_beta")) or 0.0))
         self._one_euro_derivative_cutoff = max(
-            1e-6, float(_coerce_number(self._initial_state.get("one_euro_derivative_cutoff")) or 1.0)
+            1e-6, float(parse_number(self._initial_state.get("one_euro_derivative_cutoff")) or 1.0)
         )
         self._one_euro_default_freq = max(
-            1e-3, float(_coerce_number(self._initial_state.get("one_euro_default_freq")) or 90.0)
+            1e-3, float(parse_number(self._initial_state.get("one_euro_default_freq")) or 90.0)
         )
         self._filters: list[Any] = []
         self._last_output: tuple[float, ...] | None = None
@@ -181,7 +147,7 @@ class SmoothFilterRuntimeNode(OperatorNode):
 
     @staticmethod
     def _coerce_alpha(value: Any, default: float) -> float:
-        numeric = _coerce_number(value)
+        numeric = parse_number(value)
         if numeric is None:
             return float(default)
         return max(0.0, min(1.0, float(numeric)))
@@ -236,25 +202,25 @@ class SmoothFilterRuntimeNode(OperatorNode):
             self._reset_bank()
             return
         if name == "one_euro_min_cutoff":
-            numeric = _coerce_number(value)
+            numeric = parse_number(value)
             if numeric is not None:
                 self._one_euro_min_cutoff = max(1e-6, float(numeric))
             self._reset_bank()
             return
         if name == "one_euro_beta":
-            numeric = _coerce_number(value)
+            numeric = parse_number(value)
             if numeric is not None:
                 self._one_euro_beta = max(0.0, float(numeric))
             self._reset_bank()
             return
         if name == "one_euro_derivative_cutoff":
-            numeric = _coerce_number(value)
+            numeric = parse_number(value)
             if numeric is not None:
                 self._one_euro_derivative_cutoff = max(1e-6, float(numeric))
             self._reset_bank()
             return
         if name == "one_euro_default_freq":
-            numeric = _coerce_number(value)
+            numeric = parse_number(value)
             if numeric is not None:
                 self._one_euro_default_freq = max(1e-3, float(numeric))
             self._reset_bank()
@@ -263,7 +229,7 @@ class SmoothFilterRuntimeNode(OperatorNode):
         if str(port) != "value":
             return None
 
-        sample = _coerce_sequence(await self.pull("value", ctx_id=ctx_id))
+        sample = parse_number_sequence(await self.pull("value", ctx_id=ctx_id))
         if sample is None:
             return _format_output(self._last_output)
 
@@ -302,10 +268,10 @@ class SmoothFilterRuntimeNode(OperatorNode):
         self._dirty = False
         return _format_output(self._last_output)
 
-
 SmoothFilterRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
+    paletteCategory=f"{SERVICE_CLASS}.signal",
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="Smooth Filter",
@@ -386,13 +352,11 @@ SmoothFilterRuntimeNode.SPEC = F8OperatorSpec(
     ],
 )
 
-
-def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
         return SmoothFilterRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(SmoothFilterRuntimeNode.SPEC, overwrite=True)
-    return reg
+    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
+    registry.register_operator_spec(SmoothFilterRuntimeNode.SPEC, overwrite=True)
+    return registry

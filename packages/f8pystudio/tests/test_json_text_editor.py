@@ -2,18 +2,18 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from f8pysdk import F8ServiceSpec
+from f8pysdk.specs import F8ServiceSpec
 from qtpy import QtGui, QtWidgets
 
-from f8pystudio.widgets.json_text_editor import (
+from f8pystudio.ui.support.json_text_editor import (
     BracketMatch,
     attach_json_enhancements,
     compute_line_end_depth,
     find_bracket_match,
 )
-from f8pystudio.components.state_editors import F8JsonValueEditor
-from f8pystudio.widgets.node_library_widget import _F8StudioNodesTreeWidget
-from f8pystudio.widgets.node_variant_manager_dialog import NodeVariantManagerDialog
+from f8pystudio.ui.components.state_editors import F8JsonValueEditor
+from f8pystudio.ui.mainwin.node_library_widget import _F8StudioNodesTreeWidget
+from f8pystudio.assets.ui.variant_catalog_dialog import VariantCatalogDialog
 
 
 def _ensure_app() -> QtWidgets.QApplication:
@@ -95,7 +95,7 @@ def test_node_info_dialog_raw_json_attaches_json_enhancements(monkeypatch) -> No
     fake_node_cls = type("FakeNodeCls", (), {})
     tree._factory = SimpleNamespace(nodes={"svc.test": fake_node_cls})  # type: ignore[attr-defined]
     monkeypatch.setattr(
-        "f8pystudio.widgets.node_library_widget.typed_spec_template_or_none",
+        "f8pystudio.ui.mainwin.node_library_tree_interaction_mixin.typed_spec_template_or_none",
         lambda _cls: F8ServiceSpec(serviceClass="svc.test", label="Test"),
     )
 
@@ -117,12 +117,12 @@ def test_node_info_dialog_raw_json_attaches_json_enhancements(monkeypatch) -> No
 
 def test_node_variant_manager_raw_json_attaches_json_enhancements(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.widgets.node_variant_manager_dialog.list_variants_for_base", lambda _base: [])
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_entries.list_entries_for_base", lambda _base: [])
     monkeypatch.setattr(
-        "f8pystudio.widgets.node_variant_manager_dialog.subscribe_variants_changed",
+        "f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed",
         lambda _cb: (lambda: None),
     )
-    dlg = NodeVariantManagerDialog(
+    dlg = VariantCatalogDialog(
         parent=None,
         base_node_type="svc.test.operator",
         base_node_name="Test",

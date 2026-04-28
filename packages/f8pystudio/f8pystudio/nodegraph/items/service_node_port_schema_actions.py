@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import json
 
-from f8pysdk.msgspec_codec import copy_model, dump_json
+from f8pysdk.codec import copy_model, dump_json
 from typing import Any
 
 from qtpy import QtCore, QtWidgets
 
-from f8pysdk.schema_helpers import schema_type
+from f8pysdk.specs import schema_type
+from f8pysdk.command import parse_command_port_name
+from f8pysdk.specs import can_edit_existing as _policy_can_edit_existing
 
-from ...widgets.schema_builder import SchemaBuilderDialog, schema_from_json_obj as _schema_from_json_obj
-from ...widgets.state_controls.schema_introspect import (
+from ...ui.dialogs.schema_builder_dialog import SchemaBuilderDialog, schema_from_json_obj as _schema_from_json_obj
+from ...nodegraph.state_schema import (
     schema_enum_items as _shared_schema_enum_items,
     schema_numeric_range as _shared_schema_numeric_range,
 )
@@ -24,6 +26,8 @@ def port_group(name: str) -> str:
         return "data"
     if port_name.startswith("[S]") or port_name.endswith("[S]"):
         return "state"
+    if port_name.startswith("[C]") or port_name.endswith("[C]"):
+        return "command"
     return "other"
 
 
@@ -31,7 +35,7 @@ def display_port_label(name: str, *, max_chars: int | None = None) -> str:
     """
     Display-friendly label for port text items.
 
-    Strip `[E]/[D]/[S]` markers and optionally elide to keep compact.
+    Strip `[E]/[D]/[S]/[C]` markers and optionally elide to keep compact.
     """
     label = str(name or "")
     if label.startswith("[E]"):
@@ -45,6 +49,10 @@ def display_port_label(name: str, *, max_chars: int | None = None) -> str:
     elif label.startswith("[S]"):
         label = label[3:]
     elif label.endswith("[S]"):
+        label = label[:-3]
+    elif label.startswith("[C]"):
+        label = label[3:]
+    elif label.endswith("[C]"):
         label = label[:-3]
     label = label.strip()
     if max_chars is not None and max_chars > 0 and len(label) > max_chars:
@@ -82,6 +90,10 @@ def parse_schema_port_view_name(view_name: str) -> tuple[str, bool, str] | None:
         if not port_name:
             return None
         return "state", False, port_name
+    command = parse_command_port_name(raw)
+    if command is not None:
+        is_in, command_name = command
+        return "command", is_in, command_name
     return None
 
 
@@ -208,7 +220,43 @@ def port_tooltip_text(node_item: Any, view_name: str) -> str:
         return data_port_tooltip(node_item, is_in=bool(is_in), port_name=port_name)
     if kind == "state":
         return state_port_tooltip(node_item, is_in=bool(is_in), field_name=port_name)
+    if kind == "command":
+        return command_port_tooltip(node_item, is_in=bool(is_in), command_name=port_name)
     return str(view_name or "")
+
+
+def find_command_spec(node_item: Any, *, command_name: str) -> tuple[Any, int] | None:
+    node = node_item._backend_node()
+    if node is None:
+        return None
+    target_name = str(command_name or "").strip()
+    try:
+        commands = list(node.effective_commands() or [])
+    except Exception:
+        spec = getattr(node, "spec", None)
+        commands = list(spec.commands or []) if spec is not None else []
+    for index, command in enumerate(commands):
+        if str(command.name or "").strip() == target_name:
+            return command, int(index)
+    return None
+
+
+def command_port_tooltip(node_item: Any, *, is_in: bool, command_name: str) -> str:
+    direction_text = "command input" if bool(is_in) else "command output"
+    found = find_command_spec(node_item, command_name=command_name)
+    if found is None:
+        return f"{command_name} ({direction_text})"
+    command, _index = found
+    desc = str(command.description or "").strip()
+    params = [str(param.name or "").strip() for param in list(command.params or []) if str(param.name or "").strip()]
+    lines = [f"{command_name} ({direction_text})"]
+    if params:
+        lines.append("params: " + ", ".join(params))
+    else:
+        lines.append("params: none")
+    if desc:
+        lines.append(desc)
+    return "\n".join(lines)
 
 
 def refresh_port_tooltips(node_item: Any) -> None:
@@ -245,10 +293,9 @@ def open_data_port_schema_dialog(node_item: Any, *, is_in: bool, port_name: str)
         return
     port, index = found
     spec = node.spec
-    editable = bool(spec.editableDataInPorts) if bool(is_in) else bool(spec.editableDataOutPorts)
-    required = bool(port.required)
+    editable = _policy_can_edit_existing(spec, "dataInPorts" if bool(is_in) else "dataOutPorts")
     missing_locked = bool(node.is_missing_locked())
-    read_only = bool((not editable) or required or missing_locked)
+    read_only = bool((not editable) or missing_locked)
     schema_value = port.valueSchema
     if schema_value is None:
         schema_value = _schema_from_json_obj({"type": "any"})
@@ -293,10 +340,9 @@ def open_state_field_schema_dialog(node_item: Any, *, field_name: str) -> None:
         return
     field, index = found
     spec = node.spec
-    editable = bool(spec.editableStateFields)
-    required = bool(field.required)
+    editable = _policy_can_edit_existing(spec, "stateFields")
     missing_locked = bool(node.is_missing_locked())
-    read_only = bool((not editable) or required or missing_locked)
+    read_only = bool((not editable) or missing_locked)
     schema_value = field.valueSchema
     if schema_value is None:
         schema_value = _schema_from_json_obj({"type": "any"})
@@ -407,13 +453,13 @@ def open_data_port_editor_dialog(node_item: Any, *, is_in: bool, port_name: str)
         return
     port, index = found
     spec = node.spec
-    editable = bool(spec.editableDataInPorts) if bool(is_in) else bool(spec.editableDataOutPorts)
+    editable = _policy_can_edit_existing(spec, "dataInPorts" if bool(is_in) else "dataOutPorts")
     missing_locked = bool(node.is_missing_locked())
     ui_only = bool(not editable)
     read_only = bool(missing_locked)
 
-    from ...widgets.node_property_panel import _F8EditDataPortDialog
-    from ...widgets.ui_override_mutations import (
+    from ...ui.dialogs.node_spec_edit_dialogs import _F8EditDataPortDialog
+    from ...nodegraph.ui_override_mutations import (
         base_data_port_show_on_node as _base_data_port_show_on_node,
         set_data_port_show_on_node_override as _set_data_port_show_on_node_override,
     )
@@ -423,6 +469,7 @@ def open_data_port_editor_dialog(node_item: Any, *, is_in: bool, port_name: str)
         title="Edit data port",
         port=port,
         ui_only=ui_only,
+        lock_identity_fields=bool(editable),
         read_only=read_only,
     )
     if dlg.exec_() != QtWidgets.QDialog.Accepted:
@@ -480,33 +527,57 @@ def open_state_field_editor_dialog(node_item: Any, *, field_name: str) -> None:
             return
         current, _index = found
 
-    editable = bool(spec.editableStateFields)
+    editable = _policy_can_edit_existing(spec, "stateFields")
     missing_locked = bool(node.is_missing_locked())
     ui_only = bool(not editable)
     read_only = bool(missing_locked)
 
-    from ...widgets.node_property_panel import _F8EditStateFieldDialog
-    from ...widgets.spec_mutations import replace_state_field as _spec_replace_state_field
-    from ...widgets.ui_override_mutations import (
+    from ...ui.dialogs.node_spec_edit_dialogs import _F8EditStateFieldDialog
+    from ...nodegraph.spec_mutations import replace_state_field as _spec_replace_state_field
+    from ...nodegraph.ui_override_mutations import (
         find_base_state_field as _find_base_state_field,
         set_state_field_ui_override as _set_state_field_ui_override,
+    )
+    from ...nodegraph.ui_state_mutations import (
+        set_state_field_global_hotkey_override as _set_state_field_global_hotkey_override,
+        state_field_global_hotkey as _state_field_global_hotkey,
     )
 
     dlg = _F8EditStateFieldDialog(
         node_item._viewer_safe(),
         title="Edit state field",
         field=current,
+        global_hotkey=_state_field_global_hotkey(node, field_name),
+        current_binding_id=f"{str(node.id or '').strip()}:{str(field_name or '').strip()}",
+        hotkey_conflict_lookup=(
+            node.graph.global_hotkey_controller.entries_for_hotkey
+            if getattr(getattr(node, "graph", None), "global_hotkey_controller", None) is not None
+            else None
+        ),
+        hotkey_capture_started=(
+            node.graph.global_hotkey_controller.suspend_hotkeys
+            if getattr(getattr(node, "graph", None), "global_hotkey_controller", None) is not None
+            else None
+        ),
+        hotkey_capture_finished=(
+            node.graph.global_hotkey_controller.resume_hotkeys
+            if getattr(getattr(node, "graph", None), "global_hotkey_controller", None) is not None
+            else None
+        ),
         ui_only=ui_only,
+        lock_identity_fields=bool(editable),
         read_only=read_only,
     )
     if dlg.exec_() != QtWidgets.QDialog.Accepted:
         return
     new_field = dlg.field()
+    global_hotkey = dlg.global_hotkey()
     if ui_only:
         base_field = _find_base_state_field(spec, name=field_name)
         if base_field is None:
             base_field = new_field
         _set_state_field_ui_override(node, field_name=field_name, base=base_field, edited=new_field)
+        _set_state_field_global_hotkey_override(node, field_name=field_name, hotkey=global_hotkey)
         node.sync_from_spec()
         return
     if read_only:
@@ -514,6 +585,9 @@ def open_state_field_editor_dialog(node_item: Any, *, field_name: str) -> None:
 
     updated_spec = _spec_replace_state_field(spec, old_name=field_name, new_field=new_field)
     node.spec = updated_spec
+    if str(new_field.name or "").strip() != str(field_name or "").strip():
+        _set_state_field_global_hotkey_override(node, field_name=field_name, hotkey="")
+    _set_state_field_global_hotkey_override(node, field_name=str(new_field.name or field_name), hotkey=global_hotkey)
 
 
 def on_port_right_click(node_item: Any, port: Any, screen_pos: QtCore.QPoint) -> None:
@@ -531,15 +605,16 @@ def on_port_right_click(node_item: Any, port: Any, screen_pos: QtCore.QPoint) ->
         if found_data is None:
             return
         _data_port, _index = found_data
-        editable = bool(node.spec.editableDataInPorts) if bool(is_in) else bool(node.spec.editableDataOutPorts)
-        can_edit = bool(editable and (not bool(node.is_missing_locked())))
+        can_edit = bool(
+            _policy_can_edit_existing(node.spec, "dataInPorts" if bool(is_in) else "dataOutPorts")
+            and (not bool(node.is_missing_locked()))
+        )
     elif kind == "state":
         found_field = find_state_field_spec(node_item, field_name=port_name)
         if found_field is None:
             return
         _field, _index = found_field
-        editable = bool(node.spec.editableStateFields)
-        can_edit = bool(editable and (not bool(node.is_missing_locked())))
+        can_edit = bool(_policy_can_edit_existing(node.spec, "stateFields") and (not bool(node.is_missing_locked())))
     else:
         return
     menu = QtWidgets.QMenu()

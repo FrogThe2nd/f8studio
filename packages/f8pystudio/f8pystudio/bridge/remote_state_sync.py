@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from ..remote_state_watcher import RemoteStateWatcher, WatchTarget
+from f8pystudio.bridge.remote_state_watcher import RemoteStateWatcher, WatchTarget
 
 
 @dataclass(frozen=True)

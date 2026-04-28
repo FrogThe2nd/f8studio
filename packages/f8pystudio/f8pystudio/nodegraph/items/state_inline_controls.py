@@ -7,32 +7,107 @@ This module binds state-value controls into the nodegraph item environment,
 handling node callbacks, option-pool refresh, styling, and graph sync.
 """
 
+import enum
 import json
 import logging
 from typing import Any
 
 from qtpy import QtCore, QtGui, QtWidgets
 
-from f8pysdk.schema_helpers import schema_type
+from f8pysdk.specs import schema_type
 
-from ...components.controls import parse_multiselect_pool, parse_select_pool
-from ...components.state_builders import (
+from ...ui.components.controls import F8Dial, F8MultiSelect, F8OptionCombo
+from ...ui.components.state_editors import (
+    F8BoolSwitchEditor,
+    F8CodeButtonEditor,
+    F8DialEditor,
+    F8IncrementButtonEditor,
+    F8MultiSelectEditor,
+    F8OptionComboEditor,
+    F8ValueBarEditor,
+)
+from ...ui.components.controls import parse_multiselect_pool, parse_select_pool
+from ...ui.support.ui_control import parse_ui_control
+from ...ui.support.state_builders import (
     StateControlSpec,
     build_inline_control_binding,
     set_control_read_only,
 )
-from ...components.wave import (
+from ...ui.components.wave import (
     WAVE_PATTERN_EDITOR_DEPENDENCY_FIELDS,
     WAVE_PREVIEW_DEPENDENCY_FIELDS,
 )
 from ...editor_assist.protocol import editor_assist_context_for_field
 from ...editor_assist.workspace import EditorAssistContext
-from ...widgets.state_controls.pool_resolver import resolve_pool_items
-from ...widgets.studio_node_code_editor import get_node_text, resolve_node, set_node_text, studio_session_key
+from ...nodegraph.state_pool_resolver import resolve_pool_items
+from ...nodegraph.node_text_fields import get_node_text, resolve_node, set_node_text, studio_session_key
+from ...nodegraph.ui_state_mutations import set_state_inline_expanded, state_inline_expanded
 from .node_item_core import StateFieldInfo, state_field_info
+from .proxy_widget_utils import dispose_detached_proxy_widget
 from .service_toolbar_host import F8ElideToolButton, F8ForceGlobalToolTipFilter
 
 logger = logging.getLogger(__name__)
+
+INLINE_HEADER_BUTTON_STYLE = """
+    QToolButton {
+        color: rgb(235, 235, 235);
+        background: transparent;
+        border: 1px solid rgba(255, 255, 255, 18);
+        border-radius: 4px;
+        padding: 2px 8px;
+        text-align: left;
+    }
+    QToolButton:hover { background: transparent; }
+    QToolButton:checked { background: transparent; }
+"""
+
+
+def _json_safe_schema_value(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, enum.Enum):
+        return value.value
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_schema_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _json_safe_schema_value(item) for key, item in value.items()}
+    return str(value)
+
+
+def state_inline_control_serial(node_item: Any, info: StateFieldInfo) -> str:
+    """
+    Signature used to decide whether an inline state control must be rebuilt.
+
+    Include schema details that affect the control widget itself, not just
+    cosmetic metadata like label/description.
+    """
+    try:
+        value_schema = info.value_schema
+        enum_items = node_item._schema_enum_items(value_schema)
+        minimum, maximum = node_item._schema_numeric_range(value_schema)
+        default_value = None
+        if value_schema is not None:
+            try:
+                default_value = value_schema.default
+            except AttributeError:
+                default_value = None
+        return json.dumps(
+            {
+                "access": info.access_str,
+                "required": info.required,
+                "uiControl": info.ui_control,
+                "schemaType": str(schema_type(value_schema) or ""),
+                "enum": [str(item) for item in enum_items],
+                "minimum": minimum,
+                "maximum": maximum,
+                "default": _json_safe_schema_value(default_value),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        )
+    except Exception:
+        return ""
 
 
 def _refresh_embedded_text_palette(widget: QtWidgets.QWidget) -> None:
@@ -74,13 +149,86 @@ def _apply_text_palette(widget: QtWidgets.QWidget) -> None:
     _refresh_embedded_text_palette(widget)
 
 
+def build_inline_header_button(
+    *,
+    label: str,
+    tooltip: str,
+    expandable: bool,
+    expanded: bool = False,
+    parent: QtWidgets.QWidget | None = None,
+) -> tuple[QtWidgets.QWidget, F8ElideToolButton]:
+    header = QtWidgets.QWidget(parent)
+    header_lay = QtWidgets.QHBoxLayout(header)
+    header_lay.setContentsMargins(0, 0, 0, 0)
+    header_lay.setSpacing(6)
+    header.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+    header.setStyleSheet("background: transparent;")
+
+    btn = F8ElideToolButton(header)
+    btn.setCheckable(bool(expandable))
+    btn.setChecked(bool(expanded) if expandable else False)
+    btn.setAutoRaise(True)
+    btn.setProperty("_f8_preview_interaction_exempt", bool(expandable))
+    if expandable:
+        btn.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        btn.setArrowType(QtCore.Qt.DownArrow if expanded else QtCore.Qt.RightArrow)
+    else:
+        btn.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
+        btn.setArrowType(QtCore.Qt.NoArrow)
+    btn.set_full_text(label)
+    btn.setToolTip(tooltip)
+    btn.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+    btn.setStyleSheet(INLINE_HEADER_BUTTON_STYLE)
+
+    header_lay.addWidget(btn, 1)
+    return header, btn
+
+
+def _refresh_state_inline_control_metadata(node_item: Any, control: QtWidgets.QWidget, info: StateFieldInfo) -> None:
+    name = info.name
+    label = info.label or name
+    field_tooltip = info.tooltip if info.tooltip != name else ""
+
+    if isinstance(control, F8IncrementButtonEditor):
+        control.set_button_text(label)
+        control.set_context_tooltip(field_tooltip)
+        return
+
+    if isinstance(control, F8CodeButtonEditor):
+        control.set_title(f"{node_item.name} - {label}")
+        control.setToolTip(field_tooltip)
+        return
+
+    if isinstance(
+        control,
+        (
+            F8OptionComboEditor,
+            F8MultiSelectEditor,
+            F8BoolSwitchEditor,
+            F8ValueBarEditor,
+            F8DialEditor,
+        ),
+    ):
+        control.set_context_tooltip(field_tooltip)
+        return
+
+    if isinstance(control, (F8OptionCombo, F8MultiSelect, F8Dial)):
+        control.set_context_tooltip(field_tooltip)
+        return
+
+    control.setToolTip(field_tooltip)
+
+
 def _editor_assist_context(
     graph: Any,
     *,
     node_id: str,
     state_field_name: str,
+    ui_control: str,
     language: str,
 ) -> EditorAssistContext | None:
+    if parse_ui_control(ui_control).control_name != "code":
+        return None
     field_name = str(state_field_name or "").strip()
     lang = str(language or "").strip().lower()
     if not field_name or not lang:
@@ -123,6 +271,10 @@ def set_state_inline_control_read_only(control: QtWidgets.QWidget, *, read_only:
     set_control_read_only(control, read_only=read_only)
 
 
+def _preview_force_read_only(node_item: Any) -> bool:
+    return bool(getattr(node_item, "_f8_preview_read_only", False))
+
+
 def refresh_state_inline_control_read_only(node_item: Any) -> None:
     """
     Refresh readonly state for already-built inline state controls.
@@ -139,7 +291,11 @@ def refresh_state_inline_control_read_only(node_item: Any) -> None:
         if info is None or not info.show_on_node:
             continue
         name = info.name
-        read_only = info.access_str == "ro" or is_state_inline_input_connected(node_item, name)
+        read_only = (
+            _preview_force_read_only(node_item)
+            or info.access_str == "ro"
+            or is_state_inline_input_connected(node_item, name)
+        )
         try:
             binding = node_item._state_inline_bindings.get(name)
         except AttributeError:
@@ -277,15 +433,9 @@ def toggle_state_inline_section(node_item: Any, name: str, expanded: bool) -> No
     node = node_item._backend_node()
     if node is not None:
         try:
-            ui = dict(node.ui_overrides() or {})
-            store = ui.get("stateInlineExpanded")
-            if not isinstance(store, dict):
-                store = {}
-            store[state_name] = bool(expanded)
-            ui["stateInlineExpanded"] = store
-            node.set_ui_overrides(ui, rebuild=False)
+            set_state_inline_expanded(node, state_name=state_name, expanded=bool(expanded))
         except AttributeError:
-            logger.exception("node missing ui_overrides/set_ui_overrides; cannot persist expand state")
+            logger.exception("node missing ui_state/set_ui_state; cannot persist expand state")
     btn = node_item._state_inline_toggles.get(state_name)
     if btn is not None:
         try:
@@ -319,10 +469,16 @@ def toggle_state_inline_section(node_item: Any, name: str, expanded: bool) -> No
         _redraw_and_invalidate()
 
 
-def build_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> QtWidgets.QWidget:
+def build_state_inline_control(
+    node_item: Any,
+    state_field: StateFieldInfo,
+    *,
+    widget_parent: QtWidgets.QWidget | None = None,
+) -> QtWidgets.QWidget:
     name = state_field.name
     ui_raw = state_field.ui_control
-    ui = str(ui_raw or "").strip().lower()
+    parsed_ui = parse_ui_control(ui_raw)
+    ui = parsed_ui.control_name
     schema = state_field.value_schema
     access_s = state_field.access_str
     schema_type_value = (schema_type(schema) or "") if schema is not None else ""
@@ -409,11 +565,15 @@ def build_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Q
             return []
         return resolve_pool_items(value)
 
-    read_only = access_s == "ro" or node_item._is_state_inline_input_connected(name)
+    read_only = (
+        _preview_force_read_only(node_item)
+        or access_s == "ro"
+        or node_item._is_state_inline_input_connected(name)
+    )
     spec = StateControlSpec(
         name=name,
         label=state_field.label or name,
-        ui_control=ui,
+        ui_control=ui_raw,
         ui_language=state_field.ui_language or "plaintext",
         schema_type=schema_type_value,
         enum_items=enum_items,
@@ -470,6 +630,7 @@ def build_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Q
     binding = build_inline_control_binding(
         spec=spec,
         read_only=read_only,
+        widget_parent=widget_parent,
         value_getter=_get_node_value,
         value_setter=_set_node_value,
         property_value_getter=_get_node_property,
@@ -481,13 +642,15 @@ def build_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Q
             graph,
             node_id=node_id,
             state_field_name=name,
-            language=state_field.ui_language or "plaintext",
+            ui_control=ui_raw,
+            language=parsed_ui.ui_language or "plaintext",
         ),
         assist_context_provider=lambda: _editor_assist_context(
             graph,
             node_id=node_id,
             state_field_name=name,
-            language=state_field.ui_language or "plaintext",
+            ui_control=ui_raw,
+            language=parsed_ui.ui_language or "plaintext",
         ),
         editor_session_key=studio_session_key(graph, node_id, name) if graph is not None and node_id else None,
         style_applier=_common_style,
@@ -563,44 +726,13 @@ def ensure_state_inline_controls(node_item: Any) -> None:
         except RuntimeError:
             pass
         if old is not None:
-            try:
-                old.setParent(None)
-            except RuntimeError:
-                pass
-            try:
-                old.deleteLater()
-            except RuntimeError:
-                pass
+            dispose_detached_proxy_widget(old, context=f"inline-state-remove:{name}")
         try:
             proxy.setParentItem(None)
             if node_item.scene() is not None:
                 node_item.scene().removeItem(proxy)
         except RuntimeError:
             pass
-
-    def _ctrl_serial(info: StateFieldInfo) -> str:
-        """
-        Signature for deciding when the control widget must be rebuilt.
-        (Exclude label/description; those can be updated in-place.)
-        """
-        try:
-            vs = info.value_schema
-            enum_items = node_item._schema_enum_items(vs)
-            return json.dumps(
-                {
-                    "access": info.access_str,
-                    "required": info.required,
-                    "uiControl": info.ui_control,
-                    "uiLanguage": info.ui_language,
-                    "schemaType": str(schema_type(vs) or ""),
-                    "enum": [str(item) for item in enum_items],
-                },
-                ensure_ascii=False,
-                sort_keys=True,
-                default=str,
-            )
-        except Exception:
-            return ""
 
     for info in show:
         # Always keep label/tooltip up to date without rebuilding.
@@ -617,57 +749,35 @@ def ensure_state_inline_controls(node_item: Any) -> None:
                 btn_existing.setToolTip(tip)
             except RuntimeError:
                 pass
+        control_existing = node_item._state_inline_controls.get(name)
+        if control_existing is not None:
+            try:
+                _refresh_state_inline_control_metadata(node_item, control_existing, info)
+            except RuntimeError:
+                pass
 
-        ctrl_sig = _ctrl_serial(info)
+        ctrl_sig = state_inline_control_serial(node_item, info)
         if name in node_item._state_inline_proxies and ctrl_sig and ctrl_sig == node_item._state_inline_ctrl_serial.get(name, ""):
             continue
 
         # Default collapsed; restore persisted expand state from ui overrides.
         expanded = False
-        ui = node.ui_overrides() or {}
-        store = ui.get("stateInlineExpanded") if isinstance(ui, dict) else None
-        if isinstance(store, dict) and name in store:
-            expanded = bool(store.get(name))
+        persisted_expanded = state_inline_expanded(node, name)
+        if persisted_expanded is not None:
+            expanded = bool(persisted_expanded)
         expanded = bool(node_item._state_inline_expanded.get(name, expanded))
-        control = node_item._build_state_inline_control(info)
-
-        # Header: toggle button (state name).
-        header = QtWidgets.QWidget()
-        header_lay = QtWidgets.QHBoxLayout(header)
-        header_lay.setContentsMargins(0, 0, 0, 0)
-        header_lay.setSpacing(6)
-        header.setAttribute(QtCore.Qt.WA_StyledBackground, True)
-        header.setStyleSheet("background: transparent;")
-
-        btn = F8ElideToolButton()
-        btn.setCheckable(True)
-        btn.setChecked(expanded)
-        btn.setAutoRaise(True)
-        btn.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
-        btn.setArrowType(QtCore.Qt.DownArrow if expanded else QtCore.Qt.RightArrow)
-
-        btn.set_full_text(label)
-        btn.setToolTip(tip)
-        btn.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-        btn.setStyleSheet(
-            """
-            QToolButton {
-                color: rgb(235, 235, 235);
-                background: transparent;
-                border: 1px solid rgba(255, 255, 255, 18);
-                border-radius: 4px;
-                padding: 2px 8px;
-                text-align: left;
-            }
-            QToolButton:hover { background: transparent; }
-            QToolButton:checked { background: transparent; }
-            """
+        panel = QtWidgets.QWidget()
+        header, btn = build_inline_header_button(
+            label=label,
+            tooltip=tip,
+            expandable=True,
+            expanded=expanded,
+            parent=panel,
         )
 
-        header_lay.addWidget(btn, 1)
-
         # Body: control widget (collapsed by default).
-        body = QtWidgets.QWidget()
+        body = QtWidgets.QWidget(panel)
+        control = node_item._build_state_inline_control(info, widget_parent=body)
         body_lay = QtWidgets.QVBoxLayout(body)
         body_lay.setContentsMargins(8, 0, 8, 6)
         body_lay.setSpacing(0)
@@ -682,7 +792,6 @@ def ensure_state_inline_controls(node_item: Any) -> None:
             """
         )
 
-        panel = QtWidgets.QWidget()
         panel_lay = QtWidgets.QVBoxLayout(panel)
         panel_lay.setContentsMargins(0, 0, 0, 0)
         panel_lay.setSpacing(0)
@@ -709,16 +818,9 @@ def ensure_state_inline_controls(node_item: Any) -> None:
         except Exception:
             old = None
         proxy.setWidget(panel)
-        
+
         if old is not None and old is not panel:
-            try:
-                old.setParent(None)
-            except RuntimeError:
-                pass
-            try:
-                old.deleteLater()
-            except RuntimeError:
-                pass
+            dispose_detached_proxy_widget(old, context=f"inline-state-replace:{name}")
 
         node_item._state_inline_controls[name] = control
         node_item._state_inline_toggles[name] = btn
@@ -733,3 +835,65 @@ def ensure_state_inline_controls(node_item: Any) -> None:
             node_item.sync_proxy_mode(force=True)
         except (AttributeError, RuntimeError, TypeError):
             pass
+
+    reordered_proxies: dict[str, QtWidgets.QGraphicsProxyWidget] = {}
+    reordered_controls: dict[str, QtWidgets.QWidget] = {}
+    reordered_bindings: dict[str, Any] = {}
+    reordered_updaters: dict[str, Any] = {}
+    reordered_toggles: dict[str, Any] = {}
+    reordered_headers: dict[str, QtWidgets.QWidget] = {}
+    reordered_bodies: dict[str, QtWidgets.QWidget] = {}
+    reordered_expanded: dict[str, bool] = {}
+    reordered_option_pools: dict[str, str] = {}
+    reordered_ctrl_serial: dict[str, str] = {}
+
+    for name in desired:
+        proxy = node_item._state_inline_proxies.get(name)
+        control = node_item._state_inline_controls.get(name)
+        binding = node_item._state_inline_bindings.get(name)
+        updater = node_item._state_inline_updaters.get(name)
+        toggle = node_item._state_inline_toggles.get(name)
+        header = node_item._state_inline_headers.get(name)
+        body = node_item._state_inline_bodies.get(name)
+        if proxy is not None:
+            reordered_proxies[name] = proxy
+        if control is not None:
+            reordered_controls[name] = control
+        if binding is not None:
+            reordered_bindings[name] = binding
+        if updater is not None:
+            reordered_updaters[name] = updater
+        if toggle is not None:
+            reordered_toggles[name] = toggle
+        if header is not None:
+            reordered_headers[name] = header
+        if body is not None:
+            reordered_bodies[name] = body
+        if name in node_item._state_inline_expanded:
+            reordered_expanded[name] = bool(node_item._state_inline_expanded.get(name, False))
+        if name in node_item._state_inline_option_pools:
+            reordered_option_pools[name] = str(node_item._state_inline_option_pools.get(name, "") or "")
+        if name in node_item._state_inline_ctrl_serial:
+            reordered_ctrl_serial[name] = str(node_item._state_inline_ctrl_serial.get(name, "") or "")
+
+    node_item._state_inline_proxies.clear()
+    node_item._state_inline_controls.clear()
+    node_item._state_inline_bindings.clear()
+    node_item._state_inline_updaters.clear()
+    node_item._state_inline_toggles.clear()
+    node_item._state_inline_headers.clear()
+    node_item._state_inline_bodies.clear()
+    node_item._state_inline_expanded.clear()
+    node_item._state_inline_option_pools.clear()
+    node_item._state_inline_ctrl_serial.clear()
+
+    node_item._state_inline_proxies.update(reordered_proxies)
+    node_item._state_inline_controls.update(reordered_controls)
+    node_item._state_inline_bindings.update(reordered_bindings)
+    node_item._state_inline_updaters.update(reordered_updaters)
+    node_item._state_inline_toggles.update(reordered_toggles)
+    node_item._state_inline_headers.update(reordered_headers)
+    node_item._state_inline_bodies.update(reordered_bodies)
+    node_item._state_inline_expanded.update(reordered_expanded)
+    node_item._state_inline_option_pools.update(reordered_option_pools)
+    node_item._state_inline_ctrl_serial.update(reordered_ctrl_serial)

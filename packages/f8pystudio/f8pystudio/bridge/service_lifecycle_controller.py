@@ -8,9 +8,10 @@ from qtpy import QtCore
 
 from f8pysdk.nats_naming import ensure_token
 
+from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
 from .process_lifecycle import StartServiceRequest, StopServiceRequest
 from .service_endpoint_client import request_service_status, request_service_terminate, request_set_service_active
-from ..service_process_manager import ServiceProcessConfig
+from f8pystudio.bridge.process_manager import ServiceProcessConfig
 
 
 class ServiceLifecycleControllerMixin:
@@ -78,6 +79,8 @@ class ServiceLifecycleControllerMixin:
         sid = str(service_id or "").strip()
         if not sid:
             return False
+        if sid == self.studio_service_id:
+            return self._studio_service_bus() is not None
         try:
             if bool(self._process_gateway.is_running(str(sid))):
                 return True
@@ -102,6 +105,8 @@ class ServiceLifecycleControllerMixin:
             sid = ensure_token(str(service_id), label="service_id")
         except ValueError:
             return ""
+        if sid == self.studio_service_id:
+            return str(SERVICE_CLASS)
         return str(self._managed_service_classes.get(sid, "") or "")
 
     def _cache_service_active(self, service_id: str, active: bool | None) -> None:
@@ -149,6 +154,12 @@ class ServiceLifecycleControllerMixin:
         try:
             sid = ensure_token(str(service_id), label="service_id")
         except ValueError:
+            return
+        if sid == self.studio_service_id:
+            running = self._studio_service_bus() is not None
+            self._cache_service_alive(sid, running)
+            self._cache_service_active(sid, True if running else None)
+            self._monitor_center.update_service_status(service_id=sid, ready=running)
             return
         now = time.monotonic()
         last = float(self._service_status_req_s.get(sid, 0.0))
@@ -328,7 +339,7 @@ class ServiceLifecycleControllerMixin:
         self.start_service(sid, service_class=service_class)
 
         async def _do() -> None:
-            await self._install_studio_graph_async(compiled=compiled)
+            await self._refresh_studio_runtime_async(compiled=compiled)
             await self._deploy_service_rungraph_async(sid, compiled=compiled)
             await self._set_service_active_async(sid, True)
 
@@ -353,7 +364,7 @@ class ServiceLifecycleControllerMixin:
         async def _do() -> None:
             # Give restart a moment to come back; readiness wait inside deploy handles most cases.
             await asyncio.sleep(0.3)
-            await self._install_studio_graph_async(compiled=compiled)
+            await self._refresh_studio_runtime_async(compiled=compiled)
             await self._deploy_service_rungraph_async(sid, compiled=compiled)
             await self._set_service_active_async(sid, True)
 

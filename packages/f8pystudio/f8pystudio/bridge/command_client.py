@@ -4,10 +4,10 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 import msgspec
-from f8pysdk.generated import F8CommandInvokeReply, F8CommandInvokeRequest
+from f8pysdk.specs import F8CommandInvokeReply
 from f8pysdk.nats_naming import cmd_channel_subject, ensure_token, new_id
 
-from .json_codec import coerce_json_dict
+from .json_codec import coerce_json_value
 from .nats_request import request_typed
 
 
@@ -19,7 +19,7 @@ class CommandGateway(Protocol):
 class CommandRequest:
     service_id: str
     call: str
-    args: dict[str, Any] | None = None
+    args: Any = None
     timeout_s: float = 2.0
     source: str = "ui"
     actor: str = "studio"
@@ -59,12 +59,12 @@ class NatsCommandGateway:
             raise ValueError("call is empty")
 
         nc = await self.ensure_connected()
-        payload = F8CommandInvokeRequest(
-            reqId=new_id(),
-            call=call_name,
-            args=coerce_json_dict(req.args or {}),
-            meta={"actor": str(req.actor), "source": str(req.source)},
-        )
+        payload = {
+            "reqId": new_id(),
+            "call": call_name,
+            "args": coerce_json_value(req.args),
+            "meta": {"actor": str(req.actor), "source": str(req.source)},
+        }
         response_payload = await request_typed(
             nc,
             subject=cmd_channel_subject(sid),

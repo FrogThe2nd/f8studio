@@ -5,7 +5,7 @@ from typing import Any
 from qtpy import QtWidgets
 
 from f8pystudio.nodegraph.items.state_inline_controls import refresh_state_inline_option_pools
-from f8pystudio.components.controls import F8OptionCombo
+from f8pystudio.ui.components.controls import F8OptionCombo
 
 
 class _FakeBackendNode:
@@ -46,7 +46,9 @@ def test_refresh_option_pool_parses_json_pool_and_reapplies_backend_selection() 
     combo.set_options([], labels=[])
     combo.set_value("beta")
     assert combo.value() is None
+    assert combo._popup is None
 
     refresh_state_inline_option_pools(item, "choices")
 
     assert combo.value() == "beta"
+    assert combo._popup is None

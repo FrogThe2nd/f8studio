@@ -16,13 +16,12 @@ if ROOT not in sys.path:
 if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
-from f8pysdk.generated import F8RuntimeGraph, F8RuntimeNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
-from f8pysdk.service_host import ServiceHost, ServiceHostConfig
+from f8pysdk.specs import F8RuntimeGraph, F8RuntimeNode
+from f8pysdk.host import ServiceHost, ServiceHostConfig
 from f8pysdk.testing import ServiceBusHarness
 
 from f8pyscript.constants import SERVICE_CLASS
-from f8pyscript.script_node_registry import register_specs
+from f8pyscript.script_node_registry import create_pyscript_registry
 from f8pyscript.script_service_node import PythonScriptServiceNode
 
 
@@ -124,7 +123,7 @@ class _LegacyInvokePatch:
 
 
 def _service_node(code: str) -> F8RuntimeNode:
-    desc = RuntimeNodeRegistry.instance().describe(SERVICE_CLASS)
+    desc = create_pyscript_registry().describe(SERVICE_CLASS)
     spec = desc.service
     return F8RuntimeNode(
         nodeId="svcA",
@@ -141,8 +140,7 @@ def _service_node(code: str) -> F8RuntimeNode:
 async def _build_node(code: str) -> PythonScriptServiceNode:
     harness = ServiceBusHarness()
     bus = harness.create_bus("svcA")
-    reg = RuntimeNodeRegistry.instance()
-    register_specs(reg)
+    reg = create_pyscript_registry()
     _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
     graph = F8RuntimeGraph(graphId="g1", revision="r1", nodes=[_service_node(code)], edges=[])
     await bus.set_rungraph(graph)

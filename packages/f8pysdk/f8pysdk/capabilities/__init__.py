@@ -3,9 +3,9 @@ from __future__ import annotations
 from typing import Any, Protocol, runtime_checkable, TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from ..bus import ServiceBus
     from ..generated import F8RuntimeGraph
-    from ..service_bus.bus import ServiceBus
-    from ..service_bus.state_read import StateRead
+    from ..state import StateRead
 
 
 @runtime_checkable
@@ -218,9 +218,26 @@ class DataIOBus(Protocol):
     Data input/output operations against the bus.
     """
 
-    async def emit_data(self, node_id: str, port: str, value: Any, *, ts_ms: int | None = None) -> None: ...
+    async def emit_data(
+        self,
+        node_id: str,
+        port: str,
+        value: Any,
+        *,
+        ts_ms: int | None = None,
+        ctx_id: str | int | None = None,
+    ) -> None: ...
 
     async def pull_data(self, node_id: str, port: str, *, ctx_id: str | int | None = None) -> Any: ...
+
+
+@runtime_checkable
+class ExecIOBus(Protocol):
+    """
+    Exec emission operations against the bus.
+    """
+
+    async def emit_exec(self, node_id: str, port: str, *, exec_id: str | int) -> None: ...
 
 
 @runtime_checkable
@@ -237,7 +254,7 @@ class StateIOBus(Protocol):
 
 
 @runtime_checkable
-class NodeBus(StateIOBus, DataIOBus, BusActive, Protocol):
+class NodeBus(StateIOBus, DataIOBus, ExecIOBus, BusActive, Protocol):
     """
     Composition of bus capabilities used by `RuntimeNode`.
     """

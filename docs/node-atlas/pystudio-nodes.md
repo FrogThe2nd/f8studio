@@ -51,7 +51,7 @@ These nodes are editor-local features shipped by `f8.pystudio`. They are first-c
 
 - What it does: renders skeleton/body data in a 3D viewer.
 - Use it when: validating pose streams, world-up assumptions, or filtered skeleton outputs.
-- Common wiring: pair with `UDP Skeleton`, `UDP VMC`, or filtered bone pipelines.
+- Common wiring: pair with `UDP In + Skeleton Decoder`, `UDP In + VMC Decoder`, or filtered bone pipelines.
 - Key fields: world-up, viewer update throttling, and upstream sampling controls.
 - Related scenarios: `Scene 02`.
 

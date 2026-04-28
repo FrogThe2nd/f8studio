@@ -50,6 +50,9 @@ class LinuxX11Capture final {
 
   static void scale_bgra_bilinear(const std::uint8_t* src, int src_w, int src_h, int src_stride, std::uint8_t* dst,
                                   int dst_w, int dst_h, int dst_stride);
+  static bool copy_ximage_fast_bgra32(const std::uint8_t* src, int src_w, int src_h, int src_stride,
+                                      std::uint8_t* dst, int dst_stride, std::uint32_t red_mask,
+                                      std::uint32_t green_mask, std::uint32_t blue_mask, int byte_order);
 
   std::string service_id_;
   std::shared_ptr<f8::cppsdk::VideoSharedMemorySink> sink_;
@@ -76,4 +79,3 @@ class LinuxX11Capture final {
 };
 
 }  // namespace f8::screencap
-

@@ -9,7 +9,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from f8pysdk.monitor_schema import (  # noqa: E402
+from f8pysdk.monitoring import (  # noqa: E402
     MonitorContractError,
     monitor_snapshot_schema_dict,
     validate_describe_monitor_contract,

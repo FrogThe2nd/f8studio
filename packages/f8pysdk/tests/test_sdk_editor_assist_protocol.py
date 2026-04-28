@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from f8pysdk import F8DataPortSpec, F8StateAccess, F8StateSpec, any_schema, string_schema
+from f8pysdk.specs import F8DataPortSpec, F8StateAccess, F8StateSpec, any_schema, string_schema
 from f8pysdk.editor_assist_protocol import validate_editor_assist_spec
 
 

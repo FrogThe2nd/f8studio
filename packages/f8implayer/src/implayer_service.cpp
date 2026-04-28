@@ -215,36 +215,6 @@ float normalize_yaw_deg(float yaw_deg) {
   return v;
 }
 
-SdlVideoWindow::ProjectionMode detect_projection_from_name(const std::string& url) {
-  const std::string lower = lowercase_ascii(url);
-  const bool has_360 = (lower.find("360") != std::string::npos) || (lower.find("vr") != std::string::npos) ||
-                       (lower.find("equirect") != std::string::npos);
-  if (!has_360) {
-    return SdlVideoWindow::ProjectionMode::Flat2D;
-  }
-  const bool has_sbs = (lower.find("sbs") != std::string::npos) || (lower.find("sidebyside") != std::string::npos) ||
-                       (lower.find("side-by-side") != std::string::npos) || (lower.find("_lr") != std::string::npos) ||
-                       (lower.find("-lr") != std::string::npos);
-  if (has_sbs) {
-    return SdlVideoWindow::ProjectionMode::EquirectSbs;
-  }
-  return SdlVideoWindow::ProjectionMode::EquirectMono;
-}
-
-SdlVideoWindow::ProjectionMode detect_projection_from_ratio(unsigned width, unsigned height) {
-  if (width == 0 || height == 0) {
-    return SdlVideoWindow::ProjectionMode::Flat2D;
-  }
-  const double ratio = static_cast<double>(width) / static_cast<double>(height);
-  if (std::abs(ratio - 1.0) <= 0.08) {
-    return SdlVideoWindow::ProjectionMode::EquirectSbs;
-  }
-  if (std::abs(ratio - 2.0) <= 0.12) {
-    return SdlVideoWindow::ProjectionMode::EquirectMono;
-  }
-  return SdlVideoWindow::ProjectionMode::Flat2D;
-}
-
 MpvPlayer::ShmViewMode shm_view_mode_for_vr(SdlVideoWindow::ProjectionMode mode, int sbs_eye) {
   if (mode == SdlVideoWindow::ProjectionMode::EquirectSbs) {
     return sbs_eye == 0 ? MpvPlayer::ShmViewMode::SbsLeft : MpvPlayer::ShmViewMode::SbsRight;
@@ -412,7 +382,7 @@ bool ImPlayerService::start() {
   bus_->add_stateful_node(this);
   bus_->add_set_state_node(this);
   bus_->add_rungraph_node(this);
-  bus_->add_command_node(this);
+  bus_->add_command_node(this, ImPlayerService::describe());
   if (!bus_->start()) {
     bus_.reset();
     return false;
@@ -522,16 +492,6 @@ void ImPlayerService::tick() {
         view_pan_y_ = 0.0f;
         view_panning_ = false;
       }
-      if (vw != 0 && vh != 0 && vr_auto_pending_ratio_ && !vr_manual_override_) {
-        const auto ratio_mode = detect_projection_from_ratio(vw, vh);
-        if (ratio_mode != SdlVideoWindow::ProjectionMode::Flat2D || !vr_auto_detect_valid_) {
-          vr_auto_detect_mode_ = ratio_mode;
-          vr_auto_detect_valid_ = true;
-          vr_mode_ = ratio_mode;
-        }
-        vr_auto_pending_ratio_ = false;
-      }
-
       player_->setShmViewMode(shm_view_mode_for_vr(vr_mode_, vr_sbs_eye_));
       const bool updated = player_->renderVideoFrame();
 
@@ -599,7 +559,6 @@ void ImPlayerService::tick() {
           } else {
             vr_mode_ = SdlVideoWindow::ProjectionMode::Flat2D;
           }
-          mark_vr_manual_override();
         }
         if (xr_events.play_pause_pressed) {
           std::string err;
@@ -647,7 +606,7 @@ void ImPlayerService::tick() {
         ImPlayerGui::Callbacks cb;
         cb.open = [this](const std::string& url) {
           std::string err;
-          (void)open_media_internal(url, false, err);
+          (void)cmd_open(json{{"url", url}}, err);
         };
         cb.play = [this]() {
           std::string err;
@@ -709,7 +668,6 @@ void ImPlayerService::tick() {
         };
         cb.set_vr_mode = [this](SdlVideoWindow::ProjectionMode mode) {
           vr_mode_ = mode;
-          mark_vr_manual_override();
         };
         cb.set_vr_eye = [this](int eye) {
           vr_sbs_eye_ = (eye == 0) ? 0 : 1;
@@ -941,16 +899,20 @@ void ImPlayerService::processSdlEvent(const SDL_Event& ev) {
       return;
     }
     if (key == SDLK_SPACE) {
-      if (playing_.load(std::memory_order_relaxed))
-        player_->pause();
-      else
-        (void)player_->play();
+      std::string err;
+      if (playing_.load(std::memory_order_relaxed)) {
+        (void)cmd_pause(err);
+      } else {
+        (void)cmd_play(err);
+      }
     } else if (key == SDLK_LEFT) {
       const double p = position_seconds_.load(std::memory_order_relaxed);
-      player_->seek(std::max(0.0, p - 5.0));
+      std::string err;
+      (void)cmd_seek(json{{"position", std::max(0.0, p - 5.0)}}, err);
     } else if (key == SDLK_RIGHT) {
       const double p = position_seconds_.load(std::memory_order_relaxed);
-      player_->seek(p + 5.0);
+      std::string err;
+      (void)cmd_seek(json{{"position", p + 5.0}}, err);
     } else if (key == SDLK_UP) {
       double v = 1.0;
       {
@@ -975,17 +937,16 @@ void ImPlayerService::processSdlEvent(const SDL_Event& ev) {
   }
 }
 
+PlaybackIntent ImPlayerService::playback_intent() const {
+  return playback_intent_.load(std::memory_order_acquire);
+}
+
+void ImPlayerService::set_playback_intent(PlaybackIntent intent) {
+  playback_intent_.store(intent, std::memory_order_release);
+}
+
 void ImPlayerService::set_active_local(bool active) {
   active_.store(active, std::memory_order_release);
-  {
-    std::lock_guard<std::mutex> lock(state_mu_);
-    if (player_) {
-      if (active)
-        player_->play();
-      else
-        player_->pause();
-    }
-  }
 }
 
 bool ImPlayerService::on_set_state(const std::string& node_id, const std::string& field, const nlohmann::json& value,
@@ -1368,6 +1329,10 @@ bool ImPlayerService::on_command(const std::string& call, const nlohmann::json& 
     ok = cmd_pause(err);
   else if (call == "stop")
     ok = cmd_stop(err);
+  else if (call == "next")
+    ok = cmd_next(err);
+  else if (call == "previous")
+    ok = cmd_previous(err);
   else if (call == "seek")
     ok = cmd_seek(args, err);
   else if (call == "setVolume")
@@ -1447,6 +1412,9 @@ void ImPlayerService::playlist_add(const std::vector<std::string>& items, bool p
 
   if (!url_to_open.empty()) {
     std::string err;
+    if (play_if_idle) {
+      set_playback_intent(PlaybackIntent::Playing);
+    }
     (void)open_media_internal(url_to_open, true, err);
   }
 }
@@ -1554,6 +1522,25 @@ bool ImPlayerService::open_media_internal(const std::string& url, bool keep_play
     err = "missing url";
     return false;
   }
+  const PlaybackIntent intent = playback_intent();
+  const bool wants_loaded_media = playback_intent_wants_loaded_media(intent);
+  const bool wants_playback = playback_intent_wants_playback(intent);
+
+  if (!wants_loaded_media) {
+    eof_reached_.store(false, std::memory_order_release);
+    media_finished_.store(false, std::memory_order_release);
+    {
+      std::lock_guard<std::mutex> lock(state_mu_);
+      media_url_ = u;
+      last_error_.clear();
+      if (!keep_playlist) {
+        playlist_.clear();
+        playlist_.push_back(u);
+        playlist_index_ = 0;
+      }
+    }
+    return true;
+  }
 
   {
     std::lock_guard<std::mutex> lock(state_mu_);
@@ -1566,14 +1553,15 @@ bool ImPlayerService::open_media_internal(const std::string& url, bool keep_play
       }
       // If the user previously hit Stop, mpv likely unloaded the file. Reload it.
       if (stopped_.load(std::memory_order_acquire)) {
-        // fallthrough and call mpv loadfile again
+        if (!playback_intent_should_reload_stopped_media(intent))
+          return true;
       } else {
         if (eof_reached_.load(std::memory_order_acquire)) {
           eof_reached_.store(false, std::memory_order_release);
           media_finished_.store(false, std::memory_order_release);
           player_->seek(0.0);
         }
-        if (active_.load(std::memory_order_acquire)) {
+        if (wants_playback) {
           (void)player_->play();
         } else {
           player_->pause();
@@ -1610,20 +1598,13 @@ bool ImPlayerService::open_media_internal(const std::string& url, bool keep_play
       playlist_index_ = 0;
     }
 
-    vr_auto_video_id_ = video_id_;
-    vr_manual_override_ = false;
-    const auto detected_from_name = detect_projection_from_name(u);
-    vr_auto_detect_mode_ = detected_from_name;
-    vr_auto_detect_valid_ = true;
-    vr_auto_pending_ratio_ = true;
-    vr_mode_ = detected_from_name;
     vr_sbs_eye_ = 0;
     vr_yaw_deg_ = 0.0f;
     vr_pitch_deg_ = 0.0f;
     vr_fov_deg_ = 90.0f;
     vr_dragging_ = false;
   }
-  if (active_.load(std::memory_order_acquire)) {
+  if (wants_playback) {
     (void)player_->play();
   } else {
     player_->pause();
@@ -1641,6 +1622,7 @@ bool ImPlayerService::cmd_open(const nlohmann::json& args, std::string& err) {
       url = args["mediaUrl"].get<std::string>();
   }
   url = normalize_url(std::move(url));
+  set_playback_intent(PlaybackIntent::Playing);
   return open_media_internal(url, false, err);
 }
 
@@ -1649,6 +1631,7 @@ bool ImPlayerService::cmd_play(std::string& err) {
     err = "player not initialized";
     return false;
   }
+  set_playback_intent(PlaybackIntent::Playing);
   if (stopped_.load(std::memory_order_acquire)) {
     std::string url;
     {
@@ -1672,6 +1655,11 @@ bool ImPlayerService::cmd_play(std::string& err) {
     }
     stopped_.store(false, std::memory_order_release);
     eof_reached_.store(false, std::memory_order_release);
+    {
+      std::lock_guard<std::mutex> lock(state_mu_);
+      last_error_.clear();
+      video_id_ = new_video_id();
+    }
     player_->seek(0.0);
   }
   if (eof_reached_.load(std::memory_order_acquire)) {
@@ -1687,6 +1675,7 @@ bool ImPlayerService::cmd_pause(std::string& err) {
     err = "player not initialized";
     return false;
   }
+  set_playback_intent(PlaybackIntent::Paused);
   player_->pause();
   return true;
 }
@@ -1696,6 +1685,7 @@ bool ImPlayerService::cmd_stop(std::string& err) {
     err = "player not initialized";
     return false;
   }
+  set_playback_intent(PlaybackIntent::Stopped);
   player_->stop();
   player_->resetPlaybackState();
   eof_reached_.store(false, std::memory_order_release);
@@ -1724,6 +1714,24 @@ bool ImPlayerService::cmd_stop(std::string& err) {
   return true;
 }
 
+bool ImPlayerService::cmd_next(std::string& err) {
+  if (!player_) {
+    err = "player not initialized";
+    return false;
+  }
+  playlist_next();
+  return true;
+}
+
+bool ImPlayerService::cmd_previous(std::string& err) {
+  if (!player_) {
+    err = "player not initialized";
+    return false;
+  }
+  playlist_prev();
+  return true;
+}
+
 bool ImPlayerService::cmd_seek(const nlohmann::json& args, std::string& err) {
   if (!player_) {
     err = "player not initialized";
@@ -1746,7 +1754,15 @@ bool ImPlayerService::cmd_seek(const nlohmann::json& args, std::string& err) {
     err = "missing position";
     return false;
   }
-  if (eof_reached_.load(std::memory_order_acquire) || stopped_.load(std::memory_order_acquire)) {
+  const PlaybackIntent intent = playback_intent();
+  const bool wants_loaded_media = playback_intent_wants_loaded_media(intent);
+  const bool wants_playback = playback_intent_wants_playback(intent);
+  if (!wants_loaded_media) {
+    position_seconds_.store(pos, std::memory_order_release);
+    return true;
+  }
+  const bool was_stopped = stopped_.load(std::memory_order_acquire);
+  if (eof_reached_.load(std::memory_order_acquire) || was_stopped) {
     std::string url;
     {
       std::lock_guard<std::mutex> lock(state_mu_);
@@ -1771,9 +1787,14 @@ bool ImPlayerService::cmd_seek(const nlohmann::json& args, std::string& err) {
     }
     eof_reached_.store(false, std::memory_order_release);
     stopped_.store(false, std::memory_order_release);
+    if (was_stopped) {
+      std::lock_guard<std::mutex> lock(state_mu_);
+      last_error_.clear();
+      video_id_ = new_video_id();
+    }
   }
   player_->seek(pos);
-  if (active_.load(std::memory_order_acquire)) {
+  if (wants_playback) {
     (void)player_->play();
   } else {
     player_->pause();
@@ -1807,11 +1828,6 @@ bool ImPlayerService::cmd_set_volume(const nlohmann::json& args, std::string& er
   if (player_)
     player_->setVolume(vol);
   return true;
-}
-
-void ImPlayerService::mark_vr_manual_override() {
-  vr_manual_override_ = true;
-  vr_auto_pending_ratio_ = false;
 }
 
 bool ImPlayerService::apply_auth_options_locked(std::string& err) {
@@ -1919,6 +1935,7 @@ void ImPlayerService::publish_dynamic_state() {
   const double dur = duration_seconds_.load(std::memory_order_relaxed);
   const unsigned decoded_w = player_ ? player_->videoWidth() : 0;
   const unsigned decoded_h = player_ ? player_->videoHeight() : 0;
+  const auto player_stats = player_ ? player_->statsSnapshot() : MpvPlayer::Stats{};
 
   std::vector<std::pair<std::string, json>> updates;
   {
@@ -1951,6 +1968,16 @@ void ImPlayerService::publish_dynamic_state() {
       want("videoHeight", shm_->outputHeight());
       want("videoPitch", shm_->outputPitch());
     }
+    want("videoShmWritten", static_cast<std::int64_t>(player_stats.shmWritten));
+    want("videoShmSkipInterval", static_cast<std::int64_t>(player_stats.shmSkipInterval));
+    want("videoShmSkipTarget", static_cast<std::int64_t>(player_stats.shmSkipTarget));
+    want("videoShmSkipReadbackBusy", static_cast<std::int64_t>(player_stats.shmSkipReadbackBusy));
+    want("videoShmReadbacksIssued", static_cast<std::int64_t>(player_stats.shmReadbacksIssued));
+    want("videoShmReadbacksMapped", static_cast<std::int64_t>(player_stats.shmReadbacksMapped));
+    want("videoShmLastIssueMs", player_stats.lastShmIssueMs);
+    want("videoShmLastMapWriteMs", player_stats.lastShmMapWriteMs);
+    want("videoShmEmaMapWriteMs", player_stats.emaShmMapWriteMs);
+    want("videoShmPboBytes", static_cast<std::int64_t>(player_stats.estReadbackPboBytes));
   }
 
   for (const auto& [field, v] : updates) {
@@ -1985,6 +2012,17 @@ json ImPlayerService::describe() {
       state_field("videoShmMaxWidth", schema_integer(), "rw", "SHM Max Width", "Downsample limit (0 = auto).", false),
       state_field("videoShmMaxHeight", schema_integer(), "rw", "SHM Max Height", "Downsample limit (0 = auto).", false),
       state_field("videoShmMaxFps", schema_number(), "rw", "SHM Max FPS", "Copy rate limit (0 = unlimited).", false),
+      state_field("videoShmWritten", schema_integer(), "ro", "SHM Written", "Frames written to SHM.", false),
+      state_field("videoShmSkipInterval", schema_integer(), "ro", "SHM Skip Interval", "Copies skipped by FPS limiter.", false),
+      state_field("videoShmSkipTarget", schema_integer(), "ro", "SHM Skip Target", "Copies skipped because target size is zero.", false),
+      state_field("videoShmSkipReadbackBusy", schema_integer(), "ro", "SHM Skip Readback Busy",
+                  "Readbacks skipped because all PBO slots were busy.", false),
+      state_field("videoShmReadbacksIssued", schema_integer(), "ro", "SHM Readbacks Issued", "GPU readbacks issued.", false),
+      state_field("videoShmReadbacksMapped", schema_integer(), "ro", "SHM Readbacks Mapped", "PBO readbacks mapped/written.", false),
+      state_field("videoShmLastIssueMs", schema_number(), "ro", "SHM Last Issue ms", "Last glReadPixels issue time.", false),
+      state_field("videoShmLastMapWriteMs", schema_number(), "ro", "SHM Last Map/Write ms", "Last PBO map + SHM write time.", false),
+      state_field("videoShmEmaMapWriteMs", schema_number(), "ro", "SHM EMA Map/Write ms", "EMA PBO map + SHM write time.", false),
+      state_field("videoShmPboBytes", schema_integer(), "ro", "SHM PBO Bytes", "Estimated readback PBO memory.", false),
       state_field("authMode", schema_string_enum({"none", "browser", "cookiesFile"}), "rw", "Auth Mode",
                   "Cookie auth mode: none|browser|cookiesFile (default: none).", false),
       state_field("authBrowser", schema_string_enum({"chrome", "chromium", "edge", "firefox", "safari"}), "rw",
@@ -2025,6 +2063,14 @@ json ImPlayerService::describe() {
       json{{"name", "play"}, {"description", "Start playback"}, {"required", true}, {"showOnNode", true}},
       json{{"name", "pause"}, {"description", "Pause playback"}, {"required", true}, {"showOnNode", true}},
       json{{"name", "stop"}, {"description", "Stop playback"}, {"required", true}, {"showOnNode", true}},
+      json{{"name", "next"},
+           {"description", "Advance to the next playlist item"},
+           {"required", true},
+           {"showOnNode", true}},
+      json{{"name", "previous"},
+           {"description", "Return to the previous playlist item"},
+           {"required", true},
+           {"showOnNode", true}},
       json{{"name", "seek"},
            {"description", "Seek"},
            {"required", true},

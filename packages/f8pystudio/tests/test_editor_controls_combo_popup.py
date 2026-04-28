@@ -11,7 +11,7 @@ for p in (PKG_STUDIO, PKG_SDK):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from f8pystudio.components.controls import _choose_best_view_for_scene_point, _popup_above_y
+from f8pystudio.ui.components.controls import _choose_best_view_for_scene_point, _popup_above_y
 
 
 class _FakeViewport:

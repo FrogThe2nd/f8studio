@@ -1,214 +1,369 @@
+# pyright: reportMissingTypeStubs=false, reportPrivateUsage=false
 from __future__ import annotations
 
-from f8pysdk.msgspec_codec import dump_json, validate_as
 from collections.abc import Callable
-from typing import Any
+from typing import Protocol, cast
 
-from qtpy import QtWidgets
+import msgspec
 from NodeGraphQt import BaseNode
+from qtpy import QtWidgets
+from f8pysdk.codec import copy_model
 
-from f8pysdk import F8OperatorSpec, F8ServiceSpec, F8StateAccess
+from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec, F8StateAccess, F8VariantRecord
+from f8pysdk.specs import coerce_spec_payload
 
-from ..ui_notifications import show_info, show_warning
-from ..variants.variant_compose import build_variant_record_from_node
-from ..variants.variant_ids import build_variant_node_type
-from ..variants.variant_repository import is_variant_name_conflict, load_library, normalize_variant_name, upsert_variant
+from ..assets.common import JsonObject, json_object_from_value
+from ..ui.support.ui_notifications import show_info, show_warning
+from ..assets.ui.project_asset_dialogs import AssetOverwriteChoice, AssetOverwriteMetaDialog
+from ..assets.variants.variant_compose import _VariantNode as _ComposeVariantNode
+from ..assets.variants.variant_compose import build_variant_record_from_node
+from ..assets.variants.variant_drafts import VariantDraftService
+from ..assets.variants.variant_ids import build_variant_node_type
+from ..assets.variants.variant_metadata import variant_ref_from_record, variant_ref_to_json
+from ..assets.variants.variant_models import F8VariantDraftOriginKind, F8VariantEntry, F8VariantSourceKind
+from ..assets.variants.variant_repository import (
+    normalize_variant_name,
+    upsert_variant,
+    upsert_variant_entry,
+    variant_record,
+)
+from .node_base import F8StudioBaseNode
+from .node_model import F8StudioNodeModel
+
+
+class _NodeClassProtocol(Protocol):
+    type_: object
+
+
+class _ContextNodesMenuProtocol(Protocol):
+    def add_command(self, label: str, *, func: Callable[..., object], node_type: str) -> object: ...
+
+
+class _GraphVariantHost(Protocol):
+    def _notification_parent(self) -> QtWidgets.QWidget | None: ...
+
+    def context_nodes_menu(self) -> _ContextNodesMenuProtocol | None: ...
+
+    def selected_nodes(self) -> list[object]: ...
+
+    def create_node(
+        self,
+        node_type: str,
+        *,
+        pos: tuple[float, float] | None = None,
+        selected: bool = True,
+        push_undo: bool = True,
+    ) -> BaseNode | None: ...
+
+
+class _StateFieldProtocol(Protocol):
+    name: object
+    access: F8StateAccess
+
+
+class _VariantNodeModelProtocol(Protocol):
+    properties: dict[str, object]
+    custom_properties: dict[object, object]
+    f8_sys: dict[str, object]
+
+
+class _VariantStudioNodeProtocol(Protocol):
+    NODE_NAME: str
+    spec: F8OperatorSpec | F8ServiceSpec
+    model: _VariantNodeModelProtocol
+    type_: object
+
+    def name(self) -> str: ...
+
+    def set_ui_overrides(self, value: dict[str, object] | None, *, rebuild: bool = True) -> None: ...
+
+    def sync_from_spec(self) -> None: ...
+
+    def set_property(self, name: str, value: object, *, push_undo: bool = True) -> None: ...
 
 
 class GraphVariantActionsMixin:
+    _variant_menu_node_types: set[str] | None = None
+
+    def _variant_menu_types(self) -> set[str]:
+        node_types: set[str] | None = self._variant_menu_node_types
+        if node_types is None:
+            node_types = set()
+            self._variant_menu_node_types = node_types
+        return node_types
+
+    @staticmethod
+    def _variant_node_or_none(node: BaseNode | None) -> F8StudioBaseNode | None:
+        if isinstance(node, F8StudioBaseNode):
+            return node
+        return None
+
+    @staticmethod
+    def _variant_tags(spec: F8OperatorSpec | F8ServiceSpec) -> list[str]:
+        raw_tags = spec.tags
+        if isinstance(raw_tags, msgspec.UnsetType):
+            return []
+        return [str(tag) for tag in list(raw_tags or []) if str(tag).strip()]
+
+    @staticmethod
+    def _state_fields(spec: F8OperatorSpec | F8ServiceSpec) -> list[_StateFieldProtocol]:
+        raw_state_fields = spec.stateFields
+        if isinstance(raw_state_fields, msgspec.UnsetType):
+            return []
+        return [cast(_StateFieldProtocol, cast(object, field)) for field in list(raw_state_fields or [])]
+
+    @staticmethod
+    def _json_object_or_none(value: object) -> JsonObject | None:
+        if not isinstance(value, dict):
+            return None
+        return json_object_from_value(cast(object, value))
+
+    @classmethod
+    def _json_object_list(cls, value: object) -> list[JsonObject]:
+        if not isinstance(value, list):
+            return []
+        out: list[JsonObject] = []
+        for entry in cast(list[object], value):
+            entry_object = cls._json_object_or_none(entry)
+            if entry_object is not None:
+                out.append(entry_object)
+        return out
+
+    @classmethod
+    def _draft_variant_entries_for_base(cls, node_type: str) -> list[F8VariantEntry]:
+        service = VariantDraftService()
+        entries: list[F8VariantEntry] = []
+        for entry in service.list_catalog_entries():
+            if str(entry.record.baseNodeType or "").strip() != str(node_type or "").strip():
+                continue
+            entries.append(entry)
+        return entries
+
+    @classmethod
+    def _draft_variant_entry_by_name(
+        cls,
+        *,
+        node_type: str,
+        name: str,
+        exclude_variant_id: str | None = None,
+    ) -> F8VariantEntry | None:
+        normalized_name = normalize_variant_name(name)
+        excluded_variant_id = str(exclude_variant_id or "").strip()
+        if not normalized_name:
+            return None
+        for entry in cls._draft_variant_entries_for_base(node_type):
+            variant_id = str(entry.record.variantId or "").strip()
+            if excluded_variant_id and variant_id == excluded_variant_id:
+                continue
+            if normalize_variant_name(entry.record.name) == normalized_name:
+                return entry
+        return None
+
     def _prompt_variant_metadata(
         self,
         *,
         default_name: str,
         default_description: str,
         default_tags: list[str],
-        name_validator: Callable[[str], str | None] | None = None,
-    ) -> tuple[str, str, list[str]] | None:
-        dialog = QtWidgets.QDialog(None)
-        dialog.setWindowTitle("Save Node As Variant")
-        dialog.resize(520, 220)
-
-        name_edit = QtWidgets.QLineEdit(default_name, dialog)
-        desc_edit = QtWidgets.QLineEdit(default_description, dialog)
-        tags_edit = QtWidgets.QLineEdit(", ".join(default_tags), dialog)
-
-        form = QtWidgets.QFormLayout()
-        form.addRow("Name", name_edit)
-        form.addRow("Description", desc_edit)
-        form.addRow("Tags (comma-separated)", tags_edit)
-
-        buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
-            parent=dialog,
+        overwrite_choices: list[AssetOverwriteChoice],
+        name_validator: Callable[[str, str | None], str | None] | None = None,
+    ) -> tuple[str, str, list[str], str | None] | None:
+        dialog = AssetOverwriteMetaDialog(
+            parent=None,
+            title="Save Node As Variant",
+            name=default_name,
+            description=default_description,
+            tags=default_tags,
+            overwrite_choices=overwrite_choices,
+            overwrite_label="Overwrite Existing Variant",
+            name_validator=name_validator,
         )
-
-        def _on_accept() -> None:
-            candidate = str(name_edit.text() or "").strip()
-            if not candidate:
-                show_warning(dialog, "Invalid name", "Variant name cannot be empty.")
-                return
-            validator = name_validator
-            if validator is not None:
-                message = validator(candidate)
-                if message:
-                    show_warning(dialog, "Invalid name", message)
-                    return
-            dialog.accept()
-
-        buttons.accepted.connect(_on_accept)  # type: ignore[attr-defined]
-        buttons.rejected.connect(dialog.reject)  # type: ignore[attr-defined]
-
-        layout = QtWidgets.QVBoxLayout(dialog)
-        layout.addLayout(form)
-        layout.addWidget(buttons)
-
-        if dialog.exec() != QtWidgets.QDialog.Accepted:
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:  # pyright: ignore[reportUnknownMemberType]
             return None
-        name = str(name_edit.text() or "").strip()
-        if not name:
-            return None
-        description = str(desc_edit.text() or "").strip()
-        tags = [s.strip() for s in str(tags_edit.text() or "").split(",")]
-        return name, description, [t for t in tags if t]
+        return dialog.values()
 
-    def _save_node_as_variant(self, node: Any) -> None:
-        if node is None:
+    def _save_node_as_variant(self, node: BaseNode | None) -> None:
+        host = cast(_GraphVariantHost, cast(object, self))
+        raw_variant_node = self._variant_node_or_none(node)
+        if raw_variant_node is None:
             return
-        try:
-            spec = node.spec
-        except AttributeError:
-            return
-        if not isinstance(spec, (F8OperatorSpec, F8ServiceSpec)):
-            return
-        node_display_name = ""
-        try:
-            node_display_name = str(node.name() or "").strip()
-        except (AttributeError, RuntimeError, TypeError):
-            node_display_name = ""
-        default_name = str(node_display_name or node.NODE_NAME or spec.label or "").strip() or "Variant"
+        variant_node = cast(_VariantStudioNodeProtocol, cast(object, raw_variant_node))
+        spec = variant_node.spec
+        node_display_name = str(variant_node.name() or "").strip()
+        default_name = str(node_display_name or variant_node.NODE_NAME or spec.label or "").strip() or "Variant"
         default_desc = str(spec.description or "").strip()
-        default_tags = [str(t) for t in list(spec.tags or []) if str(t).strip()]
-        node_type = str(node.type_ or "").strip()
+        default_tags = self._variant_tags(spec)
+        node_type = str(variant_node.type_ or "").strip()
+        overwrite_choices = [
+            AssetOverwriteChoice(
+                asset_id=str(entry.record.variantId),
+                label=str(entry.record.name),
+                description=str(entry.record.description),
+                tags=[str(tag) for tag in list(entry.record.tags or []) if str(tag).strip()],
+            )
+            for entry in self._draft_variant_entries_for_base(node_type)
+        ]
 
-        def _validate_variant_name(candidate: str) -> str | None:
+        def _validate_variant_name(candidate: str, overwrite_variant_id: str | None) -> str | None:
             normalized_name = normalize_variant_name(candidate)
-            if is_variant_name_conflict(node_type, normalized_name):
-                return f"Variant name '{normalized_name}' already exists. Please rename."
+            overwrite_entry = None
+            if overwrite_variant_id:
+                overwrite_entry = next(
+                    (
+                        entry
+                        for entry in self._draft_variant_entries_for_base(node_type)
+                        if str(entry.record.variantId or "").strip() == str(overwrite_variant_id).strip()
+                    ),
+                    None,
+                )
+            exclude_variant_id = None if overwrite_entry is None else str(overwrite_entry.record.variantId)
+            if self._draft_variant_entry_by_name(
+                node_type=node_type,
+                name=normalized_name,
+                exclude_variant_id=exclude_variant_id,
+            ) is not None:
+                return f"Variant name '{normalized_name}' already exists. Please choose the existing variant to overwrite."
             return None
 
         values = self._prompt_variant_metadata(
             default_name=default_name,
             default_description=default_desc,
             default_tags=default_tags,
+            overwrite_choices=overwrite_choices,
             name_validator=_validate_variant_name,
         )
         if values is None:
             return
-        name, description, tags = values
+        name, description, tags, overwrite_variant_id = values
         normalized_name = normalize_variant_name(name)
-        node_type = str(node.type_ or "").strip()
-        if is_variant_name_conflict(node_type, normalized_name):
+        overwrite_entry = (
+            None
+            if overwrite_variant_id is None
+            else next(
+                (entry for entry in self._draft_variant_entries_for_base(node_type) if str(entry.record.variantId) == str(overwrite_variant_id)),
+                None,
+            )
+        )
+        if overwrite_entry is None:
+            overwrite_entry = self._draft_variant_entry_by_name(node_type=node_type, name=normalized_name)
+        record = build_variant_record_from_node(
+            node=cast(_ComposeVariantNode, cast(object, variant_node)),
+            name=name,
+            description=description,
+            tags=tags,
+            variant_id=(None if overwrite_entry is None else str(overwrite_entry.record.variantId)),
+        )
+        try:
+            if overwrite_entry is None:
+                saved_record = upsert_variant(record)
+            elif overwrite_entry.source == F8VariantSourceKind.local:
+                saved_record = upsert_variant_entry(
+                    copy_model(
+                        overwrite_entry,
+                        update={
+                            "record": record,
+                            "isLocalDraft": True,
+                            "draftOriginKind": (
+                                overwrite_entry.draftOriginKind
+                                if overwrite_entry.draftOriginKind is not None
+                                else F8VariantDraftOriginKind.new
+                            ),
+                        },
+                    )
+                ).record
+        except ValueError as exc:
+            show_warning(host._notification_parent(), "Invalid name", str(exc))
+            return
+        title = "Variant Updated" if overwrite_entry is not None else "Variant Saved"
+        show_info(host._notification_parent(), title, f"Saved variant:\n{saved_record.name}")
+
+    def _on_save_variant_menu_action(self, graph: object, node: BaseNode | None) -> None:
+        _ = graph
+        host = cast(_GraphVariantHost, cast(object, self))
+        selected_nodes = list(host.selected_nodes() or [])
+        if len(selected_nodes) != 1:
             show_warning(
-                self._notification_parent(),
-                "Invalid name",
-                f"Variant name '{normalized_name}' already exists. Please rename.",
+                host._notification_parent(),
+                "Save variant failed",
+                "Select exactly one node before saving a variant.",
             )
             return
-        record = build_variant_record_from_node(node=node, name=name, description=description, tags=tags)
-        try:
-            upsert_variant(record)
-        except ValueError as exc:
-            show_warning(self._notification_parent(), "Invalid name", str(exc))
-            return
-        show_info(self._notification_parent(), "Variant Saved", f"Saved variant:\n{name}")
+        selected_node = selected_nodes[0]
+        node_to_save = selected_node if isinstance(selected_node, BaseNode) else node
+        self._save_node_as_variant(node_to_save)
 
-    def _on_save_variant_menu_action(self, graph: Any, node: Any) -> None:
-        _ = graph
-        self._save_node_as_variant(node)
-
-    def install_variant_context_menu_for_nodes(self, node_classes: list[type]) -> None:
-        nodes_menu = self.context_nodes_menu()
+    def install_variant_context_menu_for_nodes(self, node_classes: list[type[_NodeClassProtocol]]) -> None:
+        host = cast(_GraphVariantHost, cast(object, self))
+        nodes_menu = host.context_nodes_menu()
         if nodes_menu is None:
             return
+        variant_menu_node_types = self._variant_menu_types()
         for node_cls in list(node_classes or []):
             node_type = str(node_cls.type_ or "")
-            if not node_type or node_type in self._variant_menu_node_types:
+            if not node_type or node_type in variant_menu_node_types:
                 continue
-            nodes_menu.add_command(
+            _ = nodes_menu.add_command(
                 "Save As Variant...",
                 func=self._on_save_variant_menu_action,
                 node_type=node_type,
             )
-            self._variant_menu_node_types.add(node_type)
+            variant_menu_node_types.add(node_type)
 
     @staticmethod
-    def _variant_record(variant_id: str) -> dict[str, Any] | None:
-        vid = str(variant_id or "").strip()
-        if not vid:
-            return None
-        lib = load_library()
-        for v in lib.variants:
-            if str(v.variantId) == vid:
-                return dump_json(v, mode="json")
-        return None
+    def _variant_record(variant_id: str) -> F8VariantRecord | None:
+        return variant_record(variant_id)
 
     @staticmethod
-    def _coerce_variant_spec(value: dict[str, Any]) -> F8OperatorSpec | F8ServiceSpec:
-        if "operatorClass" in value:
-            return validate_as(F8OperatorSpec, value)
-        return validate_as(F8ServiceSpec, value)
+    def _coerce_variant_spec(value: JsonObject) -> F8OperatorSpec | F8ServiceSpec:
+        return coerce_spec_payload(value)
 
     def _apply_variant_to_node(
         self,
         *,
-        node: BaseNode,
-        variant_id: str,
-        variant_name: str,
-        variant_spec_json: dict[str, Any],
+        node: F8StudioBaseNode,
+        variant_record: F8VariantRecord,
+        variant_spec_json: JsonObject,
     ) -> None:
+        _ = cast(_GraphVariantHost, cast(object, self))
+        typed_node = cast(_VariantStudioNodeProtocol, cast(object, node))
         spec = self._coerce_variant_spec(variant_spec_json)
-        node.spec = spec  # type: ignore[attr-defined]
-        node.set_ui_overrides({}, rebuild=False)  # type: ignore[attr-defined]
-        node.sync_from_spec()  # type: ignore[attr-defined]
+        typed_node.spec = spec
+        typed_node.set_ui_overrides({}, rebuild=False)
+        typed_node.sync_from_spec()
+
         writable_fields: set[str] = set()
-        for field_spec in list(spec.stateFields or []):
+        for field_spec in self._state_fields(spec):
             field_name = str(field_spec.name or "").strip()
-            if not field_name:
-                continue
-            if field_spec.access == F8StateAccess.ro:
+            if not field_name or field_spec.access == F8StateAccess.ro:
                 continue
             writable_fields.add(field_name)
 
-        state_defaults: dict[str, Any] = {}
-        raw_state_fields = variant_spec_json.get("stateFields")
-        if isinstance(raw_state_fields, list):
-            for raw_field in raw_state_fields:
-                if not isinstance(raw_field, dict):
-                    continue
-                field_name = str(raw_field.get("name") or "").strip()
-                if not field_name or field_name not in writable_fields:
-                    continue
-                value_schema = raw_field.get("valueSchema")
-                if not isinstance(value_schema, dict) or "default" not in value_schema:
-                    continue
-                state_defaults[field_name] = value_schema.get("default")
+        state_defaults: dict[str, object] = {}
+        for raw_field in self._json_object_list(variant_spec_json.get("stateFields")):
+            field_name = str(raw_field.get("name") or "").strip()
+            if not field_name or field_name not in writable_fields:
+                continue
+            value_schema = self._json_object_or_none(raw_field.get("valueSchema"))
+            if value_schema is None or "default" not in value_schema:
+                continue
+            state_defaults[field_name] = value_schema["default"]
 
+        model = typed_node.model
+        property_names = set(model.properties.keys())
+        custom_properties = model.custom_properties
+        custom_property_names = {str(key) for key in custom_properties.keys()}
         for field_name, default_value in state_defaults.items():
-            has_property = False
-            try:
-                has_property = field_name in node.model.properties or field_name in node.model.custom_properties
-            except (AttributeError, RuntimeError, TypeError):
-                has_property = False
-            if not has_property:
+            if field_name not in property_names and field_name not in custom_property_names:
                 continue
             try:
-                node.set_property(field_name, default_value, push_undo=False)
-            except (AttributeError, RuntimeError, TypeError, KeyError, ValueError):
+                typed_node.set_property(field_name, default_value, push_undo=False)
+            except (KeyError, TypeError, ValueError, RuntimeError):
                 continue
-        if not isinstance(node.model.f8_sys, dict):
-            node.model.f8_sys = {}
-        node.model.f8_sys["variantId"] = str(variant_id)
-        node.model.f8_sys["variantName"] = str(variant_name or "")
+        variant_ref = variant_ref_from_record(variant_record)
+        if isinstance(model, F8StudioNodeModel):
+            model.variantRef = variant_ref
+        else:
+            model.f8_sys["variantRef"] = variant_ref_to_json(variant_ref)
 
     def create_variant_node(
         self,
@@ -218,6 +373,6 @@ class GraphVariantActionsMixin:
         selected: bool = True,
         push_undo: bool = True,
     ) -> BaseNode | None:
+        host = cast(_GraphVariantHost, cast(object, self))
         node_type = build_variant_node_type(variant_id)
-        return self.create_node(node_type, pos=pos, selected=selected, push_undo=push_undo)
-
+        return host.create_node(node_type, pos=pos, selected=selected, push_undo=push_undo)

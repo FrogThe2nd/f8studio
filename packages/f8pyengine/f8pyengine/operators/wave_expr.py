@@ -7,21 +7,23 @@ from typing import Any
 
 import numpy as np
 
-from f8pysdk import (
+from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
+    F8SpecEditPolicy,
     F8StateAccess,
     F8StateSpec,
+    editable_collection_edit_policy,
     number_schema,
     string_schema,
 )
-from f8pysdk.generated import UNSET
+from f8pysdk.specs import UNSET
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import OperatorNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
-from f8pysdk.schema_helpers import schema_type
+from f8pysdk.nodes import OperatorNode
+from f8pysdk.registry import RuntimeNodeRegistry
+from f8pysdk.specs import schema_type
 
 from ..constants import SERVICE_CLASS
 from ..wave_expr_lang import RESERVED_NAMES, compile_expr, eval_compiled, eval_scalar, render_expression
@@ -403,6 +405,7 @@ class WaveExprRuntimeNode(OperatorNode):
 WaveExprRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
+    paletteCategory=f"{SERVICE_CLASS}.expr",
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="Wave Expr",
@@ -465,8 +468,7 @@ WaveExprRuntimeNode.SPEC = F8OperatorSpec(
             access=F8StateAccess.wo,
             required=True,
             showOnNode=True,
-            uiControl="wrapline",
-            uiLanguage="python",
+            uiControl="wrapline[python]",
         ),
         F8StateSpec(
             name="maxT",
@@ -533,20 +535,15 @@ WaveExprRuntimeNode.SPEC = F8OperatorSpec(
             showOnNode=False,
         ),
     ],
-    editableExecInPorts=False,
-    editableExecOutPorts=False,
-    editableDataInPorts=False,
-    editableDataOutPorts=False,
-    editableStateFields=True,
+    editPolicy=F8SpecEditPolicy(stateFields=editable_collection_edit_policy()),
 )
 
 
-def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
         return WaveExprRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(WaveExprRuntimeNode.SPEC, overwrite=True)
-    return reg
+    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
+    registry.register_operator_spec(WaveExprRuntimeNode.SPEC, overwrite=True)
+    return registry

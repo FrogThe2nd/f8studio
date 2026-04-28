@@ -9,9 +9,12 @@ import uuid
 
 from qtpy import QtCore, QtWidgets
 
-from f8pysdk import F8OperatorSpec
+from f8pysdk.specs import F8OperatorSpec
 
-from f8pystudio.widgets.ai_assist_sidebar import AiAssistSidebarWidget
+from f8pystudio.ui.mainwin.ai_assist_sidebar import AiAssistSidebarWidget
+from f8pystudio.ui.mainwin.ai_assist_sidebar_graph_context_mixin import AiAssistSidebarGraphContextMixin
+from f8pystudio.ui.mainwin.ai_assist_sidebar_toolbar_mixin import AiAssistSidebarToolbarMixin
+from f8pystudio.ui.support import webengine_utils
 
 
 def _ensure_app() -> QtWidgets.QApplication:
@@ -31,16 +34,21 @@ class _FakeWebPage(QtCore.QObject):
 
 
 class _FakeWebEngineView(QtWidgets.QWidget):
+    created: list["_FakeWebEngineView"] = []
+
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
         self._page = _FakeWebPage(self)
         self.html = ""
+        self.base_url = None
+        self.created.append(self)
 
     def page(self) -> _FakeWebPage:
         return self._page
 
-    def setHtml(self, html: str) -> None:
+    def setHtml(self, html: str, base_url=None) -> None:
         self.html = html
+        self.base_url = base_url
 
 
 class _FakeWebChannel(QtCore.QObject):
@@ -113,9 +121,15 @@ def _make_sidebar(monkeypatch) -> tuple[AiAssistSidebarWidget, _FakeGraph]:
     temp_dir = Path(".tmp") / "test_ai_assist_sidebar" / uuid.uuid4().hex
     temp_dir.mkdir(parents=True, exist_ok=True)
     store_path = temp_dir / "ai_providers.json"
-    with patch("f8pystudio.widgets.ai_assist_sidebar.AiProviderStore._resolve_storage_path", return_value=store_path):
+    with patch("f8pystudio.ui.mainwin.ai_assist_sidebar.AiProviderStore._resolve_storage_path", return_value=store_path):
         widget = AiAssistSidebarWidget(studio_graph=graph)
     return widget, graph
+
+
+def _reset_webengine_prewarm_state() -> None:
+    webengine_utils._WEBENGINE_PROFILE_CONFIGURED = False
+    webengine_utils._WEBENGINE_VIEW_PREWARMED = False
+    webengine_utils._WEBENGINE_PREWARM_VIEW = None
 
 
 def _make_node(node_id: str, name: str) -> _FakeSnapshotNode:
@@ -156,9 +170,11 @@ def test_sidebar_supports_multi_select_subgraph_context_and_reset_clears_pin(mon
     QtWidgets.QApplication.processEvents()
 
     assert widget._pin_context_btn.isEnabled()
-    assert "2 selected nodes" in widget._selected_node_label.text()
+    assert widget._selected_node_label.text().startswith("Sel:")
+    assert "Selected nodes: 2" in widget._selected_node_label.toolTip()
     widget._pin_selected_context()
-    assert "2 selected nodes" in widget._pinned_node_label.text()
+    assert widget._pinned_node_label.text().startswith("Pin:")
+    assert "Selected nodes: 2" in widget._pinned_node_label.toolTip()
     assert widget._clear_context_btn.isEnabled()
 
     widget._ai_bridge.reset_chat_history()
@@ -166,3 +182,54 @@ def test_sidebar_supports_multi_select_subgraph_context_and_reset_clears_pin(mon
 
     assert "Pin: none" == widget._pinned_node_label.text()
     assert not widget._clear_context_btn.isEnabled()
+
+
+def test_take_prewarmed_webengine_view_returns_cached_instance(monkeypatch) -> None:
+    _ensure_app()
+    _install_fake_pyside6(monkeypatch)
+    _FakeWebEngineView.created = []
+    _reset_webengine_prewarm_state()
+    monkeypatch.setattr("f8pystudio.ui.support.webengine_utils.configure_default_webengine_profile", lambda: None)
+
+    assert webengine_utils.prewarm_webengine_view() is True
+    assert len(_FakeWebEngineView.created) == 1
+    prewarmed_view = _FakeWebEngineView.created[0]
+    parent = QtWidgets.QWidget()
+
+    taken_view = webengine_utils.take_prewarmed_webengine_view(parent=parent)
+
+    assert taken_view is prewarmed_view
+    assert taken_view.parent() is parent
+    assert webengine_utils._WEBENGINE_PREWARM_VIEW is None
+
+
+def test_sidebar_reuses_prewarmed_webengine_view(monkeypatch) -> None:
+    _ensure_app()
+    _install_fake_pyside6(monkeypatch)
+    _FakeWebEngineView.created = []
+    _reset_webengine_prewarm_state()
+    monkeypatch.setattr("f8pystudio.ui.support.webengine_utils.configure_default_webengine_profile", lambda: None)
+
+    assert webengine_utils.prewarm_webengine_view() is True
+    prewarmed_view = webengine_utils._WEBENGINE_PREWARM_VIEW
+    assert prewarmed_view is not None
+
+    widget, _graph = _make_sidebar(monkeypatch)
+
+    assert widget._view is prewarmed_view
+    assert len(_FakeWebEngineView.created) == 1
+    assert widget._view.parent() is widget
+    assert widget._view.base_url is not None
+
+
+def test_sidebar_uses_toolbar_mixin_methods_directly() -> None:
+    assert AiAssistSidebarWidget._refresh_context_toolbar is AiAssistSidebarToolbarMixin._refresh_context_toolbar
+    assert AiAssistSidebarWidget._on_context_usage_updated is AiAssistSidebarToolbarMixin._on_context_usage_updated
+    assert AiAssistSidebarWidget._on_ctx_menu_requested is AiAssistSidebarToolbarMixin._on_ctx_menu_requested
+
+
+def test_sidebar_uses_graph_context_mixin_methods_directly() -> None:
+    assert AiAssistSidebarWidget._wire_graph_signals is AiAssistSidebarGraphContextMixin._wire_graph_signals
+    assert AiAssistSidebarWidget._schedule_selection_refresh is AiAssistSidebarGraphContextMixin._schedule_selection_refresh
+    assert AiAssistSidebarWidget._apply_graph_selection is AiAssistSidebarGraphContextMixin._apply_graph_selection
+    assert AiAssistSidebarWidget._pin_selected_context is AiAssistSidebarGraphContextMixin._pin_selected_context

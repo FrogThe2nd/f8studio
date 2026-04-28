@@ -5,7 +5,8 @@ import logging
 import time
 from typing import Any
 
-from f8pysdk import (
+from f8pysdk.codec import coerce_int
+from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
@@ -16,11 +17,12 @@ from f8pysdk import (
     string_schema,
 )
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import RuntimeNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import RuntimeNode
+from f8pysdk.registry import RuntimeNodeRegistry
 
-from f8pystudio.constants import SERVICE_CLASS
-from f8pystudio.ui_bus import emit_ui_command
+from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
+from f8pystudio.contracts.ui_commands import emit_ui_command
+from f8pystudio.operators.categories import PALETTE_CATEGORY_VIZ
 from f8pystudio.operators._viz_base import StudioVizRuntimeNodeBase, viz_sampling_state_fields
 
 logger = logging.getLogger(__name__)
@@ -99,21 +101,21 @@ class VizTCodeRuntimeNode(StudioVizRuntimeNodeBase):
             return
 
         if name == "throttleMs":
-            self._throttle_ms = self._coerce_int(value, default=self._throttle_ms, minimum=0, maximum=60000)
+            self._throttle_ms = coerce_int(value, default=self._throttle_ms, minimum=0, maximum=60000)
             return
 
         if name == "maxLineLength":
-            self._max_line_length = self._coerce_int(value, default=self._max_line_length, minimum=32, maximum=65536)
+            self._max_line_length = coerce_int(value, default=self._max_line_length, minimum=32, maximum=65536)
             return
 
     async def _ensure_config_loaded(self) -> None:
         if self._config_loaded:
             return
         self._model = self._coerce_model(await self._get_state_or_initial("model", "SR6"), default="SR6")
-        self._throttle_ms = self._coerce_int(
+        self._throttle_ms = coerce_int(
             await self._get_state_or_initial("throttleMs", 0), default=0, minimum=0, maximum=60000
         )
-        self._max_line_length = self._coerce_int(
+        self._max_line_length = coerce_int(
             await self._get_state_or_initial("maxLineLength", 4096), default=4096, minimum=32, maximum=65536
         )
         self._config_loaded = True
@@ -195,18 +197,6 @@ class VizTCodeRuntimeNode(StudioVizRuntimeNodeBase):
             return text
         return default
 
-    @staticmethod
-    def _coerce_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:
-        try:
-            out = int(value) if value is not None else int(default)
-        except (TypeError, ValueError):
-            out = int(default)
-        if out < minimum:
-            out = minimum
-        if out > maximum:
-            out = maximum
-        return out
-
     def _log_bad_input_once(self, value: Any) -> None:
         sig = f"{type(value).__name__}"
         if sig in self._warned_signatures:
@@ -215,20 +205,19 @@ class VizTCodeRuntimeNode(StudioVizRuntimeNodeBase):
         logger.warning("tcode_viewer ignored invalid input type=%s nodeId=%s", type(value).__name__, self.node_id)
 
 
-def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
-
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> RuntimeNode:
         return VizTCodeRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(
+    registry.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
+    registry.register_operator_spec(
         F8OperatorSpec(
             schemaVersion=F8OperatorSchemaVersion.f8operator_1,
             serviceClass=SERVICE_CLASS,
+            paletteCategory=PALETTE_CATEGORY_VIZ,
             operatorClass=OPERATOR_CLASS,
             version="0.0.1",
-            label="TCodeViz",
+            label="TCode Viz",
             description="Detached OSR emulator viewer for TCode string streams.",
             tags=["viz", "tcode", "osr", "ui"],
             dataInPorts=[
@@ -273,4 +262,4 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
         ),
         overwrite=True,
     )
-    return reg
+    return registry

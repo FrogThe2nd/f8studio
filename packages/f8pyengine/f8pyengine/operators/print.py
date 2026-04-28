@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from f8pysdk import (
+from f8pysdk.codec import coerce_flag
+from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
@@ -13,8 +14,8 @@ from f8pysdk import (
     boolean_schema,
 )
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import OperatorNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import OperatorNode
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from ..constants import SERVICE_CLASS
 
@@ -35,26 +36,11 @@ class PrintRuntimeNode(OperatorNode):
             data_out_ports=[p.name for p in (node.dataOutPorts or [])],
             state_fields=[s.name for s in (node.stateFields or [])],
         )
-        self._strip = self._coerce_bool((initial_state or {}).get("strip"), default=True)
-
-    @staticmethod
-    def _coerce_bool(value: Any, *, default: bool) -> bool:
-        if isinstance(value, bool):
-            return value
-        if value is None:
-            return default
-        if isinstance(value, (int, float)):
-            return bool(value)
-        s = str(value).strip().lower()
-        if s in ("1", "true", "yes", "on"):
-            return True
-        if s in ("0", "false", "no", "off", ""):
-            return False
-        return default
+        self._strip = coerce_flag((initial_state or {}).get("strip"), default=True)
 
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
         if str(field) == "strip":
-            self._strip = self._coerce_bool(value, default=self._strip)
+            self._strip = coerce_flag(value, default=self._strip)
             return
 
     async def on_data(self, port: str, value: Any, *, ts_ms: int | None = None) -> None:
@@ -87,6 +73,7 @@ class PrintRuntimeNode(OperatorNode):
 PrintRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
+    paletteCategory=f"{SERVICE_CLASS}.debug",
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="Print",
@@ -108,13 +95,12 @@ PrintRuntimeNode.SPEC = F8OperatorSpec(
 )
 
 
-def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 
     def _print_factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
         return PrintRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _print_factory, overwrite=True)
+    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _print_factory, overwrite=True)
 
-    reg.register_operator_spec(PrintRuntimeNode.SPEC, overwrite=True)
-    return reg
+    registry.register_operator_spec(PrintRuntimeNode.SPEC, overwrite=True)
+    return registry

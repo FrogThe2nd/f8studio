@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from qtpy import QtWidgets
 
-from f8pysdk import (
+from f8pysdk.specs import (
     F8OperatorSchemaVersion,
     F8OperatorSpec,
 )
@@ -32,12 +32,9 @@ class F8StudioOperatorMissingNode(F8StudioOperatorBaseNode):
         operatorClass="f8.missing.operator",
         version="0.0.1",
         label="Missing Operator",
-        tags=["__hidden__"],
+        paletteCategory="svc.f8.missing",
+        hiddenInPalette=True,
     )
 
     def __init__(self, qgraphics_item: type[QtWidgets.QGraphicsItem] | None = None):
         super().__init__(qgraphics_item=qgraphics_item or F8StudioMissingOperatorNodeItem)
-
-
-# Compatibility alias.
-F8StudioMissingOperatorBaseNode = F8StudioOperatorMissingNode

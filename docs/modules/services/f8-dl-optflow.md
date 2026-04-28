@@ -10,26 +10,28 @@ ONNXRuntime NeuFlowV2 dense optical flow service (flow SHM output).
 
 ## When to Use
 
-- Use `f8.dl.optflow` when learned flow quality is preferred over the classical CV implementation.
-- It provides high-quality dense optical flow using the NeuFlowV2 architecture, which is often more robust to lighting changes and local occlusions.
-- It is a strong option for motion-sensitive graphs when model-backed flow is already part of the deployment stack.
+- Use `f8.dl.optflow` when you need higher-quality motion estimation than simpler flow approaches provide.
+- It is most useful in scenes where motion vectors materially affect later logic and traditional flow is not good enough.
+- Choose it when flow quality matters more than absolute runtime cost.
 
 ## Common Wiring Patterns
 
-- Feed it from video producers, then inspect outputs through `f8.viz.video` (using flow visualization) or reduce them with `f8.cvkit.flowmetric`.
-- Compare it against the CVKit flow path before committing a release pipeline to balance performance and quality.
+- Feed it from a video source and route the result into `f8.pyengine`, summary logic, or visualization.
+- If `cvkit.denseoptflow` is already in use, compare both approaches in parallel before committing to the DL path.
+- Reserve it for places where the graph actually benefits from better motion quality.
 
 ## Pitfalls / Gotchas
 
-- GPU/runtime availability matters for performance; validate packaging and device selection (`ortProvider`) early.
-- Flow quality problems are often input-quality problems (blur, noise) rather than model bugs.
+- DL flow tends to be significantly more compute-heavy.
+- If the downstream logic only needs a rough activity score, this module may be overkill.
+- Validate on known sample footage before dropping it into a large live graph.
 
 ## Service Reference
 
 ### How to Run
 
 ```bash
-pixi run f8pydl_optflow
+pixi run -e onnx f8pydl_optflow
 ```
 
 - Workdir: `../../../../`
@@ -47,9 +49,9 @@ pixi run f8pydl_optflow
 | --- | --- | --- | --- | --- | --- |
 | `inputShmName` | `rw` | `true` | `true` | `string / default=` | Input SHM name (e.g. shm.xxx.video). |
 | `computeEveryNFrames` | `rw` | `true` | `false` | `integer / default=2` | Compute optical flow once per N new frames. |
-| `weightsDir` | `rw` | `true` | `false` | `string / default=services/f8/dl/weights` | Directory containing *.yaml + *.onnx model files. |
+| `weightsDir` | `rw` | `true` | `false` | `string / default=services/f8/dl/weights` | Directory containing *.yaml + *.onnx model files. Reset to the default relative path when exporting publish JSON. |
 | `modelId` | `rw` | `true` | `false` | `string / default=` | Model id selected from weightsDir (ignored if modelYamlPath is set). |
-| `modelYamlPath` | `rw` | `true` | `false` | `string / default=` | Optional explicit model yaml path (overrides modelId). |
+| `modelYamlPath` | `rw` | `true` | `false` | `string / default=` | Optional explicit model yaml path (overrides modelId). Cleared when exporting publish JSON. |
 | `ortProvider` | `rw` | `true` | `false` | `string / enum[auto, cuda, cpu] / default=auto` | auto prefers CUDAExecutionProvider when available. |
 | `autoDownloadWeights` | `rw` | `true` | `false` | `boolean / default=True` | When model file is missing, download from onnxUrl in model yaml. |
 | `availableModels` | `ro` | `true` | `false` | `array[string]` | List of model ids discovered from weightsDir. |
@@ -65,9 +67,9 @@ pixi run f8pydl_optflow
 
 - `inputShmName` (Input Video SHM, `rw`): Input SHM name (e.g. shm.xxx.video). Schema: `string / default=`.
 - `computeEveryNFrames` (Compute Every N Frames, `rw`): Compute optical flow once per N new frames. Schema: `integer / default=2`.
-- `weightsDir` (Weights Dir, `rw`): Directory containing *.yaml + *.onnx model files. Schema: `string / default=services/f8/dl/weights`.
+- `weightsDir` (Weights Dir, `rw`): Directory containing *.yaml + *.onnx model files. Reset to the default relative path when exporting publish JSON. Schema: `string / default=services/f8/dl/weights`.
 - `modelId` (Model Id, `rw`): Model id selected from weightsDir (ignored if modelYamlPath is set). Schema: `string / default=`.
-- `modelYamlPath` (Model YAML Path, `rw`): Optional explicit model yaml path (overrides modelId). Schema: `string / default=`.
+- `modelYamlPath` (Model YAML Path, `rw`): Optional explicit model yaml path (overrides modelId). Cleared when exporting publish JSON. Schema: `string / default=`.
 - `ortProvider` (ONNX Runtime Provider, `rw`): auto prefers CUDAExecutionProvider when available. Schema: `string / enum[auto, cuda, cpu] / default=auto`.
 - `autoDownloadWeights` (Auto Download Weights, `rw`): When model file is missing, download from onnxUrl in model yaml. Schema: `boolean / default=True`.
 - `availableModels` (Available Models, `ro`): List of model ids discovered from weightsDir. Schema: `array[string]`.

@@ -13,16 +13,16 @@ if ROOT not in sys.path:
 if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
-from f8pysdk.generated import (  # noqa: E402
+from f8pysdk.specs import (  # noqa: E402
     F8Edge,
     F8EdgeKindEnum,
     F8EdgeStrategyEnum,
     F8RuntimeGraph,
     F8RuntimeNode,
 )
-from f8pysdk.runtime_node import OperatorNode  # noqa: E402
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry  # noqa: E402
-from f8pysdk.service_host import ServiceHost, ServiceHostConfig  # noqa: E402
+from f8pysdk.nodes import OperatorNode  # noqa: E402
+from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
+from f8pysdk.host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
 from f8pyengine.constants import SERVICE_CLASS  # noqa: E402
@@ -86,9 +86,9 @@ class StateTriggerTests(unittest.IsolatedAsyncioTestCase):
     ) -> tuple[object, PyEngineService, _RuntimeStub]:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_pyengine_specs(reg)
-        reg.register(
+        reg.register_operator_factory(
             SERVICE_CLASS,
             "f8.test_probe_exec",
             lambda node_id, node, initial_state: _ProbeExecRuntimeNode(
@@ -268,8 +268,8 @@ class StateTriggerTests(unittest.IsolatedAsyncioTestCase):
                 operatorClass=ReplayerRuntimeNode.SPEC.operatorClass,
                 stateFields=list(ReplayerRuntimeNode.SPEC.stateFields or []),
                 stateValues={"path": path, "loop": False, "timeMode": TIME_MODE_OFFSET_FROM_PLAY, "playing": False},
-                execInPorts=["play", "pause", "stop"],
-                execOutPorts=["started", "stopped", "looped", "done"],
+                execInPorts=list(ReplayerRuntimeNode.SPEC.execInPorts or []),
+                execOutPorts=list(ReplayerRuntimeNode.SPEC.execOutPorts or []),
                 dataInPorts=[],
                 dataOutPorts=list(ReplayerRuntimeNode.SPEC.dataOutPorts or []),
             )

@@ -7,17 +7,17 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from f8pysdk.builtin_state_fields import (  # noqa: E402
+from f8pysdk._specs.builtin_fields import (  # noqa: E402
     MONITOR_PORT_NAME,
     normalize_describe_payload_dict,
     operator_state_fields_with_builtins,
     service_data_out_ports_with_builtins,
     service_state_fields_with_builtins,
 )
-from f8pysdk.generated import F8DataPortSpec, F8StateAccess, F8StateSpec  # noqa: E402
+from f8pysdk.specs import F8DataPortSpec, F8StateAccess, F8StateSpec  # noqa: E402
 from f8pysdk.nats_naming import kv_key_node_state  # noqa: E402
-from f8pysdk.service_bus.codec import decode_obj  # noqa: E402
-from f8pysdk.schema_helpers import boolean_schema, string_schema  # noqa: E402
+from f8pysdk.codec import decode_obj  # noqa: E402
+from f8pysdk.specs import boolean_schema, string_schema  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
 
@@ -78,7 +78,7 @@ class BuiltinStateFieldTests(unittest.TestCase):
         names = [str(port.name) for port in out]
         self.assertEqual(names.count(MONITOR_PORT_NAME), 1)
         self.assertIn("out", names)
-        self.assertNotIn("telemetry", names)
+        self.assertIn("telemetry", names)
         monitor_ports = [port for port in out if str(port.name) == MONITOR_PORT_NAME]
         self.assertEqual(len(monitor_ports), 1)
         self.assertTrue(bool(monitor_ports[0].required))
@@ -136,7 +136,7 @@ class BuiltinStateFieldTests(unittest.TestCase):
         self.assertTrue(bool(operator_id_fields[0].get("required")))
         service_data_ports = out["service"]["dataOutPorts"]
         self.assertTrue(any(str(x.get("name")) == MONITOR_PORT_NAME for x in service_data_ports))
-        self.assertFalse(any(str(x.get("name")) == "telemetry" for x in service_data_ports))
+        self.assertTrue(any(str(x.get("name")) == "telemetry" for x in service_data_ports))
         monitor_ports = [x for x in service_data_ports if str(x.get("name")) == MONITOR_PORT_NAME]
         self.assertEqual(len(monitor_ports), 1)
         self.assertTrue(bool(monitor_ports[0].get("required")))
@@ -147,7 +147,7 @@ class LifecycleBootstrapTests(unittest.IsolatedAsyncioTestCase):
     async def test_start_seeds_active_state(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        with patch("f8pysdk.service_bus.lifecycle._ensure_micro_endpoints_started") as ensure_micro:
+        with patch("f8pysdk.service_bus.workflow.lifecycle._ensure_micro_endpoints_started") as ensure_micro:
             async def _noop(_bus: object) -> None:
                 return None
             ensure_micro.side_effect = _noop
@@ -160,7 +160,7 @@ class LifecycleBootstrapTests(unittest.IsolatedAsyncioTestCase):
     async def test_seeded_active_state_origin_runtime(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        with patch("f8pysdk.service_bus.lifecycle._ensure_micro_endpoints_started") as ensure_micro:
+        with patch("f8pysdk.service_bus.workflow.lifecycle._ensure_micro_endpoints_started") as ensure_micro:
             async def _noop(_bus: object) -> None:
                 return None
             ensure_micro.side_effect = _noop

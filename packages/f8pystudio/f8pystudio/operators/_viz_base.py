@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from f8pysdk import F8StateAccess, F8StateSpec, integer_schema, string_schema
-from f8pysdk.runtime_node import OperatorNode
+from f8pysdk.specs import F8StateAccess, F8StateSpec, integer_schema, string_schema
+from f8pysdk.nodes import OperatorNode
 
 
 UPSTREAM_SAMPLING_MODE_PASSIVE = "passive"
@@ -19,8 +19,11 @@ def viz_sampling_state_fields(*, show_on_node: bool = False) -> list[F8StateSpec
         F8StateSpec(
             name="upstreamSamplingMode",
             label="Upstream Sampling",
-            description="passive: no auto sampling injection; auto: request upstream auto sampler injection.",
-            valueSchema=string_schema(default=UPSTREAM_SAMPLING_MODE_PASSIVE, enum=list(UPSTREAM_SAMPLING_MODE_VALUES)),
+            description=(
+                "passive: no upstream auto-sampler request; auto: request upstream periodic sampling when the "
+                "source runtime supports it."
+            ),
+            valueSchema=string_schema(default=UPSTREAM_SAMPLING_MODE_AUTO, enum=list(UPSTREAM_SAMPLING_MODE_VALUES)),
             access=F8StateAccess.rw,
             required=True,
             showOnNode=show_on_node,
@@ -70,10 +73,10 @@ class StudioVizRuntimeNodeBase(OperatorNode):
         except Exception:
             mode_any = None
         if mode_any is None:
-            mode_any = self._initial_state.get("upstreamSamplingMode", UPSTREAM_SAMPLING_MODE_PASSIVE)
+            mode_any = self._initial_state.get("upstreamSamplingMode", UPSTREAM_SAMPLING_MODE_AUTO)
         mode = str(mode_any or "").strip().lower()
         if mode not in UPSTREAM_SAMPLING_MODE_VALUES:
-            return UPSTREAM_SAMPLING_MODE_PASSIVE
+            return UPSTREAM_SAMPLING_MODE_AUTO
         return mode
 
     async def get_upstream_sample_interval_ms(self) -> int:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
-from f8pysdk.generated import F8OperatorSchemaVersion, F8OperatorSpec, F8ServiceSpec
+from f8pysdk.specs import F8OperatorSchemaVersion, F8OperatorSpec, F8ServiceSpec
 from f8pystudio.nodegraph.graph_identity_actions import GraphIdentityActionsMixin
 
 
@@ -97,6 +97,14 @@ class _GraphHarness(GraphIdentityActionsMixin):
         return isinstance(node.spec, F8OperatorSpec)
 
 
+class _FakeBridge:
+    def __init__(self) -> None:
+        self.unmanaged_service_ids: list[str] = []
+
+    def unmanage_service(self, service_id: str) -> None:
+        self.unmanaged_service_ids.append(str(service_id))
+
+
 def _service_spec(service_class: str) -> F8ServiceSpec:
     return F8ServiceSpec(serviceClass=service_class, label="Service")
 
@@ -159,3 +167,25 @@ def test_rename_node_identity_updates_operator_mapping_and_property() -> None:
     assert "op_1" not in graph.model.nodes
     assert graph.model.nodes["op_2"] is op_node
     assert op_node.model.properties["operatorId"] == "op_2"
+
+
+def test_rename_service_identity_clears_old_bridge_monitor_cache() -> None:
+    service_node = _Node(node_id="svc_old", spec=_service_spec("f8.tests"))
+    service_node.model.properties["svcId"] = "svc_old"
+    op_node = _Node(
+        node_id="op_1",
+        spec=_operator_spec(service_class="f8.tests", operator_class="f8.tests.op"),
+        svc_id="svc_old",
+    )
+    bridge = _FakeBridge()
+    graph = _GraphHarness([service_node, op_node])
+    graph._service_bridge = bridge
+
+    ok, message = graph._rename_node_identity(node=service_node, new_id="svc_new")
+
+    assert ok is True
+    assert message == ""
+    assert service_node.id == "svc_new"
+    assert service_node.model.properties["svcId"] == "svc_new"
+    assert op_node.svcId == "svc_new"
+    assert bridge.unmanaged_service_ids == ["svc_old"]

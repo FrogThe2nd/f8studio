@@ -4,7 +4,7 @@ from __future__ import annotations
 """
 UDP skeleton protocol test stub.
 
-Sends the same binary packet format that `f8.udp_skeleton` decodes:
+Sends the same binary packet format consumed by `UDP In -> Skeleton Decoder`:
 - aligned (null-terminated, padded to 4 bytes) strings
 - little-endian timestamp (u64), boneCount (i32), then per-bone 7 float32s
 

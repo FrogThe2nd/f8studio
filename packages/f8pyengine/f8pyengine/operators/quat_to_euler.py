@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from f8pysdk.codec import parse_number
+from f8pysdk.codec import coerce_bool
 import math
 from typing import Any
 
-from f8pysdk import (
+from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
@@ -16,8 +18,8 @@ from f8pysdk import (
     string_schema,
 )
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import OperatorNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import OperatorNode
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from ..constants import SERVICE_CLASS
 
@@ -25,28 +27,15 @@ OPERATOR_CLASS = "f8.quat_to_euler"
 _ORDERS = ("XYZ", "XZY", "YXZ", "YZX", "ZXY", "ZYX")
 _EPS = 1e-9
 
-
-def _coerce_number(value: Any) -> float | None:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        numeric = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return None
-    if math.isnan(numeric) or math.isinf(numeric):
-        return None
-    return float(numeric)
-
-
 def _coerce_quat(value: Any) -> tuple[float, float, float, float] | None:
     if not isinstance(value, (list, tuple)):
         return None
     if len(value) != 4:
         return None
-    w = _coerce_number(value[0])
-    x = _coerce_number(value[1])
-    y = _coerce_number(value[2])
-    z = _coerce_number(value[3])
+    w = parse_number(value[0])
+    x = parse_number(value[1])
+    y = parse_number(value[2])
+    z = parse_number(value[3])
     if w is None or x is None or y is None or z is None:
         return None
     norm = math.sqrt(w * w + x * x + y * y + z * z)
@@ -55,27 +44,11 @@ def _coerce_quat(value: Any) -> tuple[float, float, float, float] | None:
     inv = 1.0 / norm
     return (w * inv, x * inv, y * inv, z * inv)
 
-
-def _coerce_bool(value: Any, *, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    if isinstance(value, str):
-        text = value.strip().lower()
-        if text in {"1", "true", "yes", "on"}:
-            return True
-        if text in {"0", "false", "no", "off"}:
-            return False
-    return bool(default)
-
-
 def _normalize_order(value: Any, *, default: str = "ZYX") -> str:
     text = str(value or "").strip().upper()
     if text in _ORDERS:
         return text
     return default
-
 
 def _clamp_unit(value: float) -> float:
     if value < -1.0:
@@ -83,7 +56,6 @@ def _clamp_unit(value: float) -> float:
     if value > 1.0:
         return 1.0
     return float(value)
-
 
 def _quat_to_matrix(q: tuple[float, float, float, float]) -> tuple[float, float, float, float, float, float, float, float, float]:
     w, x, y, z = q
@@ -106,7 +78,6 @@ def _quat_to_matrix(q: tuple[float, float, float, float]) -> tuple[float, float,
     m32 = 2.0 * (yz + wx)
     m33 = 1.0 - 2.0 * (xx + yy)
     return (m11, m12, m13, m21, m22, m23, m31, m32, m33)
-
 
 def _quat_to_euler(q: tuple[float, float, float, float], order: str) -> tuple[float, float, float]:
     m11, m12, m13, m21, m22, m23, m31, m32, m33 = _quat_to_matrix(q)
@@ -164,7 +135,6 @@ def _quat_to_euler(q: tuple[float, float, float, float], order: str) -> tuple[fl
         z = math.atan2(-m12, m22)
     return (x, y, z)
 
-
 class QuatToEulerRuntimeNode(OperatorNode):
     def __init__(self, *, node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any] | None = None) -> None:
         super().__init__(
@@ -175,7 +145,7 @@ class QuatToEulerRuntimeNode(OperatorNode):
         )
         self._initial_state = dict(initial_state or {})
         self._order = _normalize_order(self._initial_state.get("order"), default="ZYX")
-        self._degrees = _coerce_bool(self._initial_state.get("degrees"), default=True)
+        self._degrees = coerce_bool(self._initial_state.get("degrees"), default=True)
         self._last_input: tuple[float, float, float, float] | None = None
         self._last_output: list[float] | None = None
         self._last_ctx_id: str | int | None = None
@@ -189,7 +159,7 @@ class QuatToEulerRuntimeNode(OperatorNode):
             self._dirty = True
             return
         if name == "degrees":
-            self._degrees = _coerce_bool(value, default=self._degrees)
+            self._degrees = coerce_bool(value, default=self._degrees)
             self._dirty = True
 
     async def compute_output(self, port: str, ctx_id: str | int | None = None) -> Any:
@@ -214,10 +184,10 @@ class QuatToEulerRuntimeNode(OperatorNode):
         self._dirty = False
         return output
 
-
 QuatToEulerRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
+    paletteCategory=f"{SERVICE_CLASS}.motion",
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="Quat To Euler",
@@ -260,13 +230,11 @@ QuatToEulerRuntimeNode.SPEC = F8OperatorSpec(
     ],
 )
 
-
-def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
         return QuatToEulerRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(QuatToEulerRuntimeNode.SPEC, overwrite=True)
-    return reg
+    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
+    registry.register_operator_spec(QuatToEulerRuntimeNode.SPEC, overwrite=True)
+    return registry

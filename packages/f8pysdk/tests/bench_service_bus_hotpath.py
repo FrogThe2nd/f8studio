@@ -12,17 +12,15 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from f8pysdk.executors.exec_flow import ExecFlowExecutor  # noqa: E402
-from f8pysdk.generated import (  # noqa: E402
+from f8pysdk.specs import (  # noqa: E402
     F8Edge,
     F8EdgeKindEnum,
     F8EdgeStrategyEnum,
     F8RuntimeGraph,
     F8RuntimeNode,
 )
-from f8pysdk.runtime_node import OperatorNode, RuntimeNode  # noqa: E402
-from f8pysdk.service_bus.routing_data import emit_data as emit_data_internal  # noqa: E402
-from f8pysdk.service_bus.routing_data import pull_data as pull_data_internal  # noqa: E402
-from f8pysdk.testing import ServiceBusHarness  # noqa: E402
+from f8pysdk.nodes import OperatorNode, RuntimeNode  # noqa: E402
+from f8pysdk.testing import ServiceBusHarness, emit_data as emit_data_internal, pull_data as pull_data_internal  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -279,7 +277,7 @@ async def bench_exec_trigger_nowait(*, iterations: int, warmup: int) -> BenchRes
 async def bench_push_on_data_batched(*, ticks: int, burst: int, warmup_ticks: int) -> BenchResult:
     harness = ServiceBusHarness()
     bus = harness.create_bus("svcA")
-    bus.set_data_delivery("push", source="bench")
+    bus.set_data_delivery("callback", source="bench")
     sink = _CountSinkDataNode("dst")
     bus.register_node(sink)
 

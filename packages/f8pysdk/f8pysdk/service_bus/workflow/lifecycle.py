@@ -5,15 +5,15 @@ import logging
 from typing import Any, TYPE_CHECKING
 
 from ...capabilities import LifecycleNode
+from ...state import StateWriteOrigin, StateWriteSource
 from ...time_utils import now_ms
-from ..adapters.micro import _ServiceBusMicroEndpoints
-from ..domain.state_pipeline import publish_state
-from ..state_write import StateWriteOrigin
-from ..state_write import StateWriteSource
-from ..codec import encode_obj
+from ..state.pipeline import publish_state
+from ..internal.micro import ServiceBusMicroEndpoints
+from ...codec import encode_obj
+from .metadata import build_lifecycle_event_meta, build_lifecycle_state_meta
 
 if TYPE_CHECKING:
-    from ..api.bus import ServiceBus
+    from ..runtime import ServiceBus
 
 
 log = logging.getLogger(__name__)
@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 async def _ensure_micro_endpoints_started(bus: "ServiceBus") -> None:
     if bus._micro_endpoints is not None:
         return
-    endpoints = _ServiceBusMicroEndpoints(bus)
+    endpoints = ServiceBusMicroEndpoints(bus)
     bus._micro_endpoints = endpoints
     await endpoints.start()
 
@@ -78,64 +78,15 @@ async def stop(bus: "ServiceBus") -> None:
     await announce_ready(bus, False, reason="stop")
 
     await _stop_micro_endpoints(bus)
-
-    for sub in list(bus._custom_subs):
-        await sub.unsubscribe()
-    bus._custom_subs.clear()
-
-    for sub in list(bus._data_route_subs.values()):
-        await sub.unsubscribe()
-    bus._data_route_subs.clear()
-
-    bus._cross_in_by_subject.clear()
-    bus._intra_data_out.clear()
-    bus._intra_data_in.clear()
-    bus._cross_out_subjects.clear()
-    bus._data_inputs.clear()
-    bus._on_data_push_queue.clear()
-    flush_task = bus._on_data_flush_task
-    bus._on_data_flush_task = None
-    if flush_task is not None:
-        flush_task.cancel()
-        try:
-            await flush_task
-        except asyncio.CancelledError:
-            pass
-        except Exception as exc:
-            log.error("on_data flush task stop failed", exc_info=exc)
-
-    bus._cross_state_in_by_key.clear()
-    for (sid, key), watch in list(bus._remote_state_watches.items()):
-        watcher: Any = None
-        task: asyncio.Task[Any] | None = None
-        try:
-            watcher, task = watch
-        except (TypeError, ValueError) as exc:
-            log.error("invalid cross-state watch handle sid=%s key=%s", sid, key, exc_info=exc)
-            continue
-        if task is not None:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            except Exception as exc:
-                log.error("cross-state watch task stop failed sid=%s key=%s", sid, key, exc_info=exc)
-        if watcher is not None:
-            try:
-                await watcher.stop()
-            except Exception as exc:
-                log.error("cross-state watcher stop failed sid=%s key=%s", sid, key, exc_info=exc)
-    bus._remote_state_watches.clear()
-
-    bus._state_cache.clear()
+    await bus.data_router.stop()
+    await bus.state_router.stop()
+    bus.state_store.clear_cache()
+    bus.state_store.clear_access_map()
 
     if bus._monitor_collector.enabled:
         await bus._monitor_collector.stop()
     await bus._transport.close()
     await notify_after_stop(bus)
-    bus._rungraph_hooks.clear()
-    bus._service_hooks.clear()
 
 
 async def announce_ready(bus: "ServiceBus", ready: bool, *, reason: str) -> None:
@@ -200,7 +151,7 @@ async def apply_active(
     changed = active != bus._active
     bus._active = active
 
-    payload = {"source": str(source or "runtime"), **(dict(meta or {}))}
+    payload = build_lifecycle_event_meta(source=source, meta=meta)
 
     # Apply lifecycle change to local nodes/hooks first so pause/resume takes effect
     # with minimal latency; persist `active` state right after.
@@ -232,5 +183,5 @@ async def apply_active(
             bool(active),
             origin=StateWriteOrigin.runtime,
             source=source or StateWriteSource.runtime,
-            meta={"lifecycle": True, **(dict(meta or {}))},
+            meta=build_lifecycle_state_meta(meta=meta),
         )

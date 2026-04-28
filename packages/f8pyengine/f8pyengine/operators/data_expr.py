@@ -5,24 +5,26 @@ import time
 from types import CodeType
 from typing import Any
 
-from f8pysdk import (
+from f8pysdk.codec import coerce_bool
+from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
+    F8SpecEditPolicy,
     F8StateAccess,
     F8StateSpec,
     any_schema,
     boolean_schema,
+    editable_collection_edit_policy,
     string_schema,
 )
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import OperatorNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import OperatorNode
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from ..constants import SERVICE_CLASS
 from ._py_expr_eval import (
-    coerce_bool as _coerce_bool,
     compile_expr as _compile_expr,
     is_identifier as _is_identifier,
     normalize_expr_code,
@@ -64,8 +66,8 @@ class DataExprRuntimeNode(OperatorNode):
         )
         self._initial_state = dict(initial_state or {})
         self._code = self._normalize_code(self._initial_state.get("code") or "input")
-        self._allow_numpy = _coerce_bool(self._initial_state.get("allowNumpy"), default=False)
-        self._unpack_dict_outputs = _coerce_bool(self._initial_state.get("unpackDictOutputs"), default=False)
+        self._allow_numpy = coerce_bool(self._initial_state.get("allowNumpy"), default=False)
+        self._unpack_dict_outputs = coerce_bool(self._initial_state.get("unpackDictOutputs"), default=False)
         self._compiled: CodeType | None = None
         self._compile_error: str | None = None
         self._recompile()
@@ -116,12 +118,12 @@ class DataExprRuntimeNode(OperatorNode):
         _ = ts_ms
         name = str(field or "")
         if name == "allowNumpy":
-            self._allow_numpy = _coerce_bool(value, default=False)
+            self._allow_numpy = coerce_bool(value, default=False)
             self._recompile()
             self._dirty = True
             return
         if name == "unpackDictOutputs":
-            self._unpack_dict_outputs = _coerce_bool(value, default=False)
+            self._unpack_dict_outputs = coerce_bool(value, default=False)
             self._dirty = True
             return
         if name != "code":
@@ -134,9 +136,9 @@ class DataExprRuntimeNode(OperatorNode):
         del ts_ms, meta
         name = str(field or "").strip()
         if name == "allowNumpy":
-            return _coerce_bool(value, default=False)
+            return coerce_bool(value, default=False)
         if name == "unpackDictOutputs":
-            return _coerce_bool(value, default=False)
+            return coerce_bool(value, default=False)
         if name == "code":
             return self._normalize_code(value)
         return value
@@ -236,6 +238,7 @@ class DataExprRuntimeNode(OperatorNode):
 DataExprRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
+    paletteCategory=f"{SERVICE_CLASS}.expr",
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="Data Expr",
@@ -267,8 +270,10 @@ DataExprRuntimeNode.SPEC = F8OperatorSpec(
     dataOutPorts=[
         F8DataPortSpec(name="out", description="Expression result.", valueSchema=any_schema(), required=False),
     ],
-    editableDataInPorts=True,
-    editableDataOutPorts=True,
+    editPolicy=F8SpecEditPolicy(
+        dataInPorts=editable_collection_edit_policy(),
+        dataOutPorts=editable_collection_edit_policy(),
+    ),
     stateFields=[
         F8StateSpec(
             name="allowNumpy",
@@ -297,24 +302,21 @@ DataExprRuntimeNode.SPEC = F8OperatorSpec(
                 "Single Python expression. Reference `x` and any extra input port names directly. Supports literals, "
                 "indexing, comprehensions, conditionals, `math.*`, and optional `np.*` / `numpy.*` when `Allow Numpy` is enabled."
             ),
-            uiControl="wrapline",
-            uiLanguage="python",
+            uiControl="wrapline[python]",
             valueSchema=string_schema(default="x"),
             access=F8StateAccess.rw,
             showOnNode=True,
             required=False,
         ),
     ],
-    editableStateFields=False,
 )
 
 
-def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
         return DataExprRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(DataExprRuntimeNode.SPEC, overwrite=True)
-    return reg
+    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
+    registry.register_operator_spec(DataExprRuntimeNode.SPEC, overwrite=True)
+    return registry

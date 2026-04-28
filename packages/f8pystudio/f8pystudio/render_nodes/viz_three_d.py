@@ -10,8 +10,8 @@ from NodeGraphQt.nodes.base_node import NodeBaseWidget
 
 from ..nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from ..nodegraph.viz_operator_nodeitem import F8StudioVizOperatorNodeItem
-from ..ui_bus import UiCommand
-from ..webengine_utils import (
+from f8pystudio.contracts.ui_commands import UiCommand
+from ..ui.support.webengine_utils import (
     configure_default_webengine_profile,
     set_webengine_view_background,
     webengine_termination_status_text,
@@ -279,7 +279,7 @@ class _Skeleton3DViewerWindow(QtWidgets.QDialog):
             return
         self._view = None
         self._page_ready = False
-        logger.info("Skeleton3D viewer releasing web view: reason=%s", reason)
+        logger.debug("Skeleton3D viewer releasing web view: reason=%s", reason)
 
         page = None
         try:
@@ -413,7 +413,7 @@ class _Skeleton3DControlPane(QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
-        self._open_button = QtWidgets.QPushButton("Open Viewer")
+        self._open_button = QtWidgets.QPushButton("Open Viewer", self)
         self._open_button.clicked.connect(on_open_clicked)  # type: ignore[arg-type]
         layout.addWidget(self._open_button)
 

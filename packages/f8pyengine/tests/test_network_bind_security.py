@@ -9,9 +9,9 @@ if ROOT not in sys.path:
 if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
-from f8pysdk.generated import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry  # noqa: E402
-from f8pysdk.service_host import ServiceHost, ServiceHostConfig  # noqa: E402
+from f8pysdk.specs import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
+from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
+from f8pysdk.host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
 from f8pyengine.constants import SERVICE_CLASS  # noqa: E402
@@ -19,17 +19,14 @@ from f8pyengine.operators.lovense_mock_server import (  # noqa: E402
     LovenseMockServerRuntimeNode,
     register_operator as register_lovense_mock_server,
 )
-from f8pyengine.operators.udp_skeleton import (  # noqa: E402
-    UdpSkeletonRuntimeNode,
-    register_operator as register_udp_skeleton,
-)
+from f8pyengine.operators.udp_in import UdpInRuntimeNode, register_operator as register_udp_in  # noqa: E402
 
 
 class NetworkBindSecurityTests(unittest.IsolatedAsyncioTestCase):
     async def test_lovense_mock_server_rejects_non_loopback_by_default(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_lovense_mock_server(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
@@ -53,20 +50,20 @@ class NetworkBindSecurityTests(unittest.IsolatedAsyncioTestCase):
             if isinstance(node, LovenseMockServerRuntimeNode):
                 await node.close()
 
-    async def test_udp_skeleton_rejects_non_loopback_by_default(self) -> None:
+    async def test_udp_in_rejects_non_loopback_by_default(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
-        register_udp_skeleton(reg)
+        reg = create_runtime_node_registry()
+        register_udp_in(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         op = F8RuntimeNode(
             nodeId="udp1",
             serviceId="svcA",
             serviceClass=SERVICE_CLASS,
-            operatorClass=UdpSkeletonRuntimeNode.SPEC.operatorClass,
-            stateFields=list(UdpSkeletonRuntimeNode.SPEC.stateFields or []),
-            stateValues={"bindAddress": "127.0.0.1", "port": 39540},
+            operatorClass=UdpInRuntimeNode.SPEC.operatorClass,
+            stateFields=list(UdpInRuntimeNode.SPEC.stateFields or []),
+            stateValues={"bindAddress": "127.0.0.1", "port": 39541},
         )
         await bus.set_rungraph(F8RuntimeGraph(graphId="g2", revision="r1", nodes=[op], edges=[]))
         try:
@@ -77,7 +74,7 @@ class NetworkBindSecurityTests(unittest.IsolatedAsyncioTestCase):
             await bus.publish_state_external("udp1", "bindAddress", "0.0.0.0", source="test")
         finally:
             node = bus.get_node("udp1")
-            if isinstance(node, UdpSkeletonRuntimeNode):
+            if isinstance(node, UdpInRuntimeNode):
                 await node.close()
 
 

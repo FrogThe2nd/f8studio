@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from NodeGraphQt import BaseNode
 
-from f8pystudio.plugin_api import PluginRendererRegistration, StudioPluginManifest
-from f8pystudio.pystudio_program import PyStudioProgram
+from f8pystudio.plugins.api import PluginRendererRegistration, StudioPluginManifest
+from f8pystudio.app.program import PyStudioProgram
 from f8pystudio.render_nodes.registry import RenderNodeRegistry
 
 

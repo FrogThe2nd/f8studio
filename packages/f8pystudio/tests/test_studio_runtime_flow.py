@@ -8,7 +8,7 @@ from f8pystudio.bridge.studio_runtime_flow import (
     install_studio_runtime_graph,
     wait_for_studio_runtime_ready,
 )
-from f8pystudio.remote_state_watcher import WatchTarget
+from f8pystudio.bridge.remote_state_watcher import WatchTarget
 
 
 class _FakeBus:

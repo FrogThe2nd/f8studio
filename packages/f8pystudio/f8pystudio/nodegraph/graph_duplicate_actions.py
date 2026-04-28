@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from f8pysdk.msgspec_codec import dump_json
+from f8pysdk.codec import dump_json
 import copy
 import logging
 from typing import Any
 
 from NodeGraphQt import BaseNode
 
-from f8pysdk import F8OperatorSpec, F8ServiceSpec
+from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +94,17 @@ class GraphDuplicateActionsMixin:
                 target.set_ui_overrides(copy.deepcopy(source_ui_overrides), rebuild=True)  # type: ignore[attr-defined]
             except (AttributeError, RuntimeError, TypeError, ValueError):
                 logger.exception("Failed to copy ui overrides for duplicate node: type=%s", str(source.type_ or ""))
+        try:
+            source_ui_state = source.ui_state()  # type: ignore[attr-defined]
+        except (AttributeError, RuntimeError, TypeError):
+            source_ui_state = {}
+        if isinstance(source_ui_state, dict):
+            copied_ui_state = copy.deepcopy(source_ui_state)
+            copied_ui_state.pop("stateFieldHotkeys", None)
+            try:
+                target.set_ui_state(copied_ui_state)  # type: ignore[attr-defined]
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                logger.exception("Failed to copy ui state for duplicate node: type=%s", str(source.type_ or ""))
 
     @staticmethod
     def _copy_node_custom_properties(*, source: BaseNode, target: BaseNode) -> None:

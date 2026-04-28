@@ -6,9 +6,9 @@ from typing import Any
 
 from qtpy import QtCore
 
-from f8pysdk import F8RuntimeGraph
+from f8pysdk.specs import F8RuntimeGraph
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.service_bus.state_write import StateWriteError
+from f8pysdk.state import StateWriteError
 
 from .json_codec import coerce_json_value
 from .managed_service_inventory import collect_managed_service_inventory
@@ -17,20 +17,37 @@ from .runtime_graph_projection import build_local_state_field_index, build_remot
 from .service_endpoint_client import request_set_remote_state
 from .studio_runtime_flow import apply_remote_state_watches_if_changed, install_studio_runtime_graph
 from ..nodegraph.runtime_compiler import CompiledRuntimeGraphs
-from ..pystudio_node_registry import SERVICE_CLASS
+from f8pystudio.studio_specs.registry import SERVICE_CLASS
 
 logger = logging.getLogger(__name__)
 
 
 class DeployStateControllerMixin:
+    def _remember_compiled_graphs(self, compiled: CompiledRuntimeGraphs) -> None:
+        self._last_compiled = compiled
+        self._local_state_fields_by_node = self._build_local_state_field_index(compiled)
+
+    def sync_studio_runtime(self, compiled: CompiledRuntimeGraphs) -> None:
+        """
+        Refresh only the in-process studio runtime graph from a compiled snapshot.
+
+        Unlike full `deploy()`, this does not start external services or deploy
+        per-service rungraphs. It exists so built-in studio operators and local
+        state edges can respond immediately after graph edits.
+        """
+        self._remember_compiled_graphs(compiled)
+        self._submit_async(
+            self._refresh_studio_runtime_async(compiled=compiled),
+            context="submit sync_studio_runtime failed",
+        )
+
     def deploy(self, compiled: CompiledRuntimeGraphs) -> None:
         """
         Starts service processes (if not running), deploys per-service graphs,
         installs the studio runtime graph, and enables remote state monitoring.
         """
         # 1) start processes (sync)
-        self._last_compiled = compiled
-        self._local_state_fields_by_node = self._build_local_state_field_index(compiled)
+        self._remember_compiled_graphs(compiled)
         inventory = collect_managed_service_inventory(
             services=list(compiled.global_graph.services or []),
             studio_service_id=self.studio_service_id,
@@ -48,7 +65,10 @@ class DeployStateControllerMixin:
         self._managed_service_classes = dict(inventory.service_classes)
 
         # 2) deploy + install monitoring (async)
-        self._submit_async(self._deploy_and_monitor_async(compiled), context="submit deploy_and_monitor failed")
+        self._submit_async(
+            self._deploy_remote_services_and_refresh_studio_async(compiled),
+            context="submit deploy_remote_services_and_refresh_studio failed",
+        )
         # Preserve the current global lifecycle preference across repeated deploys.
         # Only enforce deactivate here when globally paused; avoid forcing activate
         # on every F5, which can override rungraph/state-edge driven inactive states.
@@ -70,7 +90,7 @@ class DeployStateControllerMixin:
             return
 
         async def _do() -> None:
-            await self._install_studio_graph_async(compiled=compiled)
+            await self._refresh_studio_runtime_async(compiled=compiled)
             await self._deploy_service_rungraph_async(sid, compiled=compiled)
 
         self._submit_async(_do(), context=f"submit deploy_service_rungraph failed serviceId={sid}")
@@ -105,14 +125,17 @@ class DeployStateControllerMixin:
             return
         await self._rungraph_deploy_flow.deploy_service_rungraph(service_id=str(service_id), compiled=compiled)
 
-    async def _install_studio_graph_async(self, *, compiled: CompiledRuntimeGraphs | None = None) -> None:
+    async def _refresh_studio_runtime_async(self, *, compiled: CompiledRuntimeGraphs | None = None) -> None:
         """
-        Reinstall the studio runtime graph from the last compiled graphs (best-effort).
+        Refresh the in-process studio runtime from the last compiled graphs (best-effort).
+
+        This shared path keeps the local state-field index, installs the studio
+        subgraph into the in-process runtime, and reapplies remote watches.
         """
         compiled = pick_compiled(compiled, self._last_compiled)
         if compiled is None:
             return
-        self._local_state_fields_by_node = self._build_local_state_field_index(compiled)
+        self._remember_compiled_graphs(compiled)
         if not await self._ensure_studio_runtime_async():
             return
         await install_studio_runtime_graph(
@@ -126,23 +149,9 @@ class DeployStateControllerMixin:
         except Exception as exc:
             self._report_exception("apply remote state watches failed", exc)
 
-    async def _deploy_and_monitor_async(self, compiled: CompiledRuntimeGraphs) -> None:
+    async def _deploy_remote_services_and_refresh_studio_async(self, compiled: CompiledRuntimeGraphs) -> None:
         await self._rungraph_deploy_flow.deploy_all_service_rungraphs(compiled=compiled)
-
-        # Install studio runtime graph (studio operators + edges).
-        if self._studio_service_bus() is None:
-            return
-        await install_studio_runtime_graph(
-            compiled=compiled,
-            get_service_bus=self._studio_service_bus,
-            build_studio_runtime_graph=self._build_studio_runtime_graph,
-            emit_log=self._emit_log_line,
-        )
-
-        try:
-            await self._apply_remote_state_watches_async(compiled)
-        except Exception as exc:
-            self._report_exception("apply remote state watches failed", exc)
+        await self._refresh_studio_runtime_async(compiled=compiled)
 
     def set_local_state(self, node_id: str, field: str, value: Any) -> None:
         """
@@ -216,4 +225,3 @@ class DeployStateControllerMixin:
             _do(),
             context=f"submit set_remote_state failed serviceId={service_id} nodeId={node_id} field={field}",
         )
-

@@ -6,14 +6,274 @@ from typing import Any
 
 from qtpy import QtCore, QtWidgets
 
-from f8pysdk.schema_helpers import schema_default, schema_type
+from f8pysdk.command import command_input_state_field
+from f8pysdk.specs import schema_default, schema_type
 
-from ...command_ui_protocol import CommandUiHandler, CommandUiSource
-from ...components.controls import F8OptionCombo, F8Switch, F8ValueBar, parse_select_pool
-from ...ui_notifications import show_warning
-from .service_toolbar_host import F8ForceGlobalToolTipFilter
+from f8pystudio.contracts.command_ui import CommandUiHandler, CommandUiSource
+from ...ui.components.controls import F8OptionCombo, F8Switch, F8ValueBar, parse_select_pool
+from ...ui.support.ui_notifications import show_warning
+from .proxy_widget_utils import dispose_detached_proxy_widget
+from .state_inline_controls import build_inline_header_button
 
 logger = logging.getLogger(__name__)
+
+# Command rows are now first-class inline panels.
+# They share the same layout model as state inline rows, and `showOnNode`
+# controls both row visibility and command-port visibility.
+COMMAND_INLINE_BUTTON_STYLE = """
+    QToolButton {
+        color: rgb(235, 235, 235);
+        background: rgba(0, 0, 0, 28);
+        border: 1px solid rgba(120, 200, 255, 75);
+        border-radius: 4px;
+        padding: 2px 8px;
+        text-align: left;
+    }
+    QToolButton:hover {
+        background: rgba(120, 200, 255, 18);
+        border-color: rgba(120, 200, 255, 130);
+    }
+    QToolButton:pressed {
+        background: rgba(120, 200, 255, 42);
+        border-color: rgba(120, 200, 255, 170);
+    }
+    QToolButton:disabled {
+        color: rgba(235, 235, 235, 110);
+        background: rgba(0, 0, 0, 20);
+        border-color: rgba(255, 255, 255, 18);
+    }
+"""
+
+
+def _node_item_id(node_item: Any) -> str:
+    try:
+        return str(node_item.id or "").strip()
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return ""
+
+
+def _command_name(command: Any) -> str:
+    try:
+        return str(command.name or "").strip()
+    except Exception:
+        return ""
+
+
+def _command_description(command: Any) -> str:
+    try:
+        return str(command.description or "").strip()
+    except Exception:
+        return ""
+
+
+def _visible_commands(node_item: Any) -> list[Any]:
+    node = node_item._backend_node()
+    if node is None:
+        return []
+    try:
+        commands = list(node.effective_commands() or [])
+    except Exception:
+        logger.exception("read effective_commands failed nodeId=%s", _node_item_id(node_item))
+        return []
+
+    visible_commands: list[Any] = []
+    for command in commands:
+        command_name = _command_name(command)
+        if not command_name:
+            continue
+        try:
+            show_on_node = bool(command.showOnNode)
+        except Exception:
+            logger.exception(
+                "read command showOnNode failed nodeId=%s command=%s",
+                _node_item_id(node_item),
+                command_name,
+            )
+            continue
+        if show_on_node:
+            visible_commands.append(command)
+    return visible_commands
+
+
+def _command_row_serial(*, command_name: str) -> str:
+    return command_name
+
+
+def _command_enabled_state(node_item: Any) -> tuple[bool, str]:
+    missing_locked = _is_missing_locked(node_item)
+    enabled = bool(node_item._is_service_running()) and not missing_locked
+    if enabled:
+        return True, ""
+    if missing_locked:
+        return False, "Missing dependency"
+    return False, "Service not running"
+
+
+def _command_tooltip(*, description: str, enabled: bool, disabled_reason: str) -> str:
+    if enabled:
+        return description
+    if description:
+        return f"{description}\n{disabled_reason}"
+    return disabled_reason
+
+
+def _apply_command_button_state(
+    button: QtWidgets.QAbstractButton,
+    *,
+    command_name: str,
+    description: str,
+    enabled: bool,
+    disabled_reason: str,
+) -> None:
+    try:
+        button.set_full_text(command_name)  # type: ignore[attr-defined]
+    except AttributeError:
+        button.setText(command_name)
+    button.setEnabled(bool(enabled))
+    button.setToolTip(_command_tooltip(description=description, enabled=enabled, disabled_reason=disabled_reason))
+    button.setStyleSheet(COMMAND_INLINE_BUTTON_STYLE)
+    button.setCursor(QtCore.Qt.PointingHandCursor if enabled else QtCore.Qt.ArrowCursor)
+
+
+def _remove_command_row(node_item: Any, command_name: str) -> None:
+    proxy = node_item._command_inline_proxies.pop(command_name, None)
+    node_item._command_inline_headers.pop(command_name, None)
+    node_item._command_inline_buttons.pop(command_name, None)
+    node_item._command_inline_descriptions.pop(command_name, None)
+    node_item._command_inline_serials.pop(command_name, None)
+    if proxy is None:
+        return
+    old = None
+    try:
+        old = proxy.widget()
+    except (AttributeError, RuntimeError, TypeError):
+        old = None
+    try:
+        proxy.setWidget(None)
+    except RuntimeError:
+        pass
+    if old is not None:
+        dispose_detached_proxy_widget(old, context=f"inline-command-remove:{command_name}")
+    try:
+        proxy.setParentItem(None)
+        if node_item.scene() is not None:
+            node_item.scene().removeItem(proxy)
+    except RuntimeError:
+        pass
+
+
+def _remove_stale_command_rows(node_item: Any, desired_names: list[str]) -> None:
+    desired_name_set = set(desired_names)
+    for command_name in list(node_item._command_inline_proxies.keys()):
+        if command_name in desired_name_set:
+            continue
+        _remove_command_row(node_item, command_name)
+
+
+def _build_command_row_widget(
+    node_item: Any,
+    *,
+    command: Any,
+    command_name: str,
+    description: str,
+    enabled: bool,
+    disabled_reason: str,
+) -> tuple[QtWidgets.QGraphicsProxyWidget, QtWidgets.QWidget, QtWidgets.QAbstractButton]:
+    panel = QtWidgets.QWidget()
+    header, button = build_inline_header_button(
+        label=command_name,
+        tooltip=_command_tooltip(description=description, enabled=enabled, disabled_reason=disabled_reason),
+        expandable=False,
+        parent=panel,
+    )
+    _apply_command_button_state(
+        button,
+        command_name=command_name,
+        description=description,
+        enabled=enabled,
+        disabled_reason=disabled_reason,
+    )
+    button.pressed.connect(lambda _checked=False, _c=command: _on_command_pressed(node_item, _c))
+
+    panel_lay = QtWidgets.QVBoxLayout(panel)
+    panel_lay.setContentsMargins(0, 0, 0, 0)
+    panel_lay.setSpacing(0)
+    panel_lay.addWidget(header)
+    panel.setProperty("_f8_command_panel", True)
+    panel.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+    panel.setStyleSheet("background: transparent;")
+
+    proxy = node_item._command_inline_proxies.get(command_name)
+    if proxy is None:
+        proxy = QtWidgets.QGraphicsProxyWidget(node_item)
+    old = None
+    try:
+        old = proxy.widget()
+    except (AttributeError, RuntimeError, TypeError):
+        old = None
+    proxy.setWidget(panel)
+    if old is not None and old is not panel:
+        dispose_detached_proxy_widget(old, context=f"inline-command-replace:{command_name}")
+    return proxy, header, button
+
+
+def _sync_command_row(
+    node_item: Any,
+    *,
+    command: Any,
+    command_name: str,
+    description: str,
+    enabled: bool,
+    disabled_reason: str,
+) -> tuple[QtWidgets.QGraphicsProxyWidget, QtWidgets.QWidget, QtWidgets.QAbstractButton] | None:
+    serial = _command_row_serial(command_name=command_name)
+    existing_button = node_item._command_inline_buttons.get(command_name)
+    existing_proxy = node_item._command_inline_proxies.get(command_name)
+    existing_header = node_item._command_inline_headers.get(command_name)
+    existing_serial = str(node_item._command_inline_serials.get(command_name, "") or "")
+    if existing_button is not None and existing_proxy is not None and existing_header is not None and serial == existing_serial:
+        _apply_command_button_state(
+            existing_button,
+            command_name=command_name,
+            description=description,
+            enabled=enabled,
+            disabled_reason=disabled_reason,
+        )
+        node_item._command_inline_descriptions[command_name] = description
+        return existing_proxy, existing_header, existing_button
+
+    try:
+        proxy, header, button = _build_command_row_widget(
+            node_item,
+            command=command,
+            command_name=command_name,
+            description=description,
+            enabled=enabled,
+            disabled_reason=disabled_reason,
+        )
+    except Exception:
+        logger.exception("build command row failed nodeId=%s command=%s", _node_item_id(node_item), command_name)
+        return None
+
+    node_item._command_inline_serials[command_name] = serial
+    node_item._command_inline_descriptions[command_name] = description
+    return proxy, header, button
+
+
+def refresh_inline_command_rows(node_item: Any) -> None:
+    enabled, disabled_reason = _command_enabled_state(node_item)
+    for command_name, button in list(node_item._command_inline_buttons.items()):
+        description = str(node_item._command_inline_descriptions.get(command_name, "") or "")
+        try:
+            _apply_command_button_state(
+                button,
+                command_name=command_name,
+                description=description,
+                enabled=enabled,
+                disabled_reason=disabled_reason,
+            )
+        except (AttributeError, RuntimeError, TypeError):
+            logger.exception("refresh command row state failed nodeId=%s command=%s", _node_item_id(node_item), command_name)
 
 
 def _is_missing_locked(node_item: Any) -> bool:
@@ -84,7 +344,7 @@ def _on_command_pressed(node_item: Any, command: Any) -> None:
 
 def invoke_command(node_item: Any, cmd: Any) -> None:
     """
-    Invoke a command declared on the service spec.
+    Invoke a command declared on the node spec via hidden command input state.
 
     - no params: fire immediately
     - has params: show dialog to collect args
@@ -95,6 +355,10 @@ def invoke_command(node_item: Any, cmd: Any) -> None:
         call = ""
     if not call:
         return
+    try:
+        node = node_item._backend_node()
+    except Exception:
+        node = None
     bridge = node_item._bridge()
     if bridge is None:
         return
@@ -108,10 +372,6 @@ def invoke_command(node_item: Any, cmd: Any) -> None:
         return
 
     # Allow a node to intercept command invocation with custom UI logic.
-    try:
-        node = node_item._backend_node()
-    except Exception:
-        node = None
     if isinstance(node, CommandUiHandler):
         parent = None
         try:
@@ -134,20 +394,39 @@ def invoke_command(node_item: Any, cmd: Any) -> None:
     except Exception:
         params = []
 
+    # Route UI-triggered commands through hidden command input state so command
+    # output ports and downstream graph fanout keep the same semantics for both
+    # services and operators.
+    node_id = str(getattr(node_item, "id", "") or "").strip() or str(sid)
     if not params:
         try:
-            bridge.invoke_remote_command(sid, call, {})
+            bridge.set_remote_state(  # type: ignore[attr-defined]
+                sid,
+                node_id,
+                command_input_state_field(call),
+                {},
+            )
         except Exception:
-            logger.exception("invoke_remote_command failed serviceId=%s call=%s", sid, call)
+            logger.exception(
+                "set_remote_state failed serviceId=%s nodeId=%s call=%s",
+                sid,
+                node_id,
+                call,
+            )
         return
 
     args = prompt_command_args(node_item, cmd)
     if args is None:
         return
     try:
-        bridge.invoke_remote_command(sid, call, args)
+        bridge.set_remote_state(  # type: ignore[attr-defined]
+            sid,
+            node_id,
+            command_input_state_field(call),
+            args,
+        )
     except Exception:
-        logger.exception("invoke_remote_command failed serviceId=%s call=%s", sid, call)
+        logger.exception("set_remote_state failed serviceId=%s nodeId=%s call=%s", sid, node_id, call)
 
 
 def prompt_command_args(node_item: Any, cmd: Any) -> dict[str, Any] | None:
@@ -389,179 +668,58 @@ def prompt_command_args(node_item: Any, cmd: Any) -> dict[str, Any] | None:
         return args
 
 
-def ensure_inline_command_widget(node_item: Any) -> None:
+def ensure_inline_command_rows(node_item: Any) -> None:
     node_item._ensure_bridge_process_hook()
-    node = node_item._backend_node()
-    if node is None:
-        return
-    try:
-        commands = list(node.effective_commands() or [])
-    except Exception:
-        commands = []
-
-    visible_commands: list[Any] = []
-    for command in commands:
-        try:
-            show = bool(command.showOnNode)
-        except Exception:
-            show = False
-        if show:
-            visible_commands.append(command)
-    missing_locked = _is_missing_locked(node_item)
-    enabled = bool(node_item._is_service_running()) and not missing_locked
-
-    # Rebuild only when command list / enabled state changes.
-    try:
-
-        def _cmd_name_desc(command: Any) -> tuple[str, str]:
-            try:
-                return str(command.name or ""), str(command.description or "")
-            except Exception:
-                return "", ""
-
-        serial = json.dumps(
-            {
-                "cmds": [
-                    {
-                        "name": _cmd_name_desc(command)[0],
-                        "desc": _cmd_name_desc(command)[1],
-                    }
-                    for command in visible_commands
-                ],
-            },
-            ensure_ascii=False,
-            sort_keys=True,
-            default=str,
-        )
-    except Exception:
-        serial = ""
-
-    # Remove if no commands to show.
-    if not visible_commands:
-        if node_item._cmd_proxy is not None:
-            old = None
-            try:
-                old = node_item._cmd_proxy.widget()
-            except Exception:
-                old = None
-            try:
-                node_item._cmd_proxy.setWidget(None)
-            except RuntimeError:
-                pass
-            if old is not None:
-                try:
-                    old.setParent(None)
-                except (AttributeError, RuntimeError, TypeError):
-                    pass
-                try:
-                    old.deleteLater()
-                except (AttributeError, RuntimeError, TypeError):
-                    pass
-            try:
-                node_item._cmd_proxy.setParentItem(None)
-                if node_item.scene() is not None:
-                    node_item.scene().removeItem(node_item._cmd_proxy)
-            except RuntimeError:
-                pass
-            node_item._cmd_proxy = None
-            node_item._cmd_widget = None
-            node_item._cmd_buttons = []
-        return
-
-    if node_item._cmd_proxy is not None and serial and serial == str(node_item._cmd_serial or ""):
-        # Keep enable state in sync (service running can change without spec changes).
-        for button in list(node_item._cmd_buttons or []):
-            try:
-                button.setEnabled(bool(enabled))
-            except (AttributeError, RuntimeError, TypeError):
-                continue
-        return
-
-    node_item._cmd_serial = serial
-
-    # Build widget (only when changed).
-    widget = QtWidgets.QWidget()
-    layout = QtWidgets.QVBoxLayout(widget)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(6)
-    widget.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-    widget.setAttribute(QtCore.Qt.WA_StyledBackground, True)
-    widget.setStyleSheet("background: transparent;")
-
-    node_item._cmd_buttons = []
+    visible_commands = _visible_commands(node_item)
+    desired_names: list[str] = []
     for command in visible_commands:
-        try:
-            btn_label = str(command.name or "")
-        except Exception:
-            btn_label = ""
-        try:
-            desc = str(command.description or "").strip()
-        except Exception:
-            desc = ""
-        button = QtWidgets.QPushButton(btn_label)
-        tooltip_filter = F8ForceGlobalToolTipFilter(button)
-        button.installEventFilter(tooltip_filter)
-        node_item._tooltip_filters.append(tooltip_filter)
-        button.setMinimumHeight(24)
-        button.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-        button.setEnabled(bool(enabled))
-        button.setStyleSheet(
-            """
-            QPushButton {
-                color: rgb(235, 235, 235);
-                background: rgba(0, 0, 0, 35);
-                border: 1px solid rgba(120, 200, 255, 85);
-                border-radius: 6px;
-                padding: 6px 10px;
-                text-align: center;
-                font-weight: 600;
-            }
-            QPushButton:hover {
-                background: rgba(120, 200, 255, 22);
-                border-color: rgba(120, 200, 255, 140);
-            }
-            QPushButton:pressed {
-                background: rgba(120, 200, 255, 35);
-                border-color: rgba(120, 200, 255, 160);
-            }
-            QPushButton:disabled {
-                color: rgba(235, 235, 235, 110);
-                background: rgba(0, 0, 0, 20);
-                border-color: rgba(255, 255, 255, 18);
-            }
-            """
-        )
-        if not enabled:
-            reason = "Missing dependency" if missing_locked else "Service not running"
-            button.setToolTip((desc + "\n" if desc else "") + reason)
-        elif desc:
-            button.setToolTip(desc)
-        button.pressed.connect(lambda _c=command: _on_command_pressed(node_item, _c))  # type: ignore[attr-defined]
-        layout.addWidget(button)
-        node_item._cmd_buttons.append(button)
+        command_name = _command_name(command)
+        if command_name:
+            desired_names.append(command_name)
 
-    if node_item._cmd_proxy is None:
-        proxy = QtWidgets.QGraphicsProxyWidget(node_item)
-        proxy.setWidget(widget)
-        proxy.setCacheMode(QtWidgets.QGraphicsItem.DeviceCoordinateCache)
-        node_item._cmd_proxy = proxy
-    else:
-        old = None
-        try:
-            old = node_item._cmd_proxy.widget()
-        except Exception:
-            old = None
-        node_item._cmd_proxy.setWidget(widget)
-        if old is not None and old is not widget:
-            try:
-                old.setParent(None)
-            except (AttributeError, RuntimeError, TypeError):
-                pass
-            try:
-                old.deleteLater()
-            except (AttributeError, RuntimeError, TypeError):
-                pass
-    node_item._cmd_widget = widget
+    _remove_stale_command_rows(node_item, desired_names)
+    enabled, disabled_reason = _command_enabled_state(node_item)
+    rebuilt_proxies: dict[str, QtWidgets.QGraphicsProxyWidget] = {}
+    rebuilt_headers: dict[str, QtWidgets.QWidget] = {}
+    rebuilt_buttons: dict[str, QtWidgets.QAbstractButton] = {}
+    rebuilt_descriptions: dict[str, str] = {}
+
+    for command in visible_commands:
+        command_name = _command_name(command)
+        if not command_name:
+            continue
+        description = _command_description(command)
+        synced = _sync_command_row(
+            node_item,
+            command=command,
+            command_name=command_name,
+            description=description,
+            enabled=enabled,
+            disabled_reason=disabled_reason,
+        )
+        if synced is None:
+            continue
+        proxy, header, button = synced
+        rebuilt_proxies[command_name] = proxy
+        rebuilt_headers[command_name] = header
+        rebuilt_buttons[command_name] = button
+        rebuilt_descriptions[command_name] = description
+
+    node_item._command_inline_proxies.clear()
+    node_item._command_inline_headers.clear()
+    node_item._command_inline_buttons.clear()
+    node_item._command_inline_descriptions.clear()
+    for name in desired_names:
+        proxy = rebuilt_proxies.get(name)
+        header = rebuilt_headers.get(name)
+        button = rebuilt_buttons.get(name)
+        if proxy is None or header is None or button is None:
+            continue
+        node_item._command_inline_proxies[name] = proxy
+        node_item._command_inline_headers[name] = header
+        node_item._command_inline_buttons[name] = button
+        node_item._command_inline_descriptions[name] = rebuilt_descriptions.get(name, "")
+
     try:
         node_item._invalidate_layout_metrics()
         node_item._prepare_layout_metrics()

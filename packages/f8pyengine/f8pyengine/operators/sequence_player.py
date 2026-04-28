@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import math
+from f8pysdk.codec import parse_number
 import time
 from dataclasses import dataclass
 from typing import Any, Final
 
-from f8pysdk import (
+from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
@@ -19,13 +19,12 @@ from f8pysdk import (
     number_schema,
 )
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import OperatorNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import OperatorNode
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from ..constants import SERVICE_CLASS
 
 OPERATOR_CLASS: Final[str] = "f8.sequence_player"
-
 
 def _sequence_state_schema():
     return complex_object_schema(
@@ -37,23 +36,8 @@ def _sequence_state_schema():
         }
     )
 
-
-def _coerce_number(value: Any) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return None
-    try:
-        f = float(value)
-    except (TypeError, ValueError):
-        return None
-    if math.isnan(f) or math.isinf(f):
-        return None
-    return f
-
-
 def _coerce_epoch_us(value: Any) -> int | None:
-    n = _coerce_number(value)
+    n = parse_number(value)
     if n is None:
         return None
     i = int(n)
@@ -64,14 +48,13 @@ def _coerce_epoch_us(value: Any) -> int | None:
         return int(i)
     return int(i) * 1000
 
-
 def _parse_values(value: Any) -> list[float]:
     if value is None:
         return []
     if isinstance(value, list):
         out: list[float] = []
         for v in value:
-            n = _coerce_number(v)
+            n = parse_number(v)
             if n is None:
                 continue
             out.append(float(n))
@@ -86,12 +69,11 @@ def _parse_values(value: Any) -> list[float]:
         frag = part.strip()
         if not frag:
             continue
-        n = _coerce_number(frag)
+        n = parse_number(frag)
         if n is None:
             continue
         out2.append(float(n))
     return out2
-
 
 @dataclass(frozen=True)
 class _Sequence:
@@ -99,7 +81,6 @@ class _Sequence:
     step_s: float
     values: tuple[float, ...]
     time_s: float | None
-
 
 def _parse_sequence(v: Any) -> _Sequence | None:
     if not isinstance(v, dict):
@@ -109,7 +90,7 @@ def _parse_sequence(v: Any) -> _Sequence | None:
     if start_us is None:
         return None
 
-    step_ms = _coerce_number(v.get("stepMs"))
+    step_ms = parse_number(v.get("stepMs"))
     if step_ms is None:
         step_ms = 100.0
     step_s = max(0.001, float(step_ms) / 1000.0)
@@ -118,7 +99,7 @@ def _parse_sequence(v: Any) -> _Sequence | None:
     if not values:
         return None
 
-    time_sec = _coerce_number(v.get("timeSec"))
+    time_sec = parse_number(v.get("timeSec"))
     time_s: float | None = None
     if time_sec is not None and time_sec > 0.0:
         time_s = float(time_sec)
@@ -130,10 +111,8 @@ def _parse_sequence(v: Any) -> _Sequence | None:
         time_s=time_s,
     )
 
-
 def _elapsed_s(*, now_us: int, start_us: int) -> float:
     return float(now_us - start_us) / 1_000_000.0
-
 
 class SequencePlayerRuntimeNode(OperatorNode):
     """
@@ -229,10 +208,10 @@ class SequencePlayerRuntimeNode(OperatorNode):
             return float(t_s_nonneg)
         return None
 
-
 SequencePlayerRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
+    paletteCategory=f"{SERVICE_CLASS}.motion",
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="Sequence Player",
@@ -259,13 +238,11 @@ SequencePlayerRuntimeNode.SPEC = F8OperatorSpec(
     ],
 )
 
-
-def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
         return SequencePlayerRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(SequencePlayerRuntimeNode.SPEC, overwrite=True)
-    return reg
+    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
+    registry.register_operator_spec(SequencePlayerRuntimeNode.SPEC, overwrite=True)
+    return registry

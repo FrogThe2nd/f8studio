@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from f8pysdk.msgspec_codec import copy_model, dump_json, validate_as
+from f8pysdk.codec import copy_model, dump_json, validate_as
 import copy
 import json
 from typing import Any
@@ -8,10 +8,14 @@ from typing import Any
 from NodeGraphQt import BaseNode
 from NodeGraphQt.nodes.base_node import NodeBaseWidget
 from NodeGraphQt.errors import NodeWidgetError
+from NodeGraphQt.qgraphics.node_backdrop import BackdropNodeItem
 
-from f8pysdk import F8OperatorSpec, F8ServiceSpec
+from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
+from f8pysdk.specs import coerce_spec_payload
+from .ui_override_mutations import apply_named_order, get_list_order_override
 
 from .node_model import F8StudioNodeModel
+from .layers import extract_node_layer_ids_from_ui_state, set_node_layer_ids_in_ui_state
 
 
 class F8StudioBaseNode(BaseNode):
@@ -43,10 +47,7 @@ class F8StudioBaseNode(BaseNode):
         elif isinstance(template, F8ServiceSpec):
             spec = validate_as(F8ServiceSpec, dump_json(template, mode="json"))
         elif isinstance(template, dict):
-            if "operatorClass" in template:
-                spec = validate_as(F8OperatorSpec, template)
-            else:
-                spec = validate_as(F8ServiceSpec, template)
+            spec = coerce_spec_payload(template)
         else:
             spec = copy.deepcopy(template)
 
@@ -80,19 +81,30 @@ class F8StudioBaseNode(BaseNode):
         for name, val in self.view.properties.items():
             if name in ["inputs", "outputs"]:
                 continue
+            if name == "disabled" and self._view_is_container_forced_disabled():
+                continue
             if name not in self.model.properties and name not in self.model.custom_properties:
                 continue
             self.model.set_property(name, val)
 
-        for name, widget in self.view.widgets.items():
-            if name not in self.model.properties and name not in self.model.custom_properties:
-                continue
-            self.model.set_property(name, widget.get_value())
+        if not isinstance(self.view, BackdropNodeItem):
+            for name, widget in self.view.widgets.items():
+                if name not in self.model.properties and name not in self.model.custom_properties:
+                    continue
+                self.model.set_property(name, widget.get_value())
 
         if not isinstance(self.model.f8_sys, dict):
             self.model.f8_sys = {}
-        if not isinstance(self.model.f8_ui, dict):
-            self.model.f8_ui = {}
+        if not isinstance(self.model.f8_ui_overrides, dict):
+            self.model.f8_ui_overrides = {}
+        if not isinstance(self.model.f8_ui_state, dict):
+            self.model.f8_ui_state = {}
+
+    def _view_is_container_forced_disabled(self) -> bool:
+        try:
+            return bool(self.view.f8_container_forced_disabled)
+        except (AttributeError, RuntimeError, TypeError):
+            return False
 
     def add_ephemeral_widget(self, widget: NodeBaseWidget) -> None:
         """
@@ -110,13 +122,61 @@ class F8StudioBaseNode(BaseNode):
         widget.parent()
 
     def ui_overrides(self) -> dict[str, object]:
-        return self.model.f8_ui if isinstance(self.model.f8_ui, dict) else {}
+        return self.model.f8_ui_overrides if isinstance(self.model.f8_ui_overrides, dict) else {}
 
     def set_ui_overrides(self, value: dict[str, object] | None, *, rebuild: bool = True) -> None:
-        self.model.set_property("f8_ui", value or {})
+        self.model.set_property("f8_ui_overrides", value or {})
         self._last_ui_serial = self._ui_serial()
         if rebuild:
             self.sync_from_spec()
+
+    def ui_state(self) -> dict[str, object]:
+        return self.model.f8_ui_state if isinstance(self.model.f8_ui_state, dict) else {}
+
+    def set_ui_state(self, value: dict[str, object] | None) -> None:
+        self.model.set_property("f8_ui_state", value or {})
+
+    def layer_ids(self) -> tuple[str, ...]:
+        return extract_node_layer_ids_from_ui_state(self.ui_state())
+
+    def set_layer_ids(self, layer_ids: list[str] | tuple[str, ...]) -> None:
+        self.set_ui_state(set_node_layer_ids_in_ui_state(self.ui_state(), layer_ids=layer_ids))
+
+    @staticmethod
+    def _named_items_in_order(items: list[Any], *, order: list[str]) -> list[Any]:
+        if not items:
+            return []
+        ordered_names = apply_named_order(
+            base_names=[str(getattr(item, "name", "") or "").strip() for item in items],
+            override_names=order,
+        )
+        items_by_name: dict[str, Any] = {}
+        for item in items:
+            name = str(getattr(item, "name", "") or "").strip()
+            if not name or name in items_by_name:
+                continue
+            items_by_name[name] = item
+        return [items_by_name[name] for name in ordered_names if name in items_by_name]
+
+    def ordered_exec_port_names(self, *, is_in: bool) -> list[str]:
+        spec = self.spec
+        if not isinstance(spec, F8OperatorSpec):
+            return []
+        base_names = list(spec.execInPorts or []) if bool(is_in) else list(spec.execOutPorts or [])
+        key = "execInPorts" if bool(is_in) else "execOutPorts"
+        return apply_named_order(base_names=base_names, override_names=get_list_order_override(self, key=key))
+
+    def ordered_data_port_specs(self, *, is_in: bool) -> list[Any]:
+        spec = self.spec
+        ports = list(spec.dataInPorts or []) if bool(is_in) else list(spec.dataOutPorts or [])
+        key = "dataInPorts" if bool(is_in) else "dataOutPorts"
+        return self._named_items_in_order(ports, order=get_list_order_override(self, key=key))
+
+    def ordered_state_field_specs(self) -> list[Any]:
+        return self._named_items_in_order(list(self.effective_state_fields() or []), order=get_list_order_override(self, key="stateFields"))
+
+    def ordered_command_specs(self) -> list[Any]:
+        return self._named_items_in_order(list(self.effective_commands() or []), order=get_list_order_override(self, key="commands"))
 
     def effective_state_fields(self):
         """
@@ -126,27 +186,25 @@ class F8StudioBaseNode(BaseNode):
         fields = list(spec.stateFields or [])
         ui = self.ui_overrides()
         state_over = ui.get("stateFields") if isinstance(ui, dict) else None
-        if not isinstance(state_over, dict) or not state_over or not fields:
-            return fields
-
-        allowed_keys = {"showOnNode", "uiControl", "uiLanguage", "label", "description"}
-        out = []
-        for f in fields:
-            name = str(f.name or "").strip()
-            ov = state_over.get(name) if name else None
-            if not isinstance(ov, dict) or not ov:
-                out.append(f)
-                continue
-            patch = {k: ov.get(k) for k in allowed_keys if k in ov}
-            out.append(copy_model(f, update=patch))
-        return out
+        if isinstance(state_over, dict) and state_over and fields:
+            allowed_keys = {"showOnNode", "uiControl", "label", "description"}
+            out = []
+            for f in fields:
+                name = str(f.name or "").strip()
+                ov = state_over.get(name) if name else None
+                if not isinstance(ov, dict) or not ov:
+                    out.append(f)
+                    continue
+                patch = {k: ov.get(k) for k in allowed_keys if k in ov}
+                out.append(copy_model(f, update=patch))
+            fields = out
+        return self._named_items_in_order(fields, order=get_list_order_override(self, key="stateFields"))
 
     def effective_commands(self):
         """
         Return service commands with UI overrides applied.
 
-        Currently only supports overriding `showOnNode` when `editableCommands`
-        is false (UI-only customization).
+        Currently only supports overriding `showOnNode` as UI-only customization.
         """
         spec = self.spec
         cmds = list(spec.commands or [])
@@ -154,20 +212,19 @@ class F8StudioBaseNode(BaseNode):
             return cmds
         ui = self.ui_overrides()
         cmd_over = ui.get("commands") if isinstance(ui, dict) else None
-        if not isinstance(cmd_over, dict) or not cmd_over:
-            return cmds
-
-        allowed_keys = {"showOnNode"}
-        out = []
-        for c in cmds:
-            name = str(c.name or "").strip()
-            ov = cmd_over.get(name) if name else None
-            if not isinstance(ov, dict) or not ov:
-                out.append(c)
-                continue
-            patch = {k: ov.get(k) for k in allowed_keys if k in ov}
-            out.append(copy_model(c, update=patch))
-        return out
+        if isinstance(cmd_over, dict) and cmd_over:
+            allowed_keys = {"showOnNode"}
+            out = []
+            for c in cmds:
+                name = str(c.name or "").strip()
+                ov = cmd_over.get(name) if name else None
+                if not isinstance(ov, dict) or not ov:
+                    out.append(c)
+                    continue
+                patch = {k: ov.get(k) for k in allowed_keys if k in ov}
+                out.append(copy_model(c, update=patch))
+            cmds = out
+        return self._named_items_in_order(cmds, order=get_list_order_override(self, key="commands"))
 
     def data_port_show_on_node(self, name: str, *, is_in: bool) -> bool:
         """
@@ -199,7 +256,7 @@ class F8StudioBaseNode(BaseNode):
 
     def _ui_serial(self) -> str:
         try:
-            ui = self.model.f8_ui if isinstance(self.model.f8_ui, dict) else {}
+            ui = self.model.f8_ui_overrides if isinstance(self.model.f8_ui_overrides, dict) else {}
             return json.dumps(ui, ensure_ascii=False, sort_keys=True, default=str)
         except Exception:
             return ""

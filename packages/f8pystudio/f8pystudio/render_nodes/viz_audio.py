@@ -13,7 +13,7 @@ from f8pysdk.shm import AudioShmReader, read_audio_header, SAMPLE_FORMAT_F32LE
 
 from ..nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from ..nodegraph.viz_operator_nodeitem import F8StudioVizOperatorNodeItem
-from ..ui_bus import UiCommand
+from f8pystudio.contracts.ui_commands import UiCommand
 
 _STATE_UI_UPDATE = "uiUpdate"
 _WIDGET_NAME = "__audioshm"
@@ -29,7 +29,7 @@ class _AudioShmPane(QtWidgets.QWidget):
         top = QtWidgets.QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
 
-        self._update = QtWidgets.QCheckBox("Update")
+        self._update = QtWidgets.QCheckBox("Update", self)
         self._update.setChecked(True)
         self._update.setStyleSheet(
             """
@@ -50,7 +50,7 @@ class _AudioShmPane(QtWidgets.QWidget):
         top.addStretch()
         top.addWidget(self._update)
 
-        self._plot = pg.PlotWidget()
+        self._plot = pg.PlotWidget(self)
         self._plot.setBackground((20, 20, 20))
         self._plot.showGrid(x=True, y=True, alpha=0.25)
         # Compact viz-style: no axis captions or tick labels.

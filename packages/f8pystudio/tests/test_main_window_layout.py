@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 from qtpy import QtCore, QtWidgets
 
@@ -11,8 +12,9 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+from f8pysdk.codec import coerce_bool  # noqa: E402
 from f8pystudio.nodegraph.viewer import F8StudioNodeViewer  # noqa: E402
-from f8pystudio.widgets.main_window import F8StudioMainWin  # noqa: E402
+from f8pystudio.ui.mainwin.main_window import F8StudioMainWin  # noqa: E402
 
 
 def _ensure_app() -> QtWidgets.QApplication:
@@ -47,7 +49,7 @@ class _LayoutHarness(QtWidgets.QMainWindow):
     _PERFORMANCE_OVERLAY_ENABLED_SETTINGS_KEY = F8StudioMainWin._PERFORMANCE_OVERLAY_ENABLED_SETTINGS_KEY
 
     _as_qbytearray = staticmethod(F8StudioMainWin._as_qbytearray)
-    _coerce_bool_setting = staticmethod(F8StudioMainWin._coerce_bool_setting)
+    _coerce_bool_setting = staticmethod(coerce_bool)
     _normalize_supported_log_level = staticmethod(F8StudioMainWin._normalize_supported_log_level)
     _log_level_name_for_value = staticmethod(F8StudioMainWin._log_level_name_for_value)
     _log_level_value_from_name = staticmethod(F8StudioMainWin._log_level_value_from_name)
@@ -55,6 +57,7 @@ class _LayoutHarness(QtWidgets.QMainWindow):
     _write_layout_bytes = F8StudioMainWin._write_layout_bytes
     _read_saved_log_level_name = F8StudioMainWin._read_saved_log_level_name
     _write_saved_log_level_name = F8StudioMainWin._write_saved_log_level_name
+    _sync_log_level_actions = F8StudioMainWin._sync_log_level_actions
     _apply_log_level = F8StudioMainWin._apply_log_level
     _restore_saved_log_level = F8StudioMainWin._restore_saved_log_level
     _on_log_level_toggled = F8StudioMainWin._on_log_level_toggled
@@ -62,8 +65,10 @@ class _LayoutHarness(QtWidgets.QMainWindow):
     _capture_default_dock_layout_state = F8StudioMainWin._capture_default_dock_layout_state
     _restore_saved_window_layout = F8StudioMainWin._restore_saved_window_layout
     _save_window_layout = F8StudioMainWin._save_window_layout
-    _setup_view_menu = F8StudioMainWin._setup_view_menu
-    _setup_log_level_menu = F8StudioMainWin._setup_log_level_menu
+    _add_menu_section = F8StudioMainWin._add_menu_section
+    _build_view_menu = F8StudioMainWin._build_view_menu
+    _build_log_level_menu = F8StudioMainWin._build_log_level_menu
+    _setup_menu = F8StudioMainWin._setup_menu
     _on_reset_layout_triggered = F8StudioMainWin._on_reset_layout_action
     _read_saved_auto_proxy_enabled = F8StudioMainWin._read_saved_auto_proxy_enabled
     _write_saved_auto_proxy_enabled = F8StudioMainWin._write_saved_auto_proxy_enabled
@@ -73,6 +78,11 @@ class _LayoutHarness(QtWidgets.QMainWindow):
     _write_saved_performance_overlay_enabled = F8StudioMainWin._write_saved_performance_overlay_enabled
     _apply_performance_overlay_enabled = F8StudioMainWin._apply_performance_overlay_enabled
     _on_performance_overlay_toggled = F8StudioMainWin._on_performance_overlay_toggled
+    _replace_dock_widget = F8StudioMainWin._replace_dock_widget
+    _ensure_node_library_widget = F8StudioMainWin._ensure_node_library_widget
+    rebuild_asset_search_sources = F8StudioMainWin.rebuild_asset_search_sources
+    _on_asset_cache_changed = F8StudioMainWin._on_asset_cache_changed
+    _clear_asset_cache_changed_subscription = F8StudioMainWin._clear_asset_cache_changed_subscription
 
     class _FakeViewer(F8StudioNodeViewer):
         def __init__(self) -> None:
@@ -92,6 +102,14 @@ class _LayoutHarness(QtWidgets.QMainWindow):
             self.auto_proxy_enabled_state = self.auto_proxy_enabled()
             self.auto_proxy_calls.append(self.auto_proxy_enabled_state)
 
+    class _FakeLogDock(QtWidgets.QDockWidget):
+        def __init__(self, title: str, parent: QtWidgets.QWidget | None = None) -> None:
+            super().__init__(title, parent)
+            self.minimum_level = logging.getLogger().getEffectiveLevel()
+
+        def set_minimum_level(self, level: int) -> None:
+            self.minimum_level = int(level)
+
     class _FakeStudioGraph:
         def __init__(self, viewer: "_LayoutHarness._FakeViewer") -> None:
             self._viewer = viewer
@@ -110,7 +128,7 @@ class _LayoutHarness(QtWidgets.QMainWindow):
         self._properties_dock.setWidget(QtWidgets.QLabel("properties", self._properties_dock))
         self.addDockWidget(QtCore.Qt.LeftDockWidgetArea, self._properties_dock)
 
-        self._log_dock = QtWidgets.QDockWidget("Service Logs", self)
+        self._log_dock = self._FakeLogDock("Service Logs", self)
         self._log_dock.setObjectName("ServiceLogsDock")
         self._log_dock.setWidget(QtWidgets.QLabel("logs", self._log_dock))
         self.addDockWidget(QtCore.Qt.BottomDockWidgetArea, self._log_dock)
@@ -136,8 +154,39 @@ class _LayoutHarness(QtWidgets.QMainWindow):
         self._default_dock_layout_state = QtCore.QByteArray()
         self._auto_proxy_enabled = self._read_saved_auto_proxy_enabled()
         self._performance_overlay_enabled = self._read_saved_performance_overlay_enabled()
+        self._node_library_widget = None
+        self._unsubscribe_asset_cache_changed = None
         self._fake_viewer = self._FakeViewer()
         self.studio_graph = self._FakeStudioGraph(self._fake_viewer)
+        self._open_project_action = self._create_action("Open Project", handler=lambda: None)
+        self._quicksave_project_action = self._create_action("Quick Save", handler=lambda: None)
+        self._save_project_as_action = self._create_action("Save Project As", handler=lambda: None)
+        self._clear_all_nodes_action = self._create_action("Clear All Nodes", handler=lambda: None)
+        self._auto_save_action = self._create_action(
+            "Auto Save",
+            handler=lambda _checked: None,
+            checkable=True,
+            checked=False,
+        )
+        self._project_history_action = self._create_action("Project History", handler=lambda: None)
+        self._save_component_action = self._create_action("Export to Component", handler=lambda: None)
+        self._import_project_json_action = self._create_action("Import Project JSON", handler=lambda: None)
+        self._export_project_json_action = self._create_action("Export Project JSON", handler=lambda: None)
+        self._export_published_session_action = self._create_action(
+            "Export Published Session",
+            handler=lambda: None,
+        )
+        self._deploy_action = self._create_action("Deploy", handler=lambda: None)
+        self._stop_all_services_action = self._create_action("Stop All Services", handler=lambda: None)
+        self._auto_deploy_action = self._create_action(
+            "Auto Deploy",
+            handler=lambda _checked: None,
+            checkable=True,
+            checked=False,
+        )
+        self._manage_components_action = self._create_action("Manage Components", handler=lambda: None)
+        self._variant_catalog_action = self._create_action("Variant Catalog", handler=lambda: None)
+        self._global_hotkeys_action = self._create_action("Global Hotkeys", handler=lambda: None)
         self._auto_proxy_action = self._create_action(
             "Auto Proxy",
             handler=self._on_auto_proxy_toggled,
@@ -153,6 +202,15 @@ class _LayoutHarness(QtWidgets.QMainWindow):
 
     def _layout_settings(self) -> QtCore.QSettings:
         return self._settings
+
+    def _ordered_view_docks(self) -> list[QtWidgets.QDockWidget]:
+        return list(self._dock_widgets)
+
+    def _setup_view_menu(self) -> None:
+        self._setup_menu()
+
+    def _setup_log_level_menu(self) -> None:
+        self._setup_menu()
 
 
 def test_saved_dock_layout_is_restored_from_settings(tmp_path: Path) -> None:
@@ -178,6 +236,43 @@ def test_saved_dock_layout_is_restored_from_settings(tmp_path: Path) -> None:
     _process_events()
 
     assert reader._node_library_dock.isVisible() is False
+
+
+def test_asset_cache_changed_rebuilds_graph_and_node_library(tmp_path: Path) -> None:
+    _ensure_app()
+    harness = _LayoutHarness(_new_settings(tmp_path / "asset-refresh.ini"))
+    calls: list[str] = []
+    harness.studio_graph = SimpleNamespace(rebuild_asset_search_sources=lambda: calls.append("graph"))
+    harness._node_library_widget = SimpleNamespace(rebuild_asset_search_sources=lambda: calls.append("library"))
+
+    harness._on_asset_cache_changed()
+
+    assert calls == ["graph", "library"]
+
+
+def test_ensure_node_library_widget_uses_main_window_refresh_coordinator(monkeypatch, tmp_path: Path) -> None:
+    _ensure_app()
+    harness = _LayoutHarness(_new_settings(tmp_path / "asset-refresh-widget.ini"))
+    calls: list[str] = []
+    created: dict[str, object] = {}
+
+    class _FakeNodeLibraryWidget(QtWidgets.QWidget):
+        def __init__(self, parent=None, node_graph=None, *, asset_cache_auto_refresh=True) -> None:
+            super().__init__(parent)
+            created["node_graph"] = node_graph
+            created["asset_cache_auto_refresh"] = asset_cache_auto_refresh
+
+        def rebuild_asset_search_sources(self) -> None:
+            calls.append("library")
+
+    harness.studio_graph = SimpleNamespace(rebuild_asset_search_sources=lambda: calls.append("graph"))
+    monkeypatch.setattr("f8pystudio.ui.mainwin.main_window_ui_mixin.F8StudioNodeLibraryWidget", _FakeNodeLibraryWidget)
+
+    harness._ensure_node_library_widget()
+
+    assert created["node_graph"] is harness.studio_graph
+    assert created["asset_cache_auto_refresh"] is False
+    assert calls == ["graph", "library"]
 
 
 def test_view_menu_actions_are_checkable_and_reset_restores_defaults(tmp_path: Path) -> None:
@@ -211,6 +306,31 @@ def test_view_menu_actions_are_checkable_and_reset_restores_defaults(tmp_path: P
     saved_state = window._read_layout_bytes(key=window._WINDOW_LAYOUT_STATE_KEY)
     assert saved_state is not None
     assert saved_state == window.saveState(window._WINDOW_LAYOUT_STATE_VERSION)
+
+
+def test_file_menu_exposes_export_to_component(tmp_path: Path) -> None:
+    _ensure_app()
+    window = _LayoutHarness(_new_settings(tmp_path / "studio-file-menu.ini"))
+    window._setup_menu()
+
+    file_menu_action = window.menuBar().actions()[0]
+    file_menu = file_menu_action.menu()
+    assert file_menu is not None
+
+    action_texts = [action.text() for action in file_menu.actions() if not action.isSeparator()]
+    assert action_texts == [
+        "Open Project",
+        "Quick Save",
+        "Save Project As",
+        "Clear All Nodes",
+        "Auto Save",
+        "Project History",
+        "Import Project JSON",
+        "Export Project JSON",
+        "Export to Component",
+        "Export Published Session",
+    ]
+    assert window._save_component_action in file_menu.actions()
 
 
 def test_performance_overlay_setting_is_applied_and_restored(tmp_path: Path) -> None:
@@ -278,5 +398,29 @@ def test_log_level_menu_applies_and_restores_saved_level(tmp_path: Path) -> None
         window_restore._setup_log_level_menu()
         assert root_logger.level == logging.DEBUG
         assert window_restore._log_level_actions[logging.DEBUG].isChecked() is True
+    finally:
+        root_logger.setLevel(original_level)
+
+
+def test_restore_saved_log_level_updates_existing_menu_selection(tmp_path: Path) -> None:
+    _ensure_app()
+    settings = _new_settings(tmp_path / "studio-layout.ini")
+    root_logger = logging.getLogger()
+    original_level = root_logger.level
+    try:
+        root_logger.setLevel(logging.WARNING)
+        writer = _LayoutHarness(settings)
+        writer._write_saved_log_level_name(level_name="INFO")
+
+        restored = _LayoutHarness(QtCore.QSettings(str(tmp_path / "studio-layout.ini"), QtCore.QSettings.IniFormat))
+        restored._setup_log_level_menu()
+
+        assert restored._log_level_actions[logging.WARNING].isChecked() is True
+
+        restored._restore_saved_log_level()
+
+        assert root_logger.level == logging.INFO
+        assert restored._log_level_actions[logging.INFO].isChecked() is True
+        assert restored._log_dock.minimum_level == logging.INFO
     finally:
         root_logger.setLevel(original_level)

@@ -12,6 +12,8 @@ wheels/
 
 # Ignore dependency folder
 node_modules/
+.dev.vars
+.dev.vars.*
 
 # Ignore temporary files
 *.log
@@ -26,6 +28,7 @@ uv.lock
 # Ignore IDE-specific folder
 .vscode/
 .codex/
+.claude/
 
 # CMake build directory
 build/
@@ -84,3 +87,6 @@ services/**/linux
 services/**/win
 services/**/macos
 services/**/describe.json
+.codex
+.agents/
+package-lock.json

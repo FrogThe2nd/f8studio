@@ -18,7 +18,7 @@ from typing import Callable
 
 from qtpy import QtCore, QtNetwork  # type: ignore[import-not-found]
 
-from .registry import ProviderConfig, ProviderProtocol
+from .registry import ProviderApiMode, ProviderConfig, ProviderProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,29 @@ def _effective_base(cfg: ProviderConfig) -> str:
         "custom": "",
     }
     return ep if ep else _DEFAULTS.get(cfg.protocol, "")
+
+
+def _join_api_path(base: str, path: str) -> str:
+    normalized_base = str(base or "").strip().rstrip("/")
+    normalized_path = str(path or "").strip()
+    if not normalized_path.startswith("/"):
+        normalized_path = "/" + normalized_path
+    if normalized_base.endswith("/v1") and normalized_path.startswith("/v1/"):
+        normalized_path = normalized_path[3:]
+    return f"{normalized_base}{normalized_path}"
+
+
+def _is_official_openai_endpoint(cfg: ProviderConfig) -> bool:
+    endpoint = _effective_base(cfg).strip().rstrip("/").lower()
+    return cfg.protocol == "openai" and endpoint == "https://api.openai.com/v1"
+
+
+def _uses_openai_responses(cfg: ProviderConfig) -> bool:
+    return cfg.protocol in ("openai", "custom") and cfg.api_mode == "responses"
+
+
+def _uses_openai_prompt_cache(cfg: ProviderConfig) -> bool:
+    return _uses_openai_responses(cfg) and _is_official_openai_endpoint(cfg)
 
 
 def _auth_headers(cfg: ProviderConfig) -> list[tuple[bytes, bytes]]:
@@ -102,6 +125,155 @@ def _chat_payload_openai(
     return payload
 
 
+def _responses_payload_openai(
+    cfg: ProviderConfig,
+    model_id: str,
+    messages: list[dict],
+    *,
+    system: str,
+    stream: bool,
+    reasoning_level: str,
+    max_tokens: int,
+) -> dict:
+    instructions, response_input = _responses_instructions_and_input(messages, system=system)
+    payload: dict = {
+        "model": model_id,
+        "input": response_input,
+        "stream": stream,
+        "max_output_tokens": max_tokens,
+        "store": False,
+    }
+    if instructions:
+        payload["instructions"] = instructions
+    if reasoning_level:
+        payload["reasoning"] = {"effort": reasoning_level}
+    if _uses_openai_prompt_cache(cfg):
+        payload["prompt_cache_retention"] = "24h"
+        payload["prompt_cache_key"] = _prompt_cache_key(cfg, model_id)
+    return payload
+
+
+def _responses_instructions_and_input(messages: list[dict], *, system: str) -> tuple[str, list[dict]]:
+    instruction_parts: list[str] = []
+    explicit_system = str(system or "").strip()
+    if explicit_system:
+        instruction_parts.append(explicit_system)
+
+    response_input: list[dict] = []
+    for msg in messages:
+        role = str(msg.get("role", "user") or "user")
+        content = msg.get("content", "")
+        if role in ("system", "developer"):
+            text = _responses_content_to_text(content).strip()
+            if text and text != explicit_system:
+                instruction_parts.append(text)
+            continue
+        input_role = role if role in ("user", "assistant") else "user"
+        response_input.append(
+            {
+                "role": input_role,
+                "content": _responses_content(content),
+            }
+        )
+    return "\n\n".join(instruction_parts), response_input
+
+
+def _responses_content(content: object) -> object:
+    if isinstance(content, list):
+        parts: list[dict] = []
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            part_type = str(part.get("type", "") or "")
+            if part_type == "text":
+                parts.append({"type": "input_text", "text": str(part.get("text", "") or "")})
+            elif part_type == "image":
+                mime = str(part.get("mime_type", "image/png") or "image/png")
+                data = str(part.get("image", "") or "")
+                parts.append(
+                    {
+                        "type": "input_image",
+                        "image_url": f"data:{mime};base64,{data}",
+                        "detail": "auto",
+                    }
+                )
+            elif part_type == "image_url":
+                image_url = part.get("image_url", "")
+                url = ""
+                if isinstance(image_url, dict):
+                    url = str(image_url.get("url", "") or "")
+                else:
+                    url = str(image_url or "")
+                parts.append({"type": "input_image", "image_url": url, "detail": "auto"})
+        return parts
+    return str(content or "")
+
+
+def _responses_content_to_text(content: object) -> str:
+    if isinstance(content, list):
+        text_parts: list[str] = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text":
+                text_parts.append(str(part.get("text", "") or ""))
+        return "\n".join(text_parts)
+    return str(content or "")
+
+
+def _prompt_cache_key(cfg: ProviderConfig, model_id: str) -> str:
+    provider_id = str(cfg.provider_id or "openai").strip() or "openai"
+    model = str(model_id or "model").strip() or "model"
+    return f"f8pystudio:{provider_id}:{model}:responses"
+
+
+def _responses_error_message(data: dict) -> str:
+    error = data.get("error")
+    if isinstance(error, dict):
+        message = str(error.get("message", "") or "").strip()
+        if message:
+            return message
+    status = str(data.get("status", "") or "").strip().lower()
+    if status in ("failed", "cancelled", "canceled", "incomplete"):
+        response_error = data.get("incomplete_details")
+        if isinstance(response_error, dict):
+            reason = str(response_error.get("reason", "") or "").strip()
+            if reason:
+                return f"Response {status}: {reason}"
+        return f"Response {status}"
+    return ""
+
+
+def _responses_stream_error_message(data: dict) -> str:
+    error = data.get("error")
+    if isinstance(error, dict):
+        message = str(error.get("message", "") or "").strip()
+        if message:
+            return message
+
+    response = data.get("response")
+    if isinstance(response, dict):
+        response_error = response.get("error")
+        if isinstance(response_error, dict):
+            message = str(response_error.get("message", "") or "").strip()
+            if message:
+                return message
+        status = str(response.get("status", "") or "").strip().lower()
+        if status in ("failed", "cancelled", "canceled", "incomplete"):
+            return f"Response {status}"
+    return ""
+
+
+def _log_responses_cached_tokens(data: dict) -> None:
+    usage = data.get("usage")
+    if not isinstance(usage, dict):
+        return
+    details = usage.get("input_tokens_details")
+    if not isinstance(details, dict):
+        return
+    cached_tokens = details.get("cached_tokens")
+    if isinstance(cached_tokens, int):
+        logger.debug("AI Responses prompt cache cached_tokens=%d", cached_tokens)
+
+
 def _chat_payload_anthropic(
     model_id: str,
     messages: list[dict],
@@ -164,23 +336,27 @@ def _fim_payload_openai(model_id: str, prefix: str, suffix: str, max_tokens: int
     """
     return {
         "model": model_id,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You are a code completion assistant. "
-                    "Complete the code between <PREFIX> and <SUFFIX> tags. "
-                    "Output ONLY the completion text — no explanations, no markdown fences."
-                ),
-            },
-            {
-                "role": "user",
-                "content": f"<PREFIX>{prefix}</PREFIX><SUFFIX>{suffix}</SUFFIX>",
-            },
-        ],
+        "messages": _fim_messages(prefix, suffix),
         "max_tokens": max_tokens,
         "temperature": 0.0,
     }
+
+
+def _fim_messages(prefix: str, suffix: str) -> list[dict]:
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are a code completion assistant. "
+                "Complete the code between <PREFIX> and <SUFFIX> tags. "
+                "Output ONLY the completion text — no explanations, no markdown fences."
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"<PREFIX>{prefix}</PREFIX><SUFFIX>{suffix}</SUFFIX>",
+        },
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -213,7 +389,7 @@ class AiHttpClient(QtCore.QObject):
             return
         reply = self._requests.get(rid)
         if reply is not None:
-            logger.info("AI HTTP: aborting request id=%s", rid)
+            logger.debug("AI HTTP: aborting request id=%s", rid)
             reply.abort()
             # on_done / on_result will be called via finished signal with OperationCanceledError
 
@@ -276,8 +452,18 @@ class AiHttpClient(QtCore.QObject):
         request_id: str = "",
     ) -> None:
         """FIM (Fill-In-the-Middle) completion for inline suggestions."""
-        payload = _fim_payload_openai(model_id, prefix, suffix, max_tokens)
-        url = self._chat_url(cfg)  # Use chat completions endpoint (FIM via chat)
+        messages = _fim_messages(prefix, suffix)
+        payload = self._build_chat_payload(
+            cfg,
+            model_id=model_id,
+            messages=messages,
+            system="",
+            stream=False,
+            max_tokens=max_tokens,
+        )
+        if cfg.protocol != "anthropic":
+            payload["temperature"] = 0.0
+        url = self._chat_url(cfg)
         self._post_json(cfg, url, payload, on_result=lambda text, err: on_result(text, err), request_id=request_id)
 
     # ------------------------------------------------------------------
@@ -286,14 +472,14 @@ class AiHttpClient(QtCore.QObject):
 
     def _chat_url(self, cfg: ProviderConfig) -> str:
         base = _effective_base(cfg)
-        if getattr(cfg, "chat_path", ""):
+        if cfg.chat_path:
             path = cfg.chat_path
-            if not path.startswith("/"):
-                path = "/" + path
-            return f"{base}{path}"
+            return _join_api_path(base, path)
             
         if cfg.protocol == "anthropic":
             return f"{base}/v1/messages"
+        if _uses_openai_responses(cfg):
+            return f"{base}/responses"
         return f"{base}/chat/completions"
 
     def _build_chat_payload(
@@ -309,6 +495,16 @@ class AiHttpClient(QtCore.QObject):
         reasoning_level = str(cfg.reasoning_level or "")
         if cfg.protocol == "anthropic":
             return _chat_payload_anthropic(
+                model_id,
+                messages,
+                system=system,
+                stream=stream,
+                reasoning_level=reasoning_level,
+                max_tokens=max_tokens,
+            )
+        if _uses_openai_responses(cfg):
+            return _responses_payload_openai(
+                cfg,
                 model_id,
                 messages,
                 system=system,
@@ -341,13 +537,14 @@ class AiHttpClient(QtCore.QObject):
         if rid:
             self._requests[rid] = reply
         reply.finished.connect(  # type: ignore[attr-defined]
-            lambda: self._on_non_stream_reply(reply, cfg.protocol, on_result, rid)
+            lambda: self._on_non_stream_reply(reply, cfg.protocol, cfg.api_mode, on_result, rid)
         )
 
     def _on_non_stream_reply(
         self,
         reply: QtNetwork.QNetworkReply,
         protocol: ProviderProtocol,
+        api_mode: ProviderApiMode,
         on_result: OnResult,
         request_id: str = "",
     ) -> None:
@@ -359,7 +556,7 @@ class AiHttpClient(QtCore.QObject):
                 err = reply.errorString()
                 # Handle user cancellation
                 if reply.error() == QtNetwork.QNetworkReply.NetworkError.OperationCanceledError:
-                    logger.info("AI HTTP request canceled by user")
+                    logger.debug("AI HTTP request canceled by user")
                     on_result("", "Canceled")
                     return
                 
@@ -369,7 +566,7 @@ class AiHttpClient(QtCore.QObject):
 
             if reply.isOpen() and reply.isReadable():
                 raw = bytes(reply.readAll()).decode("utf-8", errors="replace")
-                text = self._extract_text(raw, protocol)
+                text = self._extract_text(raw, protocol, api_mode)
                 on_result(text, None)
             else:
                 on_result("", "Reply was closed prematurely")
@@ -396,7 +593,7 @@ class AiHttpClient(QtCore.QObject):
         self._active_replies.add(reply)
         if rid:
             self._requests[rid] = reply
-        state = _StreamState(protocol=cfg.protocol, on_chunk=on_chunk, on_done=on_done)
+        state = _StreamState(protocol=cfg.protocol, api_mode=cfg.api_mode, on_chunk=on_chunk, on_done=on_done)
         reply.readyRead.connect(lambda: state.feed(bytes(reply.readAll())))  # type: ignore[attr-defined]
         reply.finished.connect(lambda: self._on_stream_done(reply, state, rid))  # type: ignore[attr-defined]
 
@@ -409,7 +606,7 @@ class AiHttpClient(QtCore.QObject):
                 err = reply.errorString()
                 # OperationCanceledError happens when we call .abort()
                 if reply.error() == QtNetwork.QNetworkReply.NetworkError.OperationCanceledError:
-                    logger.info("AI stream request canceled by user")
+                    logger.debug("AI stream request canceled by user")
                     state.finish("Canceled")
                     return
 
@@ -430,7 +627,7 @@ class AiHttpClient(QtCore.QObject):
             reply.deleteLater()
 
     @staticmethod
-    def _extract_text(raw: str, protocol: ProviderProtocol) -> str:
+    def _extract_text(raw: str, protocol: ProviderProtocol, api_mode: ProviderApiMode) -> str:
         """Extract assistant text from a non-streaming response body."""
         try:
             data = json.loads(raw)
@@ -442,6 +639,29 @@ class AiHttpClient(QtCore.QObject):
                 if isinstance(block, dict) and block.get("type") == "text":
                     return str(block.get("text", ""))
             return ""
+
+        if api_mode == "responses":
+            error_message = _responses_error_message(data)
+            if error_message:
+                logger.warning("AI Responses returned error: %s", error_message)
+                return f"Error: {error_message}"
+            _log_responses_cached_tokens(data)
+            output_text = data.get("output_text")
+            if isinstance(output_text, str):
+                return output_text
+            chunks: list[str] = []
+            output = data.get("output", [])
+            if isinstance(output, list):
+                for item in output:
+                    if not isinstance(item, dict):
+                        continue
+                    content = item.get("content", [])
+                    if not isinstance(content, list):
+                        continue
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "output_text":
+                            chunks.append(str(part.get("text", "") or ""))
+            return "".join(chunks)
 
         # OpenAI / Ollama / custom
         choices = data.get("choices", [])
@@ -465,14 +685,17 @@ class _StreamState:
         self,
         *,
         protocol: ProviderProtocol,
+        api_mode: ProviderApiMode,
         on_chunk: OnChunk,
         on_done: OnDone,
     ) -> None:
         self._protocol = protocol
+        self._api_mode = api_mode
         self._on_chunk = on_chunk
         self._on_done = on_done
         self._buf = b""
         self._full_text = ""
+        self._error = ""
         self._finished = False
 
     def feed(self, data: bytes) -> None:
@@ -500,8 +723,9 @@ class _StreamState:
         if self._finished:
             return
         self._finished = True
+        final_error = str(error or self._error or "") or None
         try:
-            self._on_done(self._full_text, error)
+            self._on_done(self._full_text, final_error)
         except Exception:
             logger.exception("on_done callback raised")
 
@@ -509,6 +733,23 @@ class _StreamState:
         try:
             data = json.loads(payload_str)
         except json.JSONDecodeError:
+            return ""
+
+        if self._api_mode == "responses":
+            event_type = str(data.get("type", "") or "")
+            if event_type == "response.output_text.delta":
+                return str(data.get("delta", "") or "")
+            if event_type == "response.completed":
+                response = data.get("response")
+                if isinstance(response, dict):
+                    _log_responses_cached_tokens(response)
+                return ""
+            if event_type in ("error", "response.failed"):
+                error_message = _responses_stream_error_message(data)
+                if error_message:
+                    self._error = error_message
+                    logger.warning("AI Responses stream error: %s", error_message)
+                return ""
             return ""
 
         if self._protocol == "anthropic":

@@ -108,6 +108,7 @@ bool DenseOptflowService::start() {
   flow_shm_name_ = "shm." + cfg_.service_id + ".flow";
   flow_shm_format_ = "flow2_f16";
   compute_scale_ = 0.5;
+  output_scale_mode_ = "full";
 
   video_.close();
   frame_bgra_.clear();
@@ -118,6 +119,11 @@ bool DenseOptflowService::start() {
   frame_counter_ = 0;
 
   prev_gray_.release();
+  gray_.release();
+  prev_compute_.release();
+  gray_compute_.release();
+  flow_compute_.release();
+  flow_full_.release();
   has_prev_gray_ = false;
   prev_width_ = 0;
   prev_height_ = 0;
@@ -138,6 +144,9 @@ bool DenseOptflowService::start() {
   publish_state_if_changed("flowShmName", flow_shm_name_, "init", json::object());
   publish_state_if_changed("flowShmFormat", flow_shm_format_, "init", json::object());
   publish_state_if_changed("computeScale", compute_scale_, "init", json::object());
+  publish_state_if_changed("outputScaleMode", output_scale_mode_, "init", json::object());
+  publish_state_if_changed("flowOutputScaleX", 1.0, "init", json::object());
+  publish_state_if_changed("flowOutputScaleY", 1.0, "init", json::object());
   publish_state_if_changed("lastError", "", "init", json::object());
 
   running_.store(true, std::memory_order_release);
@@ -235,6 +244,11 @@ void DenseOptflowService::on_state(const std::string& node_id, const std::string
       frame_counter_ = 0;
       frame_bgra_.clear();
       prev_gray_.release();
+      gray_.release();
+      prev_compute_.release();
+      gray_compute_.release();
+      flow_compute_.release();
+      flow_full_.release();
       has_prev_gray_ = false;
       prev_width_ = 0;
       prev_height_ = 0;
@@ -264,6 +278,18 @@ void DenseOptflowService::on_state(const std::string& node_id, const std::string
     }
     compute_scale_ = std::max(0.25, std::min(1.0, v));
     publish_state_if_changed("computeScale", compute_scale_, "state", meta);
+    publish_state_if_changed("lastError", "", "state", meta);
+    return;
+  }
+
+  if (field == "outputScaleMode" && value.is_string()) {
+    const std::string mode = service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(value.get<std::string>()));
+    if (mode != "full" && mode != "compute") {
+      publish_state_if_changed("lastError", "invalid outputScaleMode", "state", meta);
+      return;
+    }
+    output_scale_mode_ = mode;
+    publish_state_if_changed("outputScaleMode", output_scale_mode_, "state", meta);
     publish_state_if_changed("lastError", "", "state", meta);
     return;
   }
@@ -322,7 +348,7 @@ void DenseOptflowService::process_frame_once() {
   last_notify_seq_ = observed_notify_seq;
 
   f8::cppsdk::VideoSharedMemoryHeader hdr{};
-  if (!video_.copyLatestFrame(frame_bgra_, hdr)) {
+  if (!video_.peekLatestHeader(hdr)) {
     return;
   }
   if (hdr.frame_id == 0 || hdr.frame_id == last_frame_id_) {
@@ -331,6 +357,19 @@ void DenseOptflowService::process_frame_once() {
 
   ++monitor_observed_frames_;
   ++frame_counter_;
+
+  const int every_n = std::max(1, compute_every_n_frames_);
+  if (has_prev_gray_ && (frame_counter_ % static_cast<std::uint64_t>(every_n)) != 0) {
+    last_frame_id_ = hdr.frame_id;
+    return;
+  }
+
+  if (!video_.copyLatestFrameIfChanged(frame_bgra_, hdr, last_frame_id_)) {
+    return;
+  }
+  if (hdr.frame_id == 0 || hdr.frame_id == last_frame_id_) {
+    return;
+  }
   last_frame_id_ = hdr.frame_id;
 
   if (hdr.format != 1 || hdr.width == 0 || hdr.height == 0 || hdr.pitch == 0) {
@@ -352,9 +391,8 @@ void DenseOptflowService::process_frame_once() {
 
   cv::Mat bgra(static_cast<int>(hdr.height), static_cast<int>(hdr.width), CV_8UC4, const_cast<std::byte*>(frame_bgra_.data()),
                row_bytes);
-  cv::Mat gray;
   try {
-    cv::cvtColor(bgra, gray, cv::COLOR_BGRA2GRAY);
+    cv::cvtColor(bgra, gray_, cv::COLOR_BGRA2GRAY);
   } catch (const cv::Exception& ex) {
     ++monitor_fail_frames_;
     publish_state_if_changed("lastError", std::string("opencv cvtColor failed: ") + ex.what(), "runtime", json::object());
@@ -362,14 +400,10 @@ void DenseOptflowService::process_frame_once() {
   }
 
   if (!has_prev_gray_ || prev_width_ != static_cast<int>(hdr.width) || prev_height_ != static_cast<int>(hdr.height)) {
-    prev_gray_ = gray;
+    gray_.copyTo(prev_gray_);
     has_prev_gray_ = true;
     prev_width_ = static_cast<int>(hdr.width);
     prev_height_ = static_cast<int>(hdr.height);
-    return;
-  }
-
-  if ((frame_counter_ % static_cast<std::uint64_t>(std::max(1, compute_every_n_frames_))) != 0) {
     return;
   }
 
@@ -379,42 +413,45 @@ void DenseOptflowService::process_frame_once() {
   compute_scale_ = scale;
 
   cv::Mat prev_compute = prev_gray_;
-  cv::Mat gray_compute = gray;
+  cv::Mat gray_compute = gray_;
   if (scale < 0.999) {
-    int sw = static_cast<int>(std::lround(static_cast<double>(gray.cols) * scale));
-    int sh = static_cast<int>(std::lround(static_cast<double>(gray.rows) * scale));
+    int sw = static_cast<int>(std::lround(static_cast<double>(gray_.cols) * scale));
+    int sh = static_cast<int>(std::lround(static_cast<double>(gray_.rows) * scale));
     sw = std::max(sw, 1);
     sh = std::max(sh, 1);
     try {
-      cv::resize(prev_gray_, prev_compute, cv::Size(sw, sh), 0.0, 0.0, cv::INTER_AREA);
-      cv::resize(gray, gray_compute, cv::Size(sw, sh), 0.0, 0.0, cv::INTER_AREA);
+      cv::resize(prev_gray_, prev_compute_, cv::Size(sw, sh), 0.0, 0.0, cv::INTER_AREA);
+      cv::resize(gray_, gray_compute_, cv::Size(sw, sh), 0.0, 0.0, cv::INTER_AREA);
+      prev_compute = prev_compute_;
+      gray_compute = gray_compute_;
     } catch (const cv::Exception& ex) {
       ++monitor_fail_frames_;
       publish_state_if_changed("lastError", std::string("opencv resize failed: ") + ex.what(), "runtime", json::object());
-      prev_gray_ = gray;
+      gray_.copyTo(prev_gray_);
       return;
     }
   }
 
-  cv::Mat flow_compute;
   try {
-    cv::calcOpticalFlowFarneback(prev_compute, gray_compute, flow_compute, 0.5, 3, 15, 3, 5, 1.2, 0);
+    cv::calcOpticalFlowFarneback(prev_compute, gray_compute, flow_compute_, 0.5, 3, 15, 3, 5, 1.2, 0);
   } catch (const cv::Exception& ex) {
     ++monitor_fail_frames_;
     publish_state_if_changed("lastError", std::string("opencv farneback failed: ") + ex.what(), "runtime", json::object());
-    prev_gray_ = gray;
+    gray_.copyTo(prev_gray_);
     return;
   }
 
-  cv::Mat flow = flow_compute;
-  if (flow_compute.cols != gray.cols || flow_compute.rows != gray.rows) {
+  cv::Mat flow = flow_compute_;
+  const bool keep_compute_scale = output_scale_mode_ == "compute";
+  if (!keep_compute_scale && (flow_compute_.cols != gray_.cols || flow_compute_.rows != gray_.rows)) {
     try {
-      cv::resize(flow_compute, flow, gray.size(), 0.0, 0.0, cv::INTER_LINEAR);
+      cv::resize(flow_compute_, flow_full_, gray_.size(), 0.0, 0.0, cv::INTER_LINEAR);
+      flow = flow_full_;
       flow *= static_cast<float>(1.0 / scale);
     } catch (const cv::Exception& ex) {
       ++monitor_fail_frames_;
       publish_state_if_changed("lastError", std::string("opencv flow upscale failed: ") + ex.what(), "runtime", json::object());
-      prev_gray_ = gray;
+      gray_.copyTo(prev_gray_);
       return;
     }
   }
@@ -429,7 +466,7 @@ void DenseOptflowService::process_frame_once() {
     if (!flow_sink_.initialize(shm_name, f8::cppsdk::shm::kDefaultVideoShmBytes, f8::cppsdk::shm::kDefaultVideoShmSlots)) {
       ++monitor_fail_frames_;
       publish_state_if_changed("lastError", "flow shm init failed: " + shm_name, "runtime", json::object());
-      prev_gray_ = gray;
+      gray_.copyTo(prev_gray_);
       return;
     }
   }
@@ -437,13 +474,15 @@ void DenseOptflowService::process_frame_once() {
                                                f8::cppsdk::kVideoFormatFlow2F16, 4)) {
     ++monitor_fail_frames_;
     publish_state_if_changed("lastError", "flow shm ensureConfiguration failed", "runtime", json::object());
-    prev_gray_ = gray;
+    gray_.copyTo(prev_gray_);
     return;
   }
 
   const std::size_t flow_pitch = static_cast<std::size_t>(flow_sink_.outputPitch());
   const std::size_t flow_bytes = flow_pitch * static_cast<std::size_t>(flow.rows);
-  flow_payload_.assign(flow_bytes, std::byte{0});
+  if (flow_payload_.size() != flow_bytes) {
+    flow_payload_.assign(flow_bytes, std::byte{0});
+  }
   for (int y = 0; y < flow.rows; ++y) {
     std::byte* row = flow_payload_.data() + static_cast<std::size_t>(y) * flow_pitch;
     for (int x = 0; x < flow.cols; ++x) {
@@ -461,12 +500,17 @@ void DenseOptflowService::process_frame_once() {
   if (!flow_sink_.writeFrameWithFormat(flow_payload_.data(), static_cast<unsigned>(flow_pitch), f8::cppsdk::kVideoFormatFlow2F16)) {
     ++monitor_fail_frames_;
     publish_state_if_changed("lastError", "flow shm write failed", "runtime", json::object());
-    prev_gray_ = gray;
+    gray_.copyTo(prev_gray_);
     return;
   }
 
   publish_state_if_changed("flowShmFormat", flow_shm_format_, "runtime", json::object());
   publish_state_if_changed("computeScale", compute_scale_, "runtime", json::object());
+  publish_state_if_changed("outputScaleMode", output_scale_mode_, "runtime", json::object());
+  publish_state_if_changed("flowOutputScaleX", static_cast<double>(flow.cols) / static_cast<double>(std::max(1, gray_.cols)),
+                           "runtime", json::object());
+  publish_state_if_changed("flowOutputScaleY", static_cast<double>(flow.rows) / static_cast<double>(std::max(1, gray_.rows)),
+                           "runtime", json::object());
   publish_state_if_changed("lastError", "", "runtime", json::object());
 
   const std::int64_t end_ts_ms = f8::cppsdk::now_ms();
@@ -474,7 +518,7 @@ void DenseOptflowService::process_frame_once() {
                                       static_cast<std::uint64_t>(std::max(0, flow.rows));
   emit_monitor_snapshot(end_ts_ms, hdr.frame_id, static_cast<double>(end_ts_ms - process_start_ms), dense_vectors);
 
-  prev_gray_ = gray;
+  gray_.copyTo(prev_gray_);
 }
 
 json DenseOptflowService::describe() {
@@ -493,15 +537,15 @@ json DenseOptflowService::describe() {
       state_field("flowShmFormat", schema_string(), "ro", "Flow SHM Format", "Flow payload format. Fixed to flow2_f16.", false),
       state_field("computeScale", schema_number(0.5, 0.25, 1.0), "rw", "Compute Scale",
                   "Farneback compute scale, flow is upscaled back to full size.", false),
+      state_field("outputScaleMode", schema_string(), "rw", "Output Scale Mode",
+                  "full keeps legacy full-resolution flow; compute emits flow at computeScale resolution.", false),
+      state_field("flowOutputScaleX", schema_number(), "ro", "Flow Output Scale X", "Output flow width / source width.", false),
+      state_field("flowOutputScaleY", schema_number(), "ro", "Flow Output Scale Y", "Output flow height / source height.", false),
       state_field("lastError", schema_string(), "ro", "Last Error", "Last error message.", false),
   });
-  service["editableStateFields"] = false;
   service["commands"] = json::array();
-  service["editableCommands"] = false;
   service["dataInPorts"] = json::array();
   service["dataOutPorts"] = json::array();
-  service["editableDataInPorts"] = false;
-  service["editableDataOutPorts"] = false;
 
   json out;
   out["service"] = std::move(service);

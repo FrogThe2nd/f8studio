@@ -10,9 +10,10 @@ from NodeGraphQt.constants import NodePropWidgetEnum
 from NodeGraphQt.qgraphics.node_abstract import AbstractNodeItem
 from NodeGraphQt.qgraphics.node_backdrop import BackdropSizer
 from NodeGraphQt.qgraphics.node_overlay_disabled import XDisabledItem
+from NodeGraphQt.qgraphics.node_text_item import NodeTextItem
 
-from f8pysdk import F8ServiceSpec
-from f8pysdk.schema_helpers import schema_default, schema_type
+from f8pysdk.specs import F8ServiceSpec
+from f8pysdk.specs import schema_default, schema_type
 from .node_base import F8StudioBaseNode
 from .service_process_toolbar import ServiceProcessToolbar
 from .viewer import F8StudioNodeViewer
@@ -40,6 +41,45 @@ class F8StudioContainerBaseNode(F8StudioBaseNode):
         self.model.color = (5, 129, 138, 50)
         self._child_nodes = []
         self._build_state_properties()
+
+    def _apply_backdrop_size(
+        self,
+        *,
+        width: float,
+        height: float,
+        pos_x: float,
+        pos_y: float,
+        push_undo: bool,
+    ) -> None:
+        self.set_property("width", float(width), push_undo=push_undo)
+        self.set_property("height", float(height), push_undo=push_undo)
+        self.set_property("pos", [float(pos_x), float(pos_y)], push_undo=push_undo)
+
+    def on_backdrop_updated(self, update_prop: str, value: object | None = None) -> None:
+        if not isinstance(value, dict):
+            return
+        if update_prop not in {"sizer_mouse_release", "sizer_double_clicked"}:
+            return
+        width = value.get("width")
+        height = value.get("height")
+        pos = value.get("pos")
+        if not isinstance(width, (int, float)) or not isinstance(height, (int, float)):
+            return
+        if not isinstance(pos, (list, tuple)) or len(pos) != 2:
+            return
+        pos_x = float(pos[0])
+        pos_y = float(pos[1])
+        if self.graph is not None:
+            action = 'resized "{}"'.format(self.name()) if update_prop == "sizer_mouse_release" else '"{}" auto resize'.format(self.name())
+            self.graph.begin_undo(action)
+            self._apply_backdrop_size(width=float(width), height=float(height), pos_x=pos_x, pos_y=pos_y, push_undo=True)
+            self.graph.end_undo()
+            return
+        self.view.width = float(width)
+        self.view.height = float(height)
+        self.model.width = float(width)
+        self.model.height = float(height)
+        self.set_pos(pos_x, pos_y)
 
     def sync_from_spec(self) -> None:
         self._build_state_properties()
@@ -112,6 +152,9 @@ class F8StudioContainerBaseNode(F8StudioBaseNode):
 
 
 class F8StudioContainerNodeItem(AbstractNodeItem):
+    _TITLE_BAR_HEIGHT = 26.0
+    _text_item: NodeTextItem | None = None
+
     """
     container item.
 
@@ -130,6 +173,7 @@ class F8StudioContainerNodeItem(AbstractNodeItem):
         # Match `NodeGraphQt.qgraphics.node_base.NodeItem` API so
         # `BaseNode.update_model()` can iterate `self.view.widgets`.
         self._widgets = OrderedDict()
+        self._text_item = NodeTextItem(self.name, self)
         # Must exist before BackdropSizer calls `itemChange()` which may call `_position_service_toolbar()`.
         self._svc_toolbar_proxy: QtWidgets.QGraphicsProxyWidget | None = None
         self._min_size = 500, 300
@@ -140,7 +184,33 @@ class F8StudioContainerNodeItem(AbstractNodeItem):
         self._x_item.setVisible(False)
         self._forced_child_prev_disabled: dict[str, bool] = {}
         self._forced_child_ids: set[str] = set()
-        self._svc_toolbar_proxy: QtWidgets.QGraphicsProxyWidget | None = None
+        self._sync_title_text_item_text()
+        self._sync_title_text_item_style()
+        self._sync_title_text_item_geometry()
+
+    def _sync_title_text_item_text(self) -> None:
+        text_item = self._text_item
+        if text_item is None:
+            return
+        name = str(self.name or "")
+        if name != text_item.toPlainText():
+            text_item.setPlainText(name)
+
+    def _sync_title_text_item_style(self) -> None:
+        text_item = self._text_item
+        if text_item is None:
+            return
+        text_item.setDefaultTextColor(QtGui.QColor(*self.text_color))
+
+    def _sync_title_text_item_geometry(self) -> None:
+        text_item = self._text_item
+        if text_item is None:
+            return
+        text_rect = text_item.boundingRect()
+        rect = self.boundingRect()
+        x = rect.center().x() - (text_rect.width() / 2.0)
+        y = rect.y() + ((self._TITLE_BAR_HEIGHT - text_rect.height()) / 2.0)
+        text_item.setPos(x, y)
 
     def _child_state_key(self, view: Any) -> str | None:
         try:
@@ -164,12 +234,47 @@ class F8StudioContainerNodeItem(AbstractNodeItem):
         self._forced_child_prev_disabled[key] = prev_disabled
         if prev_disabled:
             return
+        view.f8_container_forced_disabled = True
         try:
             view.disabled = True
         except (AttributeError, RuntimeError, TypeError):
+            view.f8_container_forced_disabled = False
             self._forced_child_prev_disabled.pop(key, None)
             return
         self._forced_child_ids.add(key)
+
+    def _backend_node_for_child_view(self, view: Any) -> Any | None:
+        key = self._child_state_key(view)
+        if key is None:
+            return None
+        try:
+            viewer = self.viewer()
+        except (AttributeError, RuntimeError, TypeError):
+            return None
+        if not isinstance(viewer, F8StudioNodeViewer):
+            return None
+        graph = viewer.f8_graph
+        if graph is None:
+            return None
+        try:
+            return graph.get_node_by_id(key)
+        except (AttributeError, KeyError, RuntimeError, TypeError):
+            return None
+
+    def _set_child_model_disabled(self, view: Any, disabled: bool) -> None:
+        node = self._backend_node_for_child_view(view)
+        if node is None:
+            return
+        target = bool(disabled)
+        try:
+            node.set_property("disabled", target, push_undo=False)
+            return
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+        try:
+            node.model.set_property("disabled", target)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
 
     def _restore_forced_child_if_needed(self, view: Any) -> None:
         key = self._child_state_key(view)
@@ -183,10 +288,14 @@ class F8StudioContainerNodeItem(AbstractNodeItem):
             view.disabled = bool(prev_disabled)
         except (AttributeError, RuntimeError, TypeError):
             return
+        view.f8_container_forced_disabled = False
+        self._set_child_model_disabled(view, bool(prev_disabled))
         self._forced_child_ids.discard(key)
         self._forced_child_prev_disabled.pop(key, None)
 
     def _clear_forced_child_cache(self) -> None:
+        for child in list(self._child_views):
+            child.f8_container_forced_disabled = False
         self._forced_child_ids.clear()
         self._forced_child_prev_disabled.clear()
 
@@ -310,10 +419,32 @@ class F8StudioContainerNodeItem(AbstractNodeItem):
         return rect
 
     def mouseDoubleClickEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton and not self.disabled:
+            scene = self.scene()
+            text_item = self._text_item
+            if scene is not None and text_item is not None and text_item in scene.items(event.scenePos()):
+                text_item.set_editable(True)
+                text_item.setFocus()
+                event.ignore()
+                return
         viewer = self.viewer()
         if viewer:
             viewer.node_double_clicked.emit(self.id)
         super().mouseDoubleClickEvent(event)
+
+    def _child_views_to_translate_during_drag(self) -> list[AbstractNodeItem]:
+        if not self.selected:
+            return list(self._child_views)
+        views_to_translate: list[AbstractNodeItem] = []
+        for view in self._child_views:
+            try:
+                child_selected = bool(view.selected)
+            except (AttributeError, RuntimeError, TypeError):
+                child_selected = False
+            if child_selected:
+                continue
+            views_to_translate.append(view)
+        return views_to_translate
 
     def mouseMoveEvent(self, event):
         """Moves child nodes along with the container."""
@@ -321,7 +452,7 @@ class F8StudioContainerNodeItem(AbstractNodeItem):
         super().mouseMoveEvent(event)
         new_pos = self.pos()
         delta = new_pos - prev_pos
-        for view in self._child_views:
+        for view in self._child_views_to_translate_during_drag():
             p = view.xy_pos
             p[0] += delta.x()
             p[1] += delta.y()
@@ -374,7 +505,7 @@ class F8StudioContainerNodeItem(AbstractNodeItem):
         painter.setPen(QtCore.Qt.NoPen)
         painter.drawRoundedRect(rect, radius, radius)
 
-        top_rect = QtCore.QRectF(rect.x(), rect.y(), rect.width(), 26.0)
+        top_rect = QtCore.QRectF(rect.x(), rect.y(), rect.width(), self._TITLE_BAR_HEIGHT)
         painter.setBrush(QtGui.QBrush(QtGui.QColor(*self.color)))
         painter.setPen(QtCore.Qt.NoPen)
         painter.drawRoundedRect(top_rect, radius, radius)
@@ -388,10 +519,6 @@ class F8StudioContainerNodeItem(AbstractNodeItem):
             painter.setPen(QtCore.Qt.NoPen)
             painter.drawRoundedRect(rect, radius, radius)
 
-        txt_rect = QtCore.QRectF(top_rect.x(), top_rect.y(), rect.width(), top_rect.height())
-        painter.setPen(QtGui.QColor(*self.text_color))
-        painter.drawText(txt_rect, QtCore.Qt.AlignCenter, self.name)
-
         border = 0.8
         border_color = self.color
         if self.selected and NodeEnum.SELECTED_BORDER_COLOR.value:
@@ -402,6 +529,7 @@ class F8StudioContainerNodeItem(AbstractNodeItem):
         painter.drawRoundedRect(rect, radius, radius)
 
         painter.restore()
+        self._sync_title_text_item_geometry()
 
     def get_nodes(self, inc_intersects: bool = False) -> list[AbstractNodeItem]:
         mode = {True: QtCore.Qt.IntersectsItemShape, False: QtCore.Qt.ContainsItemShape}
@@ -472,6 +600,37 @@ class F8StudioContainerNodeItem(AbstractNodeItem):
     @property
     def widgets(self):
         return self._widgets.copy()
+
+    @property
+    def name(self):
+        return AbstractNodeItem.name.fget(self)
+
+    @name.setter
+    def name(self, name=""):
+        AbstractNodeItem.name.fset(self, name)
+        if self._text_item is None:
+            return
+        self._sync_title_text_item_text()
+        self._sync_title_text_item_geometry()
+        self.update()
+
+    @property
+    def text_color(self):
+        return AbstractNodeItem.text_color.fget(self)
+
+    @text_color.setter
+    def text_color(self, color=(100, 100, 100, 255)):
+        AbstractNodeItem.text_color.fset(self, color)
+        if self._text_item is None:
+            return
+        self._sync_title_text_item_style()
+        self.update()
+
+    @property
+    def text_item(self) -> NodeTextItem:
+        text_item = self._text_item
+        assert text_item is not None
+        return text_item
 
     @AbstractNodeItem.width.setter
     def width(self, width=0.0):

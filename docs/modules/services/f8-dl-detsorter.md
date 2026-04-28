@@ -10,27 +10,28 @@ Sort detection payloads by a score-map SHM metric.
 
 ## When to Use
 
-- Use `f8.dl.detsorter` when detections already exist and you want to reorder them by a second signal such as saliency, motion, or another score-map SHM.
-- It is a utility service that reorders items in a detection payload based on values sampled from a secondary score-map (Shared Memory).
-- It allows for ranking detections by external metrics such as saliency, motion magnitude, or custom heatmap logic, rather than relying solely on the original detector's confidence score.
-- It is a good fit for "pick the most interesting box first" pipelines where plain detector confidence is not the ranking you want downstream.
+- Use `f8.dl.detsorter` to turn raw frame-by-frame detections into more stable ranked or identity-like output.
+- It is useful when the detector sees several candidates but the graph only wants one stable target or a more coherent ordering.
+- It is often the next step when detector output still feels too noisy for control logic.
 
 ## Common Wiring Patterns
 
-- Feed `detections` from `f8.dl.detector` or `f8.dl.humandetector`, point `scoreShmName` at a `scalar1_f32` or `flow2_f16` SHM source, then send the sorted `detections` payload to overlays, text inspection, or custom logic.
-- Start with `scoreAggregation=mean` and `sortDirection=desc`, then add `clsWeights` only after the base score-map ranking behaves as expected.
+- A common chain is `f8.dl.detector -> f8.dl.detsorter -> downstream logic`.
+- If a later stage depends on continuity, sorting before tracking can improve behavior.
+- Compare raw detections and sorted output side by side while tuning.
 
 ## Pitfalls / Gotchas
 
-- `f8.dl.detsorter` only reorders detections; it does not change each detection's original `score` field, so downstream logic must not assume the first item has the highest detector confidence.
-- Ranking quality depends on score-map alignment. If the detection payload resolution differs from the SHM resolution, the service rescales boxes before scoring, so mismatched crops or stale SHM content can produce surprising orderings.
+- A sorter cannot fully recover from poor detector quality.
+- Occlusion and frequent entry/exit events will still cause identity churn in hard scenes.
+- Decide early whether you need "best current target" or "best continuity" because that affects downstream design.
 
 ## Service Reference
 
 ### How to Run
 
 ```bash
-pixi run f8pydl_detsorter
+pixi run -e onnx f8pydl_detsorter
 ```
 
 - Workdir: `../../../../`
@@ -46,7 +47,7 @@ pixi run f8pydl_detsorter
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `clsWeights` | `rw` | `true` | `false` | `string / default={}` | JSON map of detection cls -> weight multiplier applied to score-map metric. Keys without a prefix are exact cls matches. Keys with 're:' prefix are Python regex patterns matched via fullmatch(). Unspecified classes default to weight 1.0. Example: {"person": 2.0, "car": 0.7, "re:^dog_.*$": 1.3} |
+| `clsWeights` | `rw` | `true` | `false` | `string / default={}` | JSON map of detection cls -> weight multiplier applied to score-map metric. Keys without a prefix are exact cls matches. Keys with 're:' prefix are Python regex patterns matched via fullmatch(). All matching rules are multiplied together. Unspecified classes default to weight 1.0. Example: {"person": 2.0, "car": 0.7, "re:^dog_.*$": 1.3} |
 | `scoreShmName` | `rw` | `true` | `true` | `string / default=` | Score-map SHM name (supports scalar1_f32 and flow2_f16). |
 | `sortDirection` | `rw` | `true` | `true` | `string / enum[desc, asc] / default=desc` | Prefer larger scores first (desc) or smaller scores first (asc). |
 | `scoreAggregation` | `rw` | `true` | `true` | `string / enum[mean, max, sum, median] / default=mean` | ROI reduction mode used to rank each bbox. |
@@ -56,7 +57,7 @@ pixi run f8pydl_detsorter
 
 ### Key Fields That Matter
 
-- `clsWeights` (Class Weights, `rw`): JSON map of detection cls -> weight multiplier applied to score-map metric. Keys without a prefix are exact cls matches. Keys with 're:' prefix are Python regex patterns matched via fullmatch(). Unspecified classes default to weight 1.0. Example: {"person": 2.0, "car": 0.7, "re:^dog_.*$": 1.3} Schema: `string / default={}`.
+- `clsWeights` (Class Weights, `rw`): JSON map of detection cls -> weight multiplier applied to score-map metric. Keys without a prefix are exact cls matches. Keys with 're:' prefix are Python regex patterns matched via fullmatch(). All matching rules are multiplied together. Unspecified classes default to weight 1.0. Example: {"person": 2.0, "car": 0.7, "re:^dog_.*$": 1.3} Schema: `string / default={}`.
 - `scoreShmName` (Score SHM, `rw`): Score-map SHM name (supports scalar1_f32 and flow2_f16). Schema: `string / default=`.
 - `sortDirection` (Sort Direction, `rw`): Prefer larger scores first (desc) or smaller scores first (asc). Schema: `string / enum[desc, asc] / default=desc`.
 - `scoreAggregation` (Score Aggregation, `rw`): ROI reduction mode used to rank each bbox. Schema: `string / enum[mean, max, sum, median] / default=mean`.

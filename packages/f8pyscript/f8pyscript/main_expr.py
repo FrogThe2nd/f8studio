@@ -1,39 +1,26 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
+import msgspec
+
+from f8pysdk.app import ServiceApp, ServiceAppDefaults
 from f8pysdk.capabilities import RungraphHook
-from f8pysdk.generated import F8RuntimeGraph
-from f8pysdk.json_unwrap import unwrap_json_value
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
-from f8pysdk.service_cli import ServiceCliTemplate
-from f8pysdk.service_runtime import ServiceRuntime, ServiceRuntimeConfig
+from f8pysdk.codec import unwrap_json_value
+from f8pysdk.logging_utils import configure_root_logging_from_env
+from f8pysdk.registry import Registry
+from f8pysdk.runtime import ServiceRuntime
+from f8pysdk.specs import F8RuntimeGraph
 
 from .constants import EXPR_SERVICE_CLASS
 from .expr_node_registry import register_expr_specs
 from .expr_service_node import PythonExprServiceNode
 
 
-class PythonExprServiceProgram(ServiceCliTemplate, RungraphHook):
+class _ExprRuntimeHooks(RungraphHook):
     def __init__(self) -> None:
         self._runtime: ServiceRuntime | None = None
-
-    @property
-    def service_class(self) -> str:
-        return EXPR_SERVICE_CLASS
-
-    def register_specs(self, registry: RuntimeNodeRegistry) -> None:
-        register_expr_specs(registry)
-
-    def build_runtime_config(self, *, service_id: str, nats_url: str) -> ServiceRuntimeConfig:
-        return ServiceRuntimeConfig.from_values(
-            service_id=service_id,
-            service_class=self.service_class,
-            nats_url=nats_url,
-            data_delivery="both",
-        )
 
     async def setup(self, runtime: ServiceRuntime) -> None:
         self._runtime = runtime
@@ -67,9 +54,10 @@ class PythonExprServiceProgram(ServiceCliTemplate, RungraphHook):
         node_any.data_out_ports = [str(p.name) for p in list(service_snapshot.dataOutPorts or [])] or ["out"]
         node_any.state_fields = [str(s.name) for s in list(service_snapshot.stateFields or [])]
         ts_ms: int | None = None
-        if graph.meta is not None and graph.meta.ts is not None:
+        meta = graph.meta
+        if meta is not None and not isinstance(meta, msgspec.UnsetType) and meta.ts is not None:
             try:
-                ts_ms = int(graph.meta.ts)
+                ts_ms = int(meta.ts)
             except (TypeError, ValueError):
                 ts_ms = None
         state_values = service_snapshot.stateValues or {}
@@ -79,12 +67,23 @@ class PythonExprServiceProgram(ServiceCliTemplate, RungraphHook):
             await node_any.on_state(str(field), unwrap_json_value(raw_value), ts_ms=ts_ms)
 
 
+def build_app() -> ServiceApp:
+    registry = Registry()
+    register_expr_specs(registry.runtime_registry)
+    hooks = _ExprRuntimeHooks()
+    return ServiceApp(
+        service_class=EXPR_SERVICE_CLASS,
+        registry=registry,
+        defaults=ServiceAppDefaults(data_delivery="both"),
+        setup=hooks.setup,
+        teardown=hooks.teardown,
+    )
+
+
 def _main(argv: list[str] | None = None) -> int:
     if not logging.getLogger().handlers:
-        raw = (os.environ.get("F8_LOG_LEVEL") or "").strip().upper()
-        level = getattr(logging, raw, logging.WARNING) if raw else logging.WARNING
-        logging.basicConfig(level=level, format="%(levelname)s:%(name)s:%(message)s")
-    return PythonExprServiceProgram().cli(argv, program_name="F8PyExpr")
+        configure_root_logging_from_env()
+    return build_app().cli(argv, program_name="F8PyExpr")
 
 
 if __name__ == "__main__":

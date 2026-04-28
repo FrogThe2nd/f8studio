@@ -10,9 +10,9 @@ if ROOT not in sys.path:
 if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
-from f8pysdk.generated import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry  # noqa: E402
-from f8pysdk.service_host import ServiceHost, ServiceHostConfig  # noqa: E402
+from f8pysdk.specs import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
+from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
+from f8pysdk.host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
 from f8pyengine.constants import SERVICE_CLASS  # noqa: E402
@@ -27,7 +27,7 @@ class LovenseOutTests(unittest.IsolatedAsyncioTestCase):
     async def _build_node(self, *, state_values: dict[str, Any]) -> tuple[Any, LovenseOutRuntimeNode]:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_operator(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
         op = F8RuntimeNode(
@@ -234,7 +234,7 @@ class LovenseOutTests(unittest.IsolatedAsyncioTestCase):
                 break
         self.assertIsNotNone(toy_state)
         assert toy_state is not None
-        self.assertEqual(str(toy_state.uiControl or ""), "options:[availableToys]")
+        self.assertEqual(str(toy_state.uiControl or ""), "select[availableToys]")
 
     async def test_api_error_updates_last_error(self) -> None:
         _bus, node = await self._build_node(state_values={"enabled": True, "timeSec": 0, "vibrate": 0.2})

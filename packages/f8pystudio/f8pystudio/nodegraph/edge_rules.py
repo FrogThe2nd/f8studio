@@ -3,11 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from f8pysdk import F8OperatorSpec, F8ServiceSpec
+from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
+from f8pysdk.specs import coerce_spec_payload, spec_kind_from_spec
 
 EDGE_KIND_EXEC = "exec"
 EDGE_KIND_DATA = "data"
 EDGE_KIND_STATE = "state"
+EDGE_KIND_COMMAND = "command"
 EDGE_KINDS: tuple[str, str, str] = (EDGE_KIND_EXEC, EDGE_KIND_DATA, EDGE_KIND_STATE)
 
 
@@ -33,6 +35,8 @@ def port_kind(name: str) -> str | None:
         return EDGE_KIND_DATA
     if n.startswith("[S]") or n.endswith("[S]"):
         return EDGE_KIND_STATE
+    if n.startswith("[C]") or n.endswith("[C]"):
+        return EDGE_KIND_COMMAND
     return None
 
 
@@ -41,6 +45,8 @@ def connection_kind(out_port_name: str, in_port_name: str) -> str | None:
     in_kind = port_kind(in_port_name)
     if out_kind is None or in_kind is None:
         return None
+    if out_kind in (EDGE_KIND_STATE, EDGE_KIND_COMMAND) and in_kind in (EDGE_KIND_STATE, EDGE_KIND_COMMAND):
+        return EDGE_KIND_STATE
     if out_kind != in_kind:
         return None
     return out_kind
@@ -89,16 +95,11 @@ def runtime_node_info(node: Any) -> EdgeRuleNodeInfo | None:
 def layout_node_info(node_id: str, node_data: dict[str, Any]) -> EdgeRuleNodeInfo | None:
     node_payload = node_data if isinstance(node_data, dict) else {}
     spec_payload = node_payload.get("f8_spec")
-
-    is_operator = False
-    if isinstance(spec_payload, F8OperatorSpec):
-        is_operator = True
-    elif isinstance(spec_payload, F8ServiceSpec):
-        is_operator = False
-    elif isinstance(spec_payload, dict):
-        is_operator = "operatorClass" in spec_payload
-    else:
+    try:
+        spec = coerce_spec_payload(spec_payload)
+    except (TypeError, ValueError):
         return None
+    is_operator = spec_kind_from_spec(spec) == "operator"
 
     node_id_str = str(node_id or "").strip()
     if is_operator:
@@ -168,4 +169,3 @@ def validate_layout_connection(
         out_info=node_info_by_id.get(str(out_node_id)),
         in_info=node_info_by_id.get(str(in_node_id)),
     )
-

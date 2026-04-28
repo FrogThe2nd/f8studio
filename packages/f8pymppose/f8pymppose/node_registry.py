@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from f8pysdk import (
+from f8pysdk.specs import (
     array_schema,
     F8DataPortSpec,
     F8RuntimeNode,
@@ -16,8 +16,8 @@ from f8pysdk import (
     string_schema,
     any_schema,
 )
-from f8pysdk.runtime_node import RuntimeNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import RuntimeNode
+from f8pysdk.registry import create_runtime_node_registry, RuntimeNodeRegistry, shared_runtime_node_registry
 
 from .config import (
     DEFAULT_INFER_EVERY_N,
@@ -177,12 +177,12 @@ def _state_fields() -> list[F8StateSpec]:
     ]
 
 
-def register_specs(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
-    reg.register_service_spec(
+def register_specs(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
+    registry.register_service_spec(
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,
             serviceClass=POSE_SERVICE_CLASS,
+            paletteCategory="svc",
             version="0.0.1",
             label="MediaPipe Pose",
             description="MediaPipe single-person pose extraction service (33 landmarks).",
@@ -201,10 +201,6 @@ def register_specs(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRe
                     valueSchema=array_schema(items=_skeleton_payload_schema()),
                 ),
             ],
-            editableStateFields=False,
-            editableDataInPorts=False,
-            editableDataOutPorts=False,
-            editableCommands=False,
         ),
         overwrite=True,
     )
@@ -212,5 +208,13 @@ def register_specs(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRe
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> RuntimeNode:
         return MediaPipePoseServiceNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register_service(POSE_SERVICE_CLASS, _factory, overwrite=True)
-    return reg
+    registry.register_service_factory(POSE_SERVICE_CLASS, _factory, overwrite=True)
+    return registry
+
+
+def create_mppose_registry() -> RuntimeNodeRegistry:
+    return register_specs(create_runtime_node_registry())
+
+
+def shared_mppose_registry() -> RuntimeNodeRegistry:
+    return register_specs(shared_runtime_node_registry())

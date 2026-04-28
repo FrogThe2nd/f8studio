@@ -4,15 +4,20 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+import pytest
 
-from f8pystudio.plugin_api import (
+from f8pystudio.plugins.api import (
     PluginOperatorRegistration,
     PluginRendererRegistration,
     StudioPlugin,
     StudioPluginManifest,
 )
-from f8pystudio.plugin_loader import load_entrypoint_plugins
+from f8pystudio.plugins.loader import clear_entrypoint_plugin_cache, load_entrypoint_plugins
+
+
+@pytest.fixture(autouse=True)
+def _clear_entrypoint_cache() -> None:
+    clear_entrypoint_plugin_cache()
 
 
 class _FakeEntryPoint:
@@ -46,9 +51,7 @@ class _Plugin(StudioPlugin):
 
 
 def _manifest(plugin_id: str) -> StudioPluginManifest:
-    def _register(registry: RuntimeNodeRegistry | None) -> RuntimeNodeRegistry:
-        if registry is None:
-            return RuntimeNodeRegistry.instance()
+    def _register(registry: object) -> object:
         return registry
 
     return StudioPluginManifest(
@@ -67,7 +70,7 @@ def test_plugin_loader_loads_entrypoints(monkeypatch) -> None:
             _FakeEntryPoint(name="a", value="pkg.a:manifest", loaded_obj=_manifest("plugin_a")),
         ]
     )
-    monkeypatch.setattr("f8pystudio.plugin_loader.importlib.metadata.entry_points", lambda: eps)
+    monkeypatch.setattr("f8pystudio.plugins.loader.importlib.metadata.entry_points", lambda: eps)
 
     manifests = load_entrypoint_plugins()
 
@@ -78,7 +81,7 @@ def test_plugin_loader_loads_entrypoints(monkeypatch) -> None:
 def test_plugin_loader_rejects_invalid_manifest(monkeypatch, caplog) -> None:
     caplog.set_level(logging.ERROR)
     eps = _FakeEntryPoints([_FakeEntryPoint(name="bad", value="pkg.bad:plugin", loaded_obj=object())])
-    monkeypatch.setattr("f8pystudio.plugin_loader.importlib.metadata.entry_points", lambda: eps)
+    monkeypatch.setattr("f8pystudio.plugins.loader.importlib.metadata.entry_points", lambda: eps)
 
     manifests = load_entrypoint_plugins()
 
@@ -94,9 +97,28 @@ def test_plugin_loader_isolation_on_plugin_failure(monkeypatch, caplog) -> None:
             _FakeEntryPoint(name="good", value="pkg.good:plugin", loaded_obj=_manifest("plugin_good")),
         ]
     )
-    monkeypatch.setattr("f8pystudio.plugin_loader.importlib.metadata.entry_points", lambda: eps)
+    monkeypatch.setattr("f8pystudio.plugins.loader.importlib.metadata.entry_points", lambda: eps)
 
     manifests = load_entrypoint_plugins()
 
     assert [m.plugin_id for m in manifests] == ["plugin_good"]
     assert "Plugin load failed" in caplog.text
+
+
+def test_plugin_loader_caches_entrypoint_discovery(monkeypatch) -> None:
+    calls = 0
+    eps = _FakeEntryPoints([_FakeEntryPoint(name="a", value="pkg.a:manifest", loaded_obj=_manifest("plugin_a"))])
+
+    def _entry_points() -> _FakeEntryPoints:
+        nonlocal calls
+        calls += 1
+        return eps
+
+    monkeypatch.setattr("f8pystudio.plugins.loader.importlib.metadata.entry_points", _entry_points)
+
+    first = load_entrypoint_plugins()
+    second = load_entrypoint_plugins()
+
+    assert [m.plugin_id for m in first] == ["plugin_a"]
+    assert [m.plugin_id for m in second] == ["plugin_a"]
+    assert calls == 1

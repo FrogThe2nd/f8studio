@@ -1,25 +1,28 @@
 from __future__ import annotations
 
+from f8pysdk.codec import coerce_int, coerce_flag
 import asyncio
 import logging
 import time
 from typing import Any, Final
 
-from f8pysdk import (
+from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
+    F8SpecEditPolicy,
     F8StateAccess,
     F8StateSpec,
     boolean_schema,
+    editable_collection_edit_policy,
     integer_schema,
     string_schema,
 )
-from f8pysdk.builtin_state_fields import OPERATOR_ID_FIELD_NAME, SVC_ID_FIELD_NAME
+from f8pysdk._specs.builtin_fields import OPERATOR_ID_FIELD_NAME, SVC_ID_FIELD_NAME
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import OperatorNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import OperatorNode
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from ..constants import SERVICE_CLASS
 from ..recording import (
@@ -48,19 +51,6 @@ _CONTROL_STATE_NAMES = {
 _POSITION_PORT = "positionMs"
 
 
-def _coerce_bool(value: Any, *, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    text = str(value or "").strip().lower()
-    if text in ("1", "true", "yes", "on"):
-        return True
-    if text in ("0", "false", "no", "off", ""):
-        return False
-    return bool(default)
-
-
 class ReplayerRuntimeNode(OperatorNode):
     def __init__(self, *, node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any] | None = None) -> None:
         super().__init__(
@@ -73,15 +63,16 @@ class ReplayerRuntimeNode(OperatorNode):
         )
         self._initial_state = dict(initial_state or {})
         self._path = str(self._initial_state.get("path") or "").strip()
-        self._loop_enabled = _coerce_bool(self._initial_state.get("loop"), default=False)
+        self._loop_enabled = coerce_flag(self._initial_state.get("loop"), default=False)
         self._time_mode = _coerce_time_mode(self._initial_state.get("timeMode"), default=TIME_MODE_OFFSET_FROM_PLAY)
-        self._playing = _coerce_bool(self._initial_state.get("playing"), default=False)
-        self._duration_ms = _coerce_int(self._initial_state.get("durationMs"), default=0)
+        self._playing = coerce_flag(self._initial_state.get("playing"), default=False)
+        self._duration_ms = coerce_int(self._initial_state.get("durationMs"), default=0)
         self._loaded = False
         self._events: list[Any] = []
         self._first_event_ts_ms = 0
         self._task: asyncio.Task[object] | None = None
         self._stop = asyncio.Event()
+        self._emit_seq: int = 0
         self._self_state_writes: dict[str, Any] = {}
         self._user_state_names = tuple(
             name for name in self.state_fields if str(name).strip() and str(name) not in _CONTROL_STATE_NAMES
@@ -99,13 +90,12 @@ class ReplayerRuntimeNode(OperatorNode):
         await self._stop_loop()
 
     async def on_exec(self, exec_id: str | int, in_port: str | None = None) -> list[str]:
-        _ = exec_id
         name = str(in_port or "").strip()
         if name == "play":
-            await self._set_playing(True)
-            return ["started"]
+            await self._set_playing(True, emit_started_event=False)
+            return ["started"] if self._playing else []
         if name == "pause":
-            await self._set_playing(False)
+            await self._set_playing(False, emit_started_event=False)
             return ["stopped"]
         if name == "stop":
             await self._stop_playback(reset_position=True)
@@ -123,13 +113,14 @@ class ReplayerRuntimeNode(OperatorNode):
             await self._load_recording()
             return
         if name == "loop":
-            self._loop_enabled = _coerce_bool(value, default=self._loop_enabled)
+            self._loop_enabled = coerce_flag(value, default=self._loop_enabled)
             return
         if name == "timeMode":
             self._time_mode = _coerce_time_mode(value, default=self._time_mode)
             return
         if name == "playing":
-            await self._set_playing(_coerce_bool(value, default=self._playing))
+            next_playing = coerce_flag(value, default=self._playing)
+            await self._set_playing(next_playing, emit_started_event=next_playing)
             return
 
     async def validate_state(self, field: str, value: Any, *, ts_ms: int, meta: dict[str, Any]) -> Any:
@@ -138,14 +129,14 @@ class ReplayerRuntimeNode(OperatorNode):
         if name == "path":
             return str(value or "").strip()
         if name == "loop":
-            return _coerce_bool(value, default=False)
+            return coerce_flag(value, default=False)
         if name == "timeMode":
             return _coerce_time_mode(value, default=TIME_MODE_OFFSET_FROM_PLAY)
         if name == "playing":
-            return _coerce_bool(value, default=False)
+            return coerce_flag(value, default=False)
         return value
 
-    async def _set_playing(self, playing: bool) -> None:
+    async def _set_playing(self, playing: bool, *, emit_started_event: bool) -> None:
         next_playing = bool(playing)
         if next_playing == self._playing and ((self._task is not None) == next_playing):
             return
@@ -159,25 +150,28 @@ class ReplayerRuntimeNode(OperatorNode):
             self._playing = False
             await self._safe_set_state("playing", False)
             return
-        self._start_loop()
+        loop_started = self._start_loop()
+        if loop_started and emit_started_event:
+            await self._safe_emit_exec("started", exec_id=self._next_emit_exec_id())
 
     async def _startup_load(self) -> None:
         if self._path:
             await self._load_recording()
         if self._playing:
-            await self._set_playing(True)
+            await self._set_playing(True, emit_started_event=True)
 
-    def _start_loop(self) -> None:
+    def _start_loop(self) -> bool:
         task = self._task
         if task is not None and not task.done():
-            return
+            return False
         self._stop.clear()
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             logger.exception("[%s:replayer] no running event loop", self.node_id)
-            return
+            return False
         self._task = loop.create_task(self._run_playback(), name=f"replayer:{self.node_id}")
+        return True
 
     async def _stop_loop(self) -> None:
         self._stop.set()
@@ -239,16 +233,15 @@ class ReplayerRuntimeNode(OperatorNode):
     async def _run_playback(self) -> None:
         try:
             while self._playing and not self._stop.is_set():
-                await self._safe_emit_exec("started")
                 await self._play_once()
                 if not self._playing or self._stop.is_set():
                     break
                 if not self._loop_enabled:
                     self._playing = False
                     await self._safe_set_state("playing", False)
-                    await self._safe_emit_exec("done")
+                    await self._safe_emit_exec("done", exec_id=self._next_emit_exec_id())
                     break
-                await self._safe_emit_exec("looped")
+                await self._safe_emit_exec("looped", exec_id=self._next_emit_exec_id())
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -294,18 +287,26 @@ class ReplayerRuntimeNode(OperatorNode):
 
     async def _dispatch_event(self, event: Any) -> None:
         if event.type == "data_sample":
-            allowed_ports = {str(name) for name in self.data_out_ports if str(name).strip() and str(name) != _POSITION_PORT}
+            exec_id = self._next_emit_exec_id()
+            allowed_ports = {
+                str(name) for name in self.data_out_ports if str(name).strip() and str(name) != _POSITION_PORT
+            }
             for port, value in dict(event.data).items():
                 if port in allowed_ports:
-                    await self._safe_emit(str(port), value)
+                    await self._safe_emit(str(port), value, ctx_id=exec_id)
+            await self._safe_emit_exec("sample", exec_id=exec_id)
             return
         if event.type == "state_change":
             if str(event.field) in self._user_state_names:
                 await self._safe_set_state(str(event.field), event.value)
 
-    async def _safe_emit(self, port: str, value: Any) -> None:
+    def _next_emit_exec_id(self) -> int:
+        self._emit_seq += 1
+        return int(self._emit_seq)
+
+    async def _safe_emit(self, port: str, value: Any, *, ctx_id: str | int | None = None) -> None:
         try:
-            await self.emit(str(port), value)
+            await self.emit(str(port), value, ctx_id=ctx_id)
         except Exception:
             logger.exception("[%s:replayer] failed to emit port: %s", self.node_id, port)
 
@@ -317,21 +318,17 @@ class ReplayerRuntimeNode(OperatorNode):
             self._self_state_writes.pop(str(field), None)
             logger.exception("[%s:replayer] failed to publish state: %s", self.node_id, field)
 
-    async def _safe_emit_exec(self, port: str) -> None:
-        _ = port
+    async def _safe_emit_exec(self, port: str, *, exec_id: str | int) -> None:
+        try:
+            await self.emit_exec(str(port), exec_id=exec_id)
+        except Exception:
+            logger.exception("[%s:replayer] failed to emit exec port: %s", self.node_id, port)
 
 
 def _event_ts_ms(event: Any) -> int:
     if event.type == "data_sample":
         return int(event.tick_ts_ms)
     return int(event.state_ts_ms)
-
-
-def _coerce_int(value: Any, *, default: int) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return int(default)
 
 
 def _coerce_time_mode(value: Any, *, default: str) -> str:
@@ -344,13 +341,14 @@ def _coerce_time_mode(value: Any, *, default: str) -> str:
 ReplayerRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
+    paletteCategory=f"{SERVICE_CLASS}.debug",
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="Replayer",
     description="Playback recorded data and sparse state changes for debugging.",
     tags=["record", "replay", "debug", "playback"],
     execInPorts=["play", "pause", "stop"],
-    execOutPorts=["started", "stopped", "looped", "done"],
+    execOutPorts=["sample", "started", "stopped", "looped", "done"],
     dataInPorts=[],
     dataOutPorts=[
         F8DataPortSpec(
@@ -360,11 +358,10 @@ ReplayerRuntimeNode.SPEC = F8OperatorSpec(
             required=False,
         ),
     ],
-    editableDataInPorts=False,
-    editableDataOutPorts=True,
-    editableExecInPorts=False,
-    editableExecOutPorts=False,
-    editableStateFields=True,
+    editPolicy=F8SpecEditPolicy(
+        stateFields=editable_collection_edit_policy(),
+        dataOutPorts=editable_collection_edit_policy(),
+    ),
     stateFields=[
         F8StateSpec(
             name="path",
@@ -374,6 +371,7 @@ ReplayerRuntimeNode.SPEC = F8OperatorSpec(
             access=F8StateAccess.rw,
             required=True,
             showOnNode=True,
+            redactOnPublish=True,
         ),
         F8StateSpec(
             name="loop",
@@ -388,7 +386,9 @@ ReplayerRuntimeNode.SPEC = F8OperatorSpec(
             name="timeMode",
             label="Time Mode",
             description="Playback time mapping mode.",
-            valueSchema=string_schema(default=TIME_MODE_OFFSET_FROM_PLAY, enum=[TIME_MODE_RECORDED_EPOCH, TIME_MODE_OFFSET_FROM_PLAY]),
+            valueSchema=string_schema(
+                default=TIME_MODE_OFFSET_FROM_PLAY, enum=[TIME_MODE_RECORDED_EPOCH, TIME_MODE_OFFSET_FROM_PLAY]
+            ),
             access=F8StateAccess.rw,
             required=True,
             showOnNode=True,
@@ -433,12 +433,11 @@ ReplayerRuntimeNode.SPEC = F8OperatorSpec(
 )
 
 
-def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
         return ReplayerRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(ReplayerRuntimeNode.SPEC, overwrite=True)
-    return reg
+    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
+    registry.register_operator_spec(ReplayerRuntimeNode.SPEC, overwrite=True)
+    return registry

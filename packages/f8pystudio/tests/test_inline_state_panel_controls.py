@@ -1,21 +1,31 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from qtpy import QtCore, QtGui, QtWidgets
 from NodeGraphQt.custom_widgets.properties_bin.node_property_factory import NodePropertyWidgetFactory
 
-from f8pysdk import F8StateAccess, F8StateSpec, integer_schema, string_schema
+from f8pysdk.codec import copy_model
+from f8pysdk.specs import F8StateAccess, F8StateSpec, integer_schema, number_schema, string_schema
 from f8pystudio.nodegraph.items.state_inline_controls import (
     build_state_inline_control,
+    ensure_state_inline_controls,
+    state_inline_control_serial,
     sync_state_inline_controls_from_graph_property,
 )
 from f8pystudio.nodegraph.items.node_item_core import StateFieldInfo
 from f8pystudio.nodegraph.items.service_toolbar_host import F8ForceGlobalToolTipFilter
-from f8pystudio.components.controls import F8OptionCombo
-from f8pystudio.components.state_editors import F8CodeButtonEditor, F8IncrementButtonEditor
-from f8pystudio.widgets.state_controls import build_state_panel_control
-from f8pystudio.components.wave import (
+from f8pystudio.ui.components.controls import F8Dial, F8OptionCombo
+from f8pystudio.ui.components.state_editors import (
+    F8CodeButtonEditor,
+    F8DialEditor,
+    F8IncrementButtonEditor,
+    F8WrapLineEditor,
+)
+from f8pystudio.ui.support.state_panel_controls import build_state_panel_control
+from f8pystudio.nodegraph.state_schema import schema_numeric_range
+from f8pystudio.ui.components.wave import (
     WaveHeatmapControl,
     WavePatternEditorControl,
     WavePreviewControl,
@@ -62,6 +72,14 @@ class _FakeNodeItem:
 
     def _backend_node(self) -> _FakeBackendNode:
         return self._backend
+
+
+class _SerialNodeItem(_FakeNodeItem):
+    def __init__(self) -> None:
+        super().__init__(code_value="")
+
+    def _schema_numeric_range(self, schema: Any) -> tuple[float | None, float | None]:
+        return schema_numeric_range(schema)
 
 
 def _ensure_app() -> QtWidgets.QApplication:
@@ -127,7 +145,7 @@ def _selected_axis_field() -> StateFieldInfo:
         access="rw",
         access_str="rw",
         required=True,
-        ui_control="options:[allAxes]",
+        ui_control="select[allAxes]",
         ui_language=None,
         value_schema=None,
     )
@@ -177,12 +195,132 @@ def _invalid_button_field() -> StateFieldInfo:
     )
 
 
+def _dial_field() -> StateFieldInfo:
+    return StateFieldInfo(
+        name="pan",
+        label="Pan",
+        tooltip="Circular pan control.",
+        show_on_node=True,
+        access="rw",
+        access_str="rw",
+        required=True,
+        ui_control="dial",
+        ui_language=None,
+        value_schema=number_schema(default=0.0, minimum=-1.0, maximum=1.0),
+    )
+
+
+def _wrapline_field() -> StateFieldInfo:
+    return StateFieldInfo(
+        name="expr",
+        label="Expr",
+        tooltip="Single-line python expression.",
+        show_on_node=True,
+        access="rw",
+        access_str="rw",
+        required=True,
+        ui_control="wrapline[python]",
+        ui_language="python",
+        value_schema=string_schema(default="x"),
+    )
+
+
 class _FakePropertyNode:
     def __init__(self, field: F8StateSpec) -> None:
         self._field = field
 
     def effective_state_fields(self) -> list[F8StateSpec]:
         return [self._field]
+
+
+class _EnsureStateBackendNode:
+    def __init__(self, fields: list[F8StateSpec], props: dict[str, Any] | None = None) -> None:
+        self._fields = list(fields)
+        self._props = dict(props or {})
+        self.spec = None
+        self.id = "nodeA"
+
+    def effective_state_fields(self) -> list[F8StateSpec]:
+        return list(self._fields)
+
+    def get_property(self, name: str) -> Any:
+        return self._props.get(str(name), None)
+
+    def set_property(self, name: str, value: Any, *, push_undo: bool = True) -> None:
+        del push_undo
+        self._props[str(name)] = value
+
+
+class _EnsureStateNodeItem(QtWidgets.QGraphicsRectItem):
+    def __init__(self, fields: list[F8StateSpec], *, props: dict[str, Any] | None = None) -> None:
+        super().__init__(0.0, 0.0, 10.0, 10.0)
+        self.id = "nodeA"
+        self.name = "nodeA"
+        self._backend = _EnsureStateBackendNode(fields, props=props)
+        self._state_inline_proxies: dict[str, QtWidgets.QGraphicsProxyWidget] = {}
+        self._state_inline_controls: dict[str, QtWidgets.QWidget] = {}
+        self._state_inline_bindings: dict[str, Any] = {}
+        self._state_inline_updaters: dict[str, Any] = {}
+        self._state_inline_toggles: dict[str, Any] = {}
+        self._state_inline_headers: dict[str, QtWidgets.QWidget] = {}
+        self._state_inline_bodies: dict[str, QtWidgets.QWidget] = {}
+        self._state_inline_expanded: dict[str, bool] = {}
+        self._state_inline_option_pools: dict[str, str] = {}
+        self._state_inline_ctrl_serial: dict[str, str] = {}
+        self._tooltip_filters: list[Any] = []
+
+    def _ensure_graph_property_hook(self) -> None:
+        return
+
+    def _backend_node(self) -> _EnsureStateBackendNode:
+        return self._backend
+
+    def _schema_enum_items(self, schema: Any) -> list[str]:
+        del schema
+        return []
+
+    def _schema_numeric_range(self, schema: Any) -> tuple[float | None, float | None]:
+        del schema
+        return None, None
+
+    def _is_state_inline_input_connected(self, field_name: str) -> bool:
+        del field_name
+        return False
+
+    def _build_state_inline_control(
+        self,
+        info: StateFieldInfo,
+        *,
+        widget_parent: QtWidgets.QWidget | None = None,
+    ) -> QtWidgets.QWidget:
+        del widget_parent
+        return QtWidgets.QLabel(info.label or info.name)
+
+    def _toggle_state_inline_section(self, name: str, expanded: bool) -> None:
+        self._state_inline_expanded[name] = bool(expanded)
+
+    def _select_node_from_embedded_widget(self) -> None:
+        return
+
+    def _invalidate_layout_metrics(self) -> None:
+        return
+
+    def _prepare_layout_metrics(self) -> None:
+        return
+
+    def sync_proxy_mode(self, *, force: bool = False) -> None:
+        del force
+        return
+
+
+class _EnsureRealStateNodeItem(_EnsureStateNodeItem):
+    def _build_state_inline_control(
+        self,
+        info: StateFieldInfo,
+        *,
+        widget_parent: QtWidgets.QWidget | None = None,
+    ) -> QtWidgets.QWidget:
+        return build_state_inline_control(self, info, widget_parent=widget_parent)
 
 
 def _mouse_event(
@@ -201,6 +339,14 @@ def _mouse_event(
         buttons,
         QtCore.Qt.KeyboardModifier.NoModifier,
     )
+
+
+def _dial_pos(widget: QtWidgets.QWidget, fraction: float) -> QtCore.QPointF:
+    rect = QtCore.QRectF(widget.rect()).adjusted(2.0, 2.0, -2.0, -2.0)
+    center = rect.center()
+    radius = min(rect.width(), rect.height()) / 2.0
+    theta = (float(fraction) * 2.0 * math.pi) - (math.pi / 2.0)
+    return QtCore.QPointF(center.x() + math.cos(theta) * radius, center.y() + math.sin(theta) * radius)
 
 
 def test_build_state_inline_control_code_uses_push_button_and_style() -> None:
@@ -310,6 +456,91 @@ def test_build_state_inline_control_button_disables_non_numeric_schema() -> None
     assert "integer or number" in str(control.toolTip() or "")
 
 
+def test_build_state_inline_control_dial_updates_backend_value() -> None:
+    _ensure_app()
+    node_item = _FakeNodeItem(code_value="")
+    node_item._backend = _FakeBackendNode({"pan": 0.0})
+
+    control = build_state_inline_control(node_item, _dial_field())
+
+    assert isinstance(control, F8Dial)
+    control.resize(96, 96)
+    target = _dial_pos(control, 0.625)
+    control.mousePressEvent(
+        _mouse_event(
+            QtCore.QEvent.Type.MouseButtonPress,
+            target,
+            button=QtCore.Qt.MouseButton.LeftButton,
+            buttons=QtCore.Qt.MouseButton.LeftButton,
+        )
+    )
+    control.mouseReleaseEvent(
+        _mouse_event(
+            QtCore.QEvent.Type.MouseButtonRelease,
+            target,
+            button=QtCore.Qt.MouseButton.LeftButton,
+            buttons=QtCore.Qt.MouseButton.NoButton,
+        )
+    )
+
+    assert float(node_item._backend.get_property("pan")) > 0.2
+
+
+def test_build_state_inline_control_dial_installs_global_tooltip_filter() -> None:
+    _ensure_app()
+    node_item = _FakeNodeItem(code_value="")
+    node_item._backend = _FakeBackendNode({"pan": 0.0})
+
+    control = build_state_inline_control(node_item, _dial_field())
+
+    assert isinstance(control, F8Dial)
+    assert len(node_item._tooltip_filters) == 1
+    tooltip_filter = node_item._tooltip_filters[0]
+    assert isinstance(tooltip_filter, F8ForceGlobalToolTipFilter)
+    assert tooltip_filter.parent() is control
+
+
+def test_build_state_inline_control_dial_noloop_sets_loop_mode() -> None:
+    _ensure_app()
+    field = StateFieldInfo(
+        name="pan",
+        label="Pan",
+        tooltip="Circular pan control.",
+        show_on_node=True,
+        access="rw",
+        access_str="rw",
+        required=True,
+        ui_control="dial[noloop]",
+        ui_language=None,
+        value_schema=number_schema(default=0.0, minimum=-1.0, maximum=1.0),
+    )
+    node_item = _FakeNodeItem(code_value="")
+    node_item._backend = _FakeBackendNode({"pan": 0.0})
+
+    control = build_state_inline_control(node_item, field)
+
+    assert isinstance(control, F8Dial)
+    assert control.loop() is False
+
+
+def test_build_state_inline_control_wrapline_python_skips_editor_assist_lookup(monkeypatch) -> None:
+    _ensure_app()
+    node_item = _FakeNodeItem(code_value="")
+    node_item._backend = _FakeBackendNode({"expr": "x + 1"})
+
+    def _unexpected(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("wrapline control should not request editor assist context")
+
+    monkeypatch.setattr(
+        "f8pystudio.nodegraph.items.state_inline_controls.editor_assist_context_for_field",
+        _unexpected,
+    )
+
+    control = build_state_inline_control(node_item, _wrapline_field())
+
+    assert isinstance(control, F8WrapLineEditor)
+
+
 def test_build_state_panel_control_button_uses_field_label_and_increments() -> None:
     _ensure_app()
     field = F8StateSpec(
@@ -334,6 +565,230 @@ def test_build_state_panel_control_button_uses_field_label_and_increments() -> N
     widget.click()
     widget.click()
     assert seen == [1, 2]
+
+
+def test_build_state_panel_control_dial_uses_dial_editor() -> None:
+    _ensure_app()
+    field = F8StateSpec(
+        name="pan",
+        label="Pan",
+        valueSchema=number_schema(default=0.0, minimum=-1.0, maximum=1.0),
+        access=F8StateAccess.rw,
+        uiControl="dial",
+    )
+    node = _FakePropertyNode(field)
+    widget = build_state_panel_control(
+        node=node,
+        prop_name="pan",
+        widget_type=1,
+        widget_factory=NodePropertyWidgetFactory(),
+    )
+
+    assert isinstance(widget, F8DialEditor)
+
+
+def test_build_state_panel_control_dial_noloop_sets_loop_mode() -> None:
+    _ensure_app()
+    field = F8StateSpec(
+        name="pan",
+        label="Pan",
+        valueSchema=number_schema(default=0.0, minimum=-1.0, maximum=1.0),
+        access=F8StateAccess.rw,
+        uiControl="dial[noloop]",
+    )
+    node = _FakePropertyNode(field)
+    widget = build_state_panel_control(
+        node=node,
+        prop_name="pan",
+        widget_type=1,
+        widget_factory=NodePropertyWidgetFactory(),
+    )
+
+    assert isinstance(widget, F8DialEditor)
+    dial = widget.findChild(F8Dial)
+    assert dial is not None
+    assert dial.loop() is False
+
+
+def test_build_state_panel_control_dial_disables_non_numeric_schema() -> None:
+    _ensure_app()
+    field = F8StateSpec(
+        name="badDial",
+        label="Bad Dial",
+        valueSchema=string_schema(default="oops"),
+        access=F8StateAccess.rw,
+        uiControl="dial",
+    )
+    node = _FakePropertyNode(field)
+    widget = build_state_panel_control(
+        node=node,
+        prop_name="badDial",
+        widget_type=1,
+        widget_factory=NodePropertyWidgetFactory(),
+    )
+
+    assert isinstance(widget, F8DialEditor)
+    dial = widget.findChild(F8Dial)
+    assert dial is not None
+    assert not dial.isEnabled()
+    assert "integer or number" in str(dial.toolTip() or "")
+
+
+def test_build_state_panel_control_wrapline_python_skips_editor_assist_lookup(monkeypatch) -> None:
+    _ensure_app()
+    field = F8StateSpec(
+        name="expr",
+        label="Expr",
+        valueSchema=string_schema(default="x"),
+        access=F8StateAccess.rw,
+        uiControl="wrapline[python]",
+    )
+    node = _FakePropertyNode(field)
+
+    def _unexpected(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("wrapline control should not request editor assist context")
+
+    monkeypatch.setattr(
+        "f8pystudio.ui.support.state_panel_controls.editor_assist_context_for_field",
+        _unexpected,
+    )
+
+    widget = build_state_panel_control(
+        node=node,
+        prop_name="expr",
+        widget_type=1,
+        widget_factory=NodePropertyWidgetFactory(),
+    )
+
+    assert isinstance(widget, F8WrapLineEditor)
+
+
+def test_ensure_state_inline_controls_disposes_detached_widget_without_reparent_flash(monkeypatch) -> None:
+    _ensure_app()
+    first = F8StateSpec(
+        name="code",
+        label="Code",
+        access=F8StateAccess.rw,
+        uiControl="code",
+        showOnNode=True,
+        valueSchema=string_schema(),
+    )
+    second = F8StateSpec(
+        name="preview",
+        label="Preview",
+        access=F8StateAccess.ro,
+        uiControl="text",
+        showOnNode=True,
+        valueSchema=string_schema(),
+    )
+    node_item = _EnsureStateNodeItem([first])
+
+    ensure_state_inline_controls(node_item)
+    old_widget = node_item._state_inline_proxies["code"].widget()
+    assert old_widget is not None
+
+    seen: list[tuple[QtWidgets.QWidget, str]] = []
+
+    def _record(widget: QtWidgets.QWidget | None, *, context: str) -> None:
+        if widget is not None:
+            seen.append((widget, context))
+
+    monkeypatch.setattr(
+        "f8pystudio.nodegraph.items.state_inline_controls.dispose_detached_proxy_widget",
+        _record,
+    )
+
+    node_item._backend = _EnsureStateBackendNode([second])
+    ensure_state_inline_controls(node_item)
+
+    assert seen == [(old_widget, "inline-state-remove:code")]
+
+
+def test_ensure_state_inline_controls_reorders_renamed_field_to_match_spec_order() -> None:
+    _ensure_app()
+    first = F8StateSpec(name="first", access=F8StateAccess.rw, showOnNode=True, valueSchema=string_schema())
+    second = F8StateSpec(name="second", access=F8StateAccess.rw, showOnNode=True, valueSchema=string_schema())
+    renamed = F8StateSpec(name="renamed", access=F8StateAccess.rw, showOnNode=True, valueSchema=string_schema())
+    node_item = _EnsureStateNodeItem([first, second])
+
+    ensure_state_inline_controls(node_item)
+    assert list(node_item._state_inline_proxies.keys()) == ["first", "second"]
+
+    node_item._backend._fields = [renamed, second]
+    ensure_state_inline_controls(node_item)
+
+    assert list(node_item._state_inline_proxies.keys()) == ["renamed", "second"]
+
+
+def test_ensure_state_inline_controls_refreshes_existing_button_label_and_tooltip() -> None:
+    _ensure_app()
+    field = F8StateSpec(
+        name="playTrigger",
+        label="Play",
+        description="Increment to trigger playback.",
+        access=F8StateAccess.rw,
+        uiControl="button",
+        showOnNode=True,
+        valueSchema=integer_schema(),
+    )
+    node_item = _EnsureRealStateNodeItem([field], props={"playTrigger": 0})
+
+    ensure_state_inline_controls(node_item)
+
+    control = node_item._state_inline_controls["playTrigger"]
+    assert isinstance(control, F8IncrementButtonEditor)
+    assert control.text() == "Play"
+    assert "Increment to trigger playback." in str(control.toolTip() or "")
+
+    updated_field = copy_model(
+        field,
+        update={
+            "label": "Start",
+            "description": "Increment to start playback.",
+        },
+    )
+    node_item._backend._fields = [updated_field]
+
+    ensure_state_inline_controls(node_item)
+
+    updated_control = node_item._state_inline_controls["playTrigger"]
+    assert updated_control is control
+    assert isinstance(updated_control, F8IncrementButtonEditor)
+    assert updated_control.text() == "Start"
+    assert "Increment to start playback." in str(updated_control.toolTip() or "")
+
+
+def test_state_inline_control_serial_changes_when_numeric_range_changes() -> None:
+    node_item = _SerialNodeItem()
+    info_a = StateFieldInfo(
+        name="pan",
+        label="Pan",
+        tooltip="Circular pan control.",
+        show_on_node=True,
+        access="rw",
+        access_str="rw",
+        required=True,
+        ui_control="dial",
+        ui_language="",
+        value_schema=number_schema(default=0.0, minimum=-1.0, maximum=1.0),
+    )
+    info_b = StateFieldInfo(
+        name="pan",
+        label="Pan",
+        tooltip="Circular pan control.",
+        show_on_node=True,
+        access="rw",
+        access_str="rw",
+        required=True,
+        ui_control="dial",
+        ui_language="",
+        value_schema=number_schema(default=0.0, minimum=-2.0, maximum=2.0),
+    )
+
+    serial_a = state_inline_control_serial(node_item, info_a)
+    serial_b = state_inline_control_serial(node_item, info_b)
+
+    assert serial_a != serial_b
 
 
 def test_option_combo_read_only_toggle_does_not_call_qlineedit_text_interaction_flags() -> None:

@@ -1,17 +1,17 @@
 ## When to Use
 
-- Use `f8.audiofeat.core` to extract low-level acoustic descriptors such as loudness (RMS/Peak), spectrum-derived features (Centroid, Flux), and general audio activity level.
-- it is the foundation for audio-reactive graphs that map real-world sound energy into visual motion, device control, or logic triggers.
-- Choose this for general energy tracking, silence detection, or basic timbre analysis.
+- Use `f8.audiofeat.core` to extract continuous audio features such as loudness, peak level, spectral centroid, and spectral change.
+- It is a good fit for audio-driven visuals, device control, silence detection, and general energy tracking.
+- In many graphs it is the foundation of the audio analysis path.
 
 ## Common Wiring Patterns
 
-- **Energy to Motion**: Feed it from `f8.audiocap`, then branch the `loudness` or `centroid` outputs to `f8.pyengine` operators or `Python Expr` for range mapping and smoothing.
-- **Spectrum Viz**: Connect the `spectrum` output to visualization nodes to inspect the frequency distribution in real-time.
-- **Responsive Tuning**: Adjust `windowMs` and `hopMs` to balance responsiveness vs. stability. Longer windows provide smoother features at the cost of slight latency.
+- A common chain is `f8.audiocap -> f8.audiofeat.core -> f8.pyengine`.
+- If you just want to inspect the analysis result, route the output to `f8.viz.text` or another lightweight visualizer.
+- For smooth control behavior, follow it with operators such as `Range Map`, filters, or envelope shaping.
 
 ## Pitfalls / Gotchas
 
-- **SHM Connectivity**: Forgetting to wire the correct `audioShmName` is a common mistake. If the service starts but shows no activity, verify it's reading from the correct producer's SHM region.
-- **Normalization**: Raw audio energy can vary wildly between sources. Use a `Range Map` or auto-gain logic in `f8.pyengine` to normalize features before they drive sensitive actuators.
-- **Processing Overhead**: High-resolution spectral analysis (very short `hopMs`) can be CPU intensive. Only use high rates if the downstream control logic actually requires sub-10ms updates.
+- Raw energy ranges are often source-dependent, so normalization or remapping is usually needed before driving sensitive controls.
+- Larger `windowMs` tends to improve stability; smaller `hopMs` improves responsiveness but raises CPU cost.
+- If the module is producing numbers but the graph behavior feels erratic, inspect input level and feature range before rewriting downstream logic.

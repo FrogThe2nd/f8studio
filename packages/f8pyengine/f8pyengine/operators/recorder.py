@@ -1,24 +1,27 @@
 from __future__ import annotations
 
+from f8pysdk.codec import coerce_flag
 from pathlib import Path
 import logging
 import time
 from typing import Any, Final
 
-from f8pysdk import (
+from f8pysdk.specs import (
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
+    F8SpecEditPolicy,
     F8StateAccess,
     F8StateSpec,
     boolean_schema,
+    editable_collection_edit_policy,
     integer_schema,
     string_schema,
 )
-from f8pysdk.builtin_state_fields import OPERATOR_ID_FIELD_NAME, SVC_ID_FIELD_NAME
+from f8pysdk._specs.builtin_fields import OPERATOR_ID_FIELD_NAME, SVC_ID_FIELD_NAME
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import OperatorNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import OperatorNode
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from ..constants import SERVICE_CLASS
 from ..recording import FORMAT_VERSION, RecordingHeader, RecordingReader, RecordingWriter
@@ -41,19 +44,6 @@ _CONTROL_STATE_NAMES = {
 }
 
 
-def _coerce_bool(value: Any, *, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    text = str(value or "").strip().lower()
-    if text in ("1", "true", "yes", "on"):
-        return True
-    if text in ("0", "false", "no", "off", ""):
-        return False
-    return bool(default)
-
-
 class RecorderRuntimeNode(OperatorNode):
     def __init__(self, *, node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any] | None = None) -> None:
         super().__init__(
@@ -66,13 +56,14 @@ class RecorderRuntimeNode(OperatorNode):
         )
         self._initial_state = dict(initial_state or {})
         self._path = str(self._initial_state.get("path") or "").strip()
-        self._enabled = _coerce_bool(self._initial_state.get("enabled"), default=True)
-        self._append = _coerce_bool(self._initial_state.get("append"), default=True)
+        self._enabled = coerce_flag(self._initial_state.get("enabled"), default=True)
+        self._append = coerce_flag(self._initial_state.get("append"), default=True)
         self._writer: RecordingWriter | None = None
         self._writer_path = ""
         self._session_start_ts_ms: int | None = None
         self._sample_count = 0
         self._state_event_count = 0
+        self._published_state_cache: dict[str, Any] = {}
         self._user_state_names = tuple(
             name for name in self.state_fields if str(name).strip() and str(name) not in _CONTROL_STATE_NAMES
         )
@@ -81,8 +72,8 @@ class RecorderRuntimeNode(OperatorNode):
         self._close_writer()
 
     async def on_exec(self, exec_id: str | int, _in_port: str | None = None) -> list[str]:
-        ts_ms = _coerce_ts_ms(exec_id)
-        await self._record_tick(ts_ms=ts_ms)
+        event_ts_ms = now_ms()
+        await self._record_tick(exec_id=exec_id, event_ts_ms=event_ts_ms)
         return []
 
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
@@ -90,22 +81,24 @@ class RecorderRuntimeNode(OperatorNode):
         if name == "path":
             self._path = str(value or "").strip()
             self._close_writer()
+            await self._safe_set_state_if_changed("recording", False)
             return
         if name == "enabled":
-            self._enabled = _coerce_bool(value, default=self._enabled)
+            self._enabled = coerce_flag(value, default=self._enabled)
             if not self._enabled:
                 self._close_writer()
-                await self._safe_set_state("recording", False)
+                await self._safe_set_state_if_changed("recording", False)
             return
         if name == "append":
-            self._append = _coerce_bool(value, default=self._append)
+            self._append = coerce_flag(value, default=self._append)
             self._close_writer()
+            await self._safe_set_state_if_changed("recording", False)
             return
         if name not in self._user_state_names:
             return
         if not self._enabled:
             return
-        event_ts_ms = int(ts_ms if ts_ms is not None else now_ms())
+        event_ts_ms = now_ms()
         try:
             writer = self._ensure_writer(start_ts_ms=event_ts_ms)
             relative_offset_ms = max(0, int(event_ts_ms - self._session_start_ts_ms_or_now(event_ts_ms)))
@@ -116,7 +109,7 @@ class RecorderRuntimeNode(OperatorNode):
                 value=value,
             )
             self._state_event_count += 1
-            await self._publish_counters()
+            await self._publish_recording_state()
         except Exception as exc:
             logger.exception("[%s:recorder] failed to record state change: %s", self.node_id, name)
             await self._set_last_error(str(exc))
@@ -125,7 +118,7 @@ class RecorderRuntimeNode(OperatorNode):
         del ts_ms, meta
         name = str(field or "").strip()
         if name in ("enabled", "append"):
-            return _coerce_bool(value, default=(name == "enabled"))
+            return coerce_flag(value, default=(name == "enabled"))
         if name == "path":
             return str(value or "").strip()
         return value
@@ -168,42 +161,51 @@ class RecorderRuntimeNode(OperatorNode):
         self._writer_path = path
         return writer
 
-    async def _record_tick(self, *, ts_ms: int) -> None:
+    async def _record_tick(self, *, exec_id: str | int, event_ts_ms: int) -> None:
         if not self._enabled:
             return
         try:
-            writer = self._ensure_writer(start_ts_ms=ts_ms)
+            writer = self._ensure_writer(start_ts_ms=event_ts_ms)
             data: dict[str, Any] = {}
             for port in self.data_in_ports:
-                data[str(port)] = await self.pull(str(port), ctx_id=ts_ms)
-            relative_offset_ms = max(0, int(ts_ms - self._session_start_ts_ms_or_now(ts_ms)))
+                data[str(port)] = await self.pull(str(port), ctx_id=exec_id)
+            relative_offset_ms = max(
+                0,
+                int(event_ts_ms - self._session_start_ts_ms_or_now(event_ts_ms)),
+            )
             writer.write_data_sample(
-                tick_ts_ms=ts_ms,
+                tick_ts_ms=event_ts_ms,
                 relative_offset_ms=relative_offset_ms,
                 data=data,
             )
             self._sample_count += 1
-            await self._publish_counters()
+            await self._publish_recording_state()
         except Exception as exc:
             logger.exception("[%s:recorder] failed to record sample", self.node_id)
             await self._set_last_error(str(exc))
 
-    async def _publish_counters(self) -> None:
-        await self._safe_set_state("recording", self._writer is not None)
-        await self._safe_set_state("sessionStartTsMs", int(self._session_start_ts_ms_or_now(now_ms())))
-        await self._safe_set_state("sampleCount", int(self._sample_count))
-        await self._safe_set_state("stateEventCount", int(self._state_event_count))
-        await self._safe_set_state("lastError", "")
+    async def _publish_recording_state(self) -> None:
+        session_start_ts_ms = self._session_start_ts_ms
+        if session_start_ts_ms is None:
+            session_start_ts_ms = now_ms()
+        await self._safe_set_state_if_changed("recording", self._writer is not None)
+        await self._safe_set_state_if_changed("sessionStartTsMs", int(session_start_ts_ms))
+        await self._safe_set_state_if_changed("lastError", "")
 
     async def _set_last_error(self, message: str) -> None:
         self._close_writer()
-        await self._safe_set_state("recording", False)
-        await self._safe_set_state("lastError", str(message))
+        await self._safe_set_state_if_changed("recording", False)
+        await self._safe_set_state_if_changed("lastError", str(message))
 
-    async def _safe_set_state(self, field: str, value: Any) -> None:
+    async def _safe_set_state_if_changed(self, field: str, value: Any) -> None:
+        prev = self._published_state_cache.get(field)
+        if prev == value:
+            return
+        self._published_state_cache[field] = value
         try:
             await self.set_state(field, value)
         except Exception:
+            self._published_state_cache.pop(field, None)
             logger.exception("[%s:recorder] failed to publish state: %s", self.node_id, field)
 
     def _session_start_ts_ms_or_now(self, fallback: int) -> int:
@@ -219,23 +221,13 @@ class RecorderRuntimeNode(OperatorNode):
             writer.close()
 
 
-def _coerce_ts_ms(exec_id: str | int) -> int:
-    if isinstance(exec_id, int):
-        return int(exec_id)
-    text = str(exec_id or "").strip()
-    try:
-        return int(text)
-    except ValueError:
-        return now_ms()
-
-
 def now_ms() -> int:
     return int(time.time() * 1000.0)
-
 
 RecorderRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
+    paletteCategory=f"{SERVICE_CLASS}.debug",
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="Recorder",
@@ -245,11 +237,10 @@ RecorderRuntimeNode.SPEC = F8OperatorSpec(
     execOutPorts=[],
     dataInPorts=[],
     dataOutPorts=[],
-    editableDataInPorts=True,
-    editableDataOutPorts=False,
-    editableExecInPorts=False,
-    editableExecOutPorts=False,
-    editableStateFields=True,
+    editPolicy=F8SpecEditPolicy(
+        stateFields=editable_collection_edit_policy(),
+        dataInPorts=editable_collection_edit_policy(),
+    ),
     stateFields=[
         F8StateSpec(
             name="path",
@@ -259,6 +250,7 @@ RecorderRuntimeNode.SPEC = F8OperatorSpec(
             access=F8StateAccess.rw,
             required=True,
             showOnNode=True,
+            redactOnPublish=True,
         ),
         F8StateSpec(
             name="enabled",
@@ -297,24 +289,6 @@ RecorderRuntimeNode.SPEC = F8OperatorSpec(
             showOnNode=False,
         ),
         F8StateSpec(
-            name="sampleCount",
-            label="Sample Count",
-            description="Readonly number of recorded data_sample events.",
-            valueSchema=integer_schema(default=0, minimum=0),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=True,
-        ),
-        F8StateSpec(
-            name="stateEventCount",
-            label="State Event Count",
-            description="Readonly number of recorded state_change events.",
-            valueSchema=integer_schema(default=0, minimum=0),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=True,
-        ),
-        F8StateSpec(
             name="lastError",
             label="Last Error",
             description="Last recording error message.",
@@ -326,13 +300,11 @@ RecorderRuntimeNode.SPEC = F8OperatorSpec(
     ],
 )
 
-
-def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
         return RecorderRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(RecorderRuntimeNode.SPEC, overwrite=True)
-    return reg
+    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
+    registry.register_operator_spec(RecorderRuntimeNode.SPEC, overwrite=True)
+    return registry

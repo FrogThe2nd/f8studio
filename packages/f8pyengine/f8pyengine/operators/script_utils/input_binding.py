@@ -7,7 +7,7 @@ import re
 from typing import Any, Literal
 
 import msgspec
-from f8pysdk import (
+from f8pysdk.specs import (
     F8AnyTypeSchema,
     F8ArrayTypeSchema,
     F8BooleanTypeSchema,
@@ -127,7 +127,7 @@ class _MappedInputsView(PyEngineInputsView):
         return {k: ValueAdapter.unwrap(self.get(k)) for k in self._iter_keys()}
 
 
-def parse_input_mode(raw: Any, *, default: InputMode = INPUT_MODE_INPUT_VIEW) -> InputMode:
+def coerce_input_mode(raw: Any, *, default: InputMode = INPUT_MODE_INPUT_VIEW) -> InputMode:
     text = str(raw or "").strip().lower().replace("-", "_")
     if text in VALID_INPUT_MODES:
         return text  # type: ignore[return-value]
@@ -404,7 +404,7 @@ class _InputsModelBuilder:
 class InputBinding:
     def __init__(self, *, node_id: str, data_in_ports: list[F8DataPortSpec], mode: InputMode) -> None:
         self._node_id = str(node_id or "")
-        self._mode: InputMode = parse_input_mode(mode)
+        self._mode: InputMode = coerce_input_mode(mode)
         model_builder = _InputsModelBuilder(node_id=self._node_id)
         self._model_type = model_builder.build_root(list(data_in_ports or []))
         self.warnings: tuple[str, ...] = tuple(model_builder.warnings)
@@ -416,7 +416,7 @@ class InputBinding:
         return self._mode
 
     def set_mode(self, mode: InputMode) -> None:
-        next_mode = parse_input_mode(mode)
+        next_mode = coerce_input_mode(mode)
         if next_mode != self._mode:
             logger.debug("[%s:python_script] switch input mode: %s -> %s", self._node_id, self._mode, next_mode)
         self._mode = next_mode

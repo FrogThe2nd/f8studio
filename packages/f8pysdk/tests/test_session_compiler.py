@@ -6,15 +6,17 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from f8pysdk.msgspec_codec import dump_json
-from f8pysdk.generated import (  # noqa: E402
+from f8pysdk.codec import dump_json
+from f8pysdk.command import command_input_state_field, command_output_state_field
+from f8pysdk.specs import (  # noqa: E402
+    F8Command,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8ServiceSchemaVersion,
     F8ServiceSpec,
 )
-from f8pysdk.service_runtime_tools.catalog import ServiceCatalog  # noqa: E402
-from f8pysdk.service_runtime_tools.session_compiler import (  # noqa: E402
+from f8pysdk.service_runtime_tools.inventory.catalog import ServiceCatalog  # noqa: E402
+from f8pysdk.service_runtime_tools.session.compiler import (  # noqa: E402
     compile_runtime_graphs_from_session_layout,
 )
 
@@ -222,6 +224,74 @@ class SessionCompilerTests(unittest.TestCase):
         self.assertNotIn("operatorClass", service_node_payload)
         self.assertNotIn("stateValues", service_node_payload)
         self.assertNotIn("stateValues", operator_node_payload)
+
+    def test_operator_commands_compile_hidden_backing_states(self) -> None:
+        operator_spec = F8OperatorSpec(
+            schemaVersion=F8OperatorSchemaVersion.f8operator_1,
+            serviceClass="f8.pyengine",
+            operatorClass="f8.pyengine.op",
+            version="0.0.1",
+            label="Op",
+            commands=[F8Command(name="run", params=[])],
+        )
+        layout = {
+            "nodes": {
+                "svc1": {
+                    "id": "svc1",
+                    "f8_spec": dump_json(self._service_spec("f8.pyengine"), mode="json"),
+                },
+                "op1": {
+                    "id": "op1",
+                    "f8_spec": dump_json(operator_spec, mode="json"),
+                    "custom": {"svcId": "svc1"},
+                },
+            },
+            "connections": [],
+        }
+
+        compiled = compile_runtime_graphs_from_session_layout(layout=layout, catalog=self.catalog)
+        operator_node = next(node for node in list(compiled.global_graph.nodes or []) if str(node.nodeId) == "op1")
+        field_names = {str(field.name or "") for field in list(operator_node.stateFields or [])}
+
+        self.assertIn(command_input_state_field("run"), field_names)
+        self.assertIn(command_output_state_field("run"), field_names)
+
+    def test_compiler_ignores_editor_only_f8_layers_metadata(self) -> None:
+        layout = {
+            "f8_layers": [
+                {
+                    "id": "base",
+                    "label": "Base",
+                    "defaultVisible": True,
+                    "isBase": True,
+                },
+                {
+                    "id": "logic",
+                    "label": "Logic",
+                    "defaultVisible": False,
+                    "isBase": False,
+                },
+            ],
+            "nodes": {
+                "svc1": {
+                    "id": "svc1",
+                    "f8_spec": dump_json(self._service_spec("f8.pyengine"), mode="json"),
+                    "f8_ui_state": {"layerIds": ["logic"]},
+                },
+                "op1": {
+                    "id": "op1",
+                    "f8_spec": dump_json(self._operator_spec("f8.pyengine", "f8.pyengine.op"), mode="json"),
+                    "custom": {"svcId": "svc1"},
+                    "f8_ui_state": {"layerIds": ["logic"]},
+                },
+            },
+            "connections": [],
+        }
+
+        compiled = compile_runtime_graphs_from_session_layout(layout=layout, catalog=self.catalog)
+
+        self.assertEqual(len(list(compiled.global_graph.nodes or [])), 2)
+        self.assertEqual(len(list(compiled.global_graph.edges or [])), 0)
 
 
 if __name__ == "__main__":

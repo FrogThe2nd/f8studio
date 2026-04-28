@@ -4,7 +4,7 @@ import asyncio
 from typing import Any
 
 from f8pysdk.nats_naming import svc_endpoint_subject
-from f8pysdk.service_bus.codec import encode_obj
+from f8pysdk.codec import encode_obj
 
 from f8pystudio.bridge.service_endpoint_client import (
     request_service_status,

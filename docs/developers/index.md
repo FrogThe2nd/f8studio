@@ -20,6 +20,10 @@ This path is for advanced users who want to build F8Studio from source or extend
 
 - [Docs Tooling](docs-tooling.md)
 
+### Work on Asset Cloud desktop browser sign-in
+
+- [Asset Cloud Desktop Browser Sign-In](assetcloud-desktop-browser-auth.md)
+
 ## What This Section Assumes
 
 - You are comfortable with source trees, Python environments, and build tooling

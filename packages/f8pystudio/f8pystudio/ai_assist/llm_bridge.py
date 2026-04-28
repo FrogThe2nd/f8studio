@@ -25,9 +25,9 @@ from qtpy import QtCore, QtGui  # type: ignore[import-not-found]
 from .graph_context import GraphContextSnapshot, format_graph_context_report, format_graph_context_snapshot
 from .http_client import AiHttpClient
 from .registry import ModelInfo, ProviderConfig
+from .state_store import AiPanelStateStore, MemoryAiPanelStateStore
 from .store import AiProviderStore
-from .ui_state import load_ai_panel_state, save_ai_panel_state
-from ..editor_assist.bridge import PythonEditorAssistBridge
+from f8pystudio.ui.support.editor_assist_bridge import PythonEditorAssistBridge
 from ..editor_assist.workspace import EditorAssistContext
 
 logger = logging.getLogger(__name__)
@@ -112,10 +112,12 @@ class AiLlmBridge(QtCore.QObject):
     def __init__(
         self,
         store: AiProviderStore,
+        state_store: AiPanelStateStore | None = None,
         parent: QtCore.QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self._store = store
+        self._state_store = state_store or MemoryAiPanelStateStore()
         self._http = AiHttpClient(self)
 
         # Active provider/model selections (changeable from quick panel)
@@ -366,7 +368,7 @@ class AiLlmBridge(QtCore.QObject):
     @QtCore.Slot()
     def reset_chat_history(self) -> None:
         """Called when user clicks the reset button in UI."""
-        logger.info("AI chat history reset requested by user")
+        logger.debug("AI chat history reset requested by user")
         # In current design, history is held by JS, so this is mainly a signal
         # for backend to clear any ephemeral cached context if it had any.
         self.clear_chat_context_snapshot()
@@ -430,12 +432,12 @@ class AiLlmBridge(QtCore.QObject):
     @QtCore.Slot(str, "QVariant")
     def set_ui_state(self, key: str, value: Any) -> None:
         """Persist UI state (called from JS)."""
-        save_ai_panel_state(str(key), value)
+        self._state_store.set_value(str(key), value)
 
     @QtCore.Slot(str, "QVariant", result="QVariant")
     def get_ui_state(self, key: str, default: Any = None) -> Any:
         """Load persistent UI state (called from JS)."""
-        return load_ai_panel_state(str(key), default)
+        return self._state_store.get_value(str(key), default)
 
     # ------------------------------------------------------------------
     # Inline suggestion (FIM)

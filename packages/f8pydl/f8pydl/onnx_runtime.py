@@ -31,6 +31,15 @@ class Classification:
     score: float
 
 
+@dataclass(frozen=True)
+class TemporalDetectorInputSpec:
+    layout: Literal["bcthw", "btchw"]
+    clip_length: int
+    channels: int
+    input_height: int
+    input_width: int
+
+
 def _choose_ort_providers(*, prefer: Literal["auto", "cuda", "cpu"]) -> list[str]:
     import onnxruntime as ort  # type: ignore
 
@@ -221,7 +230,7 @@ class OnnxYoloDetectorRuntime:
                 kpts = kpts[keep_idx]
 
                 boxes_img = self._map_boxes_to_frame(boxes, lb=lb, frame_bgr=frame_bgr)
-                out: list[Detection] = []
+                detections: list[Detection] = []
                 h0, w0 = frame_bgr.shape[:2]
                 for (x1f, y1f, x2f, y2f), sc, ci, kp_flat in zip(boxes_img, scores, cls_idx, kpts, strict=False):
                     x1i = int(round(float(x1f)))
@@ -231,7 +240,7 @@ class OnnxYoloDetectorRuntime:
                     if x2i <= x1i or y2i <= y1i:
                         continue
                     kp = np.asarray(kp_flat, dtype=np.float32).reshape((int(kpt_count), dims))
-                    kps_out: list[PoseKeypoint] = []
+                    pose_keypoints: list[PoseKeypoint] = []
                     for j in range(int(kpt_count)):
                         x = float(kp[j, 0])
                         y = float(kp[j, 1])
@@ -240,16 +249,16 @@ class OnnxYoloDetectorRuntime:
                         y = (y - float(lb.pad_y)) / float(lb.scale if lb.scale > 0 else 1.0)
                         x = max(0.0, min(float(w0), x))
                         y = max(0.0, min(float(h0), y))
-                        kps_out.append(PoseKeypoint(x=x, y=y, score=s))
-                    out.append(
+                        pose_keypoints.append(PoseKeypoint(x=x, y=y, score=s))
+                    detections.append(
                         Detection(
                             cls=names.get(int(ci), str(int(ci))),
                             conf=float(sc),
                             xyxy=(x1i, y1i, x2i, y2i),
-                            keypoints=kps_out,
+                            keypoints=pose_keypoints,
                         )
                     )
-                return out
+                return detections
 
         has_obj = False
         kpt_off = 4 + nc
@@ -477,6 +486,242 @@ class OnnxYoloDetectorRuntime:
         return polys
 
 
+class OnnxYowoTemporalDetectorRuntime:
+    _IMAGENET_MEAN = (0.485, 0.456, 0.406)
+    _IMAGENET_STD = (0.229, 0.224, 0.225)
+
+    def __init__(self, spec: ModelSpec, *, ort_provider: Literal["auto", "cuda", "cpu"] = "auto") -> None:
+        self.spec = spec
+        self._session = _OnnxSession(str(spec.onnx_path), ort_provider=ort_provider)
+        self.provider_warning = self._session.provider_warning
+        self.active_providers = self._session.active_providers
+        input_shape = list(self._session.input_meta.shape) if isinstance(self._session.input_meta.shape, list) else []
+        input_spec = self._extract_input_spec(
+            input_shape,
+            default_clip_length=int(spec.temporal_clip_length),
+            default_height=int(spec.input_height),
+            default_width=int(spec.input_width),
+        )
+        self._input_spec = input_spec
+        if int(spec.input_height) != int(input_spec.input_height) or int(spec.input_width) != int(input_spec.input_width):
+            mismatch = (
+                "Model input shape is fixed and differs from yaml input size; "
+                f"using model shape HxW={int(input_spec.input_height)}x{int(input_spec.input_width)} "
+                f"(yaml HxW={int(spec.input_height)}x{int(spec.input_width)})."
+            )
+            if self.provider_warning:
+                self.provider_warning = f"{self.provider_warning}\n{mismatch}"
+            else:
+                self.provider_warning = mismatch
+
+    @property
+    def clip_length(self) -> int:
+        return int(self._input_spec.clip_length)
+
+    @property
+    def sampling_rate(self) -> int:
+        return int(self.spec.temporal_sampling_rate)
+
+    @property
+    def buffer_span(self) -> int:
+        return (int(self.clip_length) - 1) * int(self.sampling_rate) + 1
+
+    def prepare_frame(self, frame_bgr: Any) -> Any:
+        import cv2  # type: ignore
+        import numpy as np  # type: ignore
+
+        if int(self._input_spec.channels) != 3:
+            raise ValueError(f"Temporal detector currently supports 3-channel input, got {self._input_spec.channels}")
+        resized = cv2.resize(
+            frame_bgr,
+            (int(self._input_spec.input_width), int(self._input_spec.input_height)),
+            interpolation=cv2.INTER_LINEAR,
+        )
+        rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+        x = rgb.astype(np.float32) / 255.0
+        x = np.transpose(x, (2, 0, 1))
+        if self.spec.temporal_normalization == "imagenet":
+            mean = np.asarray(self._IMAGENET_MEAN, dtype=np.float32).reshape((3, 1, 1))
+            std = np.asarray(self._IMAGENET_STD, dtype=np.float32).reshape((3, 1, 1))
+            x = (x - mean) / std
+        return np.ascontiguousarray(x, dtype=np.float32)
+
+    def infer_sequence(self, sequence_chw: Any, *, frame_size_hw: tuple[int, int]) -> tuple[list[Detection], dict[str, Any]]:
+        import numpy as np  # type: ignore
+
+        sequence = np.asarray(sequence_chw, dtype=np.float32)
+        if sequence.ndim != 4:
+            raise ValueError(f"Temporal detector sequence must have shape SxCxHxW, got {sequence.shape!r}")
+        if int(sequence.shape[0]) != int(self._input_spec.clip_length):
+            raise ValueError(
+                f"Temporal detector expected sequence length {self._input_spec.clip_length}, "
+                f"got {int(sequence.shape[0])}"
+            )
+        if int(sequence.shape[1]) != int(self._input_spec.channels):
+            raise ValueError(
+                f"Temporal detector expected channels {self._input_spec.channels}, got {int(sequence.shape[1])}"
+            )
+        if (
+            int(sequence.shape[2]) != int(self._input_spec.input_height)
+            or int(sequence.shape[3]) != int(self._input_spec.input_width)
+        ):
+            raise ValueError(
+                "Temporal detector sequence size mismatch: "
+                f"expected CxHxW={self._input_spec.channels}x{self._input_spec.input_height}x{self._input_spec.input_width}, "
+                f"got {int(sequence.shape[1])}x{int(sequence.shape[2])}x{int(sequence.shape[3])}"
+            )
+
+        input_tensor = self._to_input_tensor(sequence, layout=self._input_spec.layout)
+        out0 = self._session.run(input_tensor)
+        pred = np.asarray(out0)
+        if pred.ndim != 3:
+            return [], {"reason": "unexpected_pred_ndim", "pred_shape": list(pred.shape)}
+        if pred.shape[1] < pred.shape[2]:
+            pred = np.transpose(pred, (0, 2, 1))
+        pred = pred[0]
+        detections = self._decode_det(pred, frame_size_hw=frame_size_hw)
+        return detections, {"pred_shape": list(pred.shape), "input_layout": self._input_spec.layout}
+
+    def _decode_det(self, pred: Any, *, frame_size_hw: tuple[int, int]) -> list[Detection]:
+        import numpy as np  # type: ignore
+
+        c = int(pred.shape[1])
+        names = {int(i): str(v) for i, v in enumerate(self.spec.classes or [])}
+        nc = len(names) if names else max(1, c - 4)
+        has_obj = c == 5 + nc
+
+        if has_obj:
+            xywh = pred[:, 0:4]
+            obj = pred[:, 4]
+            cls_scores = pred[:, 5 : 5 + nc]
+            cls_idx = cls_scores.argmax(axis=1)
+            cls_conf = cls_scores[np.arange(cls_scores.shape[0]), cls_idx]
+            scores = obj * cls_conf
+        else:
+            xywh = pred[:, 0:4]
+            cls_scores = pred[:, 4 : 4 + nc]
+            cls_idx = cls_scores.argmax(axis=1)
+            scores = cls_scores[np.arange(cls_scores.shape[0]), cls_idx]
+
+        keep0 = scores >= float(self.spec.conf_threshold)
+        if not np.any(keep0):
+            return []
+
+        xywh = xywh[keep0]
+        scores = scores[keep0]
+        cls_idx = cls_idx[keep0]
+
+        boxes = OnnxYoloDetectorRuntime._xywh_to_xyxy_lb(xywh)
+        keep_idx = nms_xyxy(boxes, scores, iou_thr=float(self.spec.iou_threshold))
+        if not keep_idx:
+            return []
+        max_det = max(1, int(self.spec.temporal_max_det))
+        keep_idx = keep_idx[:max_det]
+
+        boxes = boxes[keep_idx]
+        scores = scores[keep_idx]
+        cls_idx = cls_idx[keep_idx]
+
+        boxes_img = self._map_boxes_to_frame(
+            boxes,
+            frame_size_hw=frame_size_hw,
+            input_width=int(self._input_spec.input_width),
+            input_height=int(self._input_spec.input_height),
+        )
+        out: list[Detection] = []
+        for (x1f, y1f, x2f, y2f), sc, ci in zip(boxes_img, scores, cls_idx, strict=False):
+            x1i = int(round(float(x1f)))
+            y1i = int(round(float(y1f)))
+            x2i = int(round(float(x2f)))
+            y2i = int(round(float(y2f)))
+            if x2i <= x1i or y2i <= y1i:
+                continue
+            out.append(Detection(cls=names.get(int(ci), str(int(ci))), conf=float(sc), xyxy=(x1i, y1i, x2i, y2i)))
+        return out
+
+    @staticmethod
+    def _to_input_tensor(sequence: Any, *, layout: Literal["bcthw", "btchw"]) -> Any:
+        import numpy as np  # type: ignore
+
+        if layout == "bcthw":
+            return np.ascontiguousarray(np.transpose(sequence, (1, 0, 2, 3))[None, ...], dtype=np.float32)
+        return np.ascontiguousarray(sequence[None, ...], dtype=np.float32)
+
+    @staticmethod
+    def _extract_input_spec(
+        shape: list[Any],
+        *,
+        default_clip_length: int,
+        default_height: int,
+        default_width: int,
+    ) -> TemporalDetectorInputSpec:
+        if len(shape) != 5:
+            raise ValueError(f"Temporal detector input must be rank-5, got {shape!r}")
+        batch = shape[0]
+        if isinstance(batch, int) and batch not in (0, 1):
+            raise ValueError(f"Temporal detector batch dimension must be 1 (or dynamic), got {batch}")
+
+        dim1 = shape[1]
+        dim2 = shape[2]
+        dim3 = shape[3]
+        dim4 = shape[4]
+        if isinstance(dim1, int) and dim1 == 3:
+            layout: Literal["bcthw", "btchw"] = "bcthw"
+            clip_length = OnnxYowoTemporalDetectorRuntime._resolve_positive_dim(dim2, default_clip_length, "clip_length")
+            channels = 3
+            input_height = OnnxYowoTemporalDetectorRuntime._resolve_positive_dim(dim3, default_height, "input_height")
+            input_width = OnnxYowoTemporalDetectorRuntime._resolve_positive_dim(dim4, default_width, "input_width")
+            return TemporalDetectorInputSpec(
+                layout=layout,
+                clip_length=clip_length,
+                channels=channels,
+                input_height=input_height,
+                input_width=input_width,
+            )
+        if isinstance(dim2, int) and dim2 == 3:
+            layout = "btchw"
+            clip_length = OnnxYowoTemporalDetectorRuntime._resolve_positive_dim(dim1, default_clip_length, "clip_length")
+            channels = 3
+            input_height = OnnxYowoTemporalDetectorRuntime._resolve_positive_dim(dim3, default_height, "input_height")
+            input_width = OnnxYowoTemporalDetectorRuntime._resolve_positive_dim(dim4, default_width, "input_width")
+            return TemporalDetectorInputSpec(
+                layout=layout,
+                clip_length=clip_length,
+                channels=channels,
+                input_height=input_height,
+                input_width=input_width,
+            )
+        raise ValueError(f"Temporal detector input shape must encode 3 RGB channels in dim1 or dim2, got {shape!r}")
+
+    @staticmethod
+    def _resolve_positive_dim(value: Any, default: int, label: str) -> int:
+        if isinstance(value, int):
+            if value <= 0:
+                raise ValueError(f"Temporal detector {label} must be positive, got {value}")
+            return int(value)
+        if int(default) <= 0:
+            raise ValueError(f"Temporal detector default {label} must be positive, got {default}")
+        return int(default)
+
+    @staticmethod
+    def _map_boxes_to_frame(boxes_model: Any, *, frame_size_hw: tuple[int, int], input_width: int, input_height: int) -> Any:
+        import numpy as np  # type: ignore
+
+        frame_height = int(frame_size_hw[0])
+        frame_width = int(frame_size_hw[1])
+        if frame_height <= 0 or frame_width <= 0:
+            raise ValueError(f"Invalid frame size for temporal detector: {frame_size_hw!r}")
+        if input_width <= 0 or input_height <= 0:
+            raise ValueError(f"Invalid temporal detector input size: {(input_width, input_height)!r}")
+
+        boxes = np.asarray(boxes_model, dtype=np.float32).copy()
+        boxes[:, [0, 2]] *= float(frame_width) / float(input_width)
+        boxes[:, [1, 3]] *= float(frame_height) / float(input_height)
+        boxes[:, [0, 2]] = boxes[:, [0, 2]].clip(0, float(frame_width))
+        boxes[:, [1, 3]] = boxes[:, [1, 3]].clip(0, float(frame_height))
+        return boxes
+
+
 class OnnxClassifierRuntime:
     def __init__(self, spec: ModelSpec, *, ort_provider: Literal["auto", "cuda", "cpu"] = "auto") -> None:
         self.spec = spec
@@ -511,15 +756,6 @@ class OnnxClassifierRuntime:
 
         input_type = str(self._session.input_meta.type or "").lower()
         is_float_input = "float" in input_type
-
-        input_shape = self._session.input_meta.shape
-        is_nchw = True
-        if isinstance(input_shape, list) and len(input_shape) == 4:
-            ch_dim = input_shape[1]
-            if isinstance(ch_dim, int) and ch_dim != 3:
-                is_nchw = False
-            if input_shape[3] == 3:
-                is_nchw = False
 
         if is_float_input:
             x = img_rgb.astype(np.float32) / 255.0

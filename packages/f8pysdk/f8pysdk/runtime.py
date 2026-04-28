@@ -1,0 +1,134 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from nats.js.api import StorageType  # type: ignore[import-not-found]
+
+from .bus import ServiceBus, ServiceBusConfig
+from .data import CrossPublishPolicy, DataDeliveryMode
+from .host import ServiceHost, ServiceHostConfig
+from .registry import RuntimeNodeRegistry, create_runtime_node_registry
+
+
+@dataclass(frozen=True)
+class ServiceRuntimeConfig:
+    """
+    Runtime facade for a service process.
+
+    This bundles:
+    - `ServiceBus`: NATS+KV transport, routing, state cache
+    - `ServiceHost`: rungraph-driven node creation and registration
+    - `RuntimeNodeRegistry`: node factory registry (optionally loaded from modules)
+    """
+
+    bus: ServiceBusConfig
+    host: ServiceHostConfig
+    registry_modules: tuple[str, ...] = ()
+
+    @classmethod
+    def from_values(
+        cls,
+        *,
+        service_id: str,
+        service_class: str,
+        service_name: str | None = None,
+        nats_url: str = "nats://127.0.0.1:4222",
+        cross_publish_policy: CrossPublishPolicy = "routed",
+        kv_storage: StorageType = StorageType.MEMORY,
+        delete_bucket_on_start: bool = False,
+        delete_bucket_on_stop: bool = False,
+        data_delivery: DataDeliveryMode = "callback",
+        state_sync_concurrency: int = 8,
+        state_cache_max_entries: int = 8192,
+        data_input_max_buffers: int = 4096,
+        data_input_default_queue_size: int = 256,
+        monitor_enabled: bool = True,
+        monitor_interval_ms: int = 1000,
+        monitor_window_ms: int = 30000,
+        monitor_gpu_enabled: bool = True,
+        registry_modules: list[str] | tuple[str, ...] | None = None,
+    ) -> "ServiceRuntimeConfig":
+        bus = ServiceBusConfig(
+            service_id=str(service_id),
+            service_name=str(service_name or "") or None,
+            service_class=str(service_class or "") or None,
+            nats_url=str(nats_url),
+            cross_publish_policy=cross_publish_policy,
+            kv_storage=kv_storage,
+            delete_bucket_on_start=bool(delete_bucket_on_start),
+            delete_bucket_on_stop=bool(delete_bucket_on_stop),
+            data_delivery=data_delivery,
+            state_sync_concurrency=max(1, int(state_sync_concurrency)),
+            state_cache_max_entries=max(0, int(state_cache_max_entries)),
+            data_input_max_buffers=max(0, int(data_input_max_buffers)),
+            data_input_default_queue_size=max(1, int(data_input_default_queue_size)),
+            monitor_enabled=bool(monitor_enabled),
+            monitor_interval_ms=max(200, int(monitor_interval_ms)),
+            monitor_window_ms=max(1000, int(monitor_window_ms)),
+            monitor_gpu_enabled=bool(monitor_gpu_enabled),
+        )
+        host = ServiceHostConfig(service_class=str(service_class))
+        modules = tuple(str(module).strip() for module in (registry_modules or ()) if str(module).strip())
+        return cls(bus=bus, host=host, registry_modules=modules)
+
+    @property
+    def service_id(self) -> str:
+        return str(self.bus.service_id)
+
+    @property
+    def service_class(self) -> str:
+        return str(self.host.service_class)
+
+    @property
+    def nats_url(self) -> str:
+        return str(self.bus.nats_url)
+
+    @property
+    def cross_publish_policy(self) -> CrossPublishPolicy:
+        return self.bus.cross_publish_policy
+
+    @property
+    def kv_storage(self) -> StorageType:
+        return self.bus.kv_storage
+
+    @property
+    def delete_bucket_on_start(self) -> bool:
+        return bool(self.bus.delete_bucket_on_start)
+
+    @property
+    def delete_bucket_on_stop(self) -> bool:
+        return bool(self.bus.delete_bucket_on_stop)
+
+
+class ServiceRuntime:
+    """
+    Process-level runtime facade that wires together `ServiceBus` and `ServiceHost`.
+    """
+
+    def __init__(
+        self,
+        config: ServiceRuntimeConfig,
+        *,
+        registry: RuntimeNodeRegistry | None = None,
+    ) -> None:
+        self._config = config
+        self._registry = registry if registry is not None else create_runtime_node_registry()
+        self._closed = False
+
+        for module in config.registry_modules:
+            self._registry.load_modules([str(module)])
+
+        self.bus = ServiceBus(config.bus)
+        self.host = ServiceHost(self.bus, config=config.host, registry=self._registry)
+
+    async def start(self) -> None:
+        if self._closed:
+            raise RuntimeError("ServiceRuntime is not restartable after stop(); create a new instance")
+        await self.host.start()
+        await self.bus.start()
+
+    async def stop(self) -> None:
+        await self.bus.stop()
+        self._closed = True
+
+__all__ = ["ServiceRuntime", "ServiceRuntimeConfig"]

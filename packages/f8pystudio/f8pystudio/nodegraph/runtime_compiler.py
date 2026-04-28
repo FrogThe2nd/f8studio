@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from f8pysdk.msgspec_codec import copy_model, dump_json
+from f8pysdk.codec import coerce_int, copy_model, dump_json
 import enum
 import hashlib
 import logging
@@ -10,7 +10,8 @@ from uuid import uuid4
 
 import msgspec
 
-from f8pysdk import (
+from f8pysdk.specs import (
+    F8AutoSampleRequest,
     F8DataPortSpec,
     F8Edge,
     F8EdgeDirection,
@@ -24,9 +25,15 @@ from f8pysdk import (
     F8RuntimeNode,
     F8RuntimeService,
 )
-from f8pysdk.builtin_state_fields import (
+from f8pysdk._specs.builtin_fields import (
     operator_state_fields_with_builtins,
     service_state_fields_with_builtins,
+)
+from f8pysdk.command import (
+    command_input_state_field,
+    command_output_state_field,
+    hidden_command_state_specs,
+    parse_command_port_name,
 )
 from f8pysdk.rungraph_validation import (
     validate_data_edges_or_raise,
@@ -34,18 +41,15 @@ from f8pysdk.rungraph_validation import (
     validate_state_edge_targets_writable_or_raise,
     validate_state_edges_or_raise,
 )
-from f8pysdk.schema_helpers import boolean_schema
-from f8pysdk.schema_helpers import integer_schema
-from f8pysdk.schema_helpers import any_schema
 from f8pysdk.nats_naming import ensure_token
 
-from ..pystudio_node_registry import SERVICE_CLASS as STUDIO_SERVICE_CLASS
-from ..pystudio_node_registry import STUDIO_SERVICE_ID
+from f8pystudio.studio_specs.registry import SERVICE_CLASS as STUDIO_SERVICE_CLASS
+from f8pystudio.studio_specs.registry import STUDIO_SERVICE_ID
+from ..operators.patch_hub import OPERATOR_CLASS as PATCH_HUB_OPERATOR_CLASS
 
 
 logger = logging.getLogger(__name__)
 PYENGINE_SERVICE_CLASS = "f8.pyengine"
-AUTO_PULL_OPERATOR_CLASS = "f8.pull"
 
 
 def _port_kind(name: str) -> F8EdgeKindEnum | None:
@@ -56,11 +60,19 @@ def _port_kind(name: str) -> F8EdgeKindEnum | None:
         return F8EdgeKindEnum.data
     if n.startswith("[S]") or n.endswith("[S]"):
         return F8EdgeKindEnum.state
+    if n.startswith("[C]") or n.endswith("[C]"):
+        return F8EdgeKindEnum.state
     return None
 
 
 def _raw_port_name(name: str) -> str:
     n = str(name or "")
+    parsed_command = parse_command_port_name(n)
+    if parsed_command is not None:
+        is_in, command_name = parsed_command
+        if is_in:
+            return command_input_state_field(command_name)
+        return command_output_state_field(command_name)
     for prefix in ("[E]", "[D]", "[S]"):
         if n.startswith(prefix):
             n = n[len(prefix) :]
@@ -114,17 +126,6 @@ def _stable_id(prefix: str, *parts: str) -> str:
     return ensure_token(f"{prefix}_{digest}", label="node_id")
 
 
-def _as_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:
-    try:
-        out = int(value) if value is not None else int(default)
-    except (TypeError, ValueError):
-        out = int(default)
-    if out < minimum:
-        out = minimum
-    if out > maximum:
-        out = maximum
-    return out
-
 
 def _coerce_state_payload_value(value: Any) -> tuple[bool, Any]:
     if value is None or isinstance(value, (str, int, float, bool)):
@@ -156,13 +157,13 @@ def _coerce_state_payload_value(value: Any) -> tuple[bool, Any]:
     return _coerce_state_payload_value(dumped)
 
 
-def _inject_studio_auto_pull_triggers(graph: F8RuntimeGraph) -> tuple[F8RuntimeGraph, list[str]]:
+def _attach_studio_auto_sample_requests(graph: F8RuntimeGraph) -> tuple[F8RuntimeGraph, list[str]]:
     """
-    Inject hidden pull trigger nodes for eligible Studio auto-sampling consumers.
+    Attach service-level auto-sampling requests for eligible Studio consumers.
 
-    Trigger-only mode:
+    The compiler expresses intent only:
     - Keep original source->studio cross edges unchanged.
-    - Add source->f8.pull data edges inside the source pyengine service.
+    - Add per-service periodic sampling requests for runtimes that support them.
     """
     warnings: list[str] = []
     services_by_id: dict[str, F8RuntimeService] = {str(s.serviceId): s for s in list(graph.services or [])}
@@ -181,10 +182,6 @@ def _inject_studio_auto_pull_triggers(graph: F8RuntimeGraph) -> tuple[F8RuntimeG
             continue
         if edge.fromOperatorId is None or edge.toOperatorId is None:
             continue
-        src_node_id = str(edge.fromOperatorId)
-        src_node = nodes_by_id.get(src_node_id)
-        if src_node is not None and str(src_node.operatorClass or "") == AUTO_PULL_OPERATOR_CLASS:
-            continue
 
         dst_node_id = str(edge.toOperatorId)
         dst_node = nodes_by_id.get(dst_node_id)
@@ -197,11 +194,11 @@ def _inject_studio_auto_pull_triggers(graph: F8RuntimeGraph) -> tuple[F8RuntimeG
             ok, normalized = _coerce_state_payload_value(item)
             if ok:
                 state_values[str(key)] = normalized
-        mode = str(state_values.get("upstreamSamplingMode", "passive") or "").strip().lower()
+        mode = str(state_values.get("upstreamSamplingMode", "auto") or "").strip().lower()
         if mode != "auto":
             continue
 
-        interval_ms = _as_int(
+        interval_ms = coerce_int(
             state_values.get("upstreamSampleIntervalMs", 100),
             default=100,
             minimum=8,
@@ -222,97 +219,210 @@ def _inject_studio_auto_pull_triggers(graph: F8RuntimeGraph) -> tuple[F8RuntimeG
     if not by_source:
         return graph, warnings
 
-    new_nodes = list(graph.nodes or [])
-    new_edges = list(graph.edges or [])
-
-    injected_edges: list[F8Edge] = []
+    updated_services = dict(services_by_id)
+    changed = False
 
     for src_key, group in by_source.items():
         from_service_id, from_node_id, from_port = src_key
         service = services_by_id.get(from_service_id)
         service_class = str(service.serviceClass) if service is not None else ""
         if service_class != PYENGINE_SERVICE_CLASS:
-            consumers_sorted = ", ".join(sorted(str(x) for x in group["consumers"]))
-            warnings.append(
-                f"auto sampling skipped for {from_service_id}.{from_node_id}.{from_port}: "
-                f"source serviceClass={service_class or 'unknown'} (consumers={consumers_sorted})"
-            )
+            # Studio auto sampling is a pyengine-only facility here. Other services either
+            # push data proactively or own their own scheduling semantics, so leave
+            # the original cross-service edge untouched without surfacing a warning.
             continue
 
-        pull_node_id = _stable_id("auto_pull", from_service_id, from_node_id, from_port)
-        sample_interval_ms = int(group["sample_interval_ms"])
-        trigger_port = "value"
+        existing_service = updated_services.get(from_service_id)
+        if existing_service is None:
+            continue
 
-        if pull_node_id not in nodes_by_id:
-            pull_node = F8RuntimeNode(
-                nodeId=pull_node_id,
-                serviceId=from_service_id,
-                serviceClass=PYENGINE_SERVICE_CLASS,
-                operatorClass=AUTO_PULL_OPERATOR_CLASS,
-                dataInPorts=[
-                    F8DataPortSpec(
-                        name=trigger_port,
-                        description="auto trigger pull input",
-                        valueSchema=any_schema(),
-                        required=False,
-                    ),
-                ],
-                dataOutPorts=[],
-                execInPorts=[],
-                execOutPorts=[],
-                stateFields=[
-                    F8StateSpec(
-                        name="autoTriggerEnabled",
-                        label="Auto Trigger",
-                        description="Periodically pull all data inputs without exec.",
-                        valueSchema=boolean_schema(default=False),
-                        access=F8StateAccess.rw,
-                        showOnNode=False,
-                    ),
-                    F8StateSpec(
-                        name="autoTriggerIntervalMs",
-                        label="Auto Trigger Interval (ms)",
-                        description="Periodic pull interval in milliseconds.",
-                        valueSchema=integer_schema(default=100, minimum=8, maximum=5000),
-                        access=F8StateAccess.rw,
-                        showOnNode=False,
-                    ),
-                ],
-                stateValues={
-                    "autoTriggerEnabled": True,
-                    "autoTriggerIntervalMs": sample_interval_ms,
-                },
-            )
-            new_nodes.append(pull_node)
-            nodes_by_id[pull_node_id] = pull_node
-
-        source_to_pull_edge_id = _stable_id("edge_auto_pull_src", from_service_id, from_node_id, from_port)
-        injected_edges.append(
-            F8Edge(
-                edgeId=source_to_pull_edge_id,
-                fromServiceId=from_service_id,
-                fromOperatorId=from_node_id,
-                fromPort=from_port,
-                toServiceId=from_service_id,
-                toOperatorId=pull_node_id,
-                toPort=trigger_port,
-                kind=F8EdgeKindEnum.data,
-                strategy=F8EdgeStrategyEnum.latest,
-                timeoutMs=msgspec.UNSET,
-                direction=msgspec.UNSET,
+        existing_requests = list(existing_service.autoSampleRequests or [])
+        existing_requests.append(
+            F8AutoSampleRequest(
+                sourceNodeId=from_node_id,
+                sourcePort=from_port,
+                intervalMs=int(group["sample_interval_ms"]),
+                deliverLocal=False,
+                publishCrossService=True,
             )
         )
+        updated_services[from_service_id] = copy_model(
+            existing_service,
+            deep=True,
+            update={"autoSampleRequests": existing_requests},
+        )
+        changed = True
 
-    if not injected_edges and not warnings:
+    if not changed and not warnings:
         return graph, warnings
 
-    # Deduplicate by edgeId to make reinjection idempotent.
-    dedup_edges: dict[str, F8Edge] = {}
-    for edge in list(new_edges) + injected_edges:
-        dedup_edges[str(edge.edgeId)] = edge
-
-    patched = copy_model(graph, update={"nodes": new_nodes, "edges": list(dedup_edges.values())})
+    patched = copy_model(
+        graph,
+        update={"services": [updated_services.get(str(s.serviceId), s) for s in list(graph.services or [])]},
+    )
     return patched, warnings
+
+
+def _is_patch_hub_runtime_node(node: F8RuntimeNode | None) -> bool:
+    if node is None:
+        return False
+    return str(node.operatorClass or "").strip() == PATCH_HUB_OPERATOR_CLASS
+
+
+def _patch_hub_terminal_key(*, hub_node_id: str, kind: F8EdgeKindEnum, terminal_name: str) -> tuple[str, str, str]:
+    return (str(hub_node_id), str(kind.value), str(terminal_name or "").strip())
+
+
+def _patch_hub_terminal_text(key: tuple[str, str, str]) -> str:
+    return f"{key[0]}.{key[1]}.{key[2]}"
+
+
+def _lower_patch_hubs(graph: F8RuntimeGraph) -> tuple[F8RuntimeGraph, list[str]]:
+    warnings: list[str] = []
+    nodes_by_id: dict[str, F8RuntimeNode] = {str(node.nodeId): node for node in list(graph.nodes or [])}
+    patch_hub_ids = {
+        str(node.nodeId)
+        for node in list(graph.nodes or [])
+        if _is_patch_hub_runtime_node(node)
+    }
+    if not patch_hub_ids:
+        return graph, warnings
+
+    kept_edges: list[F8Edge] = []
+    inbound_by_terminal: dict[tuple[str, str, str], list[F8Edge]] = {}
+    outbound_by_terminal: dict[tuple[str, str, str], list[F8Edge]] = {}
+
+    for edge in list(graph.edges or []):
+        from_node_id = str(edge.fromOperatorId or "").strip()
+        to_node_id = str(edge.toOperatorId or "").strip()
+        from_is_hub = from_node_id in patch_hub_ids
+        to_is_hub = to_node_id in patch_hub_ids
+
+        if not from_is_hub and not to_is_hub:
+            kept_edges.append(edge)
+            continue
+
+        if edge.kind not in (F8EdgeKindEnum.data, F8EdgeKindEnum.state):
+            raise ValueError(
+                "patch hub only supports data/state edges: "
+                f"{from_node_id or '$service'}.{str(edge.fromPort or '')} -> "
+                f"{to_node_id or '$service'}.{str(edge.toPort or '')}"
+            )
+
+        if from_is_hub:
+            outbound_key = _patch_hub_terminal_key(
+                hub_node_id=from_node_id,
+                kind=edge.kind,
+                terminal_name=str(edge.fromPort or ""),
+            )
+            outbound_by_terminal.setdefault(outbound_key, []).append(edge)
+        if to_is_hub:
+            inbound_key = _patch_hub_terminal_key(
+                hub_node_id=to_node_id,
+                kind=edge.kind,
+                terminal_name=str(edge.toPort or ""),
+            )
+            inbound_by_terminal.setdefault(inbound_key, []).append(edge)
+
+    for terminal_key, inbound_edges in list(inbound_by_terminal.items()):
+        if len(inbound_edges) <= 1:
+            continue
+        upstreams = ", ".join(
+            f"{str(edge.fromServiceId)}.{str(edge.fromOperatorId or '$service')}.{str(edge.fromPort or '')}"
+            for edge in inbound_edges
+        )
+        raise ValueError(
+            f"patch hub terminal has multiple upstreams: {_patch_hub_terminal_text(terminal_key)} <- {upstreams}"
+        )
+
+    def resolve_source_terminal(
+        terminal_key: tuple[str, str, str],
+        *,
+        stack: tuple[tuple[str, str, str], ...],
+    ) -> F8Edge | None:
+        if terminal_key in stack:
+            cycle = " -> ".join(_patch_hub_terminal_text(key) for key in (*stack, terminal_key))
+            raise ValueError(f"patch hub cycle detected: {cycle}")
+
+        inbound_edges = inbound_by_terminal.get(terminal_key)
+        if not inbound_edges:
+            return None
+
+        inbound_edge = inbound_edges[0]
+        upstream_node_id = str(inbound_edge.fromOperatorId or "").strip()
+        if upstream_node_id in patch_hub_ids:
+            upstream_key = _patch_hub_terminal_key(
+                hub_node_id=upstream_node_id,
+                kind=inbound_edge.kind,
+                terminal_name=str(inbound_edge.fromPort or ""),
+            )
+            return resolve_source_terminal(upstream_key, stack=(*stack, terminal_key))
+        return inbound_edge
+
+    lowered_edges: list[F8Edge] = []
+    terminal_keys = set(inbound_by_terminal.keys()) | set(outbound_by_terminal.keys())
+    for terminal_key in terminal_keys:
+        inbound_edges = inbound_by_terminal.get(terminal_key) or []
+        outbound_edges = outbound_by_terminal.get(terminal_key) or []
+        if inbound_edges and not outbound_edges:
+            warnings.append(f"patch hub terminal has no downstream consumers: {_patch_hub_terminal_text(terminal_key)}")
+            continue
+        if outbound_edges and not inbound_edges:
+            warnings.append(f"patch hub terminal has no upstream source: {_patch_hub_terminal_text(terminal_key)}")
+            continue
+        if not inbound_edges or not outbound_edges:
+            continue
+
+        source_edge = resolve_source_terminal(terminal_key, stack=())
+        if source_edge is None:
+            warnings.append(f"patch hub terminal has no resolvable upstream source: {_patch_hub_terminal_text(terminal_key)}")
+            continue
+
+        for outbound_edge in outbound_edges:
+            target_node_id = str(outbound_edge.toOperatorId or "").strip()
+            if target_node_id in patch_hub_ids:
+                continue
+            lowered_edges.append(
+                F8Edge(
+                    edgeId=_stable_id(
+                        "patch_hub_edge",
+                        str(source_edge.kind.value),
+                        str(source_edge.fromServiceId),
+                        str(source_edge.fromOperatorId or "$service"),
+                        str(source_edge.fromPort or ""),
+                        str(outbound_edge.toServiceId),
+                        str(outbound_edge.toOperatorId or "$service"),
+                        str(outbound_edge.toPort or ""),
+                    ),
+                    fromServiceId=source_edge.fromServiceId,
+                    fromOperatorId=source_edge.fromOperatorId,
+                    fromPort=source_edge.fromPort,
+                    toServiceId=outbound_edge.toServiceId,
+                    toOperatorId=outbound_edge.toOperatorId,
+                    toPort=outbound_edge.toPort,
+                    kind=outbound_edge.kind,
+                    strategy=outbound_edge.strategy,
+                    timeoutMs=outbound_edge.timeoutMs,
+                    direction=msgspec.UNSET,
+                )
+            )
+
+    dedup_edges: dict[tuple[str, str, str, str, str, str, str], F8Edge] = {}
+    for edge in [*kept_edges, *lowered_edges]:
+        dedup_edges[
+            (
+                str(edge.kind.value),
+                str(edge.fromServiceId),
+                str(edge.fromOperatorId or ""),
+                str(edge.fromPort or ""),
+                str(edge.toServiceId),
+                str(edge.toOperatorId or ""),
+                str(edge.toPort or ""),
+            )
+        ] = edge
+
+    filtered_nodes = [node for node in list(graph.nodes or []) if str(node.nodeId) not in patch_hub_ids]
+    return copy_model(graph, update={"nodes": filtered_nodes, "edges": list(dedup_edges.values())}), warnings
 
 
 @dataclass(frozen=True)
@@ -436,9 +546,13 @@ def compile_global_runtime_graph(
         # takes precedence over this snapshot on repeated deploys.
 
         if isinstance(spec, F8ServiceSpec):
-            state_fields = service_state_fields_with_builtins(list(spec.stateFields or []))
+            state_fields = service_state_fields_with_builtins(
+                [*list(spec.stateFields or []), *hidden_command_state_specs(list(spec.commands or []))]
+            )
         else:
-            state_fields = operator_state_fields_with_builtins(list(spec.stateFields or []))
+            state_fields = operator_state_fields_with_builtins(
+                [*list(spec.stateFields or []), *hidden_command_state_specs(list(spec.commands or []))]
+            )
 
         runtime_nodes.append(
             F8RuntimeNode(
@@ -525,7 +639,13 @@ def compile_global_runtime_graph(
         nodes=runtime_nodes,
         edges=edges,
     )
-    graph, warnings = _inject_studio_auto_pull_triggers(graph)
+    graph, patch_hub_warnings = _lower_patch_hubs(graph)
+    if patch_hub_warnings:
+        if compile_warnings is not None:
+            compile_warnings.extend(patch_hub_warnings)
+        for warning in patch_hub_warnings:
+            logger.warning("%s", warning)
+    graph, warnings = _attach_studio_auto_sample_requests(graph)
     if warnings:
         if compile_warnings is not None:
             compile_warnings.extend(warnings)

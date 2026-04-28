@@ -11,9 +11,9 @@ Manual usage guidance is merged from `docs/modules/manual/*.md` and `docs/module
 | `f8.audiocap` | Audio Capture | `0` | `13` | [Audio Capture](services/f8-audiocap.md) |
 | `f8.audiofeat.core` | Audio Feature Core | `0` | `8` | [Audio Feature Core](services/f8-audiofeat-core.md) |
 | `f8.audiofeat.rhythm` | Audio Feature Rhythm | `0` | `6` | [Audio Feature Rhythm](services/f8-audiofeat-rhythm.md) |
-| `f8.implayer` | IM Player | `0` | `22` | [IM Player](services/f8-implayer.md) |
+| `f8.implayer` | IM Player | `0` | `24` | [IM Player](services/f8-implayer.md) |
 | `f8.proclauncher` | Proc Launcher | `0` | `5` | [Proc Launcher](services/f8-proclauncher.md) |
-| `f8.pyengine` | PyEngine | `35` | `3` | [PyEngine](services/f8-pyengine.md) |
+| `f8.pyengine` | PyEngine | `42` | `3` | [PyEngine](services/f8-pyengine.md) |
 | `f8.pyexpr` | Python Expr Service | `0` | `6` | [Python Expr Service](services/f8-pyexpr.md) |
 | `f8.pyscript` | Python Script Service | `0` | `6` | [Python Script Service](services/f8-pyscript.md) |
 | `f8.screencap` | Screen Capture | `0` | `16` | [Screen Capture](services/f8-screencap.md) |
@@ -25,7 +25,7 @@ Manual usage guidance is merged from `docs/modules/manual/*.md` and `docs/module
 | `f8.cvkit.denseoptflow` | CVKit Dense Optical Flow | `0` | `8` | [CVKit Dense Optical Flow](services/f8-cvkit-denseoptflow.md) |
 | `f8.cvkit.flowmetric` | CVKit Flow Metric | `0` | `9` | [CVKit Flow Metric](services/f8-cvkit-flowmetric.md) |
 | `f8.cvkit.templatematch` | CVKit Template Match | `0` | `7` | [CVKit Template Match](services/f8-cvkit-templatematch.md) |
-| `f8.cvkit.tracking` | CVKit Tracking | `0` | `9` | [CVKit Tracking](services/f8-cvkit-tracking.md) |
+| `f8.cvkit.tracking` | CVKit Tracking | `0` | `12` | [CVKit Tracking](services/f8-cvkit-tracking.md) |
 | `f8.cvkit.videostab` | CVKit Video Stabilizer | `0` | `18` | [CVKit Video Stabilizer](services/f8-cvkit-videostab.md) |
 
 ## Deep Learning
@@ -43,4 +43,4 @@ Manual usage guidance is merged from `docs/modules/manual/*.md` and `docs/module
 
 | Service | Label | Operators | State Fields | Link |
 | --- | --- | --- | --- | --- |
-| `f8.mp.pose` | MediaPipe Pose | `0` | `9` | [MediaPipe Pose](services/f8-mp-pose.md) |
+| `f8.mp.pose` | MediaPipe Pose | `0` | `10` | [MediaPipe Pose](services/f8-mp-pose.md) |

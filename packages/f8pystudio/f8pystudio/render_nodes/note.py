@@ -27,7 +27,8 @@ class _NoteWidget(NodeBaseWidget):
     def __init__(self, parent=None, name: str = _WIDGET_NAME, label: str = "") -> None:
         super().__init__(parent=parent, name=name, label=label)
         self._raw_text = ""
-        self._editor = _NoteTextEdit()
+        self._pane = QtWidgets.QWidget()
+        self._editor = _NoteTextEdit(self._pane)
         self._editor.setFrameShape(QtWidgets.QFrame.NoFrame)
         self._editor.setAcceptRichText(False)
         self._editor.setPlaceholderText("Write markdown notes...")
@@ -37,11 +38,10 @@ class _NoteWidget(NodeBaseWidget):
         self._editor.setMinimumSize(0, 0)
         self._editor.setMaximumSize(16_777_215, 16_777_215)
 
-        self._preview_switch = QtWidgets.QCheckBox("Preview")
+        self._preview_switch = QtWidgets.QCheckBox("Preview", self._pane)
         self._preview_switch.setChecked(True)
         self._preview_switch.toggled.connect(self._on_preview_toggled)
 
-        self._pane = QtWidgets.QWidget()
         top = QtWidgets.QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
         top.addStretch()

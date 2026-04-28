@@ -10,26 +10,28 @@ ONNXRuntime temporal convolution wave inference service (port output).
 
 ## When to Use
 
-- Use `f8.dl.tcnwave` when a temporal model should infer a waveform or control trace from a sequence of upstream signals.
-- It executes temporal convolution networks (TCN) to map sequences of frames to continuous signals or waveforms, designed for temporal understanding beyond individual frames.
-- It is most useful when hand-built mappings are too brittle or too limited.
+- Use `f8.dl.tcnwave` when you want to map temporal features into a continuous waveform-like output.
+- It is a good fit for learned audio-to-control or rhythm-to-wave generation.
+- Reach for it when handcrafted rules are becoming too brittle or too fragmented.
 
 ## Common Wiring Patterns
 
-- Feed it normalized sequential features, then inspect the generated output with `WaveViz`, `TCodeViz`, or device-output branches.
-- Keep the pre-model feature branch visible so release tuning can separate model issues from input issues.
+- It commonly follows audio features, rhythm features, or another temporal summary path.
+- Output is usually forwarded into `f8.pyengine`, TCode-related operators, or visualization.
+- Keep a waveform or text inspection branch attached while validating the model behavior.
 
 ## Pitfalls / Gotchas
 
-- Temporal models depend heavily on input normalization and window assumptions.
-- Model output can look unstable if the graph does not match the training-time timing expectations; monitor frame rate consistency.
+- Output quality depends strongly on how close live inputs are to the model's training distribution.
+- Verify time windows, feature ordering, and sampling assumptions before tuning downstream thresholds.
+- It is best used for learned style and shaping, not as a blanket replacement for all explicit logic.
 
 ## Service Reference
 
 ### How to Run
 
 ```bash
-pixi run f8pydl_tcnwave
+pixi run -e onnx f8pydl_tcnwave
 ```
 
 - Workdir: `../../../../`
@@ -46,9 +48,9 @@ pixi run f8pydl_tcnwave
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
 | `shmName` | `rw` | `true` | `true` | `string / default=` | Video SHM mapping name (e.g. shm.implayer.video). |
-| `weightsDir` | `rw` | `true` | `true` | `string / default=services/f8/dl/weights` | Directory containing *.yaml + *.onnx model files. |
+| `weightsDir` | `rw` | `true` | `true` | `string / default=services/f8/dl/weights` | Directory containing *.yaml + *.onnx model files. Reset to the default relative path when exporting publish JSON. |
 | `modelId` | `rw` | `true` | `true` | `string / default=` | Model id selected from weightsDir (ignored if modelYamlPath is set). |
-| `modelYamlPath` | `rw` | `true` | `false` | `string / default=` | Optional explicit model yaml path (overrides modelId). |
+| `modelYamlPath` | `rw` | `true` | `false` | `string / default=` | Optional explicit model yaml path (overrides modelId). Cleared when exporting publish JSON. |
 | `ortProvider` | `rw` | `true` | `true` | `string / enum[auto, cuda, cpu] / default=auto` | auto prefers CUDAExecutionProvider when available. |
 | `autoDownloadWeights` | `rw` | `true` | `false` | `boolean / default=True` | When model file is missing, download from onnxUrl in model yaml. |
 | `inferEveryN` | `rw` | `true` | `true` | `integer / default=1` | Run model inference every N frames (>=1). |
@@ -65,9 +67,9 @@ pixi run f8pydl_tcnwave
 ### Key Fields That Matter
 
 - `shmName` (Video SHM, `rw`): Video SHM mapping name (e.g. shm.implayer.video). Schema: `string / default=`.
-- `weightsDir` (Weights Dir, `rw`): Directory containing *.yaml + *.onnx model files. Schema: `string / default=services/f8/dl/weights`.
+- `weightsDir` (Weights Dir, `rw`): Directory containing *.yaml + *.onnx model files. Reset to the default relative path when exporting publish JSON. Schema: `string / default=services/f8/dl/weights`.
 - `modelId` (Model Id, `rw`): Model id selected from weightsDir (ignored if modelYamlPath is set). Schema: `string / default=`.
-- `modelYamlPath` (Model YAML Path, `rw`): Optional explicit model yaml path (overrides modelId). Schema: `string / default=`.
+- `modelYamlPath` (Model YAML Path, `rw`): Optional explicit model yaml path (overrides modelId). Cleared when exporting publish JSON. Schema: `string / default=`.
 - `ortProvider` (ONNX Runtime Provider, `rw`): auto prefers CUDAExecutionProvider when available. Schema: `string / enum[auto, cuda, cpu] / default=auto`.
 - `autoDownloadWeights` (Auto Download Weights, `rw`): When model file is missing, download from onnxUrl in model yaml. Schema: `boolean / default=True`.
 - `inferEveryN` (Infer Every N Frames, `rw`): Run model inference every N frames (>=1). Schema: `integer / default=1`.

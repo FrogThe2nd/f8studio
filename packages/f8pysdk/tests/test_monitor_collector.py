@@ -1,19 +1,18 @@
 from __future__ import annotations
 
-from f8pysdk.msgspec_codec import dump_json
+from f8pysdk.codec import dump_json
 import os
 import sys
 import unittest
 import asyncio
-from dataclasses import dataclass
 from typing import Any
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from f8pysdk.service_bus.codec import decode_obj  # noqa: E402
-from f8pysdk.service_bus.monitor_collector import MonitorCollector, MonitorCollectorConfig  # noqa: E402
+from f8pysdk.codec import decode_obj  # noqa: E402
+from f8pysdk.monitoring import MonitorCollector, MonitorCollectorConfig  # noqa: E402
 from f8pysdk.time_utils import now_ms  # noqa: E402
 
 
@@ -25,9 +24,12 @@ class _FakeTransport:
         self.published.append((str(subject), bytes(payload)))
 
 
-@dataclass
-class _FakeInputBuffer:
-    queue: list[int]
+class _FakeDataRouter:
+    def __init__(self) -> None:
+        self._depth = 3
+
+    def queue_depth(self) -> int:
+        return self._depth
 
 
 class _FakeBus:
@@ -37,7 +39,7 @@ class _FakeBus:
         self._active = True
         self._ready = False
         self._transport = _FakeTransport()
-        self._data_inputs = {("n1", "p1"): _FakeInputBuffer(queue=[1, 2, 3])}
+        self.data_router = _FakeDataRouter()
 
 
 class MonitorCollectorTests(unittest.IsolatedAsyncioTestCase):
@@ -54,6 +56,11 @@ class MonitorCollectorTests(unittest.IsolatedAsyncioTestCase):
         collector.record_emit_completed(node_id="n1", now_ts_ms=ts)
         collector.record_wait_ms(wait_ms=8.0)
         collector.record_dropped(dropped_count=2)
+        collector.record_local_only_emit()
+        collector.record_routed_cross_emit()
+        collector.record_suppressed_cross_publish()
+        collector.record_callback_delivery()
+        collector.record_buffer_pull_delivery()
         collector.record_error(code="X_ERR", message="boom", ts_ms=ts)
 
         snapshot = collector._build_snapshot(ts_ms=ts)
@@ -64,6 +71,11 @@ class MonitorCollectorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(int(snapshot.frame.observed), 1)
         self.assertEqual(int(snapshot.frame.processed), 1)
         self.assertEqual(int(snapshot.frame.dropped), 2)
+        self.assertEqual(int(snapshot.frame.localOnlyEmits), 1)
+        self.assertEqual(int(snapshot.frame.routedCrossEmits), 1)
+        self.assertEqual(int(snapshot.frame.suppressedCrossPublishes), 1)
+        self.assertEqual(int(snapshot.frame.callbackDeliveries), 1)
+        self.assertEqual(int(snapshot.frame.bufferPullDeliveries), 1)
         self.assertEqual(int(snapshot.queue.depth), 3)
         self.assertEqual(str(snapshot.error.lastCode), "X_ERR")
         self.assertFalse(bool(snapshot.gpu.available))

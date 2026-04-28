@@ -8,7 +8,7 @@ import ctypes
 import errno
 from dataclasses import dataclass
 from multiprocessing.shared_memory import SharedMemory
-from typing import Optional, Tuple
+from typing import Optional, Tuple, cast
 
 from .core import open_shared_memory_create, open_shared_memory_readonly
 from .naming import frame_event_name, video_shm_name
@@ -87,7 +87,7 @@ def read_video_header(buf: memoryview) -> Optional[VideoShmHeader]:
         return None
     try:
         fields = _VIDEO_HEADER_STRUCT.unpack_from(buf, 0)
-    except Exception:
+    except struct.error:
         return None
     return VideoShmHeader(
         magic=fields[0],
@@ -133,9 +133,10 @@ class VideoShmReader:
 
     @property
     def buf(self) -> memoryview:
-        if not self._shm:
+        shm = self._shm
+        if shm is None:
             raise RuntimeError("VideoShmReader is not open")
-        return self._shm.buf
+        return cast(memoryview, shm.buf)
 
     def wait_new_frame(self, timeout_ms: int = 10) -> bool:
         if self._event:
@@ -225,7 +226,7 @@ class VideoShmWriter:
     def open(self) -> None:
         self._shm = open_shared_memory_create(self.shm_name, self.size)
         if os.name == "nt":
-            self._event = Win32Event.create(self.shm_name + "_evt", manual_reset=True, initial_state=False)
+            self._event = Win32Event.create(self.shm_name + "_evt", manual_reset=False, initial_state=False)
         self._init_header()
 
     def close(self, unlink: bool = False) -> None:
@@ -237,15 +238,16 @@ class VideoShmWriter:
             if unlink:
                 try:
                     self._shm.unlink()
-                except Exception:
+                except FileNotFoundError:
                     pass
             self._shm = None
 
     @property
     def buf(self) -> memoryview:
-        if not self._shm:
+        shm = self._shm
+        if shm is None:
             raise RuntimeError("VideoShmWriter is not open")
-        return self._shm.buf
+        return cast(memoryview, shm.buf)
 
     def _init_header(self) -> None:
         buf = self.buf
@@ -272,14 +274,15 @@ class VideoShmWriter:
             0,
         )
 
-    def write_frame(self, width: int, height: int, pitch: int, payload: bytes, fmt: int) -> None:
+    def write_frame(self, width: int, height: int, pitch: int, payload: bytes | bytearray | memoryview, fmt: int) -> None:
         buf = self.buf
         if width <= 0 or height <= 0 or pitch <= 0:
             return
         if fmt <= 0:
             return
+        payload_view = memoryview(payload).cast("B")
         frame_bytes = int(pitch) * int(height)
-        if len(payload) < frame_bytes:
+        if len(payload_view) < frame_bytes:
             return
         if frame_bytes > self._payload_capacity:
             return
@@ -287,7 +290,7 @@ class VideoShmWriter:
         self._active_slot = (self._active_slot + 1) % self.slot_count
         header_bytes = _VIDEO_HEADER_STRUCT.size
         slot_off = header_bytes + self._active_slot * self._payload_capacity
-        buf[slot_off : slot_off + frame_bytes] = payload[:frame_bytes]
+        buf[slot_off : slot_off + frame_bytes] = payload_view[:frame_bytes]
 
         self._frame_id += 1
         self._notify_seq += 1
@@ -311,10 +314,10 @@ class VideoShmWriter:
         )
 
         if self._event:
-            self._event.pulse()
+            self._event.set()
         self._futex_wake_notify_seq()
 
-    def write_frame_bgra(self, width: int, height: int, pitch: int, payload: bytes) -> None:
+    def write_frame_bgra(self, width: int, height: int, pitch: int, payload: bytes | bytearray | memoryview) -> None:
         self.write_frame(width=width, height=height, pitch=pitch, payload=payload, fmt=VIDEO_FORMAT_BGRA32)
 
     def _futex_wake_notify_seq(self) -> None:

@@ -5,7 +5,11 @@ from .embedded_resize_contract import (
     content_rect_with_minimum,
 )
 from .service_toolbar_host import F8ElideToolButton, F8ForceGlobalToolTipFilter
-from .inline_command_panel import ensure_inline_command_widget, invoke_command, prompt_command_args
+from .inline_command_panel import (
+    ensure_inline_command_rows,
+    invoke_command,
+    prompt_command_args,
+)
 from .state_inline_controls import (
     build_state_inline_control,
     ensure_state_inline_controls,
@@ -24,7 +28,7 @@ __all__ = [
     "StateFieldInfo",
     "clamp_content_size",
     "content_rect_with_minimum",
-    "ensure_inline_command_widget",
+    "ensure_inline_command_rows",
     "build_state_inline_control",
     "ensure_state_inline_controls",
     "is_state_inline_input_connected",

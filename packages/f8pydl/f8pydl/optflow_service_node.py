@@ -9,8 +9,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from f8pysdk.codec import coerce_bool, coerce_int, coerce_str
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import ServiceNode
+from f8pysdk.nodes import ServiceNode
 from f8pysdk.shm.video import VIDEO_FORMAT_BGRA32, VIDEO_FORMAT_FLOW2_F16, VideoShmReader, VideoShmWriter
 
 from .model_config import ModelSpec, ModelTask, build_model_index, build_model_index_with_errors, load_model_spec
@@ -36,41 +37,6 @@ def _default_weights_dir() -> Path:
         except Exception:
             continue
     return candidates[0] if candidates else Path.cwd().resolve()
-
-
-def _coerce_int(v: Any, *, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
-    try:
-        out = int(v)
-    except Exception:
-        out = int(default)
-    if minimum is not None and out < minimum:
-        out = int(minimum)
-    if maximum is not None and out > maximum:
-        out = int(maximum)
-    return out
-
-
-def _coerce_str(v: Any, *, default: str = "") -> str:
-    try:
-        s = str(v) if v is not None else ""
-    except Exception:
-        s = ""
-    s = s.strip()
-    return s if s else default
-
-
-def _coerce_bool(v: Any, *, default: bool) -> bool:
-    if isinstance(v, bool):
-        return v
-    if isinstance(v, (int, float)):
-        return bool(v)
-    if isinstance(v, str):
-        s = v.strip().lower()
-        if s in ("1", "true", "yes", "on"):
-            return True
-        if s in ("0", "false", "no", "off"):
-            return False
-    return bool(default)
 
 
 def _resolve_path_from_cwd_or_repo(raw: str) -> Path:
@@ -322,30 +288,32 @@ class OnnxOptflowServiceNode(ServiceNode):
         await self._ensure_config_loaded()
 
         if name == "weightsDir":
-            raw = _coerce_str(await self.get_state_value("weightsDir"), default=str(self._weights_dir))
+            raw = coerce_str(await self.get_state_value("weightsDir"), default=str(self._weights_dir))
             self._weights_dir = _resolve_path_from_cwd_or_repo(raw)
             await self._publish_model_index()
             await self._reset_runtime()
             return
 
         if name == "modelId":
-            self._model_id = _coerce_str(await self.get_state_value("modelId"), default=self._model_id)
+            self._model_id = coerce_str(await self.get_state_value("modelId"), default=self._model_id)
             await self._reset_runtime()
             return
 
         if name == "modelYamlPath":
-            self._model_yaml_path = _coerce_str(await self.get_state_value("modelYamlPath"), default=self._model_yaml_path)
+            self._model_yaml_path = coerce_str(
+                await self.get_state_value("modelYamlPath"), default=self._model_yaml_path
+            )
             await self._reset_runtime()
             return
 
         if name == "ortProvider":
-            v = _coerce_str(await self.get_state_value("ortProvider"), default=str(self._ort_provider)).lower()
+            v = coerce_str(await self.get_state_value("ortProvider"), default=str(self._ort_provider)).lower()
             self._ort_provider = v if v in ("auto", "cuda", "cpu") else "auto"
             await self._reset_runtime()
             return
 
         if name == "inputShmName":
-            self._input_shm_name = _coerce_str(await self.get_state_value("inputShmName"), default=self._input_shm_name)
+            self._input_shm_name = coerce_str(await self.get_state_value("inputShmName"), default=self._input_shm_name)
             self._frame_cache.reset()
             self._new_frame_counter = 0
             self._last_processed_frame_id = None
@@ -355,7 +323,7 @@ class OnnxOptflowServiceNode(ServiceNode):
             return
 
         if name == "computeEveryNFrames":
-            self._compute_every_n_frames = _coerce_int(
+            self._compute_every_n_frames = coerce_int(
                 await self.get_state_value("computeEveryNFrames"),
                 default=self._compute_every_n_frames,
                 minimum=1,
@@ -364,7 +332,7 @@ class OnnxOptflowServiceNode(ServiceNode):
             return
 
         if name == "autoDownloadWeights":
-            self._auto_download_weights = _coerce_bool(
+            self._auto_download_weights = coerce_bool(
                 await self.get_state_value("autoDownloadWeights"),
                 default=self._auto_download_weights,
             )
@@ -374,29 +342,33 @@ class OnnxOptflowServiceNode(ServiceNode):
         if self._config_loaded:
             return
 
-        raw_weights = _coerce_str(
+        raw_weights = coerce_str(
             await self.get_state_value("weightsDir"),
             default=str(self._initial_state.get("weightsDir") or _default_weights_dir()),
         )
         self._weights_dir = _resolve_path_from_cwd_or_repo(raw_weights)
-        self._model_id = _coerce_str(await self.get_state_value("modelId"), default=str(self._initial_state.get("modelId") or ""))
-        self._model_yaml_path = _coerce_str(
+        self._model_id = coerce_str(
+            await self.get_state_value("modelId"), default=str(self._initial_state.get("modelId") or "")
+        )
+        self._model_yaml_path = coerce_str(
             await self.get_state_value("modelYamlPath"),
             default=str(self._initial_state.get("modelYamlPath") or ""),
         )
-        v = _coerce_str(await self.get_state_value("ortProvider"), default=str(self._initial_state.get("ortProvider") or "auto")).lower()
+        v = coerce_str(
+            await self.get_state_value("ortProvider"), default=str(self._initial_state.get("ortProvider") or "auto")
+        ).lower()
         self._ort_provider = v if v in ("auto", "cuda", "cpu") else "auto"
-        self._input_shm_name = _coerce_str(
+        self._input_shm_name = coerce_str(
             await self.get_state_value("inputShmName"),
             default=str(self._initial_state.get("inputShmName") or ""),
         )
-        self._compute_every_n_frames = _coerce_int(
+        self._compute_every_n_frames = coerce_int(
             await self.get_state_value("computeEveryNFrames"),
             default=int(self._initial_state.get("computeEveryNFrames") or 2),
             minimum=1,
             maximum=120,
         )
-        self._auto_download_weights = _coerce_bool(
+        self._auto_download_weights = coerce_bool(
             await self.get_state_value("autoDownloadWeights"),
             default=bool(self._initial_state.get("autoDownloadWeights", True)),
         )
@@ -490,8 +462,7 @@ class OnnxOptflowServiceNode(ServiceNode):
         self._ort_provider = "cpu"
         await self.set_state("ortProvider", "cpu")
         await self._set_last_error(
-            "GPU inference failed; switched ortProvider to cpu automatically.\n"
-            f"reason: {detail}"
+            "GPU inference failed; switched ortProvider to cpu automatically.\n" f"reason: {detail}"
         )
 
     def _close_shm(self) -> None:
@@ -625,8 +596,7 @@ class OnnxOptflowServiceNode(ServiceNode):
             )
         if not spec.onnx_url:
             raise FileNotFoundError(
-                f"Model file not found: {spec.onnx_path}. "
-                "No onnxUrl is configured in model yaml."
+                f"Model file not found: {spec.onnx_path}. " "No onnxUrl is configured in model yaml."
             )
         now = time.monotonic()
         if float(now) < float(self._download_retry_at_monotonic):
@@ -746,7 +716,7 @@ class OnnxOptflowServiceNode(ServiceNode):
                 buf = np.frombuffer(payload, dtype=np.uint8)
                 rows = buf.reshape((height, pitch))
                 bgra = rows[:, : width * 4].reshape((height, width, 4))
-                frame_bgr = np.ascontiguousarray(bgra[:, :, 0:3])
+                frame_bgr = bgra[:, :, 0:3]
 
                 tensor = self._runtime.prepare_input(frame_bgr)
                 pair = self._frame_cache.push_and_get_pair(

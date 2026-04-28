@@ -6,28 +6,32 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from f8pysdk import (
-    array_schema,
+from f8pysdk.codec import coerce_flag, coerce_int, coerce_float
+from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
+    F8SpecEditPolicy,
     F8StateAccess,
     F8StateSpec,
+    array_schema,
     any_schema,
     boolean_schema,
     complex_object_schema,
+    editable_collection_edit_policy,
     integer_schema,
     number_schema,
     string_schema,
 )
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import RuntimeNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import RuntimeNode
+from f8pysdk.registry import RuntimeNodeRegistry
 
-from ..constants import SERVICE_CLASS
-from ..skeleton_protocols import skeleton_edges_for_nodes
-from ..ui_bus import emit_ui_command
+from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
+from f8pystudio.visualization.skeletons import skeleton_edges_for_nodes
+from f8pystudio.contracts.ui_commands import emit_ui_command
+from .categories import PALETTE_CATEGORY_VIZ
 from ._viz_base import StudioVizRuntimeNodeBase, viz_sampling_state_fields
 
 logger = logging.getLogger(__name__)
@@ -177,43 +181,43 @@ class VizThreeDRuntimeNode(StudioVizRuntimeNodeBase):
 
         updated = False
         if name == "throttleMs":
-            self._throttle_ms = self._coerce_int(value, default=self._throttle_ms, minimum=0, maximum=60000)
+            self._throttle_ms = coerce_int(value, default=self._throttle_ms, minimum=0, maximum=60000)
             updated = True
         elif name == "worldUp":
             self._world_up = self._coerce_world_up(value, default=self._world_up)
             updated = True
         elif name == "showPersonBoxes":
-            self._show_person_boxes = self._coerce_bool(value, default=self._show_person_boxes)
+            self._show_person_boxes = coerce_flag(value, default=self._show_person_boxes)
             updated = True
         elif name == "showPersonNames":
-            self._show_person_names = self._coerce_bool(value, default=self._show_person_names)
+            self._show_person_names = coerce_flag(value, default=self._show_person_names)
             updated = True
         elif name == "showBonePoints":
-            self._show_bone_points = self._coerce_bool(value, default=self._show_bone_points)
+            self._show_bone_points = coerce_flag(value, default=self._show_bone_points)
             updated = True
         elif name == "showSkeletonLines":
-            self._show_skeleton_lines = self._coerce_bool(value, default=self._show_skeleton_lines)
+            self._show_skeleton_lines = coerce_flag(value, default=self._show_skeleton_lines)
             updated = True
         elif name == "showBoneAxes":
-            self._show_bone_axes = self._coerce_bool(value, default=self._show_bone_axes)
+            self._show_bone_axes = coerce_flag(value, default=self._show_bone_axes)
             updated = True
         elif name == "showBoneNames":
-            self._show_bone_names = self._coerce_bool(value, default=self._show_bone_names)
+            self._show_bone_names = coerce_flag(value, default=self._show_bone_names)
             updated = True
         elif name == "maxPeople":
-            self._max_people = self._coerce_int(value, default=self._max_people, minimum=1, maximum=4096)
+            self._max_people = coerce_int(value, default=self._max_people, minimum=1, maximum=4096)
             updated = True
         elif name == "maxBonesPerPerson":
-            self._max_bones_per_person = self._coerce_int(value, default=self._max_bones_per_person, minimum=1, maximum=8192)
+            self._max_bones_per_person = coerce_int(value, default=self._max_bones_per_person, minimum=1, maximum=8192)
             updated = True
         elif name == "autoZoomOnNewPeople":
-            self._auto_zoom_on_new_people = self._coerce_bool(value, default=self._auto_zoom_on_new_people)
+            self._auto_zoom_on_new_people = coerce_flag(value, default=self._auto_zoom_on_new_people)
             updated = True
         elif name == "uiFpsCap":
-            self._ui_fps_cap = self._coerce_int(value, default=self._ui_fps_cap, minimum=1, maximum=120)
+            self._ui_fps_cap = coerce_int(value, default=self._ui_fps_cap, minimum=1, maximum=120)
             updated = True
         elif name == "markerScale":
-            self._marker_scale = self._coerce_float(value, default=self._marker_scale, minimum=0.1, maximum=100000.0)
+            self._marker_scale = coerce_float(value, default=self._marker_scale, minimum=0.1, maximum=100000.0)
             updated = True
 
         if not updated:
@@ -232,37 +236,37 @@ class VizThreeDRuntimeNode(StudioVizRuntimeNodeBase):
     async def _ensure_config_loaded(self) -> None:
         if self._config_loaded:
             return
-        self._throttle_ms = self._coerce_int(
+        self._throttle_ms = coerce_int(
             await self._get_state_or_initial("throttleMs", 33), default=33, minimum=0, maximum=60000
         )
         self._world_up = self._coerce_world_up(await self._get_state_or_initial("worldUp", "+y"), default="+y")
-        self._show_person_boxes = self._coerce_bool(
+        self._show_person_boxes = coerce_flag(
             await self._get_state_or_initial("showPersonBoxes", True), default=True
         )
-        self._show_person_names = self._coerce_bool(
+        self._show_person_names = coerce_flag(
             await self._get_state_or_initial("showPersonNames", False), default=False
         )
-        self._show_bone_points = self._coerce_bool(
+        self._show_bone_points = coerce_flag(
             await self._get_state_or_initial("showBonePoints", True), default=True
         )
-        self._show_skeleton_lines = self._coerce_bool(
+        self._show_skeleton_lines = coerce_flag(
             await self._get_state_or_initial("showSkeletonLines", True), default=True
         )
-        self._show_bone_axes = self._coerce_bool(await self._get_state_or_initial("showBoneAxes", False), default=False)
-        self._show_bone_names = self._coerce_bool(await self._get_state_or_initial("showBoneNames", False), default=False)
-        self._max_people = self._coerce_int(
+        self._show_bone_axes = coerce_flag(await self._get_state_or_initial("showBoneAxes", False), default=False)
+        self._show_bone_names = coerce_flag(await self._get_state_or_initial("showBoneNames", False), default=False)
+        self._max_people = coerce_int(
             await self._get_state_or_initial("maxPeople", 64), default=64, minimum=1, maximum=4096
         )
-        self._max_bones_per_person = self._coerce_int(
+        self._max_bones_per_person = coerce_int(
             await self._get_state_or_initial("maxBonesPerPerson", 256), default=256, minimum=1, maximum=8192
         )
-        self._auto_zoom_on_new_people = self._coerce_bool(
+        self._auto_zoom_on_new_people = coerce_flag(
             await self._get_state_or_initial("autoZoomOnNewPeople", False), default=False
         )
-        self._ui_fps_cap = self._coerce_int(
+        self._ui_fps_cap = coerce_int(
             await self._get_state_or_initial("uiFpsCap", 60), default=60, minimum=1, maximum=120
         )
-        self._marker_scale = self._coerce_float(
+        self._marker_scale = coerce_float(
             await self._get_state_or_initial("markerScale", 1.0), default=1.0, minimum=0.1, maximum=100000.0
         )
         self._config_loaded = True
@@ -613,45 +617,6 @@ class VizThreeDRuntimeNode(StudioVizRuntimeNodeBase):
         return (qw, qx, qy, qz)
 
     @staticmethod
-    def _coerce_bool(value: Any, *, default: bool) -> bool:
-        if isinstance(value, bool):
-            return value
-        if value is None:
-            return bool(default)
-        if isinstance(value, (int, float)):
-            return bool(value)
-        text = str(value).strip().lower()
-        if text in ("1", "true", "yes", "on"):
-            return True
-        if text in ("0", "false", "no", "off", ""):
-            return False
-        return bool(default)
-
-    @staticmethod
-    def _coerce_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:
-        try:
-            out = int(value) if value is not None else int(default)
-        except (TypeError, ValueError):
-            out = int(default)
-        if out < minimum:
-            out = minimum
-        if out > maximum:
-            out = maximum
-        return out
-
-    @staticmethod
-    def _coerce_float(value: Any, *, default: float, minimum: float, maximum: float) -> float:
-        try:
-            out = float(value) if value is not None else float(default)
-        except (TypeError, ValueError):
-            out = float(default)
-        if out < minimum:
-            out = minimum
-        if out > maximum:
-            out = maximum
-        return out
-
-    @staticmethod
     def _coerce_world_up(value: Any, *, default: str) -> str:
         text = str(value or "").strip().lower()
         if text in ("+x", "-x", "+y", "-y", "+z", "-z"):
@@ -680,20 +645,20 @@ class VizThreeDRuntimeNode(StudioVizRuntimeNodeBase):
         )
 
 
-def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> RuntimeNode:
         return VizThreeDRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(
+    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
+    registry.register_operator_spec(
         F8OperatorSpec(
             schemaVersion=F8OperatorSchemaVersion.f8operator_1,
             serviceClass=SERVICE_CLASS,
+            paletteCategory=PALETTE_CATEGORY_VIZ,
             operatorClass=OPERATOR_CLASS,
             version="0.0.1",
-            label="3DViz",
+            label="3D Viz",
             description="3D viewer for multi-person skeleton streams (Studio UI-only).",
             tags=["viz", "3d", "skeleton", "ui"],
             dataInPorts=[
@@ -704,7 +669,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                 ),
             ],
             dataOutPorts=[],
-            editableDataInPorts=True,
+            editPolicy=F8SpecEditPolicy(dataInPorts=editable_collection_edit_policy()),
             rendererClass=RENDERER_CLASS,
             stateFields=[
                 F8StateSpec(
@@ -829,4 +794,4 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
         ),
         overwrite=True,
     )
-    return reg
+    return registry

@@ -26,6 +26,207 @@ components:
         - type: array
           items: {}
         - type: "null"
+    F8VariantKind:
+      title: F8VariantKind
+      type: string
+      enum:
+        - service
+        - operator
+    F8VariantRef:
+      title: F8VariantRef
+      type: object
+      properties:
+        variantId:
+          type: string
+        kind:
+          $ref: "#/components/schemas/F8VariantKind"
+        baseNodeType:
+          type: string
+        serviceClass:
+          type: string
+        operatorClass:
+          anyOf:
+            - type: string
+            - type: "null"
+          default: null
+        name:
+          type: string
+      required:
+        - variantId
+        - kind
+        - baseNodeType
+        - serviceClass
+        - name
+      additionalProperties: false
+    F8VariantRecord:
+      title: F8VariantRecord
+      type: object
+      properties:
+        variantId:
+          type: string
+        kind:
+          $ref: "#/components/schemas/F8VariantKind"
+        baseNodeType:
+          type: string
+        serviceClass:
+          type: string
+        operatorClass:
+          anyOf:
+            - type: string
+            - type: "null"
+          default: null
+        name:
+          type: string
+        description:
+          type: string
+          default: ""
+        tags:
+          type: array
+          items:
+            type: string
+          default: []
+        spec:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/F8JsonValue"
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required:
+        - variantId
+        - kind
+        - baseNodeType
+        - serviceClass
+        - name
+        - spec
+        - createdAt
+        - updatedAt
+      additionalProperties: false
+    F8ComponentRecord:
+      title: F8ComponentRecord
+      type: object
+      properties:
+        componentId:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+          default: ""
+        tags:
+          type: array
+          items:
+            type: string
+          default: []
+        content:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/F8JsonValue"
+        createdAt:
+          type: string
+          default: ""
+        updatedAt:
+          type: string
+          default: ""
+      required:
+        - componentId
+        - name
+        - content
+      additionalProperties: false
+    F8VariantLibrary:
+      title: F8VariantLibrary
+      type: object
+      properties:
+        schemaVersion:
+          type: string
+          enum:
+            - f8variantlib/1
+          default: f8variantlib/1
+        entries:
+          type: array
+          items:
+            type: object
+            properties:
+              record:
+                $ref: "#/components/schemas/F8VariantRecord"
+              localVersionNumber:
+                type: integer
+              syncBaseRemoteRevision:
+                type: string
+              syncBaseRemoteVersionNumber:
+                type: integer
+              syncBaseLocalVersionNumber:
+                type: integer
+            required:
+              - record
+          default: []
+      additionalProperties: false
+    F8NodeUiOverridePatch:
+      title: F8NodeUiOverridePatch
+      type: object
+      properties:
+        showOnNode:
+          type: boolean
+        uiControl:
+          type: string
+        label:
+          type: string
+        description:
+          type: string
+      additionalProperties: false
+    F8NodeUiOverrides:
+      title: F8NodeUiOverrides
+      type: object
+      description: Instance-level UI presentation patches only. Does not carry schema edits or interaction/session state.
+      properties:
+        stateFields:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/F8NodeUiOverridePatch"
+        commands:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              showOnNode:
+                type: boolean
+            additionalProperties: false
+        dataPorts:
+          type: object
+          properties:
+            in:
+              type: object
+              additionalProperties:
+                type: object
+                properties:
+                  showOnNode:
+                    type: boolean
+                additionalProperties: false
+            out:
+              type: object
+              additionalProperties:
+                type: object
+                properties:
+                  showOnNode:
+                    type: boolean
+                additionalProperties: false
+          additionalProperties: false
+      additionalProperties: false
+    F8NodeUiState:
+      title: F8NodeUiState
+      type: object
+      description: Instance/session UI interaction state. Not part of spec presentation overrides.
+      properties:
+        stateInlineExpanded:
+          type: object
+          additionalProperties:
+            type: boolean
+        stateFieldHotkeys:
+          type: object
+          additionalProperties:
+            type: string
+      additionalProperties: false
     F8DynamicBindingsInputsSpec:
       title: F8DynamicBindingsInputsSpec
       type: object
@@ -78,6 +279,32 @@ components:
         - enabled
         - source
       additionalProperties: false
+    F8DynamicBindingsOutputsSpec:
+      title: F8DynamicBindingsOutputsSpec
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        source:
+          type: string
+          enum:
+            - data_out_ports
+        type_name:
+          type: string
+        module_name:
+          type: string
+        schema_mode:
+          type: string
+          enum:
+            - basic_recursive
+        access_mode:
+          type: string
+          enum:
+            - object_and_mapping
+      required:
+        - enabled
+        - source
+      additionalProperties: false
     F8DynamicBindingsSpec:
       title: F8DynamicBindingsSpec
       type: object
@@ -86,6 +313,8 @@ components:
           $ref: "#/components/schemas/F8DynamicBindingsInputsSpec"
         states:
           $ref: "#/components/schemas/F8DynamicBindingsStatesSpec"
+        outputs:
+          $ref: "#/components/schemas/F8DynamicBindingsOutputsSpec"
       additionalProperties: false
     F8PythonEditorAssistSpec:
       title: F8PythonEditorAssistSpec
@@ -143,10 +372,7 @@ components:
           description: If true, this state is protected and cannot be deleted from editable state field lists.
         uiControl:
           type: string
-          description: Optional UI hint (slider, spinbox, select, etc.)
-        uiLanguage:
-          type: string
-          description: Optional language hint for code editors (e.g., javascript, typescript)
+          description: Optional UI hint DSL (e.g., slider, code[python], wrapline[json], select[availableItems], multiselect[modelClasses], dial[noloop]).
         showOnNode:
           type: boolean
           default: false
@@ -161,6 +387,40 @@ components:
         - name
         - valueSchema
         - access
+      additionalProperties: false
+    F8CollectionEditPolicy:
+      title: F8CollectionEditPolicy
+      type: object
+      properties:
+        canAdd:
+          type: boolean
+          default: false
+          description: Allow adding new items to the collection.
+        canDelete:
+          type: boolean
+          default: false
+          description: Allow deleting existing items from the collection.
+        canEditExisting:
+          type: boolean
+          default: false
+          description: Allow editing existing items without implying add/delete permission.
+      additionalProperties: false
+    F8SpecEditPolicy:
+      title: F8SpecEditPolicy
+      type: object
+      properties:
+        stateFields:
+          $ref: "#/components/schemas/F8CollectionEditPolicy"
+        commands:
+          $ref: "#/components/schemas/F8CollectionEditPolicy"
+        dataInPorts:
+          $ref: "#/components/schemas/F8CollectionEditPolicy"
+        dataOutPorts:
+          $ref: "#/components/schemas/F8CollectionEditPolicy"
+        execInPorts:
+          $ref: "#/components/schemas/F8CollectionEditPolicy"
+        execOutPorts:
+          $ref: "#/components/schemas/F8CollectionEditPolicy"
       additionalProperties: false
     F8DataPortSpec:
       title: F8DataPortSpec
@@ -224,7 +484,7 @@ components:
           description: If true, this parameter is required when invoking the command.
         uiControl:
           type: string
-          description: Optional UI hint (slider, select, etc.)
+          description: Optional UI hint DSL (e.g., slider, select[availableItems], multiselect[modelClasses], dial[noloop]).
       required:
         - name
         - valueSchema
@@ -889,6 +1149,11 @@ components:
       title: F8ServiceSpec
       type: object
       properties:
+        specKind:
+          type: string
+          const: service
+          default: service
+          description: Explicit spec kind discriminator for schema consumers.
         schemaVersion:
           title: F8ServiceSchemaVersion
           type: string
@@ -902,11 +1167,6 @@ components:
           type: string
           default: default_svc
           description: Optional custom UI renderer key for the node (e.g., realtimePlot, 3dViewer)
-        rendererProps:
-          type: object
-          default: {}
-          description: Optional renderer-specific configuration for the custom node UI
-          additionalProperties: true
         version:
           type: string
           description: SemVer of the service profile
@@ -921,24 +1181,26 @@ components:
           items:
             type: string
           default: []
+        paletteCategory:
+          type: string
+          default: svc
+          description: Explicit Studio palette category for this spec. Studio no longer derives categories from serviceClass or node type ids.
+        hiddenInPalette:
+          type: boolean
+          description: If true, keep the spec registered but hide it from Studio palette and tab search surfaces.
+          default: false
         stateFields:
           type: array
           items:
             $ref: "#/components/schemas/F8StateSpec"
           default: []
-        editableStateFields:
-          type: boolean
-          default: false
-          description: Allow modification of state fields at runtime.
+        editPolicy:
+          $ref: "#/components/schemas/F8SpecEditPolicy"
         commands:
           type: array
           items:
             $ref: "#/components/schemas/F8Command"
           default: []
-        editableCommands:
-          type: boolean
-          default: false
-          description: Allow dynamic addition of commands beyond the declared list.
         dataInPorts:
           type: array
           description: Data bus inputs exposed by this service (for cross-instance data pub/sub).
@@ -951,17 +1213,10 @@ components:
           items:
             $ref: "#/components/schemas/F8DataPortSpec"
           default: []
-        editableDataInPorts:
-          type: boolean
-          default: false
-          description: Allow dynamic addition of data input ports.
-        editableDataOutPorts:
-          type: boolean
-          default: false
-          description: Allow dynamic addition of data output ports.
         launch:
           $ref: "#/components/schemas/F8ServiceLaunchSpec"
       required:
+        - specKind
         - serviceClass
         - label
       additionalProperties: true
@@ -970,6 +1225,11 @@ components:
       title: F8OperatorSpec
       type: object
       properties:
+        specKind:
+          type: string
+          const: operator
+          default: operator
+          description: Explicit spec kind discriminator for schema consumers.
         schemaVersion:
           title: F8OperatorSchemaVersion
           type: string
@@ -991,11 +1251,6 @@ components:
           type: string
           default: default_op
           description: Optional custom UI renderer key for this operator node (e.g., realtimePlot, 3dViewer)
-        rendererProps:
-          type: object
-          default: {}
-          description: Optional renderer-specific configuration for the custom node UI
-          additionalProperties: true
         version:
           type: string
           description: SemVer of the operator profile
@@ -1010,15 +1265,26 @@ components:
           items:
             type: string
           default: []
+        paletteCategory:
+          type: string
+          default: uncategorized
+          description: Explicit Studio palette category for this spec. Studio no longer derives categories from serviceClass or node type ids.
+        hiddenInPalette:
+          type: boolean
+          description: If true, keep the spec registered but hide it from Studio palette and tab search surfaces.
+          default: false
         stateFields:
           type: array
           items:
             $ref: "#/components/schemas/F8StateSpec"
           default: []
-        editableStateFields:
-          type: boolean
-          default: false
-          description: Allow modification of state fields at runtime.
+        editPolicy:
+          $ref: "#/components/schemas/F8SpecEditPolicy"
+        commands:
+          type: array
+          items:
+            $ref: "#/components/schemas/F8Command"
+          default: []
         execInPorts:
           type: array
           description:
@@ -1035,12 +1301,6 @@ components:
           items:
             type: string
           default: []
-        editableExecInPorts:
-          type: boolean
-          default: false
-        editableExecOutPorts:
-          type: boolean
-          default: false
         dataInPorts:
           type: array
           description: Data input ports (can be empty).
@@ -1053,15 +1313,8 @@ components:
           items:
             $ref: "#/components/schemas/F8DataPortSpec"
           default: []
-        editableDataInPorts:
-          type: boolean
-          default: false
-          description: Allow dynamic addition of data input ports.
-        editableDataOutPorts:
-          type: boolean
-          default: false
-          description: Allow dynamic addition of data output ports.
       required:
+        - specKind
         - serviceClass
         - operatorClass
         - label
@@ -1262,6 +1515,33 @@ components:
       required: [nodeId, serviceId, serviceClass]
       additionalProperties: false
 
+    F8AutoSampleRequest:
+      title: F8AutoSampleRequest
+      type: object
+      description: Service-level periodic sampling request for a source output.
+      properties:
+        sourceNodeId:
+          type: string
+          description: Source runtime node id to sample.
+        sourcePort:
+          type: string
+          description: Source output port to sample.
+        intervalMs:
+          type: integer
+          minimum: 8
+          maximum: 5000
+          description: Periodic sampling interval in milliseconds.
+        deliverLocal:
+          type: boolean
+          default: false
+          description: Whether sampled values should fan out to local routed consumers.
+        publishCrossService:
+          type: boolean
+          default: true
+          description: Whether sampled values should publish onto cross-service data subjects.
+      required: [sourceNodeId, sourcePort, intervalMs]
+      additionalProperties: false
+
     F8RuntimeService:
       title: F8RuntimeService
       type: object
@@ -1282,6 +1562,11 @@ components:
           description: Optional service instance metadata.
           additionalProperties:
             $ref: "#/components/schemas/F8JsonValue"
+        autoSampleRequests:
+          type: array
+          description: Optional service-level periodic sampling requests.
+          items:
+            $ref: "#/components/schemas/F8AutoSampleRequest"
       required: [serviceId, serviceClass]
       additionalProperties: false
 
@@ -1413,7 +1698,37 @@ components:
           type: integer
           minimum: 0
           default: 0
-      required: [observed, processed, dropped]
+        localOnlyEmits:
+          type: integer
+          minimum: 0
+          default: 0
+        routedCrossEmits:
+          type: integer
+          minimum: 0
+          default: 0
+        suppressedCrossPublishes:
+          type: integer
+          minimum: 0
+          default: 0
+        callbackDeliveries:
+          type: integer
+          minimum: 0
+          default: 0
+        bufferPullDeliveries:
+          type: integer
+          minimum: 0
+          default: 0
+      required:
+        [
+          observed,
+          processed,
+          dropped,
+          localOnlyEmits,
+          routedCrossEmits,
+          suppressedCrossPublishes,
+          callbackDeliveries,
+          bufferPullDeliveries,
+        ]
       additionalProperties: false
 
     F8MonitorTiming:

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from f8pysdk.generated import F8OperatorSchemaVersion, F8OperatorSpec, F8StateAccess, F8StateSpec
-from f8pysdk.schema_helpers import integer_schema, string_schema
+from f8pysdk.specs import F8OperatorSchemaVersion, F8OperatorSpec, F8StateAccess, F8StateSpec
+from f8pysdk.specs import integer_schema, string_schema
 
-from f8pystudio.variants.variant_compose import build_variant_record_from_node
+from f8pystudio.assets.variants.variant_compose import build_variant_record_from_node
 
 
 class _NodeModelStub:

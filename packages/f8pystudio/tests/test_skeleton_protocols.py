@@ -8,7 +8,7 @@ PKG_STUDIO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PKG_STUDIO not in sys.path:
     sys.path.insert(0, PKG_STUDIO)
 
-from f8pystudio.skeleton_protocols import skeleton_edges_for_nodes
+from f8pystudio.visualization.skeletons import skeleton_edges_for_nodes
 
 
 class SkeletonProtocolsTests(unittest.TestCase):

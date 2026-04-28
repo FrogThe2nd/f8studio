@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from f8pysdk import (
+from f8pysdk.specs import (
     array_schema,
     F8DataPortSpec,
     F8RuntimeNode,
@@ -15,8 +15,8 @@ from f8pysdk import (
     number_schema,
     string_schema,
 )
-from f8pysdk.runtime_node import RuntimeNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import RuntimeNode
+from f8pysdk.registry import create_runtime_node_registry, RuntimeNodeRegistry, shared_runtime_node_registry
 
 from .constants import CORE_SERVICE_CLASS, RHYTHM_SERVICE_CLASS
 from .core_service_node import AudioCoreFeatureServiceNode
@@ -160,6 +160,7 @@ def _register_core(reg: RuntimeNodeRegistry) -> None:
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,
             serviceClass=CORE_SERVICE_CLASS,
+            paletteCategory="svc",
             version="0.0.1",
             label="Audio Feature Core",
             description="Audio SHM core feature extraction service (rms, onset, centroid).",
@@ -173,10 +174,6 @@ def _register_core(reg: RuntimeNodeRegistry) -> None:
                     valueSchema=_core_features_schema(),
                 )
             ],
-            editableStateFields=False,
-            editableDataInPorts=False,
-            editableDataOutPorts=False,
-            editableCommands=False,
         ),
         overwrite=True,
     )
@@ -184,7 +181,7 @@ def _register_core(reg: RuntimeNodeRegistry) -> None:
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> RuntimeNode:
         return AudioCoreFeatureServiceNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register_service(CORE_SERVICE_CLASS, _factory, overwrite=True)
+    reg.register_service_factory(CORE_SERVICE_CLASS, _factory, overwrite=True)
 
 
 def _register_rhythm(reg: RuntimeNodeRegistry) -> None:
@@ -192,6 +189,7 @@ def _register_rhythm(reg: RuntimeNodeRegistry) -> None:
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,
             serviceClass=RHYTHM_SERVICE_CLASS,
+            paletteCategory="svc",
             version="0.0.1",
             label="Audio Feature Rhythm",
             description="Rhythm analysis service consuming core features (tempo + pulse clarity).",
@@ -212,10 +210,6 @@ def _register_rhythm(reg: RuntimeNodeRegistry) -> None:
                     valueSchema=_rhythm_features_schema(),
                 )
             ],
-            editableStateFields=False,
-            editableDataInPorts=False,
-            editableDataOutPorts=False,
-            editableCommands=False,
         ),
         overwrite=True,
     )
@@ -223,11 +217,18 @@ def _register_rhythm(reg: RuntimeNodeRegistry) -> None:
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> RuntimeNode:
         return AudioRhythmFeatureServiceNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register_service(RHYTHM_SERVICE_CLASS, _factory, overwrite=True)
+    reg.register_service_factory(RHYTHM_SERVICE_CLASS, _factory, overwrite=True)
 
 
-def register_specs(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
-    _register_core(reg)
-    _register_rhythm(reg)
-    return reg
+def register_specs(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
+    _register_core(registry)
+    _register_rhythm(registry)
+    return registry
+
+
+def create_audiofeat_registry() -> RuntimeNodeRegistry:
+    return register_specs(create_runtime_node_registry())
+
+
+def shared_audiofeat_registry() -> RuntimeNodeRegistry:
+    return register_specs(shared_runtime_node_registry())

@@ -4,13 +4,13 @@ from dataclasses import dataclass
 from typing import Protocol
 
 import msgspec
-from f8pysdk import F8RuntimeGraph
-from f8pysdk.generated import F8SetRungraphArgs, F8SetRungraphReply, F8SetRungraphRequest
-from f8pysdk.msgspec_codec import copy_model
+from f8pysdk.specs import F8RuntimeGraph
+from f8pysdk.specs import F8SetRungraphArgs, F8SetRungraphReply, F8SetRungraphRequest
+from f8pysdk.codec import copy_model
 from f8pysdk.nats_naming import kv_bucket_for_service, new_id, svc_endpoint_subject
-from f8pysdk.nats_transport import NatsTransport, NatsTransportConfig
-from f8pysdk.service_ready import wait_service_ready
-from f8pysdk.service_bus.codec import decode_as, encode_obj
+from f8pysdk.transport import NatsTransport, NatsTransportConfig
+from f8pysdk.service_runtime_tools.deploy.readiness import wait_service_ready
+from f8pysdk.codec import decode_as, encode_obj
 
 
 class RungraphGateway(Protocol):

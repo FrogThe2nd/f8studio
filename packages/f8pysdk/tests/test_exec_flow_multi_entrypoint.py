@@ -1,4 +1,4 @@
-from f8pysdk.msgspec_codec import copy_model
+from f8pysdk.codec import copy_model
 import asyncio
 import os
 import sys
@@ -10,14 +10,14 @@ if ROOT not in sys.path:
 
 from f8pysdk.capabilities import EntrypointNode  # noqa: E402
 from f8pysdk.executors.exec_flow import EntrypointContext, ExecFlowExecutor  # noqa: E402
-from f8pysdk.generated import (  # noqa: E402
+from f8pysdk.specs import (  # noqa: E402
     F8Edge,
     F8EdgeKindEnum,
     F8EdgeStrategyEnum,
     F8RuntimeGraph,
     F8RuntimeNode,
 )
-from f8pysdk.runtime_node import OperatorNode  # noqa: E402
+from f8pysdk.nodes import OperatorNode  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
 

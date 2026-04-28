@@ -10,21 +10,21 @@ No description.
 
 ## When to Use
 
-- Use `f8.cvkit.tracking` when you need to maintain a continuous "lock" on a moving Region of Interest (ROI) after it has been initialized.
-- It is designed for targets that change position frame-to-frame but maintain some level of visual continuity (e.g., a person walking across a room, a moving vehicle).
-- It is more robust than simple template matching for objects that might slightly change shape or scale as they move.
+- Use `f8.cvkit.tracking` after a target has already been initialized and you want to keep following it over time.
+- It is a good fit for moving people, objects, or screen regions that remain visually coherent across frames.
+- It is usually more suitable than repeated matching once the target has been acquired.
 
 ## Common Wiring Patterns
 
-- **Initialize & Follow**: Start by finding the target with `f8.cvkit.templatematch` or a manual "Capture ROI" workflow, then feed that initial bounding box into the tracking service to maintain the lock.
-- **Visual Feedback**: Always keep an `f8.viz.track` node attached to the tracker output during development to visually verify if the tracker has "lost" the object.
-- **Downstream Analysis**: Feed the tracked ROI coordinates into `f8.pyengine` operators to drive camera following, distance estimation, or motion-triggered logic based on position.
+- A common flow is `templatematch / manual ROI -> tracking`.
+- During development, keep `f8.viz.track` attached so loss-of-lock is immediately visible.
+- The tracking output is often forwarded into `f8.pyengine` for position-based rules, region triggers, or follow logic.
 
 ## Pitfalls / Gotchas
 
-- **Loss of Lock**: If an object is occluded or moves too fast for the configured `searchWindow`, the tracker will "lose" the target. You must implement logic (usually via `f8.pyengine`) to re-initialize the tracker when confidence drops.
-- **Drift Accumulation**: Small errors in frame-to-frame matching can accumulate, causing the tracking box to slowly slide away from the actual target. Periodically re-syncing with a global detector (like `f8.dl.detector`) is a common fix.
-- **Startup Order**: The tracker requires a valid initial ROI and a live input stream. Ensure the video producer is running before attempting to initialize the tracking state.
+- Occlusion, rapid acceleration, and large scale change can all cause loss of lock.
+- Track drift can build up gradually; periodic re-initialization from a detector or matcher is often needed.
+- If the initial box is unreliable, long-term tracking usually will be too.
 
 ## Service Reference
 
@@ -49,6 +49,9 @@ No description.
 | --- | --- | --- | --- | --- | --- |
 | `shmName` | `rw` | `true` | `true` | `string` | Optional SHM name override (e.g. shm.xxx.video). |
 | `initSelect` | `rw` | `true` | `true` | `string / enum[first_box, closest_center, largest_area, highest_score] / default=closest_center` | Init bbox selection strategy: first_box \| closest_center \| largest_area \| highest_score. |
+| `trackerKind` | `rw` | `true` | `true` | `string / enum[csrt, kcf, mil, boosting, median_flow, ...] / default=csrt` | OpenCV tracker backend: csrt \| kcf \| mil \| boosting \| median_flow \| mosse \| tld \| nano \| vit. |
+| `modelDir` | `rw` | `true` | `true` | `string / default=models` | Directory containing downloaded tracker model files for nano \| vit. |
+| `autoDownloadModels` | `rw` | `true` | `true` | `boolean / default=True` | Auto-download missing tracker model files when a model-based tracker is selected. |
 | `stopTrackingCooldownMs` | `rw` | `true` | `true` | `integer / default=1000` | After stopTracking, ignore initBox for this many ms. Set to 0 to disable. |
 | `stopTrackingCooldownUntilTsMs` | `ro` | `true` | `true` | `integer` | When > 0, initBox is ignored until this timestamp (ms). |
 | `isTracking` | `ro` | `true` | `true` | `boolean` | True when tracker is running. |
@@ -61,12 +64,12 @@ No description.
 
 - `shmName` (Video SHM, `rw`): Optional SHM name override (e.g. shm.xxx.video). Schema: `string`.
 - `initSelect` (Init Select, `rw`): Init bbox selection strategy: first_box | closest_center | largest_area | highest_score. Schema: `string / enum[first_box, closest_center, largest_area, highest_score] / default=closest_center`.
+- `trackerKind` (Tracker Kind, `rw`): OpenCV tracker backend: csrt | kcf | mil | boosting | median_flow | mosse | tld | nano | vit. Schema: `string / enum[csrt, kcf, mil, boosting, median_flow, ...] / default=csrt`.
+- `modelDir` (Model Dir, `rw`): Directory containing downloaded tracker model files for nano | vit. Schema: `string / default=models`.
+- `autoDownloadModels` (Auto Download Models, `rw`): Auto-download missing tracker model files when a model-based tracker is selected. Schema: `boolean / default=True`.
 - `stopTrackingCooldownMs` (Stop Cooldown (ms), `rw`): After stopTracking, ignore initBox for this many ms. Set to 0 to disable. Schema: `integer / default=1000`.
 - `stopTrackingCooldownUntilTsMs` (Stop Cooldown Until (tsMs), `ro`): When > 0, initBox is ignored until this timestamp (ms). Schema: `integer`.
 - `isTracking` (Is Tracking, `ro`): True when tracker is running. Schema: `boolean`.
-- `isNotTracking` (Is Not Tracking, `ro`): Negation of isTracking. Schema: `boolean`.
-- `lastError` (Last Error, `ro`): Last error message. Schema: `string`.
-- `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
 
 ### Service Commands
 

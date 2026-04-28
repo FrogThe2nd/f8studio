@@ -5,11 +5,12 @@ from typing import Any
 
 from NodeGraphQt.constants import NodePropWidgetEnum
 
-from f8pysdk import F8StateAccess
-from f8pysdk.schema_helpers import schema_default, schema_type
+from f8pysdk.specs import F8StateAccess
+from f8pysdk.command import command_input_port_name, command_output_port_name
+from f8pysdk.specs import schema_default, schema_type
 
 from .items.node_item_core import state_field_info as _state_field_info
-from .port_painter import DATA_PORT_COLOR, STATE_PORT_COLOR, draw_square_port
+from .port_painter import COMMAND_PORT_COLOR, DATA_PORT_COLOR, STATE_PORT_COLOR, draw_square_port
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,27 @@ def build_state_port(node: Any) -> None:
                 color=STATE_PORT_COLOR,
                 painter_func=draw_square_port,
             )
+
+
+def build_command_port(node: Any) -> None:
+    for command in list(node.effective_commands() or []):
+        name = str(command.name or "").strip()
+        if not name:
+            continue
+        if not bool(command.showOnNode):
+            continue
+        node.add_input(
+            command_input_port_name(name),
+            multi_input=False,
+            color=COMMAND_PORT_COLOR,
+            painter_func=draw_square_port,
+        )
+        node.add_output(
+            command_output_port_name(name),
+            multi_output=True,
+            color=COMMAND_PORT_COLOR,
+            painter_func=draw_square_port,
+        )
 
 
 def ensure_state_property_metadata(
@@ -241,6 +263,23 @@ def sync_from_spec(node: Any) -> None:
                 "painter_func": draw_square_port,
                 "multi_output": True,
             }
+
+    for command in list(node.effective_commands() or []):
+        name = str(command.name or "").strip()
+        if not name:
+            continue
+        if not bool(command.showOnNode):
+            continue
+        desired_inputs[command_input_port_name(name)] = {
+            "color": COMMAND_PORT_COLOR,
+            "painter_func": draw_square_port,
+            "multi_input": False,
+        }
+        desired_outputs[command_output_port_name(name)] = {
+            "color": COMMAND_PORT_COLOR,
+            "painter_func": draw_square_port,
+            "multi_output": True,
+        }
 
     current_input_names = set(node.inputs().keys())
     current_output_names = set(node.outputs().keys())

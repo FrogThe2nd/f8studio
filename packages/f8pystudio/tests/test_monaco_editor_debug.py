@@ -4,7 +4,12 @@ import json
 from pathlib import Path
 import uuid
 
-from f8pystudio.editor_assist.debug_monaco_editor import load_session_editor_target, load_session_editor_targets
+from f8pystudio.app.debug_monaco_editor import load_session_editor_target, load_session_editor_targets
+
+
+def _editable_policy(*collections: str) -> dict[str, object]:
+    policy = {"canAdd": True, "canDelete": True, "canEditExisting": True}
+    return {name: dict(policy) for name in collections}
 
 
 def _write_session(tmp_path: Path) -> Path:
@@ -19,20 +24,15 @@ def _write_session(tmp_path: Path) -> Path:
                         "operatorClass": "f8.other_op",
                         "label": "Other",
                         "rendererClass": "default_op",
-                        "rendererProps": {},
                         "version": "0.0.1",
                         "description": "",
                         "tags": [],
                         "stateFields": [],
-                        "editableStateFields": False,
+                        "editPolicy": {},
                         "execInPorts": [],
                         "execOutPorts": [],
-                        "editableExecInPorts": False,
-                        "editableExecOutPorts": False,
                         "dataInPorts": [],
                         "dataOutPorts": [],
-                        "editableDataInPorts": False,
-                        "editableDataOutPorts": False,
                     }
                 },
                 "nodeA": {
@@ -42,7 +42,6 @@ def _write_session(tmp_path: Path) -> Path:
                         "operatorClass": "f8.python_script",
                         "label": "Python Script",
                         "rendererClass": "default_op",
-                        "rendererProps": {},
                         "version": "0.0.1",
                         "description": "",
                         "tags": ["script"],
@@ -52,8 +51,7 @@ def _write_session(tmp_path: Path) -> Path:
                                 "valueSchema": {"type": "string", "default": "print('default')\n"},
                                 "access": "rw",
                                 "required": True,
-                                "uiControl": "code",
-                                "uiLanguage": "python",
+                                "uiControl": "code[python]",
                                 "showOnNode": False,
                                 "editorAssist": {
                                     "version": 1,
@@ -96,11 +94,15 @@ def _write_session(tmp_path: Path) -> Path:
                                 "required": True,
                             },
                         ],
-                        "editableStateFields": True,
+                        "editPolicy": _editable_policy(
+                            "stateFields",
+                            "execInPorts",
+                            "execOutPorts",
+                            "dataInPorts",
+                            "dataOutPorts",
+                        ),
                         "execInPorts": [],
                         "execOutPorts": [],
-                        "editableExecInPorts": True,
-                        "editableExecOutPorts": True,
                         "dataInPorts": [
                             {
                                 "name": "track",
@@ -114,8 +116,6 @@ def _write_session(tmp_path: Path) -> Path:
                             }
                         ],
                         "dataOutPorts": [],
-                        "editableDataInPorts": True,
-                        "editableDataOutPorts": True,
                     },
                     "custom": {"code": "print('live')\n"},
                 },
@@ -126,7 +126,6 @@ def _write_session(tmp_path: Path) -> Path:
                         "operatorClass": "f8.python_script",
                         "label": "Python Script B",
                         "rendererClass": "default_op",
-                        "rendererProps": {},
                         "version": "0.0.1",
                         "description": "",
                         "tags": ["script"],
@@ -136,8 +135,7 @@ def _write_session(tmp_path: Path) -> Path:
                                 "valueSchema": {"type": "string", "default": "print('default b')\n"},
                                 "access": "rw",
                                 "required": True,
-                                "uiControl": "code",
-                                "uiLanguage": "python",
+                                "uiControl": "code[python]",
                                 "showOnNode": False,
                                 "editorAssist": {
                                     "version": 1,
@@ -155,15 +153,17 @@ def _write_session(tmp_path: Path) -> Path:
                                 },
                             }
                         ],
-                        "editableStateFields": True,
+                        "editPolicy": _editable_policy(
+                            "stateFields",
+                            "execInPorts",
+                            "execOutPorts",
+                            "dataInPorts",
+                            "dataOutPorts",
+                        ),
                         "execInPorts": [],
                         "execOutPorts": [],
-                        "editableExecInPorts": True,
-                        "editableExecOutPorts": True,
                         "dataInPorts": [],
                         "dataOutPorts": [],
-                        "editableDataInPorts": True,
-                        "editableDataOutPorts": True,
                     },
                     "custom": {"code": "print('live b')\n"},
                 },
@@ -216,3 +216,4 @@ def test_load_session_editor_targets_returns_all_matching_nodes() -> None:
 
     assert [target.node_id for target in targets] == ["nodeA", "nodeB"]
     assert [target.code for target in targets] == ["print('live')\n", "print('live b')\n"]
+

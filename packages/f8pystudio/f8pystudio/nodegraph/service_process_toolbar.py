@@ -4,8 +4,8 @@ from typing import Any, Callable
 
 from qtpy import QtCore, QtWidgets
 
-from ..constants import STUDIO_SERVICE_ID
-from ..ui_icons import StudioIcon, icon_for
+from f8pystudio.studio_specs.identifiers import STUDIO_SERVICE_ID
+from ..ui.support.ui_icons import StudioIcon, icon_for
 
 from .service_bridge_protocol import ServiceBridge
 

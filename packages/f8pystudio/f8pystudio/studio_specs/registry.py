@@ -1,0 +1,52 @@
+from __future__ import annotations
+
+from f8pysdk.specs import F8ServiceSchemaVersion, F8ServiceSpec
+from f8pysdk.specs import F8StateAccess, F8StateSpec, integer_schema
+from f8pysdk.registry import create_runtime_node_registry, RuntimeNodeRegistry, shared_runtime_node_registry
+
+from f8pystudio.operators import register_operator
+from f8pystudio.studio_specs.identifiers import SERVICE_CLASS, STUDIO_SERVICE_ID
+
+
+def register_pystudio_specs(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
+    """
+    Register f8.pystudio service/operator specs for discovery / `--describe`.
+    """
+    registry.register_service_spec(
+        F8ServiceSpec(
+            schemaVersion=F8ServiceSchemaVersion.f8service_1,
+            serviceClass=SERVICE_CLASS,
+            version="0.0.1",
+            label="PyStudio",
+            description="Service Graph Editor in Python and Qt.",
+            tags=["editor", "ui", "python", "py"],
+            paletteCategory="svc",
+            hiddenInPalette=True,
+            rendererClass="default_svc",
+            stateFields=[
+                F8StateSpec(
+                    name="tickMs",
+                    label="Refresh Interval (ms)",
+                    description="Interval in milliseconds for refreshing the UI nodes in the editor.",
+                    valueSchema=integer_schema(default=100, minimum=16, maximum=5000),
+                    access=F8StateAccess.rw,
+                    required=True,
+                    showOnNode=True,
+                ),
+            ],
+        ),
+        overwrite=True,
+    )
+
+    # debug
+    register_operator(registry)
+
+    return registry
+
+
+def create_pystudio_registry() -> RuntimeNodeRegistry:
+    return register_pystudio_specs(create_runtime_node_registry())
+
+
+def shared_pystudio_registry() -> RuntimeNodeRegistry:
+    return register_pystudio_specs(shared_runtime_node_registry())

@@ -47,6 +47,9 @@ def test_schedule_stop_grace_expired_stops_process_and_emits_down_state() -> Non
     assert start_calls == []
     assert log_lines == []
     assert report_lines == []
+    QtCore.QCoreApplication.sendPostedEvents(None, int(QtCore.QEvent.Type.DeferredDelete))
+    QtWidgets.QApplication.processEvents()
+    assert owner.findChildren(QtCore.QTimer) == []
 
 
 def test_schedule_restart_when_already_stopped_relaunches_immediately() -> None:
@@ -72,3 +75,6 @@ def test_schedule_restart_when_already_stopped_relaunches_immediately() -> None:
     assert stop_calls == []
     assert emitted_states == [("svc.b", False)]
     assert start_calls == [("svc.b", "f8.tests.b")]
+    QtCore.QCoreApplication.sendPostedEvents(None, int(QtCore.QEvent.Type.DeferredDelete))
+    QtWidgets.QApplication.processEvents()
+    assert owner.findChildren(QtCore.QTimer) == []

@@ -6,11 +6,11 @@ from typing import Any
 from qtpy import QtCore, QtWidgets
 from NodeGraphQt import BaseNode
 
-from f8pysdk import F8OperatorSpec, F8ServiceSpec
+from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
 from f8pysdk.nats_naming import ensure_token
 
-from ..constants import STUDIO_SERVICE_ID
-from ..ui_notifications import show_warning
+from f8pystudio.studio_specs.identifiers import STUDIO_SERVICE_ID
+from ..ui.support.ui_notifications import show_warning
 
 logger = logging.getLogger(__name__)
 
@@ -304,6 +304,9 @@ class GraphIdentityActionsMixin:
                 new_service_id=nid,
                 service_class=str(spec.serviceClass or ""),
             )
+            bridge = self._service_bridge
+            if bridge is not None:
+                bridge.unmanage_service(old_id)
             old_timer = self._reclaim_timers.pop(old_id, None)
             if old_timer is not None:
                 remaining_ms = -1

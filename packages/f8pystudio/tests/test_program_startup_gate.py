@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 from f8pystudio.bridge.nats_lifecycle import SINGLETON_GUARD_DIALOG_TITLE
-from f8pystudio.pystudio_program import PyStudioProgram
-from f8pystudio.pystudio_service_bridge import STARTUP_GATE_TIMEOUT_S
+from f8pystudio.app.program import PyStudioProgram
+from f8pystudio.bridge.studio_bridge import STARTUP_GATE_TIMEOUT_S
 
 
 class _FakeApp:
@@ -51,6 +51,8 @@ class _FakeMainWindow:
         self.bridge_stopped = False
         self.window_icon: object | None = None
         self.discovery_logs: list[tuple[list[str], list[str]]] = []
+        self.deferred_startup_scheduled = False
+        self.prepare_before_show_called = False
         _FakeMainWindow.last_instance = self
 
     def setWindowIcon(self, icon: object) -> None:
@@ -63,6 +65,12 @@ class _FakeMainWindow:
 
     def show(self) -> None:
         self.shown = True
+
+    def prepare_before_show(self) -> None:
+        self.prepare_before_show_called = True
+
+    def schedule_deferred_startup(self) -> None:
+        self.deferred_startup_scheduled = True
 
     def close(self) -> None:
         self.closed = True
@@ -109,23 +117,28 @@ def _patch_program_dependencies(monkeypatch) -> list[tuple[object | None, str, s
         "qtpy.QtWidgets.QMessageBox.warning",
         lambda parent, title, message: warnings.append((parent, str(title), str(message))),
     )
-    monkeypatch.setattr("f8pystudio.pystudio_program.PyStudioServiceBridge", _FakeBridge)
-    monkeypatch.setattr("f8pystudio.widgets.main_window.F8StudioMainWin", _FakeMainWindow)
+    monkeypatch.setattr("f8pystudio.app.program.PyStudioServiceBridge", _FakeBridge)
+    monkeypatch.setattr("f8pystudio.ui.mainwin.main_window.F8StudioMainWin", _FakeMainWindow)
     monkeypatch.setattr(PyStudioProgram, "_load_plugin_manifests", lambda self: [])
     monkeypatch.setattr(PyStudioProgram, "_apply_plugin_manifests_to_runtime_registry", lambda self, manifests, registry: None)
     monkeypatch.setattr(PyStudioProgram, "_apply_plugin_manifests_to_renderers", lambda self, manifests: None)
     monkeypatch.setattr(PyStudioProgram, "build_node_classes", lambda self: [])
     monkeypatch.setattr(PyStudioProgram, "_studio_icon_path", lambda self: None)
-    monkeypatch.setattr("f8pystudio.pystudio_program.load_discovery_into_catalog", lambda **_kwargs: None)
-    monkeypatch.setattr("f8pystudio.pystudio_program.last_discovery_timing_lines", lambda: ["timing-1"])
-    monkeypatch.setattr("f8pystudio.pystudio_program.last_discovery_error_lines", lambda: ["error-1"])
-    monkeypatch.setattr("f8pystudio.qt_font_utils.normalize_application_font", lambda app: None)
-    monkeypatch.setattr("f8pystudio.webengine_utils.configure_default_webengine_profile", lambda: None)
+    monkeypatch.setattr("f8pystudio.app.program.load_discovery_into_catalog", lambda **_kwargs: None)
+    monkeypatch.setattr("f8pystudio.app.program.last_discovery_timing_lines", lambda: ["timing-1"])
+    monkeypatch.setattr("f8pystudio.app.program.last_discovery_error_lines", lambda: ["error-1"])
+    monkeypatch.setattr("f8pystudio.ui.support.qt_font_utils.normalize_application_font", lambda app: None)
+    monkeypatch.setattr("f8pystudio.ui.support.webengine_utils.configure_default_webengine_profile", lambda: None)
     return warnings
 
 
 def test_program_blocks_before_show_when_bridge_startup_is_blocked(monkeypatch, tmp_path) -> None:
     warnings = _patch_program_dependencies(monkeypatch)
+    prewarm_calls: list[str] = []
+    monkeypatch.setattr(
+        "f8pystudio.ui.support.webengine_utils.prewarm_webengine_view",
+        lambda: prewarm_calls.append("prewarm"),
+    )
     _FakeApp.last_instance = None
     _FakeMainWindow.last_instance = None
     _FakeBridge.preflight_message = "Another F8PyStudio instance is already running."
@@ -143,10 +156,16 @@ def test_program_blocks_before_show_when_bridge_startup_is_blocked(monkeypatch, 
     assert dismiss_file.read_text(encoding="utf-8") == "dismiss\n"
     assert _FakeApp.last_instance is not None
     assert _FakeApp.last_instance.process_events_called is False
+    assert prewarm_calls == []
 
 
 def test_program_shows_main_window_after_bridge_startup_passes(monkeypatch, tmp_path) -> None:
     warnings = _patch_program_dependencies(monkeypatch)
+    prewarm_calls: list[str] = []
+    monkeypatch.setattr(
+        "f8pystudio.ui.support.webengine_utils.prewarm_webengine_view",
+        lambda: prewarm_calls.append("prewarm"),
+    )
     _FakeApp.last_instance = None
     _FakeMainWindow.last_instance = None
     _FakeBridge.preflight_message = None
@@ -161,6 +180,8 @@ def test_program_shows_main_window_after_bridge_startup_passes(monkeypatch, tmp_
     assert _FakeMainWindow.last_instance is not None
     assert _FakeMainWindow.last_instance.bridge is _FakeBridge.last_instance
     assert _FakeMainWindow.last_instance.bridge_stopped is False
+    assert _FakeMainWindow.last_instance.deferred_startup_scheduled is True
+    assert _FakeMainWindow.last_instance.prepare_before_show_called is True
     assert _FakeMainWindow.last_instance.shown is True
     assert _FakeMainWindow.last_instance.closed is False
     assert _FakeMainWindow.last_instance.discovery_logs == [(["timing-1"], ["error-1"])]
@@ -169,3 +190,4 @@ def test_program_shows_main_window_after_bridge_startup_passes(monkeypatch, tmp_
     assert ready_file.read_text(encoding="utf-8") == "ready\n"
     assert _FakeApp.last_instance is not None
     assert _FakeApp.last_instance.process_events_called is True
+    assert prewarm_calls == ["prewarm"]

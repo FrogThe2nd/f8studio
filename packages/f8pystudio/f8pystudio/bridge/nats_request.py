@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol, TypeVar
 
-from f8pysdk.service_bus.codec import decode_as, encode_obj
+from f8pysdk.codec import decode_as, encode_obj
 
 
 class NatsRequester(Protocol):

@@ -9,22 +9,22 @@ if ROOT not in sys.path:
 if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
-from f8pysdk.generated import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry  # noqa: E402
-from f8pysdk.service_host import ServiceHost, ServiceHostConfig  # noqa: E402
-from f8pysdk.service_bus.routing_data import buffer_input  # noqa: E402
+from f8pysdk.specs import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
+from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
+from f8pysdk.host import ServiceHost, ServiceHostConfig  # noqa: E402
+from f8pysdk.testing import buffer_input  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
 from f8pyengine.constants import SERVICE_CLASS  # noqa: E402
 from f8pyengine.operators import data_expr as data_expr_mod  # noqa: E402
 from f8pyengine.operators.data_expr import DataExprRuntimeNode, register_operator  # noqa: E402
 from f8pyengine.pyengine_node_registry import register_pyengine_specs  # noqa: E402
-from f8pysdk import F8DataPortSpec, any_schema  # noqa: E402
+from f8pysdk.specs import F8DataPortSpec, any_schema  # noqa: E402
 
 
 class DataExprNodeTests(unittest.IsolatedAsyncioTestCase):
     def test_registered_in_pyengine_specs(self) -> None:
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_pyengine_specs(reg)
         desc = reg.describe(SERVICE_CLASS)
         operator_classes = {str(spec.operatorClass or "") for spec in list(desc.operators or [])}
@@ -33,7 +33,7 @@ class DataExprNodeTests(unittest.IsolatedAsyncioTestCase):
     async def test_extracts_nested_fields_via_attribute_access(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_operator(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
@@ -65,7 +65,7 @@ class DataExprNodeTests(unittest.IsolatedAsyncioTestCase):
     async def test_math_expression(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_operator(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
@@ -101,7 +101,7 @@ class DataExprNodeTests(unittest.IsolatedAsyncioTestCase):
     async def test_list_comprehension_over_list_input(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_operator(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
@@ -132,7 +132,7 @@ class DataExprNodeTests(unittest.IsolatedAsyncioTestCase):
     async def test_list_comprehension_over_nested_objects(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_operator(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
@@ -164,7 +164,7 @@ class DataExprNodeTests(unittest.IsolatedAsyncioTestCase):
     async def test_numpy_disabled_by_default(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_operator(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
@@ -195,7 +195,7 @@ class DataExprNodeTests(unittest.IsolatedAsyncioTestCase):
     async def test_numpy_enabled_allows_np_calls(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_operator(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
@@ -225,7 +225,7 @@ class DataExprNodeTests(unittest.IsolatedAsyncioTestCase):
     async def test_dict_result_without_unpack_emits_single_out_value(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_operator(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
@@ -259,7 +259,7 @@ class DataExprNodeTests(unittest.IsolatedAsyncioTestCase):
     async def test_dict_result_with_unpack_maps_to_matching_output_ports(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_operator(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 

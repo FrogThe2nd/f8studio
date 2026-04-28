@@ -4,7 +4,6 @@ from typing import Any
 
 from NodeGraphQt import BaseNode
 
-from ..widgets.node_docs_dialog import show_node_docs_dialog
 from .spec_visibility import typed_spec_template_or_none
 
 
@@ -40,8 +39,7 @@ class GraphNodeDocsActionsMixin:
         node_name = str(node.name() or node.NODE_NAME or node_type).strip()
         if not node_name:
             node_name = node_type
-        show_node_docs_dialog(
-            parent=self._notification_parent(),
+        self.open_node_docs_dialog(
             spec=spec,
             node_id=node_type,
             node_name=node_name,

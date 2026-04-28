@@ -4,7 +4,7 @@ import pytest
 
 pytest.importorskip("NodeGraphQt")
 
-from f8pysdk.schema_helpers import array_schema, complex_object_schema, number_schema, string_schema
+from f8pysdk.specs import array_schema, complex_object_schema, number_schema, string_schema
 from f8pystudio.nodegraph.service_basenode import F8StudioServiceNodeItem
 
 

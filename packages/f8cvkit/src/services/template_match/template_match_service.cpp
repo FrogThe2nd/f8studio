@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <utility>
 
 #include <spdlog/spdlog.h>
@@ -34,6 +35,18 @@ int clamp_int(int v, int lo, int hi) {
   if (v > hi)
     return hi;
   return v;
+}
+
+cv::Rect clamp_rect_to_size(const cv::Rect& rect, const cv::Size& size) {
+  const int x1 = std::clamp(rect.x, 0, size.width);
+  const int y1 = std::clamp(rect.y, 0, size.height);
+  const int x2 = std::clamp(rect.x + rect.width, 0, size.width);
+  const int y2 = std::clamp(rect.y + rect.height, 0, size.height);
+  return cv::Rect(x1, y1, std::max(0, x2 - x1), std::max(0, y2 - y1));
+}
+
+cv::Rect expand_rect(const cv::Rect& rect, int padding) {
+  return cv::Rect(rect.x - padding, rect.y - padding, rect.width + padding * 2, rect.height + padding * 2);
 }
 
 struct EncodedImage {
@@ -160,7 +173,7 @@ bool TemplateMatchService::start() {
   bus_->add_lifecycle_node(this);
   bus_->add_stateful_node(this);
   bus_->add_data_node(this);
-  bus_->add_command_node(this);
+  bus_->add_command_node(this, TemplateMatchService::describe());
 
   if (!bus_->start()) {
     bus_.reset();
@@ -171,20 +184,34 @@ bool TemplateMatchService::start() {
   publish_state_if_changed("templateImagePngB64", "", "init", json::object());
   publish_state_if_changed("matchThreshold", match_threshold_, "init", json::object());
   publish_state_if_changed("matchingIntervalMs", matching_interval_ms_, "init", json::object());
+  publish_state_if_changed("matchColorMode", match_color_mode_, "init", json::object());
+  publish_state_if_changed("searchRoiPaddingPx", search_roi_padding_px_, "init", json::object());
+  publish_state_if_changed("pyramidScale", pyramid_scale_, "init", json::object());
   publish_state_if_changed("shmName", "", "init", json::object());
   publish_state_if_changed("lastError", "", "init", json::object());
 
   template_loaded_ = false;
   template_error_.clear();
   template_bgr_.release();
+  template_gray_.release();
   template_png_b64_.clear();
   match_threshold_ = 0.5;
   matching_interval_ms_ = 200;
   last_match_ts_ms_ = 0;
+  match_color_mode_ = "gray";
+  search_roi_padding_px_ = 0;
+  pyramid_scale_ = 1.0;
+  has_last_detection_ = false;
+  last_detection_bbox_ = cv::Rect();
 
   shm_name_override_.clear();
   video_.close();
   frame_bgra_.clear();
+  frame_gray_.release();
+  roi_gray_.release();
+  roi_small_.release();
+  templ_small_.release();
+  match_result_.release();
   last_header_.reset();
   last_frame_id_ = 0;
   last_notify_seq_ = 0;
@@ -282,6 +309,40 @@ void TemplateMatchService::on_state(const std::string& node_id, const std::strin
     publish_state_if_changed("lastError", "", "state", meta);
     return;
   }
+  if (field == "matchColorMode" && value.is_string()) {
+    const std::string mode = service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(value.get<std::string>()));
+    if (mode != "gray" && mode != "bgr") {
+      publish_state_if_changed("lastError", "invalid matchColorMode", "state", meta);
+      return;
+    }
+    match_color_mode_ = mode;
+    has_last_detection_ = false;
+    publish_state_if_changed("matchColorMode", match_color_mode_, "state", meta);
+    publish_state_if_changed("lastError", "", "state", meta);
+    return;
+  }
+  if (field == "searchRoiPaddingPx") {
+    int v = 0;
+    if (!service_runtime::parse_json_int(value, v)) {
+      publish_state_if_changed("lastError", "invalid searchRoiPaddingPx", "state", meta);
+      return;
+    }
+    search_roi_padding_px_ = std::clamp(v, 0, 10000);
+    publish_state_if_changed("searchRoiPaddingPx", search_roi_padding_px_, "state", meta);
+    publish_state_if_changed("lastError", "", "state", meta);
+    return;
+  }
+  if (field == "pyramidScale") {
+    double v = 0.0;
+    if (!service_runtime::parse_json_double(value, v)) {
+      publish_state_if_changed("lastError", "invalid pyramidScale", "state", meta);
+      return;
+    }
+    pyramid_scale_ = std::clamp(v, 0.25, 1.0);
+    publish_state_if_changed("pyramidScale", pyramid_scale_, "state", meta);
+    publish_state_if_changed("lastError", "", "state", meta);
+    return;
+  }
 }
 
 void TemplateMatchService::on_data(const std::string& node_id, const std::string& port, const json& value,
@@ -306,6 +367,8 @@ void TemplateMatchService::set_template_png_b64(const std::string& b64, const js
   template_loaded_ = false;
   template_error_.clear();
   template_bgr_.release();
+  template_gray_.release();
+  has_last_detection_ = false;
   publish_state_if_changed("templateImagePngB64", template_png_b64_, "state", meta);
 
   if (template_png_b64_.empty()) {
@@ -330,6 +393,15 @@ void TemplateMatchService::set_template_png_b64(const std::string& b64, const js
   }
 
   template_bgr_ = std::move(img);
+  try {
+    cv::cvtColor(template_bgr_, template_gray_, cv::COLOR_BGR2GRAY);
+  } catch (const cv::Exception& ex) {
+    template_error_ = std::string("opencv template cvtColor failed: ") + ex.what();
+    template_bgr_.release();
+    template_gray_.release();
+    publish_state_if_changed("lastError", template_error_, "state", meta);
+    return;
+  }
   template_loaded_ = true;
   publish_state_if_changed("lastError", "", "state", meta);
 }
@@ -393,7 +465,7 @@ void TemplateMatchService::detect_once() {
     last_notify_seq_ = observed_notify_seq;
 
     f8::cppsdk::VideoSharedMemoryHeader hdr{};
-    if (!video_.copyLatestFrame(frame_bgra_, hdr)) {
+    if (!video_.copyLatestFrameIfChanged(frame_bgra_, hdr, last_frame_id_)) {
       return;
     }
     if (hdr.frame_id == 0 || hdr.frame_id == last_frame_id_) {
@@ -430,23 +502,64 @@ void TemplateMatchService::detect_once() {
 
     cv::Mat bgra_mat(static_cast<int>(hdr.height), static_cast<int>(hdr.width), CV_8UC4,
                      const_cast<std::byte*>(frame_bgra_.data()), static_cast<std::size_t>(hdr.pitch));
-    cv::Mat bgr;
+
+    if (template_bgr_.cols > bgra_mat.cols || template_bgr_.rows > bgra_mat.rows) {
+      publish_state_if_changed("lastError", "template larger than frame", "runtime", json::object());
+      return;
+    }
+
+    cv::Mat source_for_match;
+    cv::Mat template_for_match;
     try {
-      cv::cvtColor(bgra_mat, bgr, cv::COLOR_BGRA2BGR);
+      if (match_color_mode_ == "bgr") {
+        cv::cvtColor(bgra_mat, roi_gray_, cv::COLOR_BGRA2BGR);
+        source_for_match = roi_gray_;
+        template_for_match = template_bgr_;
+      } else {
+        cv::cvtColor(bgra_mat, frame_gray_, cv::COLOR_BGRA2GRAY);
+        source_for_match = frame_gray_;
+        template_for_match = template_gray_;
+      }
     } catch (const cv::Exception& ex) {
       publish_state_if_changed("lastError", std::string("opencv cvtColor failed: ") + ex.what(), "runtime",
                                json::object());
       return;
     }
 
-    if (template_bgr_.cols > bgr.cols || template_bgr_.rows > bgr.rows) {
-      publish_state_if_changed("lastError", "template larger than frame", "runtime", json::object());
-      return;
+    cv::Rect search_rect(0, 0, source_for_match.cols, source_for_match.rows);
+    if (search_roi_padding_px_ > 0 && has_last_detection_) {
+      search_rect = clamp_rect_to_size(expand_rect(last_detection_bbox_, search_roi_padding_px_), source_for_match.size());
+      if (search_rect.width < template_for_match.cols || search_rect.height < template_for_match.rows) {
+        search_rect = cv::Rect(0, 0, source_for_match.cols, source_for_match.rows);
+      }
     }
 
-    cv::Mat result;
+    cv::Mat match_source = source_for_match(search_rect);
+    cv::Mat match_template = template_for_match;
+    double inverse_scale = 1.0;
+    const double pyramid_scale = std::clamp(pyramid_scale_, 0.25, 1.0);
+    if (pyramid_scale < 0.999) {
+      const int source_w = std::max(1, static_cast<int>(std::lround(static_cast<double>(match_source.cols) * pyramid_scale)));
+      const int source_h = std::max(1, static_cast<int>(std::lround(static_cast<double>(match_source.rows) * pyramid_scale)));
+      const int templ_w = std::max(1, static_cast<int>(std::lround(static_cast<double>(match_template.cols) * pyramid_scale)));
+      const int templ_h = std::max(1, static_cast<int>(std::lround(static_cast<double>(match_template.rows) * pyramid_scale)));
+      if (source_w >= templ_w && source_h >= templ_h) {
+        try {
+          cv::resize(match_source, roi_small_, cv::Size(source_w, source_h), 0.0, 0.0, cv::INTER_AREA);
+          cv::resize(match_template, templ_small_, cv::Size(templ_w, templ_h), 0.0, 0.0, cv::INTER_AREA);
+          match_source = roi_small_;
+          match_template = templ_small_;
+          inverse_scale = 1.0 / pyramid_scale;
+        } catch (const cv::Exception& ex) {
+          publish_state_if_changed("lastError", std::string("opencv pyramid resize failed: ") + ex.what(), "runtime",
+                                   json::object());
+          return;
+        }
+      }
+    }
+
     try {
-      cv::matchTemplate(bgr, template_bgr_, result, cv::TM_CCOEFF_NORMED);
+      cv::matchTemplate(match_source, match_template, match_result_, cv::TM_CCOEFF_NORMED);
     } catch (const cv::Exception& ex) {
       publish_state_if_changed("lastError", std::string("opencv matchTemplate failed: ") + ex.what(), "runtime",
                                json::object());
@@ -456,23 +569,27 @@ void TemplateMatchService::detect_once() {
     double max_val = 0.0;
     cv::Point min_loc;
     cv::Point max_loc;
-    cv::minMaxLoc(result, &min_val, &max_val, &min_loc, &max_loc);
+    cv::minMaxLoc(match_result_, &min_val, &max_val, &min_loc, &max_loc);
 
-    const int x1 = max_loc.x;
-    const int y1 = max_loc.y;
-    const int x2 = max_loc.x + template_bgr_.cols;
-    const int y2 = max_loc.y + template_bgr_.rows;
+    const int x1 = search_rect.x + static_cast<int>(std::lround(static_cast<double>(max_loc.x) * inverse_scale));
+    const int y1 = search_rect.y + static_cast<int>(std::lround(static_cast<double>(max_loc.y) * inverse_scale));
+    const cv::Rect detected_bbox = clamp_rect_to_size(cv::Rect(x1, y1, template_bgr_.cols, template_bgr_.rows), bgra_mat.size());
 
     json detections = json::array();
     if (max_val >= match_threshold_) {
+      has_last_detection_ = true;
+      last_detection_bbox_ = detected_bbox;
       json det = json::object();
       det["cls"] = "template_match";
       det["score"] = max_val;
-      det["bbox"] = json::array({x1, y1, x2, y2});
+      det["bbox"] = json::array({detected_bbox.x, detected_bbox.y, detected_bbox.x + detected_bbox.width,
+                                  detected_bbox.y + detected_bbox.height});
       det["keypoints"] = json::array();
       det["obb"] = json::array();
       det["skeletonProtocol"] = "none";
       detections.push_back(std::move(det));
+    } else {
+      has_last_detection_ = false;
     }
 
     json out = json::object();
@@ -665,11 +782,15 @@ json TemplateMatchService::describe() {
                   "0..1 score threshold used to emit detections.", true, "slider"),
       state_field("matchingIntervalMs", schema_integer(200, 0, 60000), "rw", "Matching Interval (ms)",
                   "Minimum milliseconds between template matching passes.", false),
+      state_field("matchColorMode", schema_string(), "rw", "Match Color Mode", "gray or bgr. gray is faster.", false),
+      state_field("searchRoiPaddingPx", schema_integer(0, 0, 10000), "rw", "Search ROI Padding",
+                  "If >0, search around the previous detection with this padding.", false),
+      state_field("pyramidScale", schema_number(1.0, 0.25, 1.0), "rw", "Pyramid Scale",
+                  "Optional downscale factor for faster coarse template matching.", false),
       state_field("shmName", schema_string(), "rw", "Video SHM", "Optional SHM name override (e.g. shm.xxx.video).",
                   true),
       state_field("lastError", schema_string(), "ro", "Last Error", "Last error message.", false),
   });
-  service["editableStateFields"] = false;
   service["commands"] = json::array({
       json{{"name", "captureTemplateFrame"},
            {"description", "Capture current SHM frame as an encoded image (base64)."},
@@ -684,7 +805,6 @@ json TemplateMatchService::describe() {
                       })}},
       json{{"name", "ping"}, {"description", "Health check."}, {"required", true}, {"showOnNode", false}},
   });
-  service["editableCommands"] = false;
   service["dataInPorts"] = json::array();
   service["dataOutPorts"] = json::array({
       json{{"name", "detections"},
@@ -693,8 +813,6 @@ json TemplateMatchService::describe() {
            {"required", true},
            {"showOnNode", true}},
   });
-  service["editableDataInPorts"] = false;
-  service["editableDataOutPorts"] = false;
 
   json out;
   out["service"] = std::move(service);

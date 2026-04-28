@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from f8pysdk.msgspec_codec import dump_json
-from f8pysdk.service_bus.codec import decode_obj
+from f8pysdk.codec import dump_json
+from f8pysdk.codec import decode_obj
 from typing import Any
-
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
 
 from .nats_lifecycle import (
     SINGLETON_GUARD_DIALOG_MESSAGE,
@@ -13,9 +11,10 @@ from .nats_lifecycle import (
 )
 from .remote_state_sync import RemoteStateGatewayAdapter
 from .studio_runtime_flow import wait_for_studio_runtime_ready
-from ..pystudio_service import PyStudioService, PyStudioServiceConfig
-from ..remote_state_watcher import RemoteStateWatcher
-from ..ui_bus import UiCommand
+from f8pystudio.bridge.studio_service import PyStudioService, PyStudioServiceConfig
+from f8pystudio.bridge.remote_state_watcher import RemoteStateWatcher
+from f8pystudio.contracts.ui_commands import UiCommand
+from f8pystudio.studio_specs.registry import shared_pystudio_registry
 
 
 class RuntimeSessionControllerMixin:
@@ -38,16 +37,21 @@ class RuntimeSessionControllerMixin:
 
     async def _run_startup_preflight_async(self) -> str | None:
         nats_url = str(self._nats_connection_manager.nats_url).strip() or "nats://127.0.0.1:4222"
-        owned_pid = await ensure_nats_server_owned_pid(
-            nats_url,
-            emit_log=self._emit_log_line,
-            report_exception=self._report_exception,
-        )
-        if owned_pid is not None:
-            self._owned_nats_server_pid = int(owned_pid)
+        if self._owned_nats_server_pid is None:
+            owned_pid = await ensure_nats_server_owned_pid(
+                nats_url,
+                emit_log=self._emit_log_line,
+                report_exception=self._report_exception,
+            )
+            if owned_pid is not None:
+                self._owned_nats_server_pid = int(owned_pid)
 
-        # Singleton guard (best-effort): if any existing studio ServiceBus micro responds, do not start.
-        self._nc = await self._nats_connection_manager.connect(context="connect nats for singleton guard failed")
+        # The singleton probe should fail fast. If NATS is still unavailable here,
+        # let startup continue rather than blocking on the client's reconnect loop.
+        self._nc = await self._nats_connection_manager.connect(
+            context="connect nats for singleton guard failed",
+            allow_reconnect=False,
+        )
         guard = await self._nats_connection_manager.singleton_guard(
             self._nc,
             studio_service_id=self.studio_service_id,
@@ -60,16 +64,30 @@ class RuntimeSessionControllerMixin:
 
     async def _start_after_preflight_async(self) -> str | None:
         nats_url = str(self._nats_connection_manager.nats_url).strip() or "nats://127.0.0.1:4222"
+        if self._owned_nats_server_pid is None:
+            owned_pid = await ensure_nats_server_owned_pid(
+                nats_url,
+                emit_log=self._emit_log_line,
+                report_exception=self._report_exception,
+            )
+            if owned_pid is not None:
+                self._owned_nats_server_pid = int(owned_pid)
 
         try:
             cfg = PyStudioServiceConfig(nats_url=nats_url, studio_service_id=self.studio_service_id)
-            self._svc = PyStudioService(cfg, registry=RuntimeNodeRegistry.instance())
+            self._svc = PyStudioService(cfg, registry=shared_pystudio_registry())
             await self._svc.start(
                 on_ui_command=lambda cmd: self.ui_command.emit(cmd),
             )
+            self._cache_service_alive(self.studio_service_id, True)
+            self._cache_service_active(self.studio_service_id, True)
+            self._monitor_center.update_service_status(service_id=self.studio_service_id, ready=True)
         except Exception as exc:
             self._emit_log_line(f"studio runtime start failed: {exc}")
             self._svc = None
+            self._cache_service_alive(self.studio_service_id, False)
+            self._cache_service_active(self.studio_service_id, None)
+            self._monitor_center.update_service_status(service_id=self.studio_service_id, ready=False)
 
         # Studio-side remote KV watcher (monitors all remote node state and mirrors into UI).
         if self._remote_state_watcher is None:
@@ -186,6 +204,9 @@ class RuntimeSessionControllerMixin:
         except Exception as exc:
             self._report_exception("stop studio service failed", exc)
         self._svc = None
+        self._cache_service_alive(self.studio_service_id, False)
+        self._cache_service_active(self.studio_service_id, None)
+        self._monitor_center.update_service_status(service_id=self.studio_service_id, ready=False)
 
         try:
             await self._command_gateway.close()

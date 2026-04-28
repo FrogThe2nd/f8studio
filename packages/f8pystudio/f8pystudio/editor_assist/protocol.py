@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from f8pysdk.msgspec_codec import dump_json
+from f8pysdk.codec import dump_json
 import keyword
 import logging
 from typing import Any, Literal
 
 import msgspec
 
-from f8pysdk import F8OperatorSpec, F8ServiceSpec
+from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
 
+from ..ui.support.ui_control import ui_control_language
 from .workspace import (
     EditorAssistContext,
     EditorAssistDataInPort,
@@ -105,16 +106,11 @@ def _field_editor_assist_payload(
         if field is None:
             return None, f"state field not found: {key}"
 
-        ui_language_raw = field.uiLanguage
-        ui_language = (
-            ""
-            if isinstance(ui_language_raw, msgspec.UnsetType)
-            else str(ui_language_raw or "").strip().lower()
-        )
+        ui_language = ui_control_language(str(field.uiControl or ""))
         if ui_language and ui_language != lang:
             return (
                 None,
-                f"state:{key} uiLanguage={ui_language!r} does not match requested language={lang!r}",
+                f"state:{key} uiControl language={ui_language!r} does not match requested language={lang!r}",
             )
 
         payload_obj = field.editorAssist
@@ -268,7 +264,6 @@ def _field_target_kwargs(
 
     label_raw = field.label
     description_raw = field.description
-    ui_language_raw = field.uiLanguage
     value_schema: dict[str, Any] | None = None
     schema_obj = field.valueSchema
     if schema_obj is not None:
@@ -292,11 +287,7 @@ def _field_target_kwargs(
             if isinstance(description_raw, msgspec.UnsetType)
             else str(description_raw or "").strip()
         ),
-        "target_ui_language": (
-            lang
-            if isinstance(ui_language_raw, msgspec.UnsetType)
-            else str(ui_language_raw or "").strip().lower()
-        ),
+        "target_ui_language": ui_control_language(str(field.uiControl or "")) or lang,
         "target_value_schema": value_schema,
     }
 

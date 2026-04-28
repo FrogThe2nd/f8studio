@@ -10,27 +10,21 @@ C++ MPV-based player service with shared-memory video output.
 
 ## When to Use
 
-- Use `f8.implayer` to turn local media files, RTSP streams, or supported web URLs into a stable video Shared Memory (SHM) producer.
-- It is the primary way to ingest video content into the Feel8 graph, providing a deterministic clock for demos, QA passes, and replayable scenarios.
-- It uses a C++ MPV-based backend, supporting a wide range of codecs and protocols (including YouTube-dl support for online video URLs).
-- It is the best choice when you need precise seeking, looping, or volume control through commands.
+- Use `f8.implayer` as the main video playback entry point for local files, stream URLs, and supported online sources.
+- It is ideal for demos, replayable test passes, and scenarios where several graph branches should share one video source.
+- Choose it when you need explicit playback control such as play, pause, seek, loop, and volume.
 
 ## Common Wiring Patterns
 
-- **Standard Consumption**: Feed its SHM output (defaulting to the service instance id or `videoShmName`) into CVKit, DL, or visualization consumers (`f8.viz.video`).
-- **Media Master**: Keep one `implayer` node as the canonical media producer for a scenario and branch the SHM signal to multiple analysis pipelines in parallel.
-- **Dynamic Control**: Use `f8.pyengine` or scripts to send `open`, `play`, `pause`, or `seek` commands based on application logic or UI events.
-
-### Cookie/Auth Notes
-
-- Use browser or cookies-file auth modes only when URL playback (e.g., private streams) requires session credentials.
-- Treat auth-related state as sensitive runtime configuration; it is not persisted in session files.
+- The standard pattern is `f8.implayer -> CV / DL / Viz`.
+- When several branches consume the same footage, keep `implayer` as the single canonical producer.
+- If playback needs to be controlled from graph logic, send commands from `f8.pyengine` or a script service.
 
 ## Pitfalls / Gotchas
 
-- **Codec Availability**: Missing system codecs or internal MPV errors can result in "empty" shared memory; check the `monitor` port and console logs for explicit load failures.
-- **SHM Naming**: Mismatched `shmName` between producer and consumer is the most frequent cause of "no video" issues. Verify the `videoShmName` property matches the consumer's input.
-- **Network Stability**: For URL sources, high latency or connection drops can stall the graph if downstream nodes wait synchronously. Monitor `monitor.frame.dropped` to detect performance issues.
+- If the image is empty, check service logs and verify that downstream consumers are using the correct `videoShmName`.
+- Stream-based sources are more sensitive to network and codec environment issues than local files.
+- If the graph will be shared, remember that URL and cookie-related state may be sensitive.
 
 ## Service Reference
 
@@ -47,14 +41,16 @@ win/f8implayer_service.exe
 
 - Data inputs: none
 - Data outputs: `playback`, `monitor`
-- Commands: `open`, `play`, `pause`, `stop`, `seek`, `setVolume`
+- Commands: `open`, `play`, `pause`, `stop`, `next`, `previous`, `seek`, `setVolume`
 
 ### Service State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
 | `loop` | `rw` | `true` | `false` | `boolean` | Repeat playlist when reaching EOF. |
-| `mediaUrl` | `rw` | `true` | `true` | `string` | URI or file path to open. |
+| `mediaUrl` | `rw` | `true` | `true` | `string` | URI or local file path to open. Cleared when exporting publish JSON. |
+| `openxrMode` | `rw` | `true` | `true` | `string / enum[off, on, auto]` | PCVR output: off\|on\|auto (auto retries when headset/runtime becomes available). |
+| `openxrMirrorWindow` | `rw` | `true` | `true` | `boolean` | When OpenXR is active, also present to the SDL mirror window. |
 | `volume` | `rw` | `true` | `true` | `number / default=1.0` | Volume |
 | `playing` | `ro` | `true` | `false` | `boolean` | Playback state. |
 | `duration` | `ro` | `true` | `true` | `number` | Duration (seconds). |
@@ -66,8 +62,8 @@ win/f8implayer_service.exe
 | `videoShmMaxFps` | `rw` | `true` | `false` | `number` | Copy rate limit (0 = unlimited). |
 | `authMode` | `rw` | `true` | `false` | `string / enum[none, browser, cookiesFile]` | Cookie auth mode: none\|browser\|cookiesFile (default: none). |
 | `authBrowser` | `rw` | `true` | `false` | `string / enum[chrome, chromium, edge, firefox, safari]` | Browser name for authMode=browser: chrome\|chromium\|edge\|firefox\|safari. |
-| `authBrowserProfile` | `rw` | `true` | `false` | `string` | Optional browser profile for authMode=browser. Sensitive: runtime-only; not persisted. |
-| `authCookiesFile` | `rw` | `true` | `false` | `string` | cookies.txt path for authMode=cookiesFile. Sensitive: runtime-only; not persisted. |
+| `authBrowserProfile` | `rw` | `true` | `false` | `string` | Optional browser profile for authMode=browser. Local-only path-like metadata; cleared when exporting publish JSON. |
+| `authCookiesFile` | `rw` | `true` | `false` | `string` | cookies.txt path for authMode=cookiesFile. Local-only file path; cleared when exporting publish JSON. |
 | `decodedWidth` | `ro` | `true` | `false` | `integer` | Decoded/source video width (on-screen uses this). |
 | `decodedHeight` | `ro` | `true` | `false` | `integer` | Decoded/source video height (on-screen uses this). |
 | `videoWidth` | `ro` | `true` | `false` | `integer` | Width of the video frame. |
@@ -79,13 +75,13 @@ win/f8implayer_service.exe
 ### Key Fields That Matter
 
 - `loop` (Loop, `rw`): Repeat playlist when reaching EOF. Schema: `boolean`.
-- `mediaUrl` (Media URL, `rw`): URI or file path to open. Schema: `string`.
+- `mediaUrl` (Media URL, `rw`): URI or local file path to open. Cleared when exporting publish JSON. Schema: `string`.
+- `openxrMode` (OpenXR Mode, `rw`): PCVR output: off|on|auto (auto retries when headset/runtime becomes available). Schema: `string / enum[off, on, auto]`.
+- `openxrMirrorWindow` (OpenXR Mirror, `rw`): When OpenXR is active, also present to the SDL mirror window. Schema: `boolean`.
 - `volume` (Volume, `rw`): Volume Schema: `number / default=1.0`.
 - `playing` (Playing, `ro`): Playback state. Schema: `boolean`.
 - `duration` (Duration, `ro`): Duration (seconds). Schema: `number`.
 - `lastError` (Last Error, `ro`): Last error message. Schema: `string`.
-- `videoShmName` (Video SHM, `ro`): Shared memory region name. Schema: `string`.
-- `videoShmEvent` (Video Event, `ro`): Optional named event to signal new frames. Schema: `string`.
 
 ### Service Commands
 
@@ -112,6 +108,18 @@ Pause playback
 
 ### `stop`
 Stop playback
+
+- Show on node: `true`
+- Params: none
+
+### `next`
+Advance to the next playlist item
+
+- Show on node: `true`
+- Params: none
+
+### `previous`
+Return to the previous playlist item
 
 - Show on node: `true`
 - Params: none

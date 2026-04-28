@@ -5,13 +5,15 @@ from typing import Any
 
 from NodeGraphQt.base.commands import NodeAddedCmd
 from NodeGraphQt.errors import NodeCreationError
+from f8pysdk.codec import dump_json
 
-from f8pysdk import F8OperatorSpec, F8ServiceSpec, F8StateAccess
+from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec, F8StateAccess
 
-from ..constants import SERVICE_CLASS as _CANVAS_SERVICE_CLASS_
-from ..constants import STUDIO_SERVICE_ID
-from ..ui_notifications import show_warning
-from ..variants.variant_ids import parse_variant_node_type
+from f8pystudio.studio_specs.identifiers import SERVICE_CLASS as _CANVAS_SERVICE_CLASS_
+from f8pystudio.studio_specs.identifiers import STUDIO_SERVICE_ID
+from ..ui.support.ui_notifications import show_warning
+from ..assets.variants.variant_ids import parse_variant_node_type
+from .node_base import F8StudioBaseNode
 
 logger = logging.getLogger(__name__)
 
@@ -51,28 +53,33 @@ class GraphFactoryFlowMixin:
             seen_refs.add(marker)
             self._teardown_node(node)
 
-    def _assign_node_id(self, node: BaseNode) -> BaseNode:
+    def _assign_node_id(self, node: F8StudioBaseNode) -> F8StudioBaseNode:
         new_nid = self.new_unique_node_id()
         node.model.id = new_nid
         node.view.id = new_nid
         # Seed identity state into UI properties early (these are runtime-owned readonly
         # fields; the runtime compiler skips ro values so they won't be deployed).
-        try:
-            spec = node.spec  # type: ignore[attr-defined]
-        except Exception:
-            spec = None
-        try:
-            if isinstance(spec, F8OperatorSpec):
-                if "operatorId" in node.model.properties or "operatorId" in node.model.custom_properties:
-                    node.set_property("operatorId", str(new_nid), push_undo=False)
-            elif isinstance(spec, F8ServiceSpec):
-                if "svcId" in node.model.properties or "svcId" in node.model.custom_properties:
-                    node.set_property("svcId", str(new_nid), push_undo=False)
-        except (AttributeError, RuntimeError, TypeError):
-            pass
+        spec = node.spec
+        if isinstance(spec, F8OperatorSpec):
+            if "operatorId" in node.model.properties or "operatorId" in node.model.custom_properties:
+                node.set_property("operatorId", str(new_nid), push_undo=False)
+        elif isinstance(spec, F8ServiceSpec):
+            if "svcId" in node.model.properties or "svcId" in node.model.custom_properties:
+                node.set_property("svcId", str(new_nid), push_undo=False)
         return node
 
-    def create_node(self, node_type, name=None, selected=True, color=None, text_color=None, pos=None, push_undo=True):
+    def create_node(
+        self,
+        node_type,
+        name=None,
+        selected=True,
+        color=None,
+        text_color=None,
+        pos=None,
+        push_undo=True,
+        *,
+        begin_undo_macro: bool = True,
+    ):
         """
         Create a new node in the node graph.
 
@@ -98,11 +105,11 @@ class GraphFactoryFlowMixin:
             record = self._variant_record(variant_id)
             if record is None:
                 raise NodeCreationError(f'Can\'t find variant: "{variant_id}"')
-            base_node_type = str(record.get("baseNodeType") or "").strip()
+            base_node_type = str(record.baseNodeType or "").strip()
             if not base_node_type:
                 raise NodeCreationError(f'Variant "{variant_id}" has empty baseNodeType')
-            variant_name = str(record.get("name") or "").strip()
-            variant_spec_json = record.get("spec")
+            variant_name = str(record.name or "").strip()
+            variant_spec_json = dump_json(record.spec, mode="json") if not isinstance(record.spec, dict) else record.spec
             if not isinstance(variant_spec_json, dict):
                 raise NodeCreationError(f'Variant "{variant_id}" has invalid spec')
             node = self.create_node(
@@ -113,19 +120,23 @@ class GraphFactoryFlowMixin:
                 text_color=text_color,
                 pos=pos,
                 push_undo=push_undo,
+                begin_undo_macro=begin_undo_macro,
             )
             if node is None:
                 return None
             self._apply_variant_to_node(
                 node=node,
-                variant_id=variant_id,
-                variant_name=variant_name,
+                variant_record=record,
                 variant_spec_json=variant_spec_json,
             )
             return node
 
         node = self._node_factory.create_node_instance(node_type)
         if node:
+            if not isinstance(node, F8StudioBaseNode):
+                raise NodeCreationError(
+                    f'Node "{node_type}" must inherit from F8StudioBaseNode, got {type(node).__name__}.'
+                )
             node = self._assign_node_id(node)
 
             node._graph = self
@@ -188,6 +199,12 @@ class GraphFactoryFlowMixin:
 
             # initial node direction layout.
             node.model.layout_direction = self.layout_direction()
+            if not self._loading_session:
+                node.set_property(
+                    "f8_ui_state",
+                    self.set_node_layer_ids_in_ui_state_for_editor(node.ui_state(), self.default_layer_ids_for_new_node()),
+                    push_undo=False,
+                )
 
             node.update()
 
@@ -199,18 +216,23 @@ class GraphFactoryFlowMixin:
                     return None
 
             undo_cmd = NodeAddedCmd(self, node, pos=node.model.pos, emit_signal=True)
-            if push_undo:
+            if push_undo and begin_undo_macro:
                 undo_label = 'create node: "{}"'.format(node.NODE_NAME)
                 self._undo_stack.beginMacro(undo_label)
                 for n in self.selected_nodes():
                     n.set_property("selected", False, push_undo=True)
                 self._undo_stack.push(undo_cmd)
                 self._undo_stack.endMacro()
+            elif push_undo:
+                for n in self.selected_nodes():
+                    n.set_property("selected", False, push_undo=True)
+                self._undo_stack.push(undo_cmd)
             else:
                 for n in self.selected_nodes():
                     n.set_property("selected", False, push_undo=False)
                 undo_cmd.redo()
 
+            self.refresh_layer_visibility()
             return node
 
         raise NodeCreationError('Can\'t find node: "{}"'.format(node_type))
@@ -241,6 +263,7 @@ class GraphFactoryFlowMixin:
         super().add_node(
             node, pos=pos, selected=selected, push_undo=push_undo, inherite_graph_style=inherite_graph_style
         )
+        self.refresh_layer_visibility()
 
     def delete_node(self, node, push_undo=True):
         """
@@ -285,21 +308,10 @@ class GraphFactoryFlowMixin:
 
         # NodeGraphQt's `delete_nodes([single])` calls back into `self.delete_node(...)`,
         # which we override. Avoid recursion by using `delete_node` directly for the
-        # single-node case, and manually emitting `nodes_deleted` to keep our cleanup
-        # hooks consistent with multi-node delete behavior.
+        # single-node case.
         if len(nodes) == 1:
             node = nodes[0]
-            node_id = ""
-            try:
-                node_id = str(node.id or "")
-            except Exception:
-                node_id = ""
             r = super().delete_node(node, push_undo=push_undo)
-            if node_id:
-                try:
-                    self.nodes_deleted.emit([node_id])  # type: ignore[attr-defined]
-                except (AttributeError, RuntimeError, TypeError):
-                    pass
         else:
             r = super().delete_nodes(nodes, push_undo=push_undo)
 

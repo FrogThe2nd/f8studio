@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from f8pysdk import (
+from f8pysdk.codec import parse_bool, parse_number_sequence
+from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
@@ -14,8 +15,8 @@ from f8pysdk import (
     number_schema,
 )
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import OperatorNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import OperatorNode
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from ..constants import SERVICE_CLASS
 from ._signal_processing import (
@@ -23,8 +24,6 @@ from ._signal_processing import (
     SosFilterBank,
     clamp_order,
     clamp_positive,
-    coerce_bool,
-    coerce_sequence,
     design_lowpass,
     format_output,
     sampling_hz_from_interval_ms,
@@ -47,7 +46,7 @@ class LowpassFilterRuntimeNode(OperatorNode):
         )
         self._cutoff = clamp_positive(self._initial_state.get("cutoff"), default=8.0, minimum=1e-6)
         self._order = clamp_order(self._initial_state.get("order"), default=2)
-        self._reset_on_state_change = coerce_bool(self._initial_state.get("reset_on_state_change"))
+        self._reset_on_state_change = parse_bool(self._initial_state.get("reset_on_state_change"))
         if self._reset_on_state_change is None:
             self._reset_on_state_change = True
         self._sos = design_lowpass(
@@ -90,7 +89,7 @@ class LowpassFilterRuntimeNode(OperatorNode):
             self._rebuild_filter(reset_state=self._reset_on_state_change)
             return
         if name == "reset_on_state_change":
-            reset_value = coerce_bool(value)
+            reset_value = parse_bool(value)
             if reset_value is not None:
                 self._reset_on_state_change = reset_value
 
@@ -98,7 +97,7 @@ class LowpassFilterRuntimeNode(OperatorNode):
         if str(port) != "value":
             return None
 
-        sample = coerce_sequence(await self.pull("value", ctx_id=ctx_id))
+        sample = parse_number_sequence(await self.pull("value", ctx_id=ctx_id))
         if sample is None:
             return format_output(self._cache.last_output)
         if self._cache.should_reuse(sample, ctx_id):
@@ -114,6 +113,7 @@ class LowpassFilterRuntimeNode(OperatorNode):
 LowpassFilterRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
+    paletteCategory=f"{SERVICE_CLASS}.signal",
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="Lowpass Filter",
@@ -162,12 +162,11 @@ LowpassFilterRuntimeNode.SPEC = F8OperatorSpec(
 )
 
 
-def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
         return LowpassFilterRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(LowpassFilterRuntimeNode.SPEC, overwrite=True)
-    return reg
+    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
+    registry.register_operator_spec(LowpassFilterRuntimeNode.SPEC, overwrite=True)
+    return registry

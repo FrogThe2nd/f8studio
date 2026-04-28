@@ -4,6 +4,8 @@ import enum
 from dataclasses import dataclass
 from typing import Any
 
+from ...ui.support.ui_control import ui_control_language
+
 @dataclass(frozen=True)
 class StateFieldInfo:
     name: str
@@ -56,7 +58,7 @@ def state_field_info(field: Any) -> StateFieldInfo | None:
     except Exception:
         ui_control = ""
     try:
-        ui_language = str(field.uiLanguage or "")
+        ui_language = ui_control_language(str(field.uiControl or ""))
     except Exception:
         ui_language = ""
     try:

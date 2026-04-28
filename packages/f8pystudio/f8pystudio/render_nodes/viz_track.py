@@ -12,8 +12,8 @@ from f8pysdk.shm import VIDEO_FORMAT_FLOW2_F16, VideoShmReader
 
 from ..nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from ..nodegraph.viz_operator_nodeitem import F8StudioVizOperatorNodeItem
-from ..skeleton_protocols import skeleton_edges_for_protocol
-from ..ui_bus import UiCommand
+from f8pystudio.visualization.skeletons import skeleton_edges_for_protocol
+from f8pystudio.contracts.ui_commands import UiCommand
 
 import pyqtgraph as pg  # type: ignore[import-not-found]
 
@@ -332,7 +332,7 @@ class _TrackVizPane(QtWidgets.QWidget):
 
         top = QtWidgets.QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
-        self._update = QtWidgets.QCheckBox("Update")
+        self._update = QtWidgets.QCheckBox("Update", self)
         self._update.setChecked(True)
         self._update.setStyleSheet(
             """
@@ -356,7 +356,7 @@ class _TrackVizPane(QtWidgets.QWidget):
         layout.addLayout(top)
 
         if pg is None:
-            label = QtWidgets.QLabel("pyqtgraph not installed")
+            label = QtWidgets.QLabel("pyqtgraph not installed", self)
             label.setAlignment(QtCore.Qt.AlignCenter)
             layout.addWidget(label, 1)
             self._plot = None
@@ -364,7 +364,7 @@ class _TrackVizPane(QtWidgets.QWidget):
             self._pending: dict[str, Any] | None = None
             return
 
-        plot = pg.PlotWidget()
+        plot = pg.PlotWidget(self)
         plot.setBackground((16, 16, 16))
         plot.showGrid(x=False, y=False, alpha=0.2)
         plot.hideAxis("bottom")

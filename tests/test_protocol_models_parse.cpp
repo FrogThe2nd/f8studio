@@ -11,6 +11,7 @@ using namespace f8::cppsdk::generated;
 
 TEST(ProtocolModelsParse, CommandInvoke_IgnoreExtra) {
   json j = json::object();
+  j["reqId"] = "req-1";
   j["call"] = "pickRegion";
   j["args"] = json::object();
   j["args"]["x"] = 1;
@@ -21,6 +22,7 @@ TEST(ProtocolModelsParse, CommandInvoke_IgnoreExtra) {
   F8CommandInvokeRequest req{};
   ParseError err{};
   EXPECT_TRUE(parse_F8CommandInvokeRequest(j, req, err)) << err.message;
+  EXPECT_EQ(req.reqId, "req-1");
   EXPECT_EQ(req.call, "pickRegion");
   EXPECT_TRUE(req.args.is_object());
   EXPECT_TRUE(req.meta.is_object());
@@ -80,4 +82,3 @@ TEST(ProtocolModelsParse, SetRungraphArgs_Parse) {
 }
 
 }  // namespace
-

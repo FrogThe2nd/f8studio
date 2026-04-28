@@ -23,6 +23,7 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
 
     Intended for render/viz nodes where:
     - state controls are placed first (top-to-bottom)
+    - command rows follow visible state rows
     - embedded widgets come after state
     - data/exec/other ports are aligned alongside the widget region (no port rows)
     """
@@ -78,6 +79,7 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
 
         # State inline panel heights (span node width).
         state_h = 0.0
+        command_h = 0.0
         spacing = 1.0
         group_gap = 6.0
 
@@ -107,6 +109,15 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
                 panel_h = float(max(metric.height, port_height or float(PortEnum.SIZE.value)))
                 state_h += panel_h + spacing
             state_h = max(0.0, state_h - spacing) + group_gap
+
+        command_names = self._visible_command_names_for_layout()
+        if command_names:
+            inner_width = max(float(NodeEnum.WIDTH.value) - 8.0, 10.0)
+            for command_name in command_names:
+                metric = self._measure_command_row_metric(command_name, inner_width)
+                panel_h = float(max(metric.height, port_height or float(PortEnum.SIZE.value)))
+                command_h += panel_h + spacing
+            command_h = max(0.0, command_h - spacing) + group_gap
 
         # Embedded widgets (eg. plot canvas).
         widget_width = 0.0
@@ -148,14 +159,19 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
         side_padding = 10.0 if widget_width else 0.0
         width = max(float(NodeEnum.WIDTH.value), float(text_w + 18.0), float(widget_width + side_padding))
 
-        port_region_h = state_h + max(widget_height, required_port_region_h)
+        port_region_h = state_h + command_h + max(widget_height, required_port_region_h)
         height = max(float(NodeEnum.HEIGHT.value), float(text_h), float(port_region_h))
         if widget_height:
             height += 10.0
 
         return width, height
 
-    def _build_state_inline_control(self, state_field: Any):  # type: ignore[override]
+    def _build_state_inline_control(
+        self,
+        state_field: Any,
+        *,
+        widget_parent=None,
+    ):  # type: ignore[override]
         """
         Override a couple of fields for viz nodes:
         - minVal/maxVal: allow blank (auto) via QLineEdit (stores None/float)
@@ -163,7 +179,7 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
         nm = self._state_field_name_if_visible(state_field)
         name = nm or ""
         if name not in {"minVal", "maxVal"}:
-            return super()._build_state_inline_control(state_field)
+            return super()._build_state_inline_control(state_field, widget_parent=widget_parent)
 
         from qtpy import QtCore, QtWidgets
 
@@ -198,7 +214,7 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
             except KeyError:
                 return None
 
-        line = QtWidgets.QLineEdit()
+        line = QtWidgets.QLineEdit(widget_parent)
         line.setMinimumWidth(90)
         line.setPlaceholderText("auto")
         _common_style(line)
@@ -237,9 +253,53 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
         for text in self._output_items.values():
             text.setVisible(False)
 
+    def _ordered_non_state_ports_for_widget_region(self, *, is_in: bool) -> list[Any]:
+        ports = list(self.inputs if bool(is_in) else self.outputs)
+        visible_by_name: dict[str, Any] = {}
+        visible_names_in_insertion_order: list[str] = []
+        for port in ports:
+            try:
+                if not port.isVisible():
+                    continue
+                port_name = self._port_name(port)
+            except (AttributeError, RuntimeError, TypeError):
+                continue
+            if not port_name or self._port_group(port_name) == "state":
+                continue
+            visible_names_in_insertion_order.append(port_name)
+            visible_by_name[port_name] = port
+
+        ordered_names: list[str] = []
+        ordered_names.extend(self._ordered_exec_port_names_for_layout(is_in=bool(is_in)))
+        ordered_names.extend(self._ordered_data_port_names_for_layout(is_in=bool(is_in)))
+        ordered_names.extend(self._ordered_command_port_names_for_layout(is_in=bool(is_in)))
+
+        ordered_ports: list[Any] = []
+        seen_names: set[str] = set()
+        for name in ordered_names:
+            normalized_name = str(name or "").strip()
+            if not normalized_name or normalized_name in seen_names:
+                continue
+            port = visible_by_name.get(normalized_name)
+            if port is None:
+                continue
+            ordered_ports.append(port)
+            seen_names.add(normalized_name)
+
+        for name in visible_names_in_insertion_order:
+            if name in seen_names:
+                continue
+            port = visible_by_name.get(name)
+            if port is None:
+                continue
+            ordered_ports.append(port)
+            seen_names.add(name)
+        return ordered_ports
+
     def _align_viz_state(self, v_offset: float) -> float:
         """
-        Align state inline panels top-to-bottom and return the y position after the state block.
+        Align visible state rows first, then visible command rows, and return the y
+        position after the inline-row block.
         """
         width = float(self._width)
         spacing = 1.0
@@ -275,6 +335,7 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
             nm = self._state_field_name_if_visible(s)
             if nm:
                 state_names.append(nm)
+        command_names = self._visible_command_names_for_layout()
 
         inputs_by_name = {self._port_name(p): p for p in self.inputs if p.isVisible()}
         outputs_by_name = {self._port_name(p): p for p in self.outputs if p.isVisible()}
@@ -337,6 +398,35 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
         if state_names:
             y += group_gap
 
+        for command_name in command_names:
+            in_name = f"[C]{command_name}"
+            out_name = f"{command_name}[C]"
+
+            panel_proxy = self._command_inline_proxies.get(command_name)
+            metric = self._measure_command_row_metric(command_name, inner_w)
+            header_h = float(max(port_height or float(PortEnum.SIZE.value), metric.header_height))
+            panel_h = float(max(header_h, metric.height))
+            if panel_proxy is not None:
+                panel_w = float(max(metric.width, inner_w))
+                panel_x = rect.left() + (rect.width() - panel_w) / 2.0
+                min_x = float(inner_x)
+                max_x = float(rect.right() - 4.0 - panel_w)
+                if max_x < min_x:
+                    panel_x = min_x
+                else:
+                    panel_x = max(min_x, min(panel_x, max_x))
+                try:
+                    panel_proxy.setPos(panel_x, y)
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    pass
+
+            port_y = y + (header_h - port_height) / 2.0 if port_height else y
+            place_row(in_name, out_name, y=port_y)
+            y += panel_h + spacing
+
+        if command_names:
+            y += group_gap
+
         self._ports_end_y = y
         return y
 
@@ -366,26 +456,8 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
             return
 
         # Non-state ports.
-        in_ports = []
-        out_ports = []
-        for p in self.inputs:
-            try:
-                if not p.isVisible():
-                    continue
-                if self._port_group(self._port_name(p)) == "state":
-                    continue
-                in_ports.append(p)
-            except (AttributeError, RuntimeError, TypeError):
-                continue
-        for p in self.outputs:
-            try:
-                if not p.isVisible():
-                    continue
-                if self._port_group(self._port_name(p)) == "state":
-                    continue
-                out_ports.append(p)
-            except (AttributeError, RuntimeError, TypeError):
-                continue
+        in_ports = self._ordered_non_state_ports_for_widget_region(is_in=True)
+        out_ports = self._ordered_non_state_ports_for_widget_region(is_in=False)
 
         if not in_ports and not out_ports:
             return
@@ -465,7 +537,7 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
         except (AttributeError, RuntimeError, TypeError):
             pass
         try:
-            self._ensure_inline_command_widget()
+            self._ensure_inline_command_rows()
         except (AttributeError, RuntimeError, TypeError):
             pass
         self._prepare_layout_metrics()

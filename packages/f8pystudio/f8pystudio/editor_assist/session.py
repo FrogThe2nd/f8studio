@@ -11,7 +11,8 @@ from qtpy import QtCore
 
 from ..ai_assist.llm_bridge import AiLlmBridge
 from ..ai_assist.store import AiProviderStore
-from .bridge import PythonEditorAssistBridge
+from ..ui.support.ai_assist_state import QtAiPanelStateStore
+from ..ui.support.editor_assist_bridge import PythonEditorAssistBridge
 from .workspace import EditorAssistContext
 
 logger = logging.getLogger(__name__)
@@ -323,7 +324,7 @@ class EditorSessionController(QtCore.QObject):
             assist_context_provider=assist_context_provider,
         )
         self._ai_store = shared_ai_store()
-        self._ai_bridge = AiLlmBridge(self._ai_store, self)
+        self._ai_bridge = AiLlmBridge(self._ai_store, state_store=QtAiPanelStateStore(), parent=self)
         self._ai_bridge.set_document_language(self._state.language)
         self._ai_bridge.set_assist_context(self._state.assist_context)
         self._assist_bridge: PythonEditorAssistBridge | None = None

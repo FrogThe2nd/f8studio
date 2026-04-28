@@ -10,28 +10,28 @@ MediaPipe single-person pose extraction service (33 landmarks).
 
 ## When to Use
 
-- Use `f8.mp.pose` when your graph needs real-time, lightweight 2D or 3D body pose estimation from a video stream.
-- It is the ideal choice for human-machine interaction, gesture recognition, and skeleton-driven animation authoring within the Feel8 ecosystem.
-- Choose this for rapid prototyping and scenarios where a general-purpose, high-performance pose model is preferred over training custom networks.
+- Use `f8.mp.pose` when the graph needs human pose landmarks rather than only person boxes.
+- It is a natural choice for skeleton-driven visuals, motion analysis, and pose-derived control signals.
+- Use it when joints and body structure matter more than generic detection labels.
 
 ## Common Wiring Patterns
 
-- **Skeleton Mapping**: Feed video from `f8.implayer` or `f8.screencap`, then connect the `skeleton` output to `f8.pyengine` operators for bone angle calculation or joint-to-control mapping.
-- **3D Inspection**: Connect the 3D landmark output to `f8.viz.three_d` to visualize the estimated body posture in a 3D space directly within Studio.
-- **Feedback Loop**: Keep the original video path visible in a `f8.viz.video` node with skeleton overlays matched to the source frames to diagnose tracking accuracy.
+- Typical inputs come from `f8.implayer`, `f8.screencap`, or live camera-like sources.
+- Outputs commonly feed into `f8.viz.track`, `f8.viz.three-d`, or `f8.pyengine`.
+- If people are unstable in the frame, consider person localization or cropping before pose estimation.
 
 ## Pitfalls / Gotchas
 
-- **Framing & Occulusion**: Pose accuracy is highly dependent on the subject being clearly visible. Partial occlusions (e.g., sitting behind a desk) or extreme camera angles can cause joints to "flicker" or be misidentified.
-- **Distance & Scale**: The subject should ideally fill a significant portion of the frame. Small subjects (far away) or very low-resolution video will result in jittery tracking.
-- **Lighting Dependency**: While MediaPipe is robust, extreme darkness or strong backlighting can confuse the initial body detection, leading to no skeleton being produced even if a person is present.
+- Pose quality depends heavily on visibility, scale, and occlusion.
+- Extreme camera angles can destabilize certain landmarks.
+- Before writing control logic, always visualize the landmarks and verify they match the actual body motion.
 
 ## Service Reference
 
 ### How to Run
 
 ```bash
-pixi run f8pymppose
+pixi run -e mediapipe f8pymppose
 ```
 
 - Workdir: `../../../../`
@@ -54,6 +54,7 @@ pixi run f8pymppose
 | `minTrackingConfidence` | `rw` | `true` | `false` | `number / default=0.5` | Minimum confidence threshold for pose tracking. |
 | `visibilityThreshold` | `rw` | `true` | `false` | `number / default=0.5` | Landmark visibility threshold (below threshold => hidden point). |
 | `lastError` | `ro` | `true` | `false` | `string / default=` | Last runtime error string (best-effort). |
+| `skeletonSource` | `rw` | `true` | `false` | `string / enum[camera, world] / default=camera` | Skeleton data source (camera-relative vs world-relative). |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
@@ -66,7 +67,7 @@ pixi run f8pymppose
 - `minTrackingConfidence` (Min Tracking Confidence, `rw`): Minimum confidence threshold for pose tracking. Schema: `number / default=0.5`.
 - `visibilityThreshold` (Visibility Threshold, `rw`): Landmark visibility threshold (below threshold => hidden point). Schema: `number / default=0.5`.
 - `lastError` (Last Error, `ro`): Last runtime error string (best-effort). Schema: `string / default=`.
-- `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
+- `skeletonSource` (Skeleton Source, `rw`): Skeleton data source (camera-relative vs world-relative). Schema: `string / enum[camera, world] / default=camera`.
 
 ### Service Commands
 

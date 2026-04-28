@@ -48,6 +48,7 @@ class TestProviderConfig:
     def test_defaults(self) -> None:
         cfg = ProviderConfig(provider_id="test", display_name="Test")
         assert cfg.protocol == "openai"
+        assert cfg.api_mode == "chat_completions"
         assert cfg.api_key == ""
         assert cfg.endpoint == ""
         assert cfg.cached_models == []
@@ -79,6 +80,7 @@ class TestDefaultProviders:
 
     def test_openai_has_models(self) -> None:
         cfg = _openai_default()
+        assert cfg.api_mode == "responses"
         assert len(cfg.cached_models) >= 2
         model_ids = [m.model_id for m in cfg.cached_models]
         assert "gpt-4o" in model_ids
@@ -90,14 +92,20 @@ class TestDefaultProviders:
 
     def test_gemini_has_large_context(self) -> None:
         cfg = _gemini_default()
+        assert cfg.api_mode == "chat_completions"
         for m in cfg.cached_models:
             assert m.capabilities.max_context_tokens >= 1_000_000
 
     def test_ollama_no_models_by_default(self) -> None:
         cfg = _ollama_default()
+        assert cfg.api_mode == "chat_completions"
         assert cfg.cached_models == []
 
     def test_protocols_valid(self) -> None:
         valid_protocols = {"openai", "anthropic", "ollama", "custom"}
         for p in DEFAULT_PROVIDERS:
             assert p.protocol in valid_protocols
+
+    def test_non_openai_defaults_use_chat_completions(self) -> None:
+        cfg = ProviderConfig(provider_id="custom", display_name="Custom", protocol="custom")
+        assert cfg.api_mode == "chat_completions"

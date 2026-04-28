@@ -1,0 +1,449 @@
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+import json
+from typing import Any
+
+from qtpy import QtCore, QtWidgets
+
+from ..common import format_timestamp_for_local_display, format_timestamp_tooltip
+from ..projects.project_models import F8ProjectSummary
+from ...ui.support.qt_lifecycle import qt_runtime_error_is_object_deleted
+from ...ui.support.ui_notifications import show_warning
+
+
+class ProjectAssetMetaDialog(QtWidgets.QDialog):
+    def __init__(
+        self,
+        *,
+        parent: QtWidgets.QWidget | None,
+        title: str,
+        name: str,
+        description: str,
+        tags: list[str],
+        name_validator: Callable[[str], str | None] | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(520, 220)
+        self._name_validator = name_validator
+        self._name = QtWidgets.QLineEdit(name, self)
+        self._description = QtWidgets.QLineEdit(description, self)
+        self._tags = QtWidgets.QLineEdit(", ".join(tags), self)
+
+        form = QtWidgets.QFormLayout()
+        form.addRow("Name", self._name)
+        form.addRow("Description", self._description)
+        form.addRow("Tags (comma-separated)", self._tags)
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel,
+            parent=self,
+        )
+        buttons.accepted.connect(self._on_accept_clicked)  # type: ignore[attr-defined]
+        buttons.rejected.connect(self.reject)  # type: ignore[attr-defined]
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+
+    def _on_accept_clicked(self) -> None:
+        name = str(self._name.text() or "").strip()
+        if not name:
+            show_warning(self, "Invalid name", "Name cannot be empty.")
+            return
+        if self._name_validator is not None:
+            message = self._name_validator(name)
+            if message:
+                show_warning(self, "Invalid name", message)
+                return
+        self.accept()
+
+    def values(self) -> tuple[str, str, list[str]]:
+        tags = [part.strip() for part in str(self._tags.text() or "").split(",")]
+        return (
+            str(self._name.text() or "").strip(),
+            str(self._description.text() or "").strip(),
+            [tag for tag in tags if tag],
+        )
+
+
+class AssetVersionNoteDialog(QtWidgets.QDialog):
+    def __init__(
+        self,
+        *,
+        parent: QtWidgets.QWidget | None,
+        title: str,
+        prompt: str,
+        note: str = "",
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(520, 320)
+
+        prompt_label = QtWidgets.QLabel(prompt, self)
+        prompt_label.setWordWrap(True)
+
+        self._note = QtWidgets.QPlainTextEdit(self)
+        self._note.setPlaceholderText("Optional: summarize what changed in this version.")
+        self._note.setPlainText(str(note or ""))
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel,
+            parent=self,
+        )
+        buttons.accepted.connect(self.accept)  # type: ignore[attr-defined]
+        buttons.rejected.connect(self.reject)  # type: ignore[attr-defined]
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(prompt_label)
+        layout.addWidget(self._note)
+        layout.addWidget(buttons)
+
+    def value(self) -> str:
+        return str(self._note.toPlainText() or "").strip()
+
+
+def prompt_version_notes(
+    *,
+    parent: QtWidgets.QWidget | None,
+    title: str,
+    prompt: str,
+    note: str = "",
+) -> str | None:
+    dialog = AssetVersionNoteDialog(
+        parent=parent,
+        title=title,
+        prompt=prompt,
+        note=note,
+    )
+    if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+        return None
+    return dialog.value()
+
+
+def _list_current_item_or_none(list_widget: QtWidgets.QListWidget) -> QtWidgets.QListWidgetItem | None:
+    try:
+        return list_widget.currentItem()
+    except RuntimeError as exc:
+        if qt_runtime_error_is_object_deleted(exc):
+            return None
+        raise
+
+
+@dataclass(frozen=True)
+class AssetOverwriteChoice:
+    asset_id: str
+    label: str
+    description: str
+    tags: list[str]
+
+
+class AssetOverwriteMetaDialog(QtWidgets.QDialog):
+    def __init__(
+        self,
+        *,
+        parent: QtWidgets.QWidget | None,
+        title: str,
+        name: str,
+        description: str,
+        tags: list[str],
+        overwrite_choices: list[AssetOverwriteChoice] | None = None,
+        overwrite_label: str = "Overwrite Existing",
+        selected_asset_id: str | None = None,
+        name_validator: Callable[[str, str | None], str | None] | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(560, 260)
+        self._name_validator = name_validator
+        self._default_name = str(name or "").strip()
+        self._default_description = str(description or "").strip()
+        self._default_tags = [str(tag).strip() for tag in list(tags or []) if str(tag).strip()]
+        self._choices_by_id: dict[str, AssetOverwriteChoice] = {
+            str(choice.asset_id): choice for choice in list(overwrite_choices or []) if str(choice.asset_id).strip()
+        }
+
+        self._overwrite_combo = QtWidgets.QComboBox(self)
+        self._overwrite_combo.addItem("Create New", "")
+        for choice in self._choices_by_id.values():
+            self._overwrite_combo.addItem(str(choice.label), str(choice.asset_id))
+        self._overwrite_combo.currentIndexChanged.connect(self._on_overwrite_changed)  # type: ignore[attr-defined]
+
+        self._name = QtWidgets.QLineEdit(self._default_name, self)
+        self._description = QtWidgets.QLineEdit(self._default_description, self)
+        self._tags = QtWidgets.QLineEdit(", ".join(self._default_tags), self)
+
+        form = QtWidgets.QFormLayout()
+        form.addRow(overwrite_label, self._overwrite_combo)
+        form.addRow("Name", self._name)
+        form.addRow("Description", self._description)
+        form.addRow("Tags (comma-separated)", self._tags)
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel,
+            parent=self,
+        )
+        buttons.accepted.connect(self._on_accept_clicked)  # type: ignore[attr-defined]
+        buttons.rejected.connect(self.reject)  # type: ignore[attr-defined]
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+
+        if selected_asset_id:
+            selected_index = self._overwrite_combo.findData(str(selected_asset_id))
+            if selected_index >= 0:
+                self._overwrite_combo.setCurrentIndex(selected_index)
+            else:
+                self._reset_to_defaults()
+        else:
+            self._reset_to_defaults()
+
+    def selected_asset_id(self) -> str | None:
+        data = self._overwrite_combo.currentData()
+        selected_asset_id = str(data or "").strip()
+        return None if not selected_asset_id else selected_asset_id
+
+    def values(self) -> tuple[str, str, list[str], str | None]:
+        tags = [part.strip() for part in str(self._tags.text() or "").split(",")]
+        return (
+            str(self._name.text() or "").strip(),
+            str(self._description.text() or "").strip(),
+            [tag for tag in tags if tag],
+            self.selected_asset_id(),
+        )
+
+    def _on_overwrite_changed(self) -> None:
+        selected_asset_id = self.selected_asset_id()
+        if selected_asset_id is None:
+            self._reset_to_defaults()
+            return
+        choice = self._choices_by_id.get(selected_asset_id)
+        if choice is None:
+            self._reset_to_defaults()
+            return
+        self._name.setText(str(choice.label))
+        self._description.setText(str(choice.description))
+        self._tags.setText(", ".join([str(tag) for tag in list(choice.tags or []) if str(tag).strip()]))
+
+    def _reset_to_defaults(self) -> None:
+        self._name.setText(self._default_name)
+        self._description.setText(self._default_description)
+        self._tags.setText(", ".join(self._default_tags))
+
+    def _on_accept_clicked(self) -> None:
+        name = str(self._name.text() or "").strip()
+        if not name:
+            show_warning(self, "Invalid name", "Name cannot be empty.")
+            return
+        if self._name_validator is not None:
+            message = self._name_validator(name, self.selected_asset_id())
+            if message:
+                show_warning(self, "Invalid name", message)
+                return
+        self.accept()
+
+
+class ProjectPickerDialog(QtWidgets.QDialog):
+    def __init__(
+        self,
+        *,
+        parent: QtWidgets.QWidget | None,
+        projects: list[F8ProjectSummary],
+        current_project_id: str,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Open Project")
+        self.resize(720, 420)
+        self._projects = list(projects)
+        self._list = QtWidgets.QListWidget(self)
+        self._details = QtWidgets.QPlainTextEdit(self)
+        self._details.setReadOnly(True)
+        self._details.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
+
+        split = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal, self)
+        split.addWidget(self._list)
+        split.addWidget(self._details)
+        split.setStretchFactor(0, 3)
+        split.setStretchFactor(1, 4)
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Open | QtWidgets.QDialogButtonBox.StandardButton.Cancel,
+            parent=self,
+        )
+        buttons.accepted.connect(self.accept)  # type: ignore[attr-defined]
+        buttons.rejected.connect(self.reject)  # type: ignore[attr-defined]
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(split)
+        layout.addWidget(buttons)
+
+        for index, project in enumerate(self._projects):
+            item = QtWidgets.QListWidgetItem(project.name)
+            item.setData(QtCore.Qt.ItemDataRole.UserRole, project.projectId)
+            if project.projectId == current_project_id:
+                item.setSelected(True)
+                self._list.setCurrentRow(index)
+            self._list.addItem(item)
+        self._list.currentItemChanged.connect(self._on_current_item_changed)  # type: ignore[attr-defined]
+        current_item = _list_current_item_or_none(self._list)
+        if current_item is None and self._list.count() > 0:
+            self._list.setCurrentRow(0)
+            current_item = _list_current_item_or_none(self._list)
+        self._on_current_item_changed(current_item, None)
+
+    def selected_project_id(self) -> str:
+        item = _list_current_item_or_none(self._list)
+        if item is None:
+            return ""
+        return str(item.data(QtCore.Qt.ItemDataRole.UserRole) or "").strip()
+
+    def _on_current_item_changed(
+        self,
+        current: QtWidgets.QListWidgetItem | None,
+        _previous: QtWidgets.QListWidgetItem | None,
+    ) -> None:
+        if current is None:
+            self._details.setPlainText("")
+            return
+        selected_project_id = str(current.data(QtCore.Qt.ItemDataRole.UserRole) or "").strip()
+        selected_summary = None
+        for project in self._projects:
+            if project.projectId == selected_project_id:
+                selected_summary = project
+                break
+        if selected_summary is None:
+            self._details.setPlainText("")
+            return
+        self._details.setPlainText(
+            "\n".join(
+                [
+                    f"Name: {selected_summary.name}",
+                    f"Description: {selected_summary.description}",
+                    f"Tags: {', '.join(selected_summary.tags)}",
+                    f"Version: {selected_summary.latestVersionNumber}",
+                    f"Updated: {format_timestamp_for_local_display(selected_summary.updatedAt)}",
+                ]
+            )
+        )
+        self._details.setToolTip(format_timestamp_tooltip(selected_summary.updatedAt))
+
+
+@dataclass(frozen=True)
+class AssetVersionBrowserItem:
+    version_number: int
+    created_at: str
+    change_summary: str = ""
+
+
+@dataclass(frozen=True)
+class AssetVersionBrowserAction:
+    action_key: str
+    label: str
+
+
+class AssetVersionBrowserDialog(QtWidgets.QDialog):
+    def __init__(
+        self,
+        *,
+        parent: QtWidgets.QWidget | None,
+        title: str,
+        items: list[AssetVersionBrowserItem],
+        load_payload: Callable[[int], dict[str, Any]],
+        primary_action_label: str | None = None,
+        actions: list[AssetVersionBrowserAction] | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(860, 520)
+        self._items = list(items)
+        self._load_payload = load_payload
+        self._selected_version_number: int | None = None
+        self._selected_action_key: str | None = None
+
+        self._list = QtWidgets.QListWidget(self)
+        self._details = QtWidgets.QPlainTextEdit(self)
+        self._details.setReadOnly(True)
+        self._details.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
+
+        split = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal, self)
+        split.addWidget(self._list)
+        split.addWidget(self._details)
+        split.setStretchFactor(0, 3)
+        split.setStretchFactor(1, 5)
+
+        buttons = QtWidgets.QDialogButtonBox(parent=self)
+        close_button = buttons.addButton(QtWidgets.QDialogButtonBox.StandardButton.Close)
+        close_button.clicked.connect(self.reject)  # type: ignore[attr-defined]
+        resolved_actions = list(actions or [])
+        if primary_action_label and not resolved_actions:
+            resolved_actions.append(AssetVersionBrowserAction(action_key="primary", label=primary_action_label))
+        self._action_buttons: dict[str, QtWidgets.QPushButton] = {}
+        for action in resolved_actions:
+            action_button = buttons.addButton(action.label, QtWidgets.QDialogButtonBox.ButtonRole.AcceptRole)
+            action_button.clicked.connect(
+                lambda _checked=False, action_key=action.action_key: self._on_action_clicked(action_key)
+            )  # type: ignore[attr-defined]
+            self._action_buttons[action.action_key] = action_button
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(split)
+        layout.addWidget(buttons)
+
+        for item in self._items:
+            display_time = format_timestamp_for_local_display(item.created_at)
+            tooltip_time = format_timestamp_tooltip(item.created_at)
+            label_parts = [f"v{item.version_number}", display_time]
+            if item.change_summary:
+                label_parts.append(item.change_summary)
+            list_item = QtWidgets.QListWidgetItem(" | ".join(label_parts))
+            list_item.setData(QtCore.Qt.ItemDataRole.UserRole, item.version_number)
+            if tooltip_time:
+                list_item.setToolTip(tooltip_time)
+            self._list.addItem(list_item)
+        self._list.currentItemChanged.connect(self._on_current_item_changed)  # type: ignore[attr-defined]
+        if self._list.count() > 0:
+            self._list.setCurrentRow(0)
+        else:
+            self._details.setPlainText("No versions found.")
+            self._set_action_buttons_enabled(False)
+
+    def selected_version_number(self) -> int | None:
+        return self._selected_version_number
+
+    def selected_action_key(self) -> str | None:
+        return self._selected_action_key
+
+    def _on_action_clicked(self, action_key: str) -> None:
+        if self._selected_version_number is None:
+            return
+        self._selected_action_key = str(action_key)
+        self.accept()
+
+    def _set_action_buttons_enabled(self, enabled: bool) -> None:
+        for button in self._action_buttons.values():
+            button.setEnabled(enabled)
+
+    def _on_current_item_changed(
+        self,
+        current: QtWidgets.QListWidgetItem | None,
+        _previous: QtWidgets.QListWidgetItem | None,
+    ) -> None:
+        if current is None:
+            self._selected_version_number = None
+            self._selected_action_key = None
+            self._details.setPlainText("")
+            self._set_action_buttons_enabled(False)
+            return
+        version_number = int(current.data(QtCore.Qt.ItemDataRole.UserRole) or 0)
+        self._selected_version_number = version_number
+        self._selected_action_key = None
+        self._set_action_buttons_enabled(True)
+        try:
+            payload = self._load_payload(version_number)
+        except Exception as exc:
+            self._details.setPlainText(f"Failed to load version {version_number}.\n\n{exc}")
+            return
+        self._details.setPlainText(json.dumps(payload, ensure_ascii=False, indent=2, default=str))

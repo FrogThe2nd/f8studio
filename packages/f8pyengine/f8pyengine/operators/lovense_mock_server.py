@@ -7,11 +7,14 @@ import ipaddress
 import json
 import logging
 import traceback
+from collections import deque
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qsl
 
-from f8pysdk import (
+from f8pysdk.codec import coerce_flag
+from f8pysdk.specs import (
+    F8DataPortSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
@@ -25,15 +28,16 @@ from f8pysdk import (
 )
 from f8pysdk.capabilities import ClosableNode, EntrypointNode, NodeBus
 from f8pysdk.executors.exec_flow import EntrypointContext
-from f8pysdk.json_unwrap import unwrap_json_value as _unwrap_json_value
+from f8pysdk.codec import unwrap_json_value
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import OperatorNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import OperatorNode
+from f8pysdk.registry import RuntimeNodeRegistry
 from f8pysdk.time_utils import now_ms
 
 from ..constants import SERVICE_CLASS
 
 OPERATOR_CLASS = "f8.lovense_mock_server"
+_EVENT_CACHE_MIN = 256
 
 logger = logging.getLogger(__name__)
 
@@ -364,9 +368,9 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
 
     - POST /command (JSON)
     - Responds to GetToys with a minimal toy list
-    - Captures all requests into a runtime-owned `event` state field
+    - Captures command requests into the `event` data output
 
-    This node is event-driven and can trigger exec downstream after event commits.
+    This node is event-driven and can trigger exec downstream after each event.
     It keeps the server running as long as the node instance stays registered in
     the ServiceHost, so rungraph redeploys that do not recreate the node won't
     drop connections.
@@ -384,26 +388,30 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
         self._lock = asyncio.Lock()
         self._event_lock = asyncio.Lock()
         self._server: asyncio.AbstractServer | None = None
-        self._allow_non_loopback_bind = self._parse_bool(
-            _unwrap_json_value(self._initial_state.get("allowNonLoopbackBind")),
+        self._allow_non_loopback_bind = coerce_flag(
+            unwrap_json_value(self._initial_state.get("allowNonLoopbackBind")),
             default=False,
         )
         self._cfg: _ServerConfig = _ServerConfig(
-            bind_address=str(_unwrap_json_value(self._initial_state.get("bindAddress")) or "127.0.0.1"),
-            port=self._parse_port(_unwrap_json_value(self._initial_state.get("port")), default=30010),
+            bind_address=str(unwrap_json_value(self._initial_state.get("bindAddress")) or "127.0.0.1"),
+            port=self._coerce_port_or_default(unwrap_json_value(self._initial_state.get("port")), default=30010),
         )
-        self._print_enabled = self._parse_bool(
-            _unwrap_json_value(self._initial_state.get("printEnabled")), default=False
+        self._print_enabled = coerce_flag(
+            unwrap_json_value(self._initial_state.get("printEnabled")), default=False
         )
 
-        self._event_include_payload = self._parse_bool(
-            _unwrap_json_value(self._initial_state.get("eventIncludePayload")), default=False
+        self._event_include_payload = coerce_flag(
+            unwrap_json_value(self._initial_state.get("eventIncludePayload")), default=False
         )
-        self._event_include_request = self._parse_bool(
-            _unwrap_json_value(self._initial_state.get("eventIncludeRequest")), default=False
+        self._event_include_request = coerce_flag(
+            unwrap_json_value(self._initial_state.get("eventIncludeRequest")), default=False
         )
 
         self._seq = 0
+        self._latest_event: dict[str, Any] | None = None
+        self._event_by_ctx_id: dict[str, dict[str, Any]] = {}
+        self._event_ctx_order: deque[str] = deque()
+        self._event_snapshot_limit = _EVENT_CACHE_MIN
         self._last_error: str | None = None
         self._entrypoint_ctx: EntrypointContext | None = None
         self._pending_exec_id: str | int | None = None
@@ -449,7 +457,7 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
     ) -> Any:
         _ = ts_ms
         _ = meta
-        value = _unwrap_json_value(value)
+        value = unwrap_json_value(value)
         name = str(field or "").strip()
         if name == "bindAddress":
             v = str(value or "").strip()
@@ -459,25 +467,25 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
                 raise ValueError("bindAddress must be loopback unless allowNonLoopbackBind is true")
             return v
         if name == "port":
-            port = self._parse_port(value, default=30010)
+            port = self._coerce_port_or_default(value, default=30010)
             if port < 1 or port > 65535:
                 raise ValueError("port must be 1..65535")
             return port
         if name == "printEnabled":
-            return self._parse_bool(value, default=False)
+            return coerce_flag(value, default=False)
         if name == "allowNonLoopbackBind":
-            return self._parse_bool(value, default=False)
+            return coerce_flag(value, default=False)
         if name == "eventIncludePayload":
-            return self._parse_bool(value, default=False)
+            return coerce_flag(value, default=False)
         if name == "eventIncludeRequest":
-            return self._parse_bool(value, default=False)
+            return coerce_flag(value, default=False)
         return value
 
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
         _ = ts_ms
         name = str(field or "").strip()
         if name == "bindAddress":
-            bind_address = str(_unwrap_json_value(value) or "").strip()
+            bind_address = str(unwrap_json_value(value) or "").strip()
             if bind_address and bind_address != self._cfg.bind_address:
                 if (not self._allow_non_loopback_bind) and (not _is_loopback_bind_address(bind_address)):
                     self._set_error("bindAddress must be loopback unless allowNonLoopbackBind is true")
@@ -487,7 +495,7 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
             return
         if name == "port":
             try:
-                port = int(_unwrap_json_value(value))
+                port = int(unwrap_json_value(value))
             except Exception:
                 return
             if port != self._cfg.port:
@@ -495,20 +503,32 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
                 await self._restart_server()
             return
         if name == "printEnabled":
-            self._print_enabled = self._parse_bool(_unwrap_json_value(value), default=False)
+            self._print_enabled = coerce_flag(unwrap_json_value(value), default=False)
             return
         if name == "allowNonLoopbackBind":
-            self._allow_non_loopback_bind = self._parse_bool(_unwrap_json_value(value), default=False)
+            self._allow_non_loopback_bind = coerce_flag(unwrap_json_value(value), default=False)
             if (not self._allow_non_loopback_bind) and (not _is_loopback_bind_address(self._cfg.bind_address)):
                 self._cfg = _ServerConfig(bind_address="127.0.0.1", port=self._cfg.port)
             await self._restart_server()
             return
         if name == "eventIncludePayload":
-            self._event_include_payload = self._parse_bool(_unwrap_json_value(value), default=False)
+            self._event_include_payload = coerce_flag(unwrap_json_value(value), default=False)
             return
         if name == "eventIncludeRequest":
-            self._event_include_request = self._parse_bool(_unwrap_json_value(value), default=False)
+            self._event_include_request = coerce_flag(unwrap_json_value(value), default=False)
             return
+
+    async def compute_output(self, port: str, ctx_id: str | int | None = None) -> Any:
+        if str(port or "").strip() != "event":
+            return None
+        async with self._event_lock:
+            if ctx_id is not None:
+                event = self._event_by_ctx_id.get(self._ctx_key(ctx_id))
+                if event is not None:
+                    return dict(event)
+            if self._latest_event is None:
+                return None
+            return dict(self._latest_event)
 
     async def _restart_server(self) -> None:
         await self._stop_server()
@@ -571,28 +591,40 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
         s = str(payload or "")
         if len(s) > _RAW_LOG_MAX_CHARS:
             s = f"{s[:_RAW_LOG_MAX_CHARS]}...(truncated {len(s) - _RAW_LOG_MAX_CHARS})"
-        logger.info("[%s:lovense_mock_server] %s(raw) %s", self.node_id, str(direction), s)
+        logger.debug("[%s:lovense_mock_server] %s(raw) %s", self.node_id, str(direction), s)
 
     async def _safe_set_state(self, field: str, value: Any) -> None:
         try:
             await self.set_state(field, value)
-        except Exception:
-            return
+        except Exception as exc:
+            logger.exception("[%s:lovense_mock_server] failed to publish state: %s", self.node_id, field, exc_info=exc)
 
     async def _safe_write_event(self, entry: dict[str, Any]) -> dict[str, Any] | None:
         async with self._event_lock:
             self._seq += 1
             seq = int(self._seq)
-        event = dict(entry)
-        event["seq"] = seq
-        # Include a changing field to avoid state value dedupe on repeats.
-        event["eventId"] = f"{self.node_id}:{seq}"
-        try:
-            await self.set_state("event", event)
-        except Exception:
-            return None
+            event = dict(entry)
+            event["seq"] = seq
+            event["eventId"] = f"{self.node_id}:{seq}"
+            self._latest_event = dict(event)
+            self._store_event_snapshot_locked(exec_id=str(event["eventId"]), event=event)
         self._request_exec_emit(exec_id=str(event["eventId"]))
         return event
+
+    @staticmethod
+    def _ctx_key(ctx_id: str | int | None) -> str:
+        return str(ctx_id) if ctx_id is not None else ""
+
+    def _store_event_snapshot_locked(self, *, exec_id: str | int, event: dict[str, Any]) -> None:
+        ctx_key = self._ctx_key(exec_id)
+        if not ctx_key:
+            return
+        if ctx_key not in self._event_by_ctx_id:
+            self._event_ctx_order.append(ctx_key)
+        self._event_by_ctx_id[ctx_key] = dict(event)
+        while len(self._event_ctx_order) > self._event_snapshot_limit:
+            oldest_key = self._event_ctx_order.popleft()
+            self._event_by_ctx_id.pop(oldest_key, None)
 
     def _request_exec_emit(self, *, exec_id: str | int) -> None:
         if self._entrypoint_ctx is None:
@@ -773,7 +805,7 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
 
         typ = str(summary.get("type") or "")
 
-        # keep-alive traffic should not land in state.
+        # Keep-alive traffic should not replace the latest command event.
         if typ in ("ping", "pong"):
             if typ == "ping":
                 resp_obj = {"type": "pong"}
@@ -785,7 +817,6 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
                 await self._write_json(writer, status=200, obj=resp_obj, keep_alive=keep_alive)
             return keep_alive
 
-        published_event: dict[str, Any] | None = None
         if typ in (
             "get_toys",
             "get_toy_name",
@@ -799,7 +830,7 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
             "preset",
             "other",
         ):
-            published_event = await self._safe_write_event(entry)
+            await self._safe_write_event(entry)
 
         resp_obj = self._build_command_response(normalized, summary=summary, ts_ms=ts_ms)
 
@@ -1372,19 +1403,7 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
             return "Internal Server Error"
         return "OK"
 
-    def _parse_bool(self, value: Any, *, default: bool) -> bool:
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, (int, float)):
-            return bool(value)
-        s = str(value or "").strip().lower()
-        if s in ("1", "true", "yes", "on"):
-            return True
-        if s in ("0", "false", "no", "off", ""):
-            return False
-        return bool(default)
-
-    def _parse_port(self, value: Any, *, default: int) -> int:
+    def _coerce_port_or_default(self, value: Any, *, default: int) -> int:
         try:
             v = int(value)
         except Exception:
@@ -1399,12 +1418,20 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
 LovenseMockServerRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
+    paletteCategory=f"{SERVICE_CLASS}.input",
     operatorClass=OPERATOR_CLASS,
     version="0.0.2",
     label="Lovense Mock Server",
-    description="Event-driven input node that mocks the Lovense Local API, publishes received commands as state, and emits exec.",
+    description="Event-driven input node that mocks the Lovense Local API and emits received commands.",
     tags=["io", "lovense", "http", "server", "event"],
     execOutPorts=["event"],
+    dataOutPorts=[
+        F8DataPortSpec(
+            name="event",
+            description="Latest received Lovense command event.",
+            valueSchema=_event_schema(),
+        ),
+    ],
     stateFields=[
         F8StateSpec(
             name="bindAddress",
@@ -1445,7 +1472,7 @@ LovenseMockServerRuntimeNode.SPEC = F8OperatorSpec(
         F8StateSpec(
             name="eventIncludePayload",
             label="Event Include Payload",
-            description="Include the parsed request payload in the `event` state (debug).",
+            description="Include the parsed request payload in the `event` data output (debug).",
             valueSchema=boolean_schema(default=False),
             access=F8StateAccess.rw,
             required=True,
@@ -1454,7 +1481,7 @@ LovenseMockServerRuntimeNode.SPEC = F8OperatorSpec(
         F8StateSpec(
             name="eventIncludeRequest",
             label="Event Include Request",
-            description="Include request headers/body in the `event` state (debug).",
+            description="Include request headers/body in the `event` data output (debug).",
             valueSchema=boolean_schema(default=False),
             access=F8StateAccess.rw,
             required=True,
@@ -1478,30 +1505,15 @@ LovenseMockServerRuntimeNode.SPEC = F8OperatorSpec(
             required=True,
             showOnNode=True,
         ),
-        F8StateSpec(
-            name="event",
-            label="Event",
-            description="Latest received Lovense command (dict with seq/eventId/summary/raw).",
-            valueSchema=_event_schema(),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=True,
-        ),
     ],
-    editableStateFields=False,
-    editableDataInPorts=False,
-    editableDataOutPorts=False,
-    editableExecInPorts=False,
-    editableExecOutPorts=False,
 )
 
 
-def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
         return LovenseMockServerRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(LovenseMockServerRuntimeNode.SPEC, overwrite=True)
-    return reg
+    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
+    registry.register_operator_spec(LovenseMockServerRuntimeNode.SPEC, overwrite=True)
+    return registry

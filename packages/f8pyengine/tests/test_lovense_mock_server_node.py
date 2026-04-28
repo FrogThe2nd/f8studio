@@ -15,16 +15,16 @@ if ROOT not in sys.path:
 if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
-from f8pysdk.generated import (  # noqa: E402
+from f8pysdk.specs import (  # noqa: E402
     F8Edge,
     F8EdgeKindEnum,
     F8EdgeStrategyEnum,
     F8RuntimeGraph,
     F8RuntimeNode,
 )
-from f8pysdk.runtime_node import OperatorNode  # noqa: E402
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry  # noqa: E402
-from f8pysdk.service_host import ServiceHost, ServiceHostConfig  # noqa: E402
+from f8pysdk.nodes import OperatorNode  # noqa: E402
+from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
+from f8pysdk.host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
 from f8pyengine.constants import SERVICE_CLASS  # noqa: E402
@@ -153,12 +153,18 @@ class _ProbeExecRuntimeNode(OperatorNode):
 
 
 class LovenseMockServerNodeTests(unittest.IsolatedAsyncioTestCase):
-    async def test_publishes_event_and_survives_rungraph_redeploy(self) -> None:
+    def test_spec_exposes_event_as_data_not_state(self) -> None:
+        state_names = {str(field.name or "") for field in list(LovenseMockServerRuntimeNode.SPEC.stateFields or [])}
+        data_names = {str(port.name or "") for port in list(LovenseMockServerRuntimeNode.SPEC.dataOutPorts or [])}
+        self.assertNotIn("event", state_names)
+        self.assertIn("event", data_names)
+
+    async def test_publishes_event_output_and_survives_rungraph_redeploy(self) -> None:
         port = _free_port()
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
 
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_operator(reg)
 
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
@@ -170,6 +176,7 @@ class LovenseMockServerNodeTests(unittest.IsolatedAsyncioTestCase):
             operatorClass=LovenseMockServerRuntimeNode.SPEC.operatorClass,
             stateFields=list(LovenseMockServerRuntimeNode.SPEC.stateFields or []),
             stateValues={"bindAddress": "127.0.0.1", "port": port},
+            dataOutPorts=list(LovenseMockServerRuntimeNode.SPEC.dataOutPorts or []),
         )
         graph_v1 = F8RuntimeGraph(graphId="g1", revision="r1", nodes=[op], edges=[])
         await bus.set_rungraph(graph_v1)
@@ -194,13 +201,13 @@ class LovenseMockServerNodeTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(code, 200)
 
-        ev1 = (await bus.get_state("lov1", "event")).value
+        ev1 = await node1.compute_output("event")
         self.assertIsInstance(ev1, dict)
         self.assertEqual(ev1.get("seq"), 1)
         self.assertEqual(((ev1.get("command") or {}).get("kind") or ""), "vibration_pattern")
         self.assertIn("Lush", ((ev1.get("toys") or {}).get("names") or []))
 
-        # Ping should NOT land in state.
+        # Ping should NOT replace the latest command event.
         code, _ = await _http_post_json(
             host="127.0.0.1",
             port=port,
@@ -208,7 +215,7 @@ class LovenseMockServerNodeTests(unittest.IsolatedAsyncioTestCase):
             payload={"type": "ping"},
         )
         self.assertEqual(code, 200)
-        ev_after_ping = (await bus.get_state("lov1", "event")).value
+        ev_after_ping = await node1.compute_output("event")
         self.assertIsInstance(ev_after_ping, dict)
         self.assertEqual(ev_after_ping.get("seq"), 1)
 
@@ -226,7 +233,8 @@ class LovenseMockServerNodeTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(code, 200)
 
-        ev2 = (await bus.get_state("lov1", "event")).value
+        assert isinstance(node2, LovenseMockServerRuntimeNode)
+        ev2 = await node2.compute_output("event")
         self.assertIsInstance(ev2, dict)
         self.assertEqual(ev2.get("seq"), 2)
         self.assertEqual(((ev2.get("command") or {}).get("kind") or ""), "stop")
@@ -240,7 +248,7 @@ class LovenseMockServerNodeTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
 
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_operator(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
@@ -251,6 +259,7 @@ class LovenseMockServerNodeTests(unittest.IsolatedAsyncioTestCase):
             operatorClass=LovenseMockServerRuntimeNode.SPEC.operatorClass,
             stateFields=list(LovenseMockServerRuntimeNode.SPEC.stateFields or []),
             stateValues={"bindAddress": "127.0.0.1", "port": port},
+            dataOutPorts=list(LovenseMockServerRuntimeNode.SPEC.dataOutPorts or []),
         )
         await bus.set_rungraph(F8RuntimeGraph(graphId="g_ws", revision="r1", nodes=[op], edges=[]))
 
@@ -273,9 +282,9 @@ class LovenseMockServerExecTriggerTests(unittest.IsolatedAsyncioTestCase):
     async def _setup_exec_runtime(self, *, port: int) -> tuple[object, PyEngineService, _RuntimeStub]:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_pyengine_specs(reg)
-        reg.register(
+        reg.register_operator_factory(
             SERVICE_CLASS,
             "f8.test_probe_exec",
             lambda node_id, node, initial_state: _ProbeExecRuntimeNode(
@@ -297,6 +306,7 @@ class LovenseMockServerExecTriggerTests(unittest.IsolatedAsyncioTestCase):
             stateValues={"bindAddress": "127.0.0.1", "port": port},
             execInPorts=list(LovenseMockServerRuntimeNode.SPEC.execInPorts or []),
             execOutPorts=list(LovenseMockServerRuntimeNode.SPEC.execOutPorts or []),
+            dataOutPorts=list(LovenseMockServerRuntimeNode.SPEC.dataOutPorts or []),
         )
         probe = F8RuntimeNode(
             nodeId="probe_exec",

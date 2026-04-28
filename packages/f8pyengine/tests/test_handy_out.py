@@ -11,9 +11,9 @@ if ROOT not in sys.path:
 if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
-from f8pysdk.generated import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry  # noqa: E402
-from f8pysdk.service_host import ServiceHost, ServiceHostConfig  # noqa: E402
+from f8pysdk.specs import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
+from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
+from f8pysdk.host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
 from f8pyengine.constants import SERVICE_CLASS  # noqa: E402
@@ -25,10 +25,18 @@ from f8pyengine.operators.handy_out import (  # noqa: E402
 
 
 class HandyOutTests(unittest.IsolatedAsyncioTestCase):
+    def test_spec_excludes_command_rate_state_fields(self) -> None:
+        state_names = {str(field.name or "") for field in list(HandyOutRuntimeNode.SPEC.stateFields or [])}
+        self.assertNotIn("lastHttpStatus", state_names)
+        self.assertNotIn("lastResult", state_names)
+        self.assertNotIn("sentCommands", state_names)
+        self.assertNotIn("droppedCommands", state_names)
+        self.assertNotIn("lastSentTsMs", state_names)
+
     async def _build_node(self, *, state_values: dict[str, Any]) -> tuple[Any, HandyOutRuntimeNode]:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_operator(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
         op = F8RuntimeNode(
@@ -195,7 +203,7 @@ class HandyOutTests(unittest.IsolatedAsyncioTestCase):
 
         last_error = (await bus.get_state("handy1", "lastError")).value
         self.assertIn("3000", str(last_error))
-        self.assertEqual((await bus.get_state("handy1", "lastHttpStatus")).value, 200)
+        self.assertEqual(int(node._last_http_status), 200)
         await node.close()
 
     async def test_rate_limit_backoff_drops_following_exec(self) -> None:
@@ -233,8 +241,7 @@ class HandyOutTests(unittest.IsolatedAsyncioTestCase):
         await node.on_exec("e2")
         await asyncio.sleep(0.02)
         self.assertEqual(len(calls), 1)
-        dropped = (await bus.get_state("handy1", "droppedCommands")).value
-        self.assertGreaterEqual(int(dropped), 1)
+        self.assertGreaterEqual(int(node._dropped_commands), 1)
         await node.close()
 
     async def test_validate_state_rejects_invalid_values(self) -> None:

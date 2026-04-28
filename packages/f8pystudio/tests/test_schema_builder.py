@@ -1,18 +1,21 @@
 from __future__ import annotations
 
-from f8pysdk.msgspec_codec import dump_json
+from f8pysdk.codec import dump_json
 import json
 import subprocess
 import sys
 
 from qtpy import QtCore, QtWidgets
 
-from f8pystudio.widgets.schema_builder import (
+from f8pystudio.ui.dialogs.schema_builder_dialog import (
     SchemaBuilderDialog,
     schema_from_json_obj,
     schema_to_json_obj,
     validate_schema_json_unknown_keys,
 )
+from f8pystudio.ui.dialogs.schema_builder_form_mixin import SchemaBuilderFormMixin
+from f8pystudio.ui.dialogs.schema_builder_sync_mixin import SchemaBuilderSyncMixin
+from f8pystudio.ui.dialogs.schema_builder_tree_mixin import SchemaBuilderTreeMixin
 
 
 def _ensure_app() -> QtWidgets.QApplication:
@@ -175,7 +178,7 @@ def test_schema_builder_read_only_disables_edits_and_preserves_schema() -> None:
 def test_schema_builder_type_switch_does_not_crash() -> None:
     script = """
 from qtpy import QtWidgets
-from f8pystudio.widgets.schema_builder import SchemaBuilderDialog, schema_from_json_obj
+from f8pystudio.ui.dialogs.schema_builder_dialog import SchemaBuilderDialog, schema_from_json_obj
 app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 dlg = SchemaBuilderDialog(None, title='Schema', schema=schema_from_json_obj({'type': 'string'}))
 root_index = dlg._find_tree_item_for_path(())
@@ -195,3 +198,9 @@ app.processEvents()
         text=True,
     )
     assert result.returncode == 0, f"subprocess exited with {result.returncode}: {result.stderr}"
+
+
+def test_schema_builder_uses_sync_tree_and_form_mixins_directly() -> None:
+    assert SchemaBuilderDialog._on_json_debounce_timeout is SchemaBuilderSyncMixin._on_json_debounce_timeout
+    assert SchemaBuilderDialog._rebuild_tree is SchemaBuilderTreeMixin._rebuild_tree
+    assert SchemaBuilderDialog._render_form is SchemaBuilderFormMixin._render_form

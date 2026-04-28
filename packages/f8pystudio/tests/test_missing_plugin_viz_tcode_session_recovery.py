@@ -3,8 +3,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
-from f8pysdk.generated import F8OperatorSchemaVersion, F8OperatorSpec
-from f8pysdk.msgspec_codec import dump_json
+from f8pysdk.specs import F8OperatorSchemaVersion, F8OperatorSpec
+from f8pysdk.codec import dump_json
 from f8pystudio.nodegraph.node_graph import F8StudioGraph
 
 

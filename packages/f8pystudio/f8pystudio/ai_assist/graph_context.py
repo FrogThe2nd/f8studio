@@ -7,9 +7,10 @@ from typing import Any, Iterable
 
 import msgspec
 
-from f8pysdk import F8OperatorSpec, F8ServiceSpec
-from f8pysdk.msgspec_codec import dump_json
+from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
+from f8pysdk.codec import dump_json
 
+from ..ui.support.ui_control import ui_control_language
 from ..nodegraph.edge_rules import EDGE_KIND_DATA, port_kind
 
 _MAX_CURRENT_VALUE_FIELDS = 8
@@ -412,7 +413,7 @@ def _format_detailed_node_summary(node: GraphContextNodeSummary) -> list[str]:
         for field in node.state_fields:
             field_parts = [f"access={field.access}", f"schema={field.schema_summary}"]
             if field.ui_language:
-                field_parts.append(f"uiLanguage={field.ui_language}")
+                field_parts.append(f"uiControlLanguage={field.ui_language}")
             label_suffix = f" label={field.label}" if field.label else ""
             desc_suffix = f" | description={field.description}" if field.description else ""
             lines.append(f"  - `{field.name}` ({', '.join(field_parts)}){label_suffix}{desc_suffix}")
@@ -504,7 +505,7 @@ def _state_field_summary(field: Any) -> GraphContextStateFieldSummary:
         schema_summary=_schema_summary(field.valueSchema),
         description=_text_or_empty(field.description),
         required=_bool_or_default(field.required, default=False),
-        ui_language=_text_or_empty(field.uiLanguage).lower(),
+        ui_language=ui_control_language(_text_or_empty(field.uiControl)),
     )
 
 
@@ -527,7 +528,7 @@ def _current_value_summaries(node: Any, state_fields: list[Any]) -> list[GraphCo
 
 
 def _summarize_state_value(*, field_name: str, field: Any, raw_value: Any) -> GraphContextValueSummary | None:
-    ui_language = _text_or_empty(field.uiLanguage).lower()
+    ui_language = ui_control_language(_text_or_empty(field.uiControl))
     field_label = _text_or_empty(field.label)
     if isinstance(raw_value, msgspec.UnsetType):
         raw_value = None
@@ -786,10 +787,10 @@ def _port_node(port: Any) -> Any | None:
 
 def _raw_port_name(name: str) -> str:
     raw = str(name or "").strip()
-    for prefix in ("[E]", "[D]", "[S]"):
+    for prefix in ("[E]", "[D]", "[S]", "[C]"):
         if raw.startswith(prefix):
             raw = raw[len(prefix) :]
-    for suffix in ("[E]", "[D]", "[S]"):
+    for suffix in ("[E]", "[D]", "[S]", "[C]"):
         if raw.endswith(suffix):
             raw = raw[: -len(suffix)]
     return raw.strip()

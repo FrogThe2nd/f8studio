@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from f8pysdk.msgspec_codec import dump_json
+from f8pysdk.codec import dump_json
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping
 
-from f8pysdk.generated import F8MonitorSnapshot
+from f8pysdk.specs import F8MonitorSnapshot
 
 
 @dataclass(frozen=True)

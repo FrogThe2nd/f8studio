@@ -9,8 +9,9 @@ from typing import Any
 
 import numpy as np
 
+from f8pysdk.codec import coerce_int, coerce_str
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import ServiceNode
+from f8pysdk.nodes import ServiceNode
 from f8pysdk.shm.audio import (
     AUDIO_SHM_MAGIC,
     AUDIO_SHM_VERSION,
@@ -44,11 +45,11 @@ class AudioCoreFeatureServiceNode(ServiceNode):
         self._active = True
         self._task: asyncio.Task[object] | None = None
 
-        self._audio_shm_name = self._coerce_str(self._initial_state.get("audioShmName"), default="")
+        self._audio_shm_name = coerce_str(self._initial_state.get("audioShmName"), default="")
         self._channel_mode = self._coerce_channel_mode(self._initial_state.get("channelMode"))
-        self._window_ms = self._coerce_int(self._initial_state.get("windowMs"), default=CoreDefaults.window_ms, minimum=64)
-        self._hop_ms = self._coerce_int(self._initial_state.get("hopMs"), default=CoreDefaults.hop_ms, minimum=8)
-        self._emit_every_hops = self._coerce_int(
+        self._window_ms = coerce_int(self._initial_state.get("windowMs"), default=CoreDefaults.window_ms, minimum=64)
+        self._hop_ms = coerce_int(self._initial_state.get("hopMs"), default=CoreDefaults.hop_ms, minimum=8)
+        self._emit_every_hops = coerce_int(
             self._initial_state.get("emitEveryHops"), default=CoreDefaults.emit_every_hops, minimum=1
         )
 
@@ -84,40 +85,21 @@ class AudioCoreFeatureServiceNode(ServiceNode):
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
         del ts_ms
         if field == "audioShmName":
-            self._audio_shm_name = self._coerce_str(value, default="")
+            self._audio_shm_name = coerce_str(value, default="")
             self._close_reader()
             return
         if field == "channelMode":
             self._channel_mode = self._coerce_channel_mode(value)
             return
         if field == "windowMs":
-            self._window_ms = self._coerce_int(value, default=self._window_ms, minimum=64)
+            self._window_ms = coerce_int(value, default=self._window_ms, minimum=64)
             return
         if field == "hopMs":
-            self._hop_ms = self._coerce_int(value, default=self._hop_ms, minimum=8)
+            self._hop_ms = coerce_int(value, default=self._hop_ms, minimum=8)
             return
         if field == "emitEveryHops":
-            self._emit_every_hops = self._coerce_int(value, default=self._emit_every_hops, minimum=1)
+            self._emit_every_hops = coerce_int(value, default=self._emit_every_hops, minimum=1)
             return
-
-    @staticmethod
-    def _coerce_str(value: Any, *, default: str) -> str:
-        if value is None:
-            return default
-        text = str(value).strip()
-        if text:
-            return text
-        return default
-
-    @staticmethod
-    def _coerce_int(value: Any, *, default: int, minimum: int) -> int:
-        try:
-            out = int(value)
-        except (TypeError, ValueError):
-            out = int(default)
-        if out < int(minimum):
-            return int(minimum)
-        return out
 
     @staticmethod
     def _coerce_channel_mode(value: Any) -> str:
@@ -182,7 +164,7 @@ class AudioCoreFeatureServiceNode(ServiceNode):
             return matrix[:, idx].astype(np.float32, copy=True)
         if channels == 1:
             return matrix[:, 0].astype(np.float32, copy=True)
-        return np.mean(matrix, axis=1, dtype=np.float32)
+        return np.asarray(np.mean(matrix, axis=1, dtype=np.float32), dtype=np.float32)
 
     async def _loop(self) -> None:
         if not librosa_available():

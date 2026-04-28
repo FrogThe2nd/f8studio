@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from f8pysdk import (
+from f8pysdk.codec import parse_bool, parse_number_sequence
+from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
@@ -15,16 +16,14 @@ from f8pysdk import (
     string_schema,
 )
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import OperatorNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import OperatorNode
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from ..constants import SERVICE_CLASS
 from ._signal_processing import (
     ExponentialTrendTracker,
     NodeComputationCache,
     clamp_alpha,
-    coerce_bool,
-    coerce_sequence,
     format_output,
 )
 
@@ -52,7 +51,7 @@ class DetrendRuntimeNode(OperatorNode):
         self._initial_state = dict(initial_state or {})
         self._mode = _normalize_mode(self._initial_state.get("mode"))
         self._alpha = clamp_alpha(self._initial_state.get("alpha"), default=0.05)
-        self._reset_on_state_change = coerce_bool(self._initial_state.get("reset_on_state_change"))
+        self._reset_on_state_change = parse_bool(self._initial_state.get("reset_on_state_change"))
         if self._reset_on_state_change is None:
             self._reset_on_state_change = True
         self._trackers: list[ExponentialTrendTracker] = []
@@ -87,7 +86,7 @@ class DetrendRuntimeNode(OperatorNode):
                 self._cache.mark_dirty()
             return
         if name == "reset_on_state_change":
-            reset_value = coerce_bool(value)
+            reset_value = parse_bool(value)
             if reset_value is not None:
                 self._reset_on_state_change = reset_value
 
@@ -95,7 +94,7 @@ class DetrendRuntimeNode(OperatorNode):
         if str(port) != "value":
             return None
 
-        sample = coerce_sequence(await self.pull("value", ctx_id=ctx_id))
+        sample = parse_number_sequence(await self.pull("value", ctx_id=ctx_id))
         if sample is None:
             return format_output(self._cache.last_output)
         if self._cache.should_reuse(sample, ctx_id):
@@ -118,6 +117,7 @@ class DetrendRuntimeNode(OperatorNode):
 DetrendRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
+    paletteCategory=f"{SERVICE_CLASS}.signal",
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="Detrend",
@@ -158,12 +158,11 @@ DetrendRuntimeNode.SPEC = F8OperatorSpec(
 )
 
 
-def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
         return DetrendRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(DetrendRuntimeNode.SPEC, overwrite=True)
-    return reg
+    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
+    registry.register_operator_spec(DetrendRuntimeNode.SPEC, overwrite=True)
+    return registry

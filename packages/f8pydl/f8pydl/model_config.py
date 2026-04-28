@@ -4,9 +4,21 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from f8pysdk.codec import coerce_float, coerce_int, parse_str_list
+
 
 FlowInputOrder = Literal["prev_now", "now_prev"]
-ModelTask = Literal["yolo_det", "yolo_pose", "yolo_obb", "yolo_cls", "optflow_neuflowv2", "tcn_wave"]
+TemporalResizeMode = Literal["direct_resize"]
+TemporalNormalization = Literal["imagenet"]
+ModelTask = Literal[
+    "yolo_det",
+    "yolo_pose",
+    "yolo_obb",
+    "yolo_cls",
+    "optflow_neuflowv2",
+    "tcn_wave",
+    "yowo_temporal_det",
+]
 
 
 @dataclass(frozen=True)
@@ -27,6 +39,11 @@ class ModelSpec:
     top_k: int = 5
     flow_format: str = "flow2_f16"
     flow_input_order: FlowInputOrder = "prev_now"
+    temporal_clip_length: int = 16
+    temporal_sampling_rate: int = 1
+    temporal_max_det: int = 300
+    temporal_resize_mode: TemporalResizeMode = "direct_resize"
+    temporal_normalization: TemporalNormalization = "imagenet"
     onnx_url: str = ""
     onnx_sha256: str = ""
     meta: dict[str, Any] | None = None
@@ -60,19 +77,6 @@ def _as_str(v: Any, *, default: str = "") -> str:
     return s if s else default
 
 
-def _as_int(v: Any, *, default: int) -> int:
-    try:
-        return int(v)
-    except Exception:
-        return int(default)
-
-
-def _as_float(v: Any, *, default: float) -> float:
-    try:
-        return float(v)
-    except Exception:
-        return float(default)
-
 
 def _parse_task(v: Any) -> ModelTask | None:
     s = _as_str(v).lower()
@@ -88,6 +92,8 @@ def _parse_task(v: Any) -> ModelTask | None:
         return "optflow_neuflowv2"
     if s in ("tcn_wave", "tcn", "temporal_wave", "temporal_conv", "conv_tcn"):
         return "tcn_wave"
+    if s in ("yowo_temporal_det", "yowov3_temporal", "yowo_temporal", "temporal_det", "temporal_detector"):
+        return "yowo_temporal_det"
     return None
 
 
@@ -98,6 +104,20 @@ def _parse_flow_input_order(v: Any) -> FlowInputOrder:
     if s in ("now_prev", "now->prev", "current_previous", "now_previous"):
         return "now_prev"
     raise ValueError(f"Unsupported optflow inputOrder: {s!r}")
+
+
+def _parse_temporal_resize_mode(v: Any) -> TemporalResizeMode:
+    s = _as_str(v, default="direct_resize").lower()
+    if s in ("direct_resize", "resize", "stretch"):
+        return "direct_resize"
+    raise ValueError(f"Unsupported temporal resizeMode: {s!r}")
+
+
+def _parse_temporal_normalization(v: Any) -> TemporalNormalization:
+    s = _as_str(v, default="imagenet").lower()
+    if s in ("imagenet", "image_net"):
+        return "imagenet"
+    raise ValueError(f"Unsupported temporal normalization: {s!r}")
 
 
 def _normalize_optional_sha256(v: Any) -> str:
@@ -112,37 +132,6 @@ def _normalize_optional_sha256(v: Any) -> str:
     return s
 
 
-def _coerce_str_list(v: Any) -> list[str] | None:
-    if isinstance(v, (list, tuple)):
-        out: list[str] = []
-        for x in v:
-            s = _as_str(x)
-            if s:
-                out.append(s)
-        return out
-    if isinstance(v, dict):
-        # Accept class maps like {0: "person", 1: "car"}.
-        try:
-            items = list(v.items())
-        except Exception:
-            items = []
-
-        def _sort_key(item: tuple[Any, Any]) -> tuple[int, str]:
-            key = item[0]
-            try:
-                return (0, f"{int(key):08d}")
-            except Exception:
-                return (1, _as_str(key))
-
-        items.sort(key=_sort_key)
-        out2: list[str] = []
-        for _k, val in items:
-            s = _as_str(val)
-            if s:
-                out2.append(s)
-        return out2
-    return None
-
 
 def _normalize_skeleton_protocol(v: Any) -> str:
     text = _as_str(v).strip()
@@ -151,152 +140,99 @@ def _normalize_skeleton_protocol(v: Any) -> str:
     return text
 
 
+def _as_positive_int(v: Any, *, default: int, label: str, yaml_path: Path) -> int:
+    out = coerce_int(v, default=default)
+    if out <= 0:
+        raise ValueError(f"Invalid {label} in {yaml_path}")
+    return out
+
+
 def load_model_spec(yaml_path: Path) -> ModelSpec:
     """
-    Load a model yaml.
-
-    Supports:
-    - legacy format
-    - f8onnxModel/1 format
+    Load an `f8onnxModel/1` model yaml.
     """
     yaml_path = Path(yaml_path).resolve()
     data = _load_yaml(yaml_path)
 
     schema = _as_str(data.get("schemaVersion"))
-    if schema == "f8onnxModel/1":
-        model = data.get("model") if isinstance(data.get("model"), dict) else {}
-        thresholds = data.get("thresholds") if isinstance(data.get("thresholds"), dict) else {}
-        inp = data.get("input") if isinstance(data.get("input"), dict) else {}
-        labels = data.get("labels") if isinstance(data.get("labels"), dict) else {}
-        pose = data.get("pose") if isinstance(data.get("pose"), dict) else {}
-        classification = data.get("classification") if isinstance(data.get("classification"), dict) else {}
-        optflow = data.get("optflow") if isinstance(data.get("optflow"), dict) else {}
+    if schema != "f8onnxModel/1":
+        raise ValueError(f"Unsupported model schemaVersion in {yaml_path}: {schema!r}")
 
-        task = _parse_task(model.get("task")) or "yolo_det"
-        skeleton_protocol = _normalize_skeleton_protocol(model.get("skeletonProtocol"))
-        model_id = _as_str(model.get("id"), default=_as_str(data.get("name"), default=yaml_path.stem))
-        display_name = _as_str(model.get("displayName"), default=model_id)
-        provider = _as_str(model.get("provider"), default=_as_str(data.get("provider"), default=""))
-        onnx_rel = _as_str(model.get("onnxPath"), default=_as_str(data.get("model_path"), default=""))
-        if not onnx_rel:
-            raise ValueError(f"Missing model.onnxPath in {yaml_path}")
-        onnx_path = (yaml_path.parent / onnx_rel).resolve() if not Path(onnx_rel).is_absolute() else Path(onnx_rel)
-        onnx_url = _as_str(
-            model.get("onnxUrl"),
-            default=_as_str(
-                model.get("url"),
-                default=_as_str(data.get("onnxUrl"), default=_as_str(data.get("url"), default="")),
-            ),
-        )
-        onnx_sha256 = _normalize_optional_sha256(
-            model.get("onnxSHA256")
-            if model.get("onnxSHA256") is not None
-            else model.get("sha256")
-            if model.get("sha256") is not None
-            else data.get("onnxSHA256")
-            if data.get("onnxSHA256") is not None
-            else data.get("sha256")
-        )
+    model = data.get("model") if isinstance(data.get("model"), dict) else {}
+    thresholds = data.get("thresholds") if isinstance(data.get("thresholds"), dict) else {}
+    inp = data.get("input") if isinstance(data.get("input"), dict) else {}
+    labels = data.get("labels") if isinstance(data.get("labels"), dict) else {}
+    pose = data.get("pose") if isinstance(data.get("pose"), dict) else {}
+    classification = data.get("classification") if isinstance(data.get("classification"), dict) else {}
+    optflow = data.get("optflow") if isinstance(data.get("optflow"), dict) else {}
+    temporal = data.get("temporal") if isinstance(data.get("temporal"), dict) else {}
 
-        input_width = _as_int(inp.get("width"), default=_as_int(data.get("input_width"), default=0))
-        input_height = _as_int(inp.get("height"), default=_as_int(data.get("input_height"), default=0))
-        if input_width <= 0 or input_height <= 0:
-            raise ValueError(f"Invalid input size in {yaml_path}")
+    task_value = _as_str(model.get("task"))
+    task = _parse_task(task_value)
+    if task is None or task_value != task:
+        raise ValueError(f"Unsupported model.task in {yaml_path}: {task_value!r}")
 
-        conf_threshold = _as_float(thresholds.get("conf"), default=_as_float(data.get("conf_threshold"), default=0.25))
-        iou_threshold = _as_float(thresholds.get("iou"), default=_as_float(data.get("iou_threshold"), default=0.45))
-
-        classes = _coerce_str_list(labels.get("classes")) or _coerce_str_list(data.get("classes")) or []
-        keypoints = _coerce_str_list(pose.get("keypoints"))
-        keypoint_dims = _as_int(pose.get("dims"), default=3)
-        top_k = _as_int(classification.get("topK"), default=_as_int(data.get("top_k"), default=5))
-        flow_format = _as_str(
-            optflow.get("flowFormat"),
-            default=_as_str(data.get("flow_format"), default="flow2_f16"),
-        ).lower()
-        flow_input_order: FlowInputOrder = "prev_now"
-
-        if task == "optflow_neuflowv2":
-            flow_input_order = _parse_flow_input_order(
-                optflow.get("inputOrder") if optflow.get("inputOrder") is not None else data.get("flow_input_order")
-            )
-            if flow_format != "flow2_f16":
-                raise ValueError(f"optflow.flowFormat must be 'flow2_f16' in {yaml_path}")
-            if onnx_path.suffix.lower() != ".onnx":
-                raise ValueError(f"Optflow model file must be .onnx in {yaml_path}")
-        if task == "tcn_wave" and onnx_path.suffix.lower() != ".onnx":
-            raise ValueError(f"TCN wave model file must be .onnx in {yaml_path}")
-
-        meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
-        return ModelSpec(
-            model_id=model_id,
-            display_name=display_name,
-            provider=provider,
-            task=task,
-            onnx_path=onnx_path,
-            onnx_url=onnx_url,
-            onnx_sha256=onnx_sha256,
-            input_width=input_width,
-            input_height=input_height,
-            conf_threshold=conf_threshold,
-            iou_threshold=iou_threshold,
-            classes=classes,
-            skeleton_protocol=skeleton_protocol,
-            keypoints=keypoints,
-            keypoint_dims=max(1, int(keypoint_dims)),
-            top_k=max(1, int(top_k)),
-            flow_format=flow_format,
-            flow_input_order=flow_input_order,
-            meta=dict(meta),
-        )
-
-    model_id = _as_str(data.get("name"), default=yaml_path.stem)
-    display_name = _as_str(data.get("display_name"), default=model_id)
-    provider = _as_str(data.get("provider"), default="")
-
-    task = _parse_task(data.get("task")) or _parse_task(data.get("type"))
-    if task is None:
-        name_hint = f"{yaml_path.stem} {model_id} {display_name}".lower()
-        if "pose" in name_hint or "kpt" in name_hint:
-            task = "yolo_pose"
-        elif "cls" in name_hint or "class" in name_hint:
-            task = "yolo_cls"
-        else:
-            task = "yolo_det"
-
-    onnx_rel = _as_str(data.get("model_path"), default=f"{yaml_path.stem}.onnx")
+    skeleton_protocol = _normalize_skeleton_protocol(model.get("skeletonProtocol"))
+    model_id = _as_str(model.get("id"), default=yaml_path.stem)
+    display_name = _as_str(model.get("displayName"), default=model_id)
+    provider = _as_str(model.get("provider"), default="")
+    onnx_rel = _as_str(model.get("onnxPath"))
+    if not onnx_rel:
+        raise ValueError(f"Missing model.onnxPath in {yaml_path}")
     onnx_path = (yaml_path.parent / onnx_rel).resolve() if not Path(onnx_rel).is_absolute() else Path(onnx_rel)
-    onnx_url = _as_str(data.get("onnxUrl"), default=_as_str(data.get("url"), default=""))
-    onnx_sha256 = _normalize_optional_sha256(
-        data.get("onnxSHA256") if data.get("onnxSHA256") is not None else data.get("sha256")
-    )
+    onnx_url = _as_str(model.get("onnxUrl"))
+    onnx_sha256 = _normalize_optional_sha256(model.get("onnxSHA256"))
 
-    input_width = _as_int(data.get("input_width"), default=0)
-    input_height = _as_int(data.get("input_height"), default=0)
+    input_width = coerce_int(inp.get("width"), default=0)
+    input_height = coerce_int(inp.get("height"), default=0)
     if input_width <= 0 or input_height <= 0:
-        raise ValueError(f"Invalid input_width/input_height in {yaml_path}")
+        raise ValueError(f"Invalid input.width/input.height in {yaml_path}")
 
-    conf_threshold = _as_float(data.get("conf_threshold"), default=0.25)
-    iou_threshold = _as_float(data.get("iou_threshold"), default=0.45)
-    classes = _coerce_str_list(data.get("classes")) or []
-    skeleton_protocol = _normalize_skeleton_protocol(
-        data.get("skeletonProtocol") if data.get("skeletonProtocol") is not None else data.get("skeleton_protocol")
-    )
-    keypoints = _coerce_str_list(data.get("keypoints"))
-    keypoint_dims = _as_int(data.get("keypoint_dims"), default=3)
-    top_k = _as_int(data.get("top_k"), default=5)
-    flow_format = _as_str(data.get("flow_format"), default="flow2_f16").lower()
+    conf_threshold = coerce_float(thresholds.get("conf"), default=0.25)
+    iou_threshold = coerce_float(thresholds.get("iou"), default=0.45)
+    classes = parse_str_list(labels.get("classes"), allow_mapping_values=True) or []
+    keypoints = parse_str_list(pose.get("keypoints"), allow_mapping_values=True)
+    keypoint_dims = coerce_int(pose.get("dims"), default=3)
+    top_k = coerce_int(classification.get("topK"), default=5)
+    flow_format = _as_str(optflow.get("flowFormat"), default="flow2_f16").lower()
     flow_input_order: FlowInputOrder = "prev_now"
+    temporal_clip_length = coerce_int(temporal.get("clipLength"), default=16)
+    temporal_sampling_rate = coerce_int(temporal.get("samplingRate"), default=1)
+    temporal_max_det = coerce_int(temporal.get("maxDet"), default=300)
+    temporal_resize_mode = _parse_temporal_resize_mode(temporal.get("resizeMode"))
+    temporal_normalization = _parse_temporal_normalization(temporal.get("normalization"))
 
     if task == "optflow_neuflowv2":
-        flow_input_order = _parse_flow_input_order(data.get("flow_input_order"))
+        flow_input_order = _parse_flow_input_order(optflow.get("inputOrder"))
         if flow_format != "flow2_f16":
-            raise ValueError(f"flow_format must be 'flow2_f16' in {yaml_path}")
+            raise ValueError(f"optflow.flowFormat must be 'flow2_f16' in {yaml_path}")
         if onnx_path.suffix.lower() != ".onnx":
             raise ValueError(f"Optflow model file must be .onnx in {yaml_path}")
     if task == "tcn_wave" and onnx_path.suffix.lower() != ".onnx":
         raise ValueError(f"TCN wave model file must be .onnx in {yaml_path}")
+    if task == "yowo_temporal_det":
+        if onnx_path.suffix.lower() != ".onnx":
+            raise ValueError(f"Temporal detector model file must be .onnx in {yaml_path}")
+        temporal_clip_length = _as_positive_int(
+            temporal_clip_length,
+            default=16,
+            label="temporal.clipLength",
+            yaml_path=yaml_path,
+        )
+        temporal_sampling_rate = _as_positive_int(
+            temporal_sampling_rate,
+            default=1,
+            label="temporal.samplingRate",
+            yaml_path=yaml_path,
+        )
+        temporal_max_det = _as_positive_int(
+            temporal_max_det,
+            default=300,
+            label="temporal.maxDet",
+            yaml_path=yaml_path,
+        )
 
+    meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
     return ModelSpec(
         model_id=model_id,
         display_name=display_name,
@@ -316,7 +252,12 @@ def load_model_spec(yaml_path: Path) -> ModelSpec:
         top_k=max(1, int(top_k)),
         flow_format=flow_format,
         flow_input_order=flow_input_order,
-        meta={},
+        temporal_clip_length=int(temporal_clip_length),
+        temporal_sampling_rate=int(temporal_sampling_rate),
+        temporal_max_det=int(temporal_max_det),
+        temporal_resize_mode=temporal_resize_mode,
+        temporal_normalization=temporal_normalization,
+        meta=dict(meta),
     )
 
 

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Protocol
 
 from f8pysdk.nats_naming import svc_micro_name
-from f8pysdk.nats_server_bootstrap import ensure_nats_server_with_result, stop_nats_server_process
+from f8pysdk.service_runtime_tools.deploy.nats_bootstrap import ensure_nats_server_with_result, stop_nats_server_process
 
 SINGLETON_GUARD_LOG_MESSAGE = "Another PyStudio instance is already running (micro service ping responded)."
 SINGLETON_GUARD_DIALOG_TITLE = "F8PyStudio Already Running"
@@ -22,6 +22,7 @@ class NatsConnectFunc(Protocol):
         nats_url: str,
         error_cb: Callable[[Exception], Awaitable[None]],
         connect_timeout_s: float,
+        allow_reconnect: bool,
     ) -> Any: ...
 
 
@@ -37,12 +38,14 @@ async def _default_connect(
     nats_url: str,
     error_cb: Callable[[Exception], Awaitable[None]],
     connect_timeout_s: float,
+    allow_reconnect: bool,
 ) -> Any:
     import nats  # type: ignore[import-not-found]
 
     return await nats.connect(
         servers=[str(nats_url)],
         connect_timeout=float(connect_timeout_s),
+        allow_reconnect=bool(allow_reconnect),
         error_cb=error_cb,
     )
 
@@ -63,19 +66,28 @@ class NatsConnectionManager:
     _connect_func: NatsConnectFunc = _default_connect
     _last_error_log_s: float = 0.0
 
-    async def _on_connect_error(self, exc: Exception) -> None:
+    async def _emit_connect_error(self, exc: Exception, *, will_retry: bool) -> None:
         now = time.monotonic()
         if (now - float(self._last_error_log_s)) < float(self.error_log_interval_s):
             return
         self._last_error_log_s = now
-        self.emit_log(f"NATS not reachable at {self.nats_url!r} (will retry): {type(exc).__name__}: {exc}")
+        retry_suffix = " (will retry)" if will_retry else ""
+        self.emit_log(f"NATS not reachable at {self.nats_url!r}{retry_suffix}: {type(exc).__name__}: {exc}")
 
-    async def connect(self, *, context: str) -> Any | None:
+    async def _on_connect_error_retry(self, exc: Exception) -> None:
+        await self._emit_connect_error(exc, will_retry=True)
+
+    async def _on_connect_error_fail_fast(self, exc: Exception) -> None:
+        await self._emit_connect_error(exc, will_retry=False)
+
+    async def connect(self, *, context: str, allow_reconnect: bool = True) -> Any | None:
+        error_cb = self._on_connect_error_retry if allow_reconnect else self._on_connect_error_fail_fast
         try:
             return await self._connect_func(
                 str(self.nats_url).strip(),
-                self._on_connect_error,
+                error_cb,
                 float(self.connect_timeout_s),
+                bool(allow_reconnect),
             )
         except Exception as exc:
             self.report_exception(context, exc)

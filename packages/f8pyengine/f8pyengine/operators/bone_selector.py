@@ -3,8 +3,9 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from f8pysdk import (
+from f8pysdk.specs import (
     F8DataPortSpec,
+    F8ComplexObjectTypeSchema,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
@@ -16,15 +17,15 @@ from f8pysdk import (
     string_schema,
 )
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import OperatorNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import OperatorNode
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from ..constants import SERVICE_CLASS
 
 OPERATOR_CLASS = "f8.bone_selector"
 
 
-def _bone_schema() -> dict[str, Any]:
+def _bone_schema() -> F8ComplexObjectTypeSchema:
     return complex_object_schema(
         properties={
             "name": string_schema(),
@@ -34,7 +35,7 @@ def _bone_schema() -> dict[str, Any]:
     )
 
 
-def _skeleton_schema() -> dict[str, Any]:
+def _skeleton_schema() -> F8ComplexObjectTypeSchema:
     return complex_object_schema(
         properties={
             "bones": array_schema(items=_bone_schema()),
@@ -173,6 +174,7 @@ class BoneSelectorRuntimeNode(OperatorNode):
 BoneSelectorRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
+    paletteCategory=f"{SERVICE_CLASS}.motion",
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="Bone Selector",
@@ -183,7 +185,7 @@ BoneSelectorRuntimeNode.SPEC = F8OperatorSpec(
     dataInPorts=[
         F8DataPortSpec(
             name="skeleton",
-            description="Single skeleton payload (e.g. udp_vmc.selectedSkeleton).",
+            description="Single skeleton payload (e.g. skeleton_decoder.selectedSkeleton or vmc_decoder.selectedSkeleton).",
             valueSchema=_skeleton_schema(),
         )
     ],
@@ -202,7 +204,7 @@ BoneSelectorRuntimeNode.SPEC = F8OperatorSpec(
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
             required=True,
-            uiControl="options:[availableBones]",
+            uiControl="select[availableBones]",
             showOnNode=True,
         ),
         F8StateSpec(
@@ -218,12 +220,11 @@ BoneSelectorRuntimeNode.SPEC = F8OperatorSpec(
 )
 
 
-def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
         return BoneSelectorRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(BoneSelectorRuntimeNode.SPEC, overwrite=True)
-    return reg
+    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
+    registry.register_operator_spec(BoneSelectorRuntimeNode.SPEC, overwrite=True)
+    return registry

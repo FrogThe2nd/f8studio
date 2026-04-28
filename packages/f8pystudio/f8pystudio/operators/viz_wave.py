@@ -4,24 +4,27 @@ import asyncio
 import time
 from typing import Any
 
-from f8pysdk import (
+from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
+    F8SpecEditPolicy,
     F8StateAccess,
     F8StateSpec,
     boolean_schema,
+    editable_collection_edit_policy,
     integer_schema,
     number_schema,
 )
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import RuntimeNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import RuntimeNode
+from f8pysdk.registry import RuntimeNodeRegistry
 
-from ..constants import SERVICE_CLASS
-from ..color_table import series_colors
-from ..ui_bus import emit_ui_command
+from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
+from f8pystudio.visualization.colors import series_colors
+from f8pystudio.contracts.ui_commands import emit_ui_command
+from .categories import PALETTE_CATEGORY_VIZ
 from ._viz_base import StudioVizRuntimeNodeBase, viz_sampling_state_fields
 
 
@@ -279,20 +282,20 @@ class VizWaveRuntimeNode(StudioVizRuntimeNodeBase):
         return changed
 
 
-def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> RuntimeNode:
         return VizWaveRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(
+    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
+    registry.register_operator_spec(
         F8OperatorSpec(
             schemaVersion=F8OperatorSchemaVersion.f8operator_1,
             serviceClass=SERVICE_CLASS,
+            paletteCategory=PALETTE_CATEGORY_VIZ,
             operatorClass=OPERATOR_CLASS,
             version="0.0.1",
-            label="WaveViz",
+            label="Wave Viz",
             description="Plot numeric values over time (UI-only).",
             tags=["plot", "timeseries", "ui"],
             dataInPorts=[
@@ -315,7 +318,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                 ),
             ],
             dataOutPorts=[],
-            editableDataInPorts=True,
+            editPolicy=F8SpecEditPolicy(dataInPorts=editable_collection_edit_policy()),
             rendererClass=RENDERER_CLASS,
             stateFields=[
                 F8StateSpec(
@@ -395,4 +398,4 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
         ),
         overwrite=True,
     )
-    return reg
+    return registry

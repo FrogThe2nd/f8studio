@@ -11,13 +11,13 @@ for p in (PKG_AUDIOFEAT, PKG_SDK):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from f8pyaudiofeat.main_rhythm import AudioFeatureRhythmService  # noqa: E402
+from f8pyaudiofeat.main_rhythm import build_app  # noqa: E402
 
 
 class AudioFeatureRhythmServiceTests(unittest.TestCase):
     def test_program_defaults_data_delivery_to_both(self) -> None:
-        program = AudioFeatureRhythmService()
-        cfg = program.build_runtime_config(service_id="svcA", nats_url="mem://")
+        app = build_app()
+        cfg = app.build_runtime_config(service_id="svcA", nats_url="mem://")
         self.assertEqual(str(cfg.bus.data_delivery), "both")
 
 

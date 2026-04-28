@@ -286,6 +286,10 @@ def _fadein_value(t: Any, duration: Any) -> Any:
     return saturate(t_arr / duration_arr)
 
 
+def fadein(t: Any, duration: Any) -> Any:
+    return _fadein_value(t, duration)
+
+
 def _fadeout_value(t: Any, duration: Any, maxt: Any) -> Any:
     duration_arr = np.asarray(duration, dtype=np.float64)
     if np.any(duration_arr <= 0.0):
@@ -293,6 +297,10 @@ def _fadeout_value(t: Any, duration: Any, maxt: Any) -> Any:
     t_arr = np.asarray(t, dtype=np.float64)
     maxt_arr = np.asarray(maxt, dtype=np.float64)
     return saturate((maxt_arr - t_arr) / duration_arr)
+
+
+def fadeout(t: Any, duration: Any, maxt: Any) -> Any:
+    return _fadeout_value(t, duration, maxt)
 
 
 def _sequence_value(t: Any, values: Any) -> Any:
@@ -310,6 +318,10 @@ def _sequence_value(t: Any, values: Any) -> Any:
     if np.asarray(selected).ndim == 0:
         return float(selected)
     return selected
+
+
+def sequence(t: Any, values: Any) -> Any:
+    return _sequence_value(t, values)
 
 
 _ALLOWED_DIRECT_FUNCTIONS: dict[str, Callable[..., Any]] = {

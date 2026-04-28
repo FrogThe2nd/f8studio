@@ -358,7 +358,6 @@ class DistCiCppBuildTest(unittest.TestCase):
 
     def test_build_cpp_runtime_uses_aggregate_deploy_target(self) -> None:
         preset_path = self._write_preset_file()
-        fallback_path = self.root / "build" / "generators" / "CMakePresets.json"
         recorded_commands: list[list[str]] = []
 
         def _record_run(command: list[str]) -> None:
@@ -366,7 +365,6 @@ class DistCiCppBuildTest(unittest.TestCase):
 
         with (
             mock.patch.object(self.module, "CPP_PRESET_PATH", preset_path),
-            mock.patch.object(self.module, "CPP_PRESET_FALLBACK_PATH", fallback_path),
             mock.patch.object(self.module, "_run", side_effect=_record_run),
         ):
             self.module._build_cpp_runtime()
@@ -380,7 +378,6 @@ class DistCiCppBuildTest(unittest.TestCase):
 
     def test_build_cpp_runtime_reports_actionable_error_for_missing_registration(self) -> None:
         preset_path = self._write_preset_file()
-        fallback_path = self.root / "build" / "generators" / "CMakePresets.json"
 
         def _fake_run(command: list[str]) -> None:
             if "--build" in command:
@@ -388,7 +385,6 @@ class DistCiCppBuildTest(unittest.TestCase):
 
         with (
             mock.patch.object(self.module, "CPP_PRESET_PATH", preset_path),
-            mock.patch.object(self.module, "CPP_PRESET_FALLBACK_PATH", fallback_path),
             mock.patch.object(self.module, "_run", side_effect=_fake_run),
         ):
             with self.assertRaises(RuntimeError) as ctx:
@@ -397,6 +393,15 @@ class DistCiCppBuildTest(unittest.TestCase):
         error_text = str(ctx.exception)
         self.assertIn(self.module.CPP_DEPLOY_ALL_TARGET, error_text)
         self.assertIn("f8_deploy_service_runtime(...)", error_text)
+
+    def test_build_cpp_runtime_requires_canonical_release_build_preset(self) -> None:
+        preset_path = self._write_preset_file(preset_name="conan-default")
+
+        with mock.patch.object(self.module, "CPP_PRESET_PATH", preset_path):
+            with self.assertRaises(FileNotFoundError) as ctx:
+                self.module._build_cpp_runtime()
+
+        self.assertIn("canonical release build preset", str(ctx.exception))
 
 
 class DistCiLauncherIsolationTest(unittest.TestCase):

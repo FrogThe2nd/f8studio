@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <filesystem>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -31,6 +32,18 @@ enum class TrackingInitSelectMode {
   HighestScore,
 };
 
+enum class TrackerKind {
+  Csrt,
+  Kcf,
+  Mil,
+  Boosting,
+  MedianFlow,
+  Mosse,
+  Tld,
+  Nano,
+  Vit,
+};
+
 class TrackingService final : public f8::cppsdk::LifecycleNode,
                               public f8::cppsdk::StatefulNode,
                               public f8::cppsdk::DataReceivableNode,
@@ -41,6 +54,9 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
     std::string service_class = "f8.cvkit.tracking";
     std::string nats_url = "nats://127.0.0.1:4222";
     std::string shm_name;
+    std::string tracker_kind = "csrt";
+    std::string model_dir = "models";
+    bool auto_download_models = true;
     int stop_tracking_cooldown_ms = 1000;
   };
 
@@ -73,6 +89,8 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
   void emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms);
   void set_shm_name(const std::string& shm_name, const json& meta);
   void set_init_select(const std::string& mode, const json& meta);
+  void set_tracker_kind(const std::string& kind, const json& meta);
+  void set_model_dir(const std::string& model_dir, const json& meta);
   bool ensure_video_open();
   void apply_init_box_if_any();
   void process_frame_once();
@@ -94,11 +112,19 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
   std::string shm_name_override_;
   f8::cppsdk::VideoSharedMemoryReader video_;
   std::vector<std::byte> frame_bgra_;
+  cv::Mat frame_bgr_;
   std::optional<f8::cppsdk::VideoSharedMemoryHeader> last_header_;
   std::uint64_t last_frame_id_ = 0;
   std::int64_t last_video_open_attempt_ms_ = 0;
   TrackingInitSelectMode init_select_mode_ = TrackingInitSelectMode::ClosestCenter;
   std::string init_select_state_ = "closest_center";
+  TrackerKind tracker_kind_ = TrackerKind::Csrt;
+  std::string tracker_kind_state_ = "csrt";
+  std::string active_tracker_kind_state_;
+  std::string model_dir_state_ = "models";
+  std::filesystem::path model_dir_path_;
+  bool auto_download_models_ = true;
+  std::int64_t model_download_retry_after_ms_ = 0;
 
   // Tracking state.
   std::mutex tracking_mu_;

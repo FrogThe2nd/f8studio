@@ -7,9 +7,9 @@ from qtpy import QtCore, QtWidgets
 from NodeGraphQt.nodes.base_node import NodeBaseWidget
 
 from ..nodegraph.operator_basenode import F8StudioOperatorBaseNode
-from ..color_table import series_colors
+from f8pystudio.visualization.colors import series_colors
 from ..nodegraph.viz_operator_nodeitem import F8StudioVizOperatorNodeItem
-from ..ui_bus import UiCommand
+from f8pystudio.contracts.ui_commands import UiCommand
 
 import pyqtgraph as pg  # type: ignore[import-not-found]
 
@@ -28,7 +28,7 @@ class _TimeSeriesPane(QtWidgets.QWidget):
 
         top = QtWidgets.QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
-        self._clear = QtWidgets.QToolButton()
+        self._clear = QtWidgets.QToolButton(self)
         self._clear.setText("CLEAR")
         self._clear.setAutoRaise(True)
         self._clear.setToolTip("Clear accumulated samples.")
@@ -45,7 +45,7 @@ class _TimeSeriesPane(QtWidgets.QWidget):
             QToolButton:pressed { background: rgba(255, 255, 255, 25); }
             """
         )
-        self._update = QtWidgets.QCheckBox("Update")
+        self._update = QtWidgets.QCheckBox("Update", self)
         self._update.setChecked(True)
         self._update.setStyleSheet(
             """
@@ -73,7 +73,7 @@ class _TimeSeriesPane(QtWidgets.QWidget):
         self._update.toggled.connect(self._on_update_toggled)
 
         if pg is None:
-            label = QtWidgets.QLabel("pyqtgraph not installed")
+            label = QtWidgets.QLabel("pyqtgraph not installed", self)
             label.setAlignment(QtCore.Qt.AlignCenter)
             layout.addWidget(label)
             self._plot = None
@@ -81,7 +81,7 @@ class _TimeSeriesPane(QtWidgets.QWidget):
             self._legend = None
             return
 
-        plot = pg.PlotWidget()
+        plot = pg.PlotWidget(self)
         plot.setBackground((16, 16, 16))
         plot.showGrid(x=True, y=True, alpha=0.25)
         # Keep the plot compact: omit axis captions ("Time/Value") which take
@@ -375,8 +375,11 @@ class VizWaveRenderNode(F8StudioOperatorBaseNode):
         self._apply_data_port_colors()
 
     def _apply_data_port_colors(self) -> None:
-        spec = self.spec
-        ports = spec.dataInPorts
+        try:
+            ports = list(self.ordered_data_port_specs(is_in=True) or [])
+        except Exception:
+            spec = self.spec
+            ports = list(spec.dataInPorts or [])
         try:
             colors = series_colors([str(p.name) for p in ports])
         except (AttributeError, TypeError):
@@ -449,12 +452,16 @@ class VizWaveRenderNode(F8StudioOperatorBaseNode):
         else:
             # Derive colors from current spec order when runtime didn't provide them.
             try:
-                ports = list(self.spec.dataInPorts or [])
-            except (AttributeError, TypeError):
-                ports = []
+                ports = list(self.ordered_data_port_specs(is_in=True) or [])
+            except Exception:
+                try:
+                    ports = list(self.spec.dataInPorts or [])
+                except (AttributeError, TypeError):
+                    ports = []
             try:
                 colors = series_colors([str(p.name) for p in ports])
             except (AttributeError, TypeError):
+                ports = []
                 colors = {}
 
         y_min: float | None = None

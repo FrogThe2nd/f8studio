@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Protocol, cast
 
-from f8pysdk import (
+from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
@@ -20,10 +20,11 @@ from f8pysdk import (
     number_schema,
     string_schema,
 )
-from f8pysdk.json_unwrap import unwrap_json_value as _unwrap_json_value
+from f8pysdk.codec import coerce_flag, coerce_float, coerce_int, coerce_str
+from f8pysdk.codec import unwrap_json_value
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import OperatorNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import OperatorNode
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from ..constants import SERVICE_CLASS
 
@@ -39,10 +40,8 @@ _OUTPUT_POSITION_WITH_DURATION = "HwPositionWithDuration"
 _POSITION_CLAMP_MIN = 0.0001
 _POSITION_CLAMP_MAX = 0.9999
 
-
 def _range2_schema():
     return array_schema(items=integer_schema())
-
 
 def _feature_output_info_schema():
     return complex_object_schema(
@@ -54,7 +53,6 @@ def _feature_output_info_schema():
         }
     )
 
-
 def _feature_input_info_schema():
     return complex_object_schema(
         properties={
@@ -64,7 +62,6 @@ def _feature_input_info_schema():
             "commands": array_schema(items=string_schema()),
         }
     )
-
 
 def _device_info_schema():
     return complex_object_schema(
@@ -92,16 +89,13 @@ def _device_info_schema():
         }
     )
 
-
 class _FeatureOutputDefinitionLike(Protocol):
     value: tuple[int, int]
     duration: tuple[int, int] | None
 
-
 class _FeatureInputDefinitionLike(Protocol):
     value: list[tuple[int, int]]
     command: list[str]
-
 
 class _DeviceFeatureLike(Protocol):
     @property
@@ -119,7 +113,6 @@ class _DeviceFeatureLike(Protocol):
     def has_output(self, output_type: str) -> bool: ...
 
     async def run_output(self, command: Any) -> None: ...
-
 
 class _DeviceLike(Protocol):
     @property
@@ -142,7 +135,6 @@ class _DeviceLike(Protocol):
     async def run_output(self, command: Any) -> None: ...
 
     async def stop(self, inputs: bool = True, outputs: bool = True) -> None: ...
-
 
 class _ButtplugClientLike(Protocol):
     @property
@@ -200,13 +192,11 @@ class _ButtplugClientLike(Protocol):
 
     async def stop_scanning(self) -> None: ...
 
-
 @dataclass(frozen=True)
 class _ButtplugSymbols:
     buttplug_client_cls: type
     device_output_command_cls: type
     output_type_enum: type
-
 
 @dataclass(frozen=True)
 class _OutConfig:
@@ -217,72 +207,11 @@ class _OutConfig:
     scan_duration_ms: int
     reconnect_interval_ms: int
 
-
 def _now_ms() -> int:
     return int(time.time() * 1000.0)
 
-
-def _coerce_bool(value: Any, *, default: bool) -> bool:
-    v = _unwrap_json_value(value)
-    if isinstance(v, bool):
-        return v
-    if isinstance(v, (int, float)):
-        return bool(v)
-    text = str(v or "").strip().lower()
-    if text in ("1", "true", "yes", "on"):
-        return True
-    if text in ("0", "false", "no", "off", ""):
-        return False
-    return bool(default)
-
-
-def _coerce_int(value: Any, *, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
-    v = _unwrap_json_value(value)
-    out: int
-    if isinstance(v, bool):
-        out = int(v)
-    else:
-        try:
-            out = int(v)
-        except (TypeError, ValueError):
-            out = int(default)
-    if minimum is not None and out < int(minimum):
-        out = int(minimum)
-    if maximum is not None and out > int(maximum):
-        out = int(maximum)
-    return int(out)
-
-
-def _coerce_float(value: Any, *, default: float, minimum: float | None = None, maximum: float | None = None) -> float:
-    v = _unwrap_json_value(value)
-    out: float
-    if isinstance(v, bool):
-        out = float(default)
-    else:
-        try:
-            out = float(v)
-        except (TypeError, ValueError):
-            out = float(default)
-    if minimum is not None and out < float(minimum):
-        out = float(minimum)
-    if maximum is not None and out > float(maximum):
-        out = float(maximum)
-    return float(out)
-
-
-def _coerce_str(value: Any, *, default: str) -> str:
-    v = _unwrap_json_value(value)
-    if v is None:
-        return str(default)
-    out = str(v).strip()
-    if out:
-        return out
-    return str(default)
-
-
 def _device_token(*, index: int, name: str) -> str:
     return f"{int(index)}|{str(name)}"
-
 
 def _device_index_from_token(token: str) -> int | None:
     raw = str(token or "").strip()
@@ -296,7 +225,6 @@ def _device_index_from_token(token: str) -> int | None:
         return int(left)
     except ValueError:
         return None
-
 
 class ButtplugOutRuntimeNode(OperatorNode):
     def __init__(self, *, node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any] | None = None) -> None:
@@ -362,22 +290,22 @@ class ButtplugOutRuntimeNode(OperatorNode):
             "rescan",
             "stopOnDeactivate",
         ):
-            return _coerce_bool(value, default=False)
+            return coerce_flag(value, default=False)
 
         if name == "wsUrl":
-            out = _coerce_str(value, default="ws://127.0.0.1:12345")
+            out = coerce_str(value, default="ws://127.0.0.1:12345")
             if not (out.startswith("ws://") or out.startswith("wss://")):
                 raise ValueError("wsUrl must start with ws:// or wss://")
             return out
 
         if name == "selectedDevice":
-            return _coerce_str(value, default="")
+            return coerce_str(value, default="")
 
         if name in ("scanDurationMs",):
-            return _coerce_int(value, default=5000, minimum=100, maximum=120000)
+            return coerce_int(value, default=5000, minimum=100, maximum=120000)
 
         if name in ("reconnectIntervalMs",):
-            return _coerce_int(value, default=2000, minimum=100, maximum=120000)
+            return coerce_int(value, default=2000, minimum=100, maximum=120000)
 
         if name in (
             "defaultPositionDurationMs",
@@ -387,23 +315,23 @@ class ButtplugOutRuntimeNode(OperatorNode):
             "positionFeatureIndex",
         ):
             if name == "defaultPositionDurationMs":
-                return _coerce_int(value, default=500, minimum=0, maximum=120000)
-            return _coerce_int(value, default=-1, minimum=-1, maximum=4096)
+                return coerce_int(value, default=500, minimum=0, maximum=120000)
+            return coerce_int(value, default=-1, minimum=-1, maximum=4096)
 
         if name in ("vibrate", "oscillate"):
-            v = _unwrap_json_value(value)
+            v = unwrap_json_value(value)
             if v is None or (isinstance(v, str) and not v.strip()):
                 return None
-            return _coerce_float(v, default=0.0, minimum=0.0, maximum=1.0)
+            return coerce_float(v, default=0.0, minimum=0.0, maximum=1.0)
 
         if name in ("rotate",):
-            v = _unwrap_json_value(value)
+            v = unwrap_json_value(value)
             if v is None or (isinstance(v, str) and not v.strip()):
                 return None
-            return _coerce_float(v, default=0.0, minimum=-1.0, maximum=1.0)
+            return coerce_float(v, default=0.0, minimum=-1.0, maximum=1.0)
 
         if name in ("stop",):
-            return _coerce_bool(value, default=False)
+            return coerce_flag(value, default=False)
 
         return value
 
@@ -411,7 +339,7 @@ class ButtplugOutRuntimeNode(OperatorNode):
         del ts_ms
         name = str(field or "").strip()
         if name == "rescan":
-            if _coerce_bool(value, default=False):
+            if coerce_flag(value, default=False):
                 self._rescan_requested = True
                 await self._publish_state_if_changed("rescan", False)
             return
@@ -425,7 +353,7 @@ class ButtplugOutRuntimeNode(OperatorNode):
             return
 
         if name in ("enabled",):
-            enabled = _coerce_bool(value, default=True)
+            enabled = coerce_flag(value, default=True)
             if not enabled:
                 await self._disconnect_client()
             return
@@ -721,7 +649,7 @@ class ButtplugOutRuntimeNode(OperatorNode):
             await self._set_last_error_once(f"send_{selected_output_name}_failed", exc)
 
     async def _handle_send_position_cmd(self, *, target: _DeviceLike, exec_id: str | int) -> None:
-        raw_position = _unwrap_json_value(await self.pull("position", ctx_id=exec_id))
+        raw_position = unwrap_json_value(await self.pull("position", ctx_id=exec_id))
         if raw_position is None:
             return
         if isinstance(raw_position, str) and not raw_position.strip():
@@ -736,7 +664,7 @@ class ButtplugOutRuntimeNode(OperatorNode):
             return
         if value_raw in (float("inf"), float("-inf")):
             return
-        value = _coerce_float(
+        value = coerce_float(
             value_raw,
             default=_POSITION_CLAMP_MIN,
             minimum=_POSITION_CLAMP_MIN,
@@ -757,7 +685,7 @@ class ButtplugOutRuntimeNode(OperatorNode):
 
     async def _handle_send_function_cmd(self, *, target: _DeviceLike) -> None:
         stop_raw = await self._read_raw_state("stop")
-        stop_flag = _coerce_bool(stop_raw, default=False)
+        stop_flag = coerce_flag(stop_raw, default=False)
         if stop_flag:
             try:
                 await target.stop(inputs=False, outputs=True)
@@ -805,7 +733,7 @@ class ButtplugOutRuntimeNode(OperatorNode):
             return None
         if isinstance(raw, str) and not raw.strip():
             return None
-        return _coerce_float(raw, default=0.0, minimum=minimum, maximum=maximum)
+        return coerce_float(raw, default=0.0, minimum=minimum, maximum=maximum)
 
     async def _stop_target_device_outputs(self) -> None:
         target = await self._resolve_target_device(update_selection=False)
@@ -949,24 +877,24 @@ class ButtplugOutRuntimeNode(OperatorNode):
             await self._set_last_error_once(f"read_state_{name}_failed", exc)
             live = None
         if live is not None:
-            return _unwrap_json_value(live)
-        return _unwrap_json_value(self._initial_state.get(name))
+            return unwrap_json_value(live)
+        return unwrap_json_value(self._initial_state.get(name))
 
     async def _read_bool_state(self, name: str, *, default: bool) -> bool:
-        return _coerce_bool(await self._read_raw_state(name), default=default)
+        return coerce_flag(await self._read_raw_state(name), default=default)
 
     async def _read_int_state(
         self, name: str, *, default: int, minimum: int | None = None, maximum: int | None = None
     ) -> int:
-        return _coerce_int(await self._read_raw_state(name), default=default, minimum=minimum, maximum=maximum)
+        return coerce_int(await self._read_raw_state(name), default=default, minimum=minimum, maximum=maximum)
 
     async def _read_str_state(self, name: str, *, default: str) -> str:
-        return _coerce_str(await self._read_raw_state(name), default=default)
-
+        return coerce_str(await self._read_raw_state(name), default=default)
 
 ButtplugOutRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
+    paletteCategory=f"{SERVICE_CLASS}.output",
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="Buttplug Out",
@@ -1045,7 +973,7 @@ ButtplugOutRuntimeNode.SPEC = F8OperatorSpec(
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
             required=True,
-            uiControl="select:[availableDevices]",
+            uiControl="select[availableDevices]",
             showOnNode=True,
         ),
         F8StateSpec(
@@ -1193,20 +1121,13 @@ ButtplugOutRuntimeNode.SPEC = F8OperatorSpec(
             showOnNode=False,
         ),
     ],
-    editableStateFields=False,
-    editableDataInPorts=False,
-    editableDataOutPorts=False,
-    editableExecInPorts=False,
-    editableExecOutPorts=False,
 )
 
-
-def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
         return ButtplugOutRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(ButtplugOutRuntimeNode.SPEC, overwrite=True)
-    return reg
+    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
+    registry.register_operator_spec(ButtplugOutRuntimeNode.SPEC, overwrite=True)
+    return registry

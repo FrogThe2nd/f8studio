@@ -10,26 +10,28 @@ ONNXRuntime image classifier service (no tracking).
 
 ## When to Use
 
-- Use `f8.dl.classifier` when each frame should map to one label or class distribution.
-- It performs whole-image classification on video frames provided via Shared Memory and outputs a class distribution or top-K predicted labels.
-- It is best for scene labels, coarse state estimation, or discrete control cues.
+- Use `f8.dl.classifier` when you need category predictions rather than detection boxes.
+- It fits graphs where a target region is already known and the next question is "what class is this?"
+- It is often the right tool for scene-state recognition or ROI-level classification.
 
 ## Common Wiring Patterns
 
-- Feed it from `f8.implayer` or `f8.screencap`, then inspect outputs with `TextViz`, `Python Expr`, or downstream state mappings to drive application logic.
-- Keep a visualization or logging branch attached while tuning thresholds and class interpretation.
+- A common setup sends an ROI from a detector or tracker into the classifier.
+- If you classify full frames, make sure the model was trained for that style of input.
+- Route classification results into `f8.pyengine`, `Text Viz`, or UI logic.
 
 ## Pitfalls / Gotchas
 
-- Wrong model assets or label assumptions can look like logic bugs in downstream nodes; verify the loaded model in the properties.
-- Classification outputs need explicit business rules (hysteresis, thresholds) before they drive physical devices or actuator logic.
+- Classification quality depends heavily on model choice and correct preprocessing.
+- If the output feels unstable, verify the input crop before blaming the classifier.
+- Thresholds should be chosen from observed score distributions, not guessed in isolation.
 
 ## Service Reference
 
 ### How to Run
 
 ```bash
-pixi run f8pydl_classifier
+pixi run -e onnx f8pydl_classifier
 ```
 
 - Workdir: `../../../../`
@@ -46,9 +48,9 @@ pixi run f8pydl_classifier
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
 | `shmName` | `rw` | `true` | `true` | `string / default=` | Video SHM mapping name (e.g. shm.implayer.video). |
-| `weightsDir` | `rw` | `true` | `true` | `string / default=services/f8/dl/weights` | Directory containing *.yaml + *.onnx model files. |
+| `weightsDir` | `rw` | `true` | `true` | `string / default=services/f8/dl/weights` | Directory containing *.yaml + *.onnx model files. Reset to the default relative path when exporting publish JSON. |
 | `modelId` | `rw` | `true` | `true` | `string / default=` | Model id selected from weightsDir (ignored if modelYamlPath is set). |
-| `modelYamlPath` | `rw` | `true` | `false` | `string / default=` | Optional explicit model yaml path (overrides modelId). |
+| `modelYamlPath` | `rw` | `true` | `false` | `string / default=` | Optional explicit model yaml path (overrides modelId). Cleared when exporting publish JSON. |
 | `ortProvider` | `rw` | `true` | `true` | `string / enum[auto, cuda, cpu] / default=auto` | auto prefers CUDAExecutionProvider when available. |
 | `autoDownloadWeights` | `rw` | `true` | `false` | `boolean / default=True` | When model file is missing, download from onnxUrl in model yaml. |
 | `inferEveryN` | `rw` | `true` | `true` | `integer / default=1` | Run model inference every N frames (>=1). |
@@ -63,9 +65,9 @@ pixi run f8pydl_classifier
 ### Key Fields That Matter
 
 - `shmName` (Video SHM, `rw`): Video SHM mapping name (e.g. shm.implayer.video). Schema: `string / default=`.
-- `weightsDir` (Weights Dir, `rw`): Directory containing *.yaml + *.onnx model files. Schema: `string / default=services/f8/dl/weights`.
+- `weightsDir` (Weights Dir, `rw`): Directory containing *.yaml + *.onnx model files. Reset to the default relative path when exporting publish JSON. Schema: `string / default=services/f8/dl/weights`.
 - `modelId` (Model Id, `rw`): Model id selected from weightsDir (ignored if modelYamlPath is set). Schema: `string / default=`.
-- `modelYamlPath` (Model YAML Path, `rw`): Optional explicit model yaml path (overrides modelId). Schema: `string / default=`.
+- `modelYamlPath` (Model YAML Path, `rw`): Optional explicit model yaml path (overrides modelId). Cleared when exporting publish JSON. Schema: `string / default=`.
 - `ortProvider` (ONNX Runtime Provider, `rw`): auto prefers CUDAExecutionProvider when available. Schema: `string / enum[auto, cuda, cpu] / default=auto`.
 - `autoDownloadWeights` (Auto Download Weights, `rw`): When model file is missing, download from onnxUrl in model yaml. Schema: `boolean / default=True`.
 - `inferEveryN` (Infer Every N Frames, `rw`): Run model inference every N frames (>=1). Schema: `integer / default=1`.

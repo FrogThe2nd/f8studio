@@ -7,7 +7,7 @@ from dataclasses import replace
 from typing import Any
 
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import ServiceNode
+from f8pysdk.nodes import ServiceNode
 
 from .config import (
     DEFAULT_INFER_EVERY_N,

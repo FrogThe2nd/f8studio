@@ -1,13 +1,13 @@
 [project]
 name = "f8pystudio"
-version = "0.2.0"
+version = "0.3.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "qtpy>=2.4.3",
     "pyside6>=6.10.1",
-    "pyqt-toast-notification>=1.3.3",
+    "keyring>=25.6.0",
     "setuptools",
     "nodegraphqt>=0.6.43",
     "pyqtgraph>=0.14.0",
@@ -27,10 +27,11 @@ include = [
     "f8pystudio/render_nodes/web_assets/**/*.html",
     "f8pystudio/render_nodes/web_assets/**/*.js",
     "f8pystudio/render_nodes/web_assets/**/*.css",
-    "f8pystudio/assets/**/*.svg",
-    "f8pystudio/assets/**/*.png",
-    "f8pystudio/assets/**/*.ico",
-    "f8pystudio/assets/**/*.txt",
+    "f8pystudio/resources/**/*.svg",
+    "f8pystudio/resources/**/*.png",
+    "f8pystudio/resources/**/*.ico",
+    "f8pystudio/resources/**/*.txt",
+    "f8pystudio/resources/**/*.json",
 ]
 
 [tool.uv]

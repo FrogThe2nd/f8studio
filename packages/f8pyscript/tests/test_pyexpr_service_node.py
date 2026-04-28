@@ -10,16 +10,15 @@ if ROOT not in sys.path:
 if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
-from f8pysdk import F8DataPortSpec, F8Edge, F8EdgeKindEnum, F8EdgeStrategyEnum, any_schema  # noqa: E402
-from f8pysdk.generated import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry  # noqa: E402
-from f8pysdk.service_host import ServiceHost, ServiceHostConfig  # noqa: E402
+from f8pysdk.specs import F8DataPortSpec, F8Edge, F8EdgeKindEnum, F8EdgeStrategyEnum, any_schema  # noqa: E402
+from f8pysdk.specs import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
+from f8pysdk.host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
 from f8pyscript.constants import EXPR_SERVICE_CLASS  # noqa: E402
-from f8pyscript.expr_node_registry import register_expr_specs  # noqa: E402
+from f8pyscript.expr_node_registry import create_pyexpr_registry  # noqa: E402
 from f8pyscript.expr_service_node import PythonExprServiceNode, np  # noqa: E402
-from f8pyscript.main_expr import PythonExprServiceProgram  # noqa: E402
+from f8pyscript.main_expr import build_app  # noqa: E402
 
 
 def _expr_node(
@@ -29,7 +28,7 @@ def _expr_node(
     data_in_ports: list[F8DataPortSpec] | None = None,
     data_out_ports: list[F8DataPortSpec] | None = None,
 ) -> F8RuntimeNode:
-    desc = RuntimeNodeRegistry.instance().describe(EXPR_SERVICE_CLASS)
+    desc = create_pyexpr_registry().describe(EXPR_SERVICE_CLASS)
     spec = desc.service
     state = {"code": "inputs['in']"}
     if state_values is not None:
@@ -52,18 +51,17 @@ def _any_port(name: str) -> F8DataPortSpec:
 
 class PyExprServiceNodeTests(unittest.IsolatedAsyncioTestCase):
     def _register_runtime(self, bus: object) -> None:
-        reg = RuntimeNodeRegistry.instance()
-        register_expr_specs(reg)
+        reg = create_pyexpr_registry()
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=EXPR_SERVICE_CLASS), registry=reg)
+        bus.set_data_delivery("both", source="test")
 
     def test_program_defaults_data_delivery_to_both(self) -> None:
-        program = PythonExprServiceProgram()
-        cfg = program.build_runtime_config(service_id="svcExpr", nats_url="mem://")
+        app = build_app()
+        cfg = app.build_runtime_config(service_id="svcExpr", nats_url="mem://")
         self.assertEqual(str(cfg.bus.data_delivery), "both")
 
     def test_expr_spec_placeholder_ports_not_required(self) -> None:
-        reg = RuntimeNodeRegistry.instance()
-        register_expr_specs(reg)
+        reg = create_pyexpr_registry()
         spec = reg.describe(EXPR_SERVICE_CLASS).service
         state_fields = {str(field.name or ""): field for field in list(spec.stateFields or [])}
         self.assertIn("code", state_fields)
@@ -293,6 +291,7 @@ class PyExprServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         bus_src = harness.create_bus("srcSvc")
         bus_dst = harness.create_bus("dstSvc")
         self._register_runtime(bus_dst)
+        bus_src.set_cross_publish_policy("all", source="test")
 
         graph_dst = F8RuntimeGraph(
             graphId="g_cross",
@@ -331,8 +330,12 @@ class PyExprServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         assert isinstance(node, PythonExprServiceNode)
         await node.on_state("code", "inputs['in'] + 100", ts_ms=1)
         await bus_src.emit_data("srcNode", "out", 23, ts_ms=123)
-        await asyncio.sleep(0.05)
-        out = await bus_dst.pull_data("tap", "in", ctx_id="ctx-cross")
+        out = None
+        for _ in range(10):
+            out = await bus_dst.pull_data("tap", "in", ctx_id="ctx-cross")
+            if out is not None:
+                break
+            await asyncio.sleep(0.02)
         self.assertEqual(out, 123)
 
 

@@ -20,8 +20,8 @@ from f8pyaudiofeat.constants import CORE_SCHEMA_VERSION, RHYTHM_SCHEMA_VERSION  
 from f8pyaudiofeat.core_service_node import AudioCoreFeatureServiceNode  # noqa: E402
 from f8pyaudiofeat.feature_math import librosa_available  # noqa: E402
 from f8pyaudiofeat.rhythm_service_node import AudioRhythmFeatureServiceNode  # noqa: E402
-from f8pysdk.runtime_node import RuntimeNode  # noqa: E402
-from f8pysdk.service_bus.state_read import StateRead  # noqa: E402
+from f8pysdk.nodes import RuntimeNode  # noqa: E402
+from f8pysdk.state import StateRead  # noqa: E402
 from f8pysdk.shm.audio import AudioShmWriter  # noqa: E402
 
 
@@ -38,10 +38,18 @@ class _NodeStub:
 class _FakeBus:
     def __init__(self) -> None:
         self.state_values: dict[str, Any] = {}
-        self.emits: list[tuple[str, str, Any, int | None]] = []
+        self.emits: list[tuple[str, str, Any, int | None, str | int | None]] = []
 
-    async def emit_data(self, node_id: str, port: str, value: Any, *, ts_ms: int | None = None) -> None:
-        self.emits.append((node_id, port, value, ts_ms))
+    async def emit_data(
+        self,
+        node_id: str,
+        port: str,
+        value: Any,
+        *,
+        ts_ms: int | None = None,
+        ctx_id: str | int | None = None,
+    ) -> None:
+        self.emits.append((node_id, port, value, ts_ms, ctx_id))
 
     async def publish_state_runtime(self, node_id: str, field: str, value: Any, *, ts_ms: int | None = None) -> None:
         del node_id

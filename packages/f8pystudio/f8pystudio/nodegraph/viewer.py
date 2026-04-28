@@ -6,6 +6,7 @@ from typing import Any
 
 from Qt import QtCore, QtGui, QtWidgets
 from NodeGraphQt.constants import PortTypeEnum
+from NodeGraphQt.qgraphics.node_abstract import AbstractNodeItem
 from NodeGraphQt.qgraphics.port import PortItem
 from NodeGraphQt.widgets.viewer import NodeViewer
 
@@ -159,6 +160,14 @@ class F8StudioNodeViewer(NodeViewer):
             scene.update()
         self.viewport().update()
 
+    def set_view_range_rect(self, rect: QtCore.QRectF) -> None:
+        if rect.isNull() or not rect.isValid():
+            return
+        self._scene_range = QtCore.QRectF(rect)
+        self._update_scene()
+        if self._auto_proxy_enabled:
+            self.refresh_auto_proxy_mode(force=False)
+
     def performance_overlay_snapshot(self) -> dict[str, float]:
         scene = self.scene()
         visible_proxy_widget_count = 0.0
@@ -303,10 +312,35 @@ class F8StudioNodeViewer(NodeViewer):
                             pipe.output_port.node.isVisible(),
                         )
                     )
+                if pipe_visible:
+                    pipe_visible = self.layer_visible_for_ports(pipe.output_port, pipe.input_port)
                 pipe.setVisible(bool(pipe_visible))
                 pipe.draw_path(pipe.input_port, pipe.output_port)
             except (AttributeError, RuntimeError, TypeError):
                 continue
+
+    def layer_visible_for_ports(self, output_port: Any, input_port: Any) -> bool:
+        graph = self._f8_graph
+        if graph is None:
+            return True
+        try:
+            out_node_id = str(output_port.node.id or "").strip()
+            in_node_id = str(input_port.node.id or "").strip()
+        except (AttributeError, RuntimeError, TypeError):
+            return True
+        if not out_node_id or not in_node_id:
+            return True
+        try:
+            out_node = graph.get_node_by_id(out_node_id)
+            in_node = graph.get_node_by_id(in_node_id)
+        except (AttributeError, KeyError, RuntimeError, TypeError):
+            return True
+        if out_node is None or in_node is None:
+            return True
+        try:
+            return bool(graph.edge_visible_for_nodes(out_node, in_node))
+        except (AttributeError, RuntimeError, TypeError):
+            return True
 
     def begin_node_placement(self, node_type: str, node_label: str) -> None:
         pending_type = str(node_type or "").strip()
@@ -784,7 +818,22 @@ class F8StudioNodeViewer(NodeViewer):
         graph = self._f8_graph
         if graph is None:
             return
-        nodes = graph.selected_nodes()
+        nodes = list(graph.selected_nodes() or [])
+        node_ids = {str(node.id or "") for node in nodes}
+        for item in list(self.scene().selectedItems() or []):
+            parent = item.parentItem()
+            while parent is not None and not isinstance(parent, AbstractNodeItem):
+                parent = parent.parentItem()
+            if not isinstance(parent, AbstractNodeItem):
+                continue
+            node_id = str(parent.id or "")
+            if not node_id or node_id in node_ids:
+                continue
+            node = graph.get_node_by_id(node_id)
+            if node is None:
+                continue
+            nodes.append(node)
+            node_ids.add(node_id)
         if nodes:
             graph.delete_nodes(nodes)
 
@@ -793,6 +842,13 @@ class F8StudioNodeViewer(NodeViewer):
         if graph is None:
             return
         graph.toggle_node_search()
+
+    def tab_search_rebuild_nodes(self, nodes: dict[str, list[str]]) -> None:
+        self._search_widget.rebuild = True
+        self.tab_search_set_nodes(nodes)
+
+    def is_tab_search_visible(self) -> bool:
+        return bool(self._search_widget.isVisible())
 
     def _validate_accept_connection(self, from_port, to_port):  # type: ignore[override]
         if not super()._validate_accept_connection(from_port, to_port):

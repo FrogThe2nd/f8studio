@@ -10,8 +10,11 @@ from qtpy import QtCore, QtWidgets
 
 from f8pystudio.nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from f8pystudio.nodegraph.viz_operator_nodeitem import F8StudioVizOperatorNodeItem
-from f8pystudio.ui_bus import UiCommand
-from f8pystudio.webengine_utils import configure_default_webengine_profile, webengine_termination_status_text
+from f8pystudio.contracts.ui_commands import UiCommand
+from f8pystudio.ui.support.webengine_utils import (
+    configure_default_webengine_profile,
+    webengine_termination_status_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -103,13 +106,13 @@ class _TCodeViewerWindow(QtWidgets.QDialog):
 
         if QtWebEngineWidgets is None:
             fallback = QtWidgets.QLabel("QtWebEngine is not available")
-            fallback.setAlignment(QtCore.Qt.AlignCenter)
+            fallback.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(fallback, 1)
             return
 
         configure_default_webengine_profile()
         self._view = QtWebEngineWidgets.QWebEngineView(self)
-        self._view.setContextMenuPolicy(QtCore.Qt.NoContextMenu)
+        self._view.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.NoContextMenu)
         self._enable_remote_asset_access()
         self._view.loadFinished.connect(self._on_page_loaded)  # type: ignore[attr-defined]
         page = self._view.page()

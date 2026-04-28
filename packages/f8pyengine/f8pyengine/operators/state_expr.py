@@ -4,24 +4,26 @@ import logging
 import time
 from typing import Any
 
-from f8pysdk import (
+from f8pysdk.codec import coerce_bool
+from f8pysdk.specs import (
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
+    F8SpecEditPolicy,
     F8StateAccess,
     F8StateSpec,
     any_schema,
     boolean_schema,
+    editable_collection_edit_policy,
     string_schema,
 )
-from f8pysdk.generated import UNSET
+from f8pysdk.specs import UNSET
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import OperatorNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import OperatorNode
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from ..constants import SERVICE_CLASS
 from ._py_expr_eval import (
-    coerce_bool,
     compile_expr,
     is_identifier,
     normalize_expr_code,
@@ -276,6 +278,7 @@ class StateExprRuntimeNode(OperatorNode):
 StateExprRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
+    paletteCategory=f"{SERVICE_CLASS}.expr",
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="State Expr",
@@ -317,8 +320,7 @@ StateExprRuntimeNode.SPEC = F8OperatorSpec(
                 "Single Python expression. Editable RW/WO state fields are available directly by name; "
                 "non-identifier names remain available through `states[...]`."
             ),
-            uiControl="wrapline",
-            uiLanguage="python",
+            uiControl="wrapline[python]",
             valueSchema=string_schema(default="0"),
             access=F8StateAccess.rw,
             showOnNode=True,
@@ -343,20 +345,15 @@ StateExprRuntimeNode.SPEC = F8OperatorSpec(
             required=False,
         ),
     ],
-    editableExecInPorts=False,
-    editableExecOutPorts=False,
-    editableDataInPorts=False,
-    editableDataOutPorts=False,
-    editableStateFields=True,
+    editPolicy=F8SpecEditPolicy(stateFields=editable_collection_edit_policy()),
 )
 
 
-def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
         return StateExprRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(StateExprRuntimeNode.SPEC, overwrite=True)
-    return reg
+    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
+    registry.register_operator_spec(StateExprRuntimeNode.SPEC, overwrite=True)
+    return registry

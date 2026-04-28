@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from qtpy import QtWidgets
 
-from f8pysdk import (
+from f8pysdk.specs import (
     F8ServiceSchemaVersion,
     F8ServiceSpec,
 )
@@ -30,12 +30,9 @@ class F8StudioServiceMissingNode(F8StudioServiceBaseNode):
         serviceClass="f8.missing",
         version="0.0.1",
         label="Missing Service",
-        tags=["__hidden__"],
+        paletteCategory="svc.f8.missing",
+        hiddenInPalette=True,
     )
 
     def __init__(self, qgraphics_item: type[QtWidgets.QGraphicsItem] | None = None):
         super().__init__(qgraphics_item=qgraphics_item or F8StudioMissingServiceNodeItem)
-
-
-# Compatibility alias.
-F8StudioMissingServiceBaseNode = F8StudioServiceMissingNode

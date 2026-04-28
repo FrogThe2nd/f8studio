@@ -12,6 +12,10 @@ from typing import Literal
 # Protocol identifiers recognised by the HTTP client.
 ProviderProtocol = Literal["openai", "anthropic", "ollama", "custom"]
 
+# OpenAI-compatible providers can speak either the legacy Chat Completions
+# wire shape or the newer Responses API wire shape.
+ProviderApiMode = Literal["chat_completions", "responses"]
+
 # All reasoning-level values that a model may advertise.
 ReasoningLevel = Literal["low", "medium", "high"]
 
@@ -97,6 +101,9 @@ class ProviderConfig:
     protocol: ProviderProtocol = "openai"
     """Wire protocol to use when talking to this provider."""
 
+    api_mode: ProviderApiMode = "chat_completions"
+    """OpenAI-compatible API shape to use for chat/edit/plan requests."""
+
     api_key: str = ""
     """Secret key — stored locally only, never logged."""
 
@@ -150,6 +157,7 @@ def _openai_default() -> ProviderConfig:
         provider_id="openai",
         display_name="OpenAI",
         protocol="openai",
+        api_mode="responses",
         endpoint="https://api.openai.com/v1",
         cached_models=[
             ModelInfo(

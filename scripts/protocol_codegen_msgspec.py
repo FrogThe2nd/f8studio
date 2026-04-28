@@ -6,6 +6,7 @@ import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
+import re
 from typing import Any
 
 import msgspec
@@ -137,6 +138,19 @@ def _smoke_test_generated(output_path: Path) -> None:
     _ = msgspec.to_builtins(cmd_reply)
 
 
+def _postprocess_generated(output_path: Path) -> None:
+    source = output_path.read_text(encoding="utf-8")
+    updated = re.sub(
+        r"class F8ComponentRecord\(Struct, kw_only=True\):",
+        "class F8ComponentRecord(Struct, kw_only=True, forbid_unknown_fields=True):",
+        source,
+        count=1,
+    )
+    if updated == source:
+        raise RuntimeError("generated module is missing F8ComponentRecord for post-processing")
+    output_path.write_text(updated, encoding="utf-8")
+
+
 def _generate_with_fallback(*, protocol_path: Path, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -149,12 +163,14 @@ def _generate_with_fallback(*, protocol_path: Path, output_path: Path) -> None:
         cli_error = exc
     else:
         try:
+            _postprocess_generated(output_path)
             _smoke_test_generated(output_path)
             return
         except Exception as exc:  # pragma: no cover - boundary path
             smoke_error = exc
 
     _run_python_codegen(protocol_path=protocol_path, output_path=output_path)
+    _postprocess_generated(output_path)
     _smoke_test_generated(output_path)
 
     if cli_error is not None:

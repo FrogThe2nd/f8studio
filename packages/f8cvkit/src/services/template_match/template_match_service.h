@@ -70,19 +70,30 @@ class TemplateMatchService final : public f8::cppsdk::LifecycleNode,
   std::unordered_map<std::string, json> published_state_;
   std::mutex video_mu_;
 
-  // Template (BGR).
+  // Template (BGR/gray).
   bool template_loaded_ = false;
   std::string template_error_;
   cv::Mat template_bgr_;
+  cv::Mat template_gray_;
   std::string template_png_b64_;
   double match_threshold_ = 0.50;
   std::int64_t matching_interval_ms_ = 200;
   std::int64_t last_match_ts_ms_ = 0;
+  std::string match_color_mode_ = "gray";
+  int search_roi_padding_px_ = 0;
+  double pyramid_scale_ = 1.0;
+  bool has_last_detection_ = false;
+  cv::Rect last_detection_bbox_;
 
   // Video input (BGRA32 SHM).
   std::string shm_name_override_;
   f8::cppsdk::VideoSharedMemoryReader video_;
   std::vector<std::byte> frame_bgra_;
+  cv::Mat frame_gray_;
+  cv::Mat roi_gray_;
+  cv::Mat roi_small_;
+  cv::Mat templ_small_;
+  cv::Mat match_result_;
   std::optional<f8::cppsdk::VideoSharedMemoryHeader> last_header_;
   std::uint64_t last_frame_id_ = 0;
   std::uint32_t last_notify_seq_ = 0;

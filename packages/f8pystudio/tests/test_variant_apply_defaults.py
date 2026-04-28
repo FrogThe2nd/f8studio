@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from f8pysdk.msgspec_codec import copy_model, dump_json
+from f8pysdk.codec import copy_model, dump_json
 from typing import Any
 
-from f8pysdk.generated import F8OperatorSchemaVersion, F8OperatorSpec, F8StateAccess, F8StateSpec
-from f8pysdk.schema_helpers import string_schema
+from f8pysdk.specs import F8OperatorSchemaVersion, F8OperatorSpec, F8StateAccess, F8StateSpec
+from f8pysdk.specs import string_schema
 
 from f8pystudio.nodegraph.node_graph import F8StudioGraph
+from f8pystudio.assets.variants.variant_models import F8VariantKind, variant_now_iso
+from f8pysdk.specs import F8VariantRecord
 
 
 class _NodeModelStub:
@@ -72,13 +74,29 @@ def test_apply_variant_to_node_uses_variant_state_defaults_for_writable_fields()
     ), mode="json")
     node = _NodeStub(base_spec)
     graph = F8StudioGraph.__new__(F8StudioGraph)
+    record = F8VariantRecord(
+        variantId="v_123",
+        kind=F8VariantKind.operator,
+        baseNodeType="f8.pyengine.f8.python_script",
+        serviceClass="f8.pyengine",
+        operatorClass="f8.python_script",
+        name="Variant",
+        description="",
+        tags=[],
+        spec=variant_spec_json,
+        createdAt=variant_now_iso(),
+        updatedAt=variant_now_iso(),
+    )
 
     graph._apply_variant_to_node(
         node=node,  # type: ignore[arg-type]
-        variant_id="v_123",
-        variant_name="Variant",
+        variant_record=record,
         variant_spec_json=variant_spec_json,
     )
 
     assert node.model.custom_properties["code"] == "VARIANT_CODE"
     assert node.model.custom_properties["svcId"] == "seed_svc"
+    assert node.model.f8_sys["variantRef"]["variantId"] == "v_123"
+    assert node.model.f8_sys["variantRef"]["name"] == "Variant"
+    assert "variantId" not in node.model.f8_sys
+    assert "variantName" not in node.model.f8_sys

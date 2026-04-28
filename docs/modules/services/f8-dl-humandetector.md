@@ -10,26 +10,28 @@ ONNXRuntime human detection/pose service (no tracking).
 
 ## When to Use
 
-- Use `f8.dl.humandetector` when the graph only cares about people and not general object classes.
-- It specializes in identifying humans in video streams using optimized ONNX models and is a more focused alternative to the general object detector.
-- It is a cleaner release choice than a broader detector when the downstream logic is human-specific.
+- Use `f8.dl.humandetector` when the graph only cares about people rather than general objects.
+- It is a strong choice for human-presence logic, person ROI filtering, and person-first analysis chains.
+- It usually fits better than a general detector when the scene is fundamentally human-centered.
 
 ## Common Wiring Patterns
 
-- Feed it from `f8.implayer` or `f8.screencap`, then branch detections to overlays, skeleton-related logic, or state summaries.
-- Keep it paired with a visual validation branch during threshold tuning to ensure the subject is captured reliably.
+- A common chain is `video source -> f8.dl.humandetector -> tracking / mp.pose / pyengine`.
+- If later logic depends on people, stabilize the "where is the person?" step before building the rest of the graph.
+- Keep detections visible during development.
 
 ## Pitfalls / Gotchas
 
-- Human-only detectors still depend on source framing and input scale; low-quality or extreme-angle inputs reduce confidence quickly.
-- Users often tune downstream logic before verifying that the detector itself sees the subject reliably in the current environment.
+- Small people, strong backlight, and heavy occlusion reduce quality quickly.
+- Human detection is not the same as pose estimation; use it as a person-localization stage, not as a skeleton source.
+- In multi-person scenes, decide early which person the graph should follow.
 
 ## Service Reference
 
 ### How to Run
 
 ```bash
-pixi run f8pydl_humandetector
+pixi run -e onnx f8pydl_humandetector
 ```
 
 - Workdir: `../../../../`
@@ -46,9 +48,9 @@ pixi run f8pydl_humandetector
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
 | `shmName` | `rw` | `true` | `true` | `string / default=` | Video SHM mapping name (e.g. shm.implayer.video). |
-| `weightsDir` | `rw` | `true` | `true` | `string / default=services/f8/dl/weights` | Directory containing *.yaml + *.onnx model files. |
+| `weightsDir` | `rw` | `true` | `true` | `string / default=services/f8/dl/weights` | Directory containing *.yaml + *.onnx model files. Reset to the default relative path when exporting publish JSON. |
 | `modelId` | `rw` | `true` | `true` | `string / default=` | Model id selected from weightsDir (ignored if modelYamlPath is set). |
-| `modelYamlPath` | `rw` | `true` | `false` | `string / default=` | Optional explicit model yaml path (overrides modelId). |
+| `modelYamlPath` | `rw` | `true` | `false` | `string / default=` | Optional explicit model yaml path (overrides modelId). Cleared when exporting publish JSON. |
 | `ortProvider` | `rw` | `true` | `true` | `string / enum[auto, cuda, cpu] / default=auto` | auto prefers CUDAExecutionProvider when available. |
 | `autoDownloadWeights` | `rw` | `true` | `false` | `boolean / default=True` | When model file is missing, download from onnxUrl in model yaml. |
 | `inferEveryN` | `rw` | `true` | `true` | `integer / default=1` | Run model inference every N frames (>=1). |
@@ -67,9 +69,9 @@ pixi run f8pydl_humandetector
 ### Key Fields That Matter
 
 - `shmName` (Video SHM, `rw`): Video SHM mapping name (e.g. shm.implayer.video). Schema: `string / default=`.
-- `weightsDir` (Weights Dir, `rw`): Directory containing *.yaml + *.onnx model files. Schema: `string / default=services/f8/dl/weights`.
+- `weightsDir` (Weights Dir, `rw`): Directory containing *.yaml + *.onnx model files. Reset to the default relative path when exporting publish JSON. Schema: `string / default=services/f8/dl/weights`.
 - `modelId` (Model Id, `rw`): Model id selected from weightsDir (ignored if modelYamlPath is set). Schema: `string / default=`.
-- `modelYamlPath` (Model YAML Path, `rw`): Optional explicit model yaml path (overrides modelId). Schema: `string / default=`.
+- `modelYamlPath` (Model YAML Path, `rw`): Optional explicit model yaml path (overrides modelId). Cleared when exporting publish JSON. Schema: `string / default=`.
 - `ortProvider` (ONNX Runtime Provider, `rw`): auto prefers CUDAExecutionProvider when available. Schema: `string / enum[auto, cuda, cpu] / default=auto`.
 - `autoDownloadWeights` (Auto Download Weights, `rw`): When model file is missing, download from onnxUrl in model yaml. Schema: `boolean / default=True`.
 - `inferEveryN` (Infer Every N Frames, `rw`): Run model inference every N frames (>=1). Schema: `integer / default=1`.

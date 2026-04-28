@@ -1,21 +1,34 @@
 from __future__ import annotations
 
 import copy
-from f8pysdk.msgspec_codec import copy_model, dump_json, validate_as
+from f8pysdk.codec import copy_model, dump_json, validate_as
 import json
 import logging
 import os
 from typing import Any
 
-from qtpy import QtCore
+from qtpy import QtCore, QtWidgets
+from NodeGraphQt.base.commands import PortConnectedCmd
 from NodeGraphQt.errors import NodeCreationError
 
-from f8pysdk import F8OperatorSpec, F8ServiceSpec
+from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
+from f8pysdk.command import command_input_port_name, command_output_port_name
+from f8pysdk.specs import (
+    coerce_spec_payload,
+    spec_kind_from_spec,
+)
+from f8pysdk.specs import (
+    can_add as _policy_can_add,
+    can_delete as _policy_can_delete,
+    can_edit_existing as _policy_can_edit_existing,
+)
 
 from .edge_rules import EdgeRuleNodeInfo, layout_node_info, validate_layout_connection
+from .layers import augment_layer_defs_for_layout_nodes, layer_defs_to_json, layout_layer_defs_from_layout
 from .viewer import F8StudioNodeViewer
-from ..session_migration import extract_layout as _extract_session_layout
-from ..session_migration import wrap_layout_for_save as _wrap_layout_for_save
+from f8pystudio.nodegraph.session_payload_sanitizer import sanitize_session_layout_for_persistence
+from f8pystudio.nodegraph.session_schema import extract_layout as _extract_session_layout
+from f8pystudio.nodegraph.session_schema import wrap_layout_for_save as _wrap_layout_for_save
 
 MISSING_SERVICE_NODE_TYPE = "svc.f8.missing.service"
 MISSING_OPERATOR_NODE_TYPE = "svc.f8.missing.operator"
@@ -24,66 +37,90 @@ logger = logging.getLogger(__name__)
 
 
 class SessionLayoutCodecMixin:
-    @staticmethod
-    def _json_default_redacted_value(value_schema: Any) -> Any:
-        try:
-            schema_json = dump_json(value_schema, mode="json")
-        except (AttributeError, TypeError, ValueError):
-            schema_json = value_schema
-        if not isinstance(schema_json, dict):
-            return None
+    def _deserialize_session_fast(self, layout_data: dict) -> None:
+        def _convert_last_list_to_set(data_obj: dict[str, Any]) -> None:
+            for key, value in data_obj.items():
+                if isinstance(value, dict):
+                    _convert_last_list_to_set(value)
+                elif isinstance(value, list):
+                    data_obj[key] = set(value)
 
-        if "default" in schema_json:
-            return copy.deepcopy(schema_json.get("default"))
+        for attr_name, attr_value in layout_data.get("graph", {}).items():
+            if attr_name == "layout_direction":
+                self.set_layout_direction(attr_value)
+            elif attr_name == "acyclic":
+                self.set_acyclic(attr_value)
+            elif attr_name == "pipe_collision":
+                self.set_pipe_collision(attr_value)
+            elif attr_name == "pipe_slicing":
+                self.set_pipe_slicing(attr_value)
+            elif attr_name == "pipe_style":
+                self.set_pipe_style(attr_value)
+            elif attr_name == "accept_connection_types":
+                parsed_value = json.loads(attr_value)
+                _convert_last_list_to_set(parsed_value)
+                self.model.accept_connection_types = parsed_value
+            elif attr_name == "reject_connection_types":
+                parsed_value = json.loads(attr_value)
+                _convert_last_list_to_set(parsed_value)
+                self.model.reject_connection_types = parsed_value
 
-        schema_type = schema_json.get("type")
-        if isinstance(schema_type, list):
-            non_null_types = [item for item in schema_type if isinstance(item, str) and item != "null"]
-            schema_type = non_null_types[0] if non_null_types else None
-
-        if schema_type == "string":
-            return ""
-        if schema_type == "array":
-            return []
-        if schema_type == "object":
-            return {}
-        if schema_type == "number":
-            return 0
-        if schema_type == "integer":
-            return 0
-        if schema_type == "boolean":
-            return False
-        return None
-
-    @classmethod
-    def _redact_publish_session_state_values(cls, layout_data: dict) -> dict:
-        nodes = layout_data.get("nodes")
-        if not isinstance(nodes, dict):
-            return layout_data
-
-        for node_data in nodes.values():
-            if not isinstance(node_data, dict):
+        nodes_by_id: dict[str, Any] = {}
+        for node_id, node_data in layout_data.get("nodes", {}).items():
+            identifier = node_data["type_"]
+            node = self._node_factory.create_node_instance(identifier)
+            if node is None:
                 continue
-            custom = node_data.get("custom")
-            raw_spec = node_data.get("f8_spec")
-            if not isinstance(custom, dict) or not isinstance(raw_spec, dict):
+            node.NODE_NAME = node_data.get("name", node.NODE_NAME)
+            for prop in node.model.properties.keys():
+                if prop in node_data:
+                    node.model.set_property(prop, node_data[prop])
+            custom_data = node_data.get("custom", {})
+            if isinstance(custom_data, dict):
+                for prop, value in custom_data.items():
+                    node.model.set_property(prop, value)
+                    widgets = getattr(node.view, "widgets", None)
+                    if isinstance(widgets, dict) and prop in widgets:
+                        widgets[prop].set_value(value)
+            nodes_by_id[node_id] = node
+            self.add_node(
+                node,
+                node_data.get("pos"),
+                selected=False,
+                push_undo=False,
+                inherite_graph_style=True,
+            )
+            if node_data.get("port_deletion_allowed", None):
+                node.set_ports(
+                    {
+                        "input_ports": node_data["input_ports"],
+                        "output_ports": node_data["output_ports"],
+                    }
+                )
+
+        for connection in layout_data.get("connections", []):
+            in_node_id, input_name = connection.get("in", ("", ""))
+            in_node = nodes_by_id.get(in_node_id) or self.get_node_by_id(in_node_id)
+            if in_node is None:
+                continue
+            in_port = in_node.inputs().get(input_name)
+
+            out_node_id, output_name = connection.get("out", ("", ""))
+            out_node = nodes_by_id.get(out_node_id) or self.get_node_by_id(out_node_id)
+            if out_node is None:
+                continue
+            out_port = out_node.outputs().get(output_name)
+
+            if in_port is None or out_port is None:
                 continue
 
-            raw_state_fields = raw_spec.get("stateFields")
-            if not isinstance(raw_state_fields, list) or not raw_state_fields:
-                continue
+            allow_connection = (not in_port.model.connected_ports) or in_port.model.multi_connection
+            if allow_connection:
+                PortConnectedCmd(in_port, out_port, emit_signal=False).redo()
+            in_node.on_input_connected(in_port, out_port)
 
-            for raw_field in raw_state_fields:
-                if not isinstance(raw_field, dict):
-                    continue
-                if not bool(raw_field.get("redactOnPublish")):
-                    continue
-                field_name = str(raw_field.get("name") or "").strip()
-                if not field_name or field_name not in custom:
-                    continue
-                custom[field_name] = cls._json_default_redacted_value(raw_field.get("valueSchema"))
-
-        return layout_data
+        self.clear_selection()
+        self._undo_stack.clear()
 
     @staticmethod
     def _strip_port_restore_data(layout_data: dict) -> dict:
@@ -124,16 +161,10 @@ class SessionLayoutCodecMixin:
         def _coerce_spec(v: object) -> F8OperatorSpec | F8ServiceSpec | None:
             if v is None:
                 return None
-            if isinstance(v, (F8OperatorSpec, F8ServiceSpec)):
-                return v
-            if isinstance(v, dict):
-                try:
-                    if "operatorClass" in v:
-                        return validate_as(F8OperatorSpec, v)
-                    return validate_as(F8ServiceSpec, v)
-                except Exception:
-                    return None
-            return None
+            try:
+                return coerce_spec_payload(v)
+            except (TypeError, ValueError):
+                return None
 
         port_sets: dict[str, set[str] | None] = {}
         node_info_by_id: dict[str, EdgeRuleNodeInfo | None] = {}
@@ -152,12 +183,12 @@ class SessionLayoutCodecMixin:
             # Apply UI overrides (eg. showOnNode) so we can strip connections
             # referencing ports that will not be created.
             state_fields = list(spec.stateFields or [])
-            ui = node_data.get("f8_ui")
+            ui = node_data.get("f8_ui_overrides")
             state_ui = None
             if isinstance(ui, dict):
                 state_ui = ui.get("stateFields")
             if isinstance(state_ui, dict) and state_ui and state_fields:
-                allowed_keys = {"showOnNode", "uiControl", "uiLanguage", "label", "description"}
+                allowed_keys = {"showOnNode", "uiControl", "label", "description"}
                 patched = []
                 for f in state_fields:
                     name = str(f.name or "").strip()
@@ -199,6 +230,16 @@ class SessionLayoutCodecMixin:
                     ports.add(f"{name}[S]")
                 except (AttributeError, TypeError):
                     continue
+            if isinstance(spec, F8ServiceSpec):
+                for command in list(spec.commands or []):
+                    try:
+                        command_name = str(command.name or "").strip()
+                    except (AttributeError, TypeError):
+                        command_name = ""
+                    if not command_name:
+                        continue
+                    ports.add(command_input_port_name(command_name))
+                    ports.add(command_output_port_name(command_name))
             port_sets[node_id_str] = ports
 
         kept: list[dict[str, Any]] = []
@@ -264,16 +305,10 @@ class SessionLayoutCodecMixin:
         def _coerce_spec(v: object) -> F8OperatorSpec | F8ServiceSpec | None:
             if v is None:
                 return None
-            if isinstance(v, (F8OperatorSpec, F8ServiceSpec)):
-                return v
-            if isinstance(v, dict):
-                try:
-                    if "operatorClass" in v:
-                        return validate_as(F8OperatorSpec, v)
-                    return validate_as(F8ServiceSpec, v)
-                except Exception:
-                    return None
-            return None
+            try:
+                return coerce_spec_payload(v)
+            except (TypeError, ValueError):
+                return None
 
         def _enum_str(v: object) -> str | None:
             if v is None:
@@ -288,6 +323,129 @@ class SessionLayoutCodecMixin:
                 return None
 
         errors: list[str] = []
+
+        def _policy_flags(
+            spec_obj: F8OperatorSpec | F8ServiceSpec,
+            collection: str,
+        ) -> tuple[bool, bool, bool]:
+            return (
+                _policy_can_add(spec_obj, collection),  # type: ignore[arg-type]
+                _policy_can_delete(spec_obj, collection),  # type: ignore[arg-type]
+                _policy_can_edit_existing(spec_obj, collection),  # type: ignore[arg-type]
+            )
+
+        def _entry_name(entry: object) -> str:
+            if not isinstance(entry, dict):
+                return ""
+            return str(entry.get("name") or "").strip()
+
+        def _merge_state_field_item(base: dict[str, Any], session: dict[str, Any]) -> dict[str, Any]:
+            merged_item = dict(base)
+            for key in ("label", "description", "showOnNode", "uiControl", "valueSchema"):
+                if key in session:
+                    merged_item[key] = session.get(key)
+            return merged_item
+
+        def _merge_data_port_item(base: dict[str, Any], session: dict[str, Any]) -> dict[str, Any]:
+            merged_item = dict(base)
+            for key in ("description", "showOnNode", "valueSchema"):
+                if key in session:
+                    merged_item[key] = session.get(key)
+            return merged_item
+
+        def _merge_command_params(base_params_obj: object, session_params_obj: object) -> list[dict[str, Any]]:
+            base_params = [item for item in list(base_params_obj or []) if isinstance(item, dict)]
+            session_params = [item for item in list(session_params_obj or []) if isinstance(item, dict)]
+            session_by_name = {_entry_name(item): item for item in session_params if _entry_name(item)}
+            out: list[dict[str, Any]] = []
+            for base_param in base_params:
+                base_name = _entry_name(base_param)
+                if not base_name:
+                    out.append(dict(base_param))
+                    continue
+                session_param = session_by_name.get(base_name)
+                merged_param = dict(base_param)
+                if session_param is not None:
+                    for key in ("description", "uiControl", "valueSchema"):
+                        if key in session_param:
+                            merged_param[key] = session_param.get(key)
+                out.append(merged_param)
+            return out
+
+        def _merge_command_item(base: dict[str, Any], session: dict[str, Any]) -> dict[str, Any]:
+            merged_item = dict(base)
+            for key in ("description", "showOnNode"):
+                if key in session:
+                    merged_item[key] = session.get(key)
+            if "params" in session:
+                merged_item["params"] = _merge_command_params(base.get("params"), session.get("params"))
+            return merged_item
+
+        def _merge_named_list(
+            *,
+            base_items_obj: object,
+            session_items_obj: object,
+            can_add: bool,
+            can_delete: bool,
+            can_edit_existing: bool,
+            merge_item: Any,
+        ) -> list[dict[str, Any]]:
+            base_items = [item for item in list(base_items_obj or []) if isinstance(item, dict)]
+            session_items = [item for item in list(session_items_obj or []) if isinstance(item, dict)]
+            session_by_name = {_entry_name(item): item for item in session_items if _entry_name(item)}
+            base_names: set[str] = set()
+            out: list[dict[str, Any]] = []
+
+            for base_item in base_items:
+                base_name = _entry_name(base_item)
+                if not base_name:
+                    out.append(dict(base_item))
+                    continue
+                base_names.add(base_name)
+                session_item = session_by_name.get(base_name)
+                if session_item is None:
+                    if can_delete and not bool(base_item.get("required")):
+                        continue
+                    out.append(dict(base_item))
+                    continue
+                if can_edit_existing:
+                    out.append(merge_item(base_item, session_item))
+                else:
+                    out.append(dict(base_item))
+
+            if can_add:
+                for session_item in session_items:
+                    session_name = _entry_name(session_item)
+                    if not session_name or session_name in base_names:
+                        continue
+                    out.append(dict(session_item))
+
+            return out
+
+        def _merge_string_list(
+            *,
+            base_items_obj: object,
+            session_items_obj: object,
+            can_add: bool,
+            can_delete: bool,
+        ) -> list[str]:
+            base_items = [str(item) for item in list(base_items_obj or []) if str(item).strip()]
+            session_items = [str(item) for item in list(session_items_obj or []) if str(item).strip()]
+            if not can_add and not can_delete:
+                return base_items
+            session_set = set(session_items)
+            base_set = set(base_items)
+            out: list[str] = []
+            for item in base_items:
+                if can_delete and item not in session_set:
+                    continue
+                out.append(item)
+            if can_add:
+                for item in session_items:
+                    if item in base_set:
+                        continue
+                    out.append(item)
+            return out
 
         for node_id, node_data in nodes.items():
             if not isinstance(node_data, dict):
@@ -313,13 +471,19 @@ class SessionLayoutCodecMixin:
                 continue
 
             # Reject when spec kind mismatches the node class.
-            session_is_operator = "operatorClass" in session_spec_raw
-            template_is_operator = isinstance(template_spec, F8OperatorSpec)
+            try:
+                session_spec = coerce_spec_payload(session_spec_raw)
+            except (TypeError, ValueError):
+                errors.append(f"nodeId={node_id}: invalid session spec payload for node type {node_type!r}")
+                continue
+            session_kind = spec_kind_from_spec(session_spec)
+            template_kind = spec_kind_from_spec(template_spec)
+            session_is_operator = session_kind == "operator"
+            template_is_operator = template_kind == "operator"
             if session_is_operator != template_is_operator:
                 errors.append(
                     f"nodeId={node_id}: session spec kind mismatch for node type {node_type!r} "
-                    f"(template={'operator' if template_is_operator else 'service'}, "
-                    f"session={'operator' if session_is_operator else 'service'})"
+                    f"(template={template_kind!r}, session={session_kind!r})"
                 )
                 continue
 
@@ -361,30 +525,7 @@ class SessionLayoutCodecMixin:
 
             merged = dump_json(template_spec, mode="json")
 
-            def _maybe_override_bool(key: str) -> None:
-                if key in session_spec_raw:
-                    merged[key] = session_spec_raw.get(key)
-
-            def _maybe_override_list(key: str, allow: bool) -> None:
-                if not allow:
-                    # warn (non-fatal) if the session attempted to override a non-editable list.
-                    if key in session_spec_raw and session_spec_raw.get(key) != merged.get(key):
-                        logger.warning(
-                            "Ignoring non-editable session override: nodeId=%s key=%s (template wins).",
-                            node_id,
-                            key,
-                        )
-                    return
-                if key in session_spec_raw:
-                    merged[key] = session_spec_raw.get(key)
-
             if isinstance(template_spec, F8OperatorSpec):
-                _maybe_override_bool("editableStateFields")
-                _maybe_override_bool("editableExecInPorts")
-                _maybe_override_bool("editableExecOutPorts")
-                _maybe_override_bool("editableDataInPorts")
-                _maybe_override_bool("editableDataOutPorts")
-
                 # Keep user metadata from persisted snapshots/variants.
                 if "label" in session_spec_raw:
                     merged["label"] = session_spec_raw.get("label")
@@ -392,21 +533,55 @@ class SessionLayoutCodecMixin:
                     merged["description"] = session_spec_raw.get("description")
                 if "tags" in session_spec_raw:
                     merged["tags"] = session_spec_raw.get("tags")
-                _maybe_override_list("stateFields", bool(merged.get("editableStateFields", False)))
-                _maybe_override_list("execInPorts", bool(merged.get("editableExecInPorts", False)))
-                _maybe_override_list("execOutPorts", bool(merged.get("editableExecOutPorts", False)))
-                _maybe_override_list("dataInPorts", bool(merged.get("editableDataInPorts", False)))
-                _maybe_override_list("dataOutPorts", bool(merged.get("editableDataOutPorts", False)))
+                if "editPolicy" in session_spec_raw:
+                    merged["editPolicy"] = session_spec_raw.get("editPolicy")
+                merged_spec = validate_as(F8OperatorSpec, merged)
+                can_add_state, can_delete_state, can_edit_state = _policy_flags(merged_spec, "stateFields")
+                can_add_exec_in, can_delete_exec_in, _can_edit_exec_in = _policy_flags(merged_spec, "execInPorts")
+                can_add_exec_out, can_delete_exec_out, _can_edit_exec_out = _policy_flags(merged_spec, "execOutPorts")
+                can_add_data_in, can_delete_data_in, can_edit_data_in = _policy_flags(merged_spec, "dataInPorts")
+                can_add_data_out, can_delete_data_out, can_edit_data_out = _policy_flags(merged_spec, "dataOutPorts")
+                merged["stateFields"] = _merge_named_list(
+                    base_items_obj=merged.get("stateFields"),
+                    session_items_obj=session_spec_raw.get("stateFields"),
+                    can_add=can_add_state,
+                    can_delete=can_delete_state,
+                    can_edit_existing=can_edit_state,
+                    merge_item=_merge_state_field_item,
+                )
+                merged["execInPorts"] = _merge_string_list(
+                    base_items_obj=merged.get("execInPorts"),
+                    session_items_obj=session_spec_raw.get("execInPorts"),
+                    can_add=can_add_exec_in,
+                    can_delete=can_delete_exec_in,
+                )
+                merged["execOutPorts"] = _merge_string_list(
+                    base_items_obj=merged.get("execOutPorts"),
+                    session_items_obj=session_spec_raw.get("execOutPorts"),
+                    can_add=can_add_exec_out,
+                    can_delete=can_delete_exec_out,
+                )
+                merged["dataInPorts"] = _merge_named_list(
+                    base_items_obj=merged.get("dataInPorts"),
+                    session_items_obj=session_spec_raw.get("dataInPorts"),
+                    can_add=can_add_data_in,
+                    can_delete=can_delete_data_in,
+                    can_edit_existing=can_edit_data_in,
+                    merge_item=_merge_data_port_item,
+                )
+                merged["dataOutPorts"] = _merge_named_list(
+                    base_items_obj=merged.get("dataOutPorts"),
+                    session_items_obj=session_spec_raw.get("dataOutPorts"),
+                    can_add=can_add_data_out,
+                    can_delete=can_delete_data_out,
+                    can_edit_existing=can_edit_data_out,
+                    merge_item=_merge_data_port_item,
+                )
                 try:
                     node_data["f8_spec"] = dump_json(validate_as(F8OperatorSpec, merged), mode="json")
                 except Exception as e:
                     errors.append(f"nodeId={node_id}: failed to merge operator spec: {e}")
             else:
-                _maybe_override_bool("editableStateFields")
-                _maybe_override_bool("editableCommands")
-                _maybe_override_bool("editableDataInPorts")
-                _maybe_override_bool("editableDataOutPorts")
-
                 # Keep user metadata from persisted snapshots/variants.
                 if "label" in session_spec_raw:
                     merged["label"] = session_spec_raw.get("label")
@@ -414,10 +589,45 @@ class SessionLayoutCodecMixin:
                     merged["description"] = session_spec_raw.get("description")
                 if "tags" in session_spec_raw:
                     merged["tags"] = session_spec_raw.get("tags")
-                _maybe_override_list("stateFields", bool(merged.get("editableStateFields", False)))
-                _maybe_override_list("commands", bool(merged.get("editableCommands", False)))
-                _maybe_override_list("dataInPorts", bool(merged.get("editableDataInPorts", False)))
-                _maybe_override_list("dataOutPorts", bool(merged.get("editableDataOutPorts", False)))
+                if "editPolicy" in session_spec_raw:
+                    merged["editPolicy"] = session_spec_raw.get("editPolicy")
+                merged_spec = validate_as(F8ServiceSpec, merged)
+                can_add_state, can_delete_state, can_edit_state = _policy_flags(merged_spec, "stateFields")
+                can_add_commands, can_delete_commands, can_edit_commands = _policy_flags(merged_spec, "commands")
+                can_add_data_in, can_delete_data_in, can_edit_data_in = _policy_flags(merged_spec, "dataInPorts")
+                can_add_data_out, can_delete_data_out, can_edit_data_out = _policy_flags(merged_spec, "dataOutPorts")
+                merged["stateFields"] = _merge_named_list(
+                    base_items_obj=merged.get("stateFields"),
+                    session_items_obj=session_spec_raw.get("stateFields"),
+                    can_add=can_add_state,
+                    can_delete=can_delete_state,
+                    can_edit_existing=can_edit_state,
+                    merge_item=_merge_state_field_item,
+                )
+                merged["commands"] = _merge_named_list(
+                    base_items_obj=merged.get("commands"),
+                    session_items_obj=session_spec_raw.get("commands"),
+                    can_add=can_add_commands,
+                    can_delete=can_delete_commands,
+                    can_edit_existing=can_edit_commands,
+                    merge_item=_merge_command_item,
+                )
+                merged["dataInPorts"] = _merge_named_list(
+                    base_items_obj=merged.get("dataInPorts"),
+                    session_items_obj=session_spec_raw.get("dataInPorts"),
+                    can_add=can_add_data_in,
+                    can_delete=can_delete_data_in,
+                    can_edit_existing=can_edit_data_in,
+                    merge_item=_merge_data_port_item,
+                )
+                merged["dataOutPorts"] = _merge_named_list(
+                    base_items_obj=merged.get("dataOutPorts"),
+                    session_items_obj=session_spec_raw.get("dataOutPorts"),
+                    can_add=can_add_data_out,
+                    can_delete=can_delete_data_out,
+                    can_edit_existing=can_edit_data_out,
+                    merge_item=_merge_data_port_item,
+                )
                 try:
                     node_data["f8_spec"] = dump_json(validate_as(F8ServiceSpec, merged), mode="json")
                 except Exception as e:
@@ -465,7 +675,6 @@ class SessionLayoutCodecMixin:
             "missingLocked",
             "missingType",
             "missingReason",
-            "missingRendererFallback",
             "missingSpec",
             "missingOriginalName",
         )
@@ -496,8 +705,8 @@ class SessionLayoutCodecMixin:
                 raise NodeCreationError(
                     f"Cannot load unknown node type '{raw_type}' (nodeId={node_id}): missing or invalid `f8_spec`."
                 )
-            is_operator = "operatorClass" in spec_payload
-            placeholder_type = MISSING_OPERATOR_NODE_TYPE if is_operator else MISSING_SERVICE_NODE_TYPE
+            spec_kind = spec_kind_from_spec(coerce_spec_payload(spec_payload))
+            placeholder_type = MISSING_OPERATOR_NODE_TYPE if spec_kind == "operator" else MISSING_SERVICE_NODE_TYPE
             if placeholder_type not in self._node_factory.nodes:
                 raise NodeCreationError(f"Missing placeholder node class '{placeholder_type}' is not registered.")
 
@@ -506,10 +715,10 @@ class SessionLayoutCodecMixin:
                 f8_sys = dict(f8_sys_obj)
             else:
                 f8_sys = {}
+            f8_sys.pop("missingRendererFallback", None)
             f8_sys["missingLocked"] = True
             f8_sys["missingType"] = raw_type
             f8_sys["missingReason"] = f"unregistered node type '{raw_type}'"
-            f8_sys["missingRendererFallback"] = bool(f8_sys.get("missingRendererFallback", False))
             f8_sys["missingSpec"] = dict(spec_payload)
             raw_name = str(node_data.get("name") or "").strip()
             if raw_name and not raw_name.endswith("[Missing]"):
@@ -617,6 +826,11 @@ class SessionLayoutCodecMixin:
                         if missing_original_name:
                             node_data["name"] = missing_original_name
                 self._strip_missing_lock_for_save(node_data)
+        stripped_layout = sanitize_session_layout_for_persistence(
+            stripped_layout,
+            redact_publish_state_values=False,
+        )
+        stripped_layout["f8_layers"] = layer_defs_to_json(self.session_layer_defs())
         return _wrap_layout_for_save(stripped_layout)
 
     def serialize_publish_session(self) -> dict:
@@ -624,8 +838,14 @@ class SessionLayoutCodecMixin:
         layout_data = payload.get("layout")
         if not isinstance(layout_data, dict):
             return payload
-        payload["layout"] = self._redact_publish_session_state_values(copy.deepcopy(layout_data))
+        payload["layout"] = sanitize_session_layout_for_persistence(
+            layout_data,
+            redact_publish_state_values=True,
+        )
         return payload
+
+    def load_session_payload(self, payload: dict) -> None:
+        self._load_session_layout_data(_extract_session_layout(payload), session_label="")
 
     def load_session(self, file_path: str) -> None:
         """
@@ -638,12 +858,27 @@ class SessionLayoutCodecMixin:
         if not os.path.isfile(file_path):
             raise IOError(f"file does not exist: {file_path}")
 
+        with open(file_path, encoding="utf-8-sig") as data_file:
+            payload = json.load(data_file)
+        self._load_session_layout_data(_extract_session_layout(payload), session_label=file_path)
+
+    def _load_session_layout_data(self, layout_data: dict, *, session_label: str) -> None:
+        graph_widget = getattr(self, "widget", None)
+        viewer = self.viewer()
+        widgets_to_freeze: list[QtWidgets.QWidget] = []
+        if isinstance(graph_widget, QtWidgets.QWidget):
+            widgets_to_freeze.append(graph_widget)
+        if isinstance(viewer, QtWidgets.QWidget) and viewer is not graph_widget:
+            widgets_to_freeze.append(viewer)
+        for widget in widgets_to_freeze:
+            widget.setUpdatesEnabled(False)
         self._loading_session = True
         try:
             self.clear_session()
-            with open(file_path, encoding="utf-8-sig") as data_file:
-                payload = json.load(data_file)
-            layout_data = _extract_session_layout(payload)
+            layer_defs = augment_layer_defs_for_layout_nodes(
+                layout_layer_defs_from_layout(layout_data),
+                layout_data.get("nodes"),
+            )
             self._inject_node_ids(layout_data)
             layout_data = self._restore_missing_session_nodes(layout_data)
             layout_data = self._coerce_missing_session_nodes(layout_data)
@@ -651,16 +886,22 @@ class SessionLayoutCodecMixin:
             layout_data = self._strip_port_restore_data(layout_data)
             layout_data = self._strip_unknown_session_custom_properties(layout_data)
             layout_data = self._strip_invalid_connections(layout_data)
-            super().deserialize_session(layout_data, clear_session=False, clear_undo_stack=True)
-            self._model.session = file_path
-            self.session_changed.emit(file_path)
+            deserialize_layout = dict(layout_data)
+            deserialize_layout.pop("f8_layers", None)
+            self._deserialize_session_fast(deserialize_layout)
+            self.set_session_layer_defs(layer_defs, preserve_active=False)
+            self._model.session = session_label
+            self.session_changed.emit(session_label)
         finally:
             self._loading_session = False
+            for widget in reversed(widgets_to_freeze):
+                widget.setUpdatesEnabled(True)
+                widget.update()
         self._rebind_container_children()
         # Session load restores connections after nodes are created/drawn, which can
         # leave inline state widgets with stale editability until the user forces a refresh.
         # Do a post-load pass to apply the "state-edge => readonly" rule.
-        QtCore.QTimer.singleShot(0, self._refresh_all_inline_state_read_only)
-        viewer = self.viewer()
-        if isinstance(viewer, F8StudioNodeViewer):
-            QtCore.QTimer.singleShot(0, lambda: viewer.refresh_auto_proxy_mode(force=True))
+        if not bool(getattr(self, "_skip_post_load_viewer_refresh", False)):
+            QtCore.QTimer.singleShot(0, self._refresh_all_inline_state_read_only)
+            if isinstance(viewer, F8StudioNodeViewer):
+                QtCore.QTimer.singleShot(0, lambda: viewer.refresh_auto_proxy_mode(force=True))

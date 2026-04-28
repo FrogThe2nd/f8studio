@@ -7,7 +7,7 @@
 ## Common Wiring Patterns
 
 - **Master Clock Lock**: Pair it with an `IM Player` or `Sequence Player` source. Feed the resulting progress into downstream operators to ensure they stay perfectly in sync with the media content.
-- **UI Progress Monitoring**: Route the progress and duration outputs to `TextViz` or a custom dashboard to give the user a visual indication of the current scenario timeline.
+- **UI Progress Monitoring**: Route the progress and duration outputs to `Text Viz` or a custom dashboard to give the user a visual indication of the current scenario timeline.
 - **Conditional Scripting**: Use the `active` or `looping` status to enable/disable specific parts of your graph based on whether media is currently playing.
 
 ## Pitfalls / Gotchas

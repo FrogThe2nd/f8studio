@@ -4,7 +4,8 @@ import asyncio
 import sys
 from typing import Any
 
-from f8pysdk import (
+from f8pysdk.codec import coerce_flag
+from f8pysdk.specs import (
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
@@ -16,8 +17,8 @@ from f8pysdk import (
 )
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.capabilities import EntrypointNode
-from f8pysdk.runtime_node import OperatorNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import OperatorNode
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from f8pysdk.executors.exec_flow import EntrypointContext
 
@@ -48,7 +49,7 @@ class TickRuntimeNode(OperatorNode, EntrypointNode):
             self._tick_ms = self._coerce_tick_ms(self._initial_state.get("tickMs"), default=100)
         except ValueError:
             self._tick_ms = 100
-        self._want_hires = self._coerce_bool(self._initial_state.get("hiResTimer"), default=True)
+        self._want_hires = coerce_flag(self._initial_state.get("hiResTimer"), default=True)
 
     async def on_exec(self, _exec_id: str | int, _in_port: str | None = None) -> list[str]:
         return list(self._exec_out_ports)
@@ -60,7 +61,7 @@ class TickRuntimeNode(OperatorNode, EntrypointNode):
         if name == "tickMs":
             return self._coerce_tick_ms(value, default=100)
         if name == "hiResTimer":
-            return self._coerce_bool(value, default=False)
+            return coerce_flag(value, default=False)
         return value
 
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
@@ -70,7 +71,7 @@ class TickRuntimeNode(OperatorNode, EntrypointNode):
             self._tick_ms = self._coerce_tick_ms(value, default=self._tick_ms)
             return
         if name == "hiResTimer":
-            self._want_hires = self._coerce_bool(value, default=self._want_hires)
+            self._want_hires = coerce_flag(value, default=self._want_hires)
             return
 
     def _apply_windows_timer_resolution(self, enabled: bool) -> None:
@@ -165,23 +166,11 @@ class TickRuntimeNode(OperatorNode, EntrypointNode):
             raise ValueError("tickMs must be <= 50000")
         return int(ms)
 
-    @staticmethod
-    def _coerce_bool(value: Any, *, default: bool) -> bool:
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, (int, float)):
-            return bool(value)
-        text = str(value or "").strip().lower()
-        if text in ("1", "true", "yes", "on"):
-            return True
-        if text in ("0", "false", "no", "off", ""):
-            return False
-        return bool(default)
-
 
 TickRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
+    paletteCategory=f"{SERVICE_CLASS}.execution",
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="Tick",
@@ -231,12 +220,11 @@ TickRuntimeNode.SPEC = F8OperatorSpec(
 )
 
 
-def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
         return TickRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(TickRuntimeNode.SPEC, overwrite=True)
-    return reg
+    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
+    registry.register_operator_spec(TickRuntimeNode.SPEC, overwrite=True)
+    return registry

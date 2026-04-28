@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import math
 import time
 from dataclasses import dataclass
 from typing import Any, Final
 
-from f8pysdk import (
+from f8pysdk.codec import coerce_flag, coerce_int, parse_number
+from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
@@ -19,14 +19,13 @@ from f8pysdk import (
     string_schema,
 )
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import OperatorNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import OperatorNode
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from ..constants import SERVICE_CLASS
 from ._ports import exec_out_ports
 
 OPERATOR_CLASS: Final[str] = "f8.playback_sync"
-
 
 def _playback_input_schema():
     return complex_object_schema(
@@ -38,51 +37,12 @@ def _playback_input_schema():
         }
     )
 
-
-def _coerce_number(value: Any) -> float | None:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        out = float(value)
-    except (TypeError, ValueError):
-        return None
-    if math.isnan(out) or math.isinf(out):
-        return None
-    return float(out)
-
-
-def _coerce_bool(value: Any, *, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    text = str(value or "").strip().lower()
-    if text in ("1", "true", "yes", "on"):
-        return True
-    if text in ("0", "false", "no", "off", ""):
-        return False
-    return bool(default)
-
-
-def _coerce_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:
-    try:
-        out = int(value)
-    except (TypeError, ValueError):
-        out = int(default)
-    if out < minimum:
-        return int(minimum)
-    if out > maximum:
-        return int(maximum)
-    return int(out)
-
-
 @dataclass(frozen=True)
 class _PlaybackSample:
     video_id: str | None
     position_s: float
     duration_s: float | None
     playing: bool
-
 
 @dataclass(frozen=True)
 class _EstimateSnapshot:
@@ -94,17 +54,16 @@ class _EstimateSnapshot:
     age_ms: int
     stale: bool
 
-
 def _parse_playback(value: Any, *, default_playing: bool) -> _PlaybackSample | None:
     if not isinstance(value, dict):
         return None
-    position_s = _coerce_number(value.get("position"))
+    position_s = parse_number(value.get("position"))
     if position_s is None:
         return None
-    duration_s = _coerce_number(value.get("duration"))
+    duration_s = parse_number(value.get("duration"))
     if duration_s is not None and duration_s < 0.0:
         duration_s = None
-    playing = _coerce_bool(value.get("playing"), default=default_playing)
+    playing = coerce_flag(value.get("playing"), default=default_playing)
 
     raw_video_id = value.get("videoId")
     video_id: str | None = None
@@ -119,7 +78,6 @@ def _parse_playback(value: Any, *, default_playing: bool) -> _PlaybackSample | N
         duration_s=duration_s,
         playing=bool(playing),
     )
-
 
 class PlaybackSyncRuntimeNode(OperatorNode):
     """
@@ -142,11 +100,11 @@ class PlaybackSyncRuntimeNode(OperatorNode):
         self._initial_state = dict(initial_state or {})
         self._exec_out_ports = exec_out_ports(node, default=["exec"])
 
-        self._max_extrapolate_ms = _coerce_int(
+        self._max_extrapolate_ms = coerce_int(
             self._initial_state.get("maxExtrapolateMs"), default=3000, minimum=0, maximum=600_000
         )
         self._playback_rate = self._coerce_playback_rate(self._initial_state.get("playbackRate"), default=1.0)
-        self._clamp_to_duration = _coerce_bool(self._initial_state.get("clampToDuration"), default=True)
+        self._clamp_to_duration = coerce_flag(self._initial_state.get("clampToDuration"), default=True)
 
         self._anchor_video_id: str | None = None
         self._anchor_position_s: float | None = None
@@ -175,13 +133,13 @@ class PlaybackSyncRuntimeNode(OperatorNode):
         del ts_ms
         name = str(field or "").strip()
         if name == "maxExtrapolateMs":
-            self._max_extrapolate_ms = _coerce_int(value, default=self._max_extrapolate_ms, minimum=0, maximum=600_000)
+            self._max_extrapolate_ms = coerce_int(value, default=self._max_extrapolate_ms, minimum=0, maximum=600_000)
             return
         if name == "playbackRate":
             self._playback_rate = self._coerce_playback_rate(value, default=self._playback_rate)
             return
         if name == "clampToDuration":
-            self._clamp_to_duration = _coerce_bool(value, default=self._clamp_to_duration)
+            self._clamp_to_duration = coerce_flag(value, default=self._clamp_to_duration)
             return
 
     async def validate_state(
@@ -190,16 +148,16 @@ class PlaybackSyncRuntimeNode(OperatorNode):
         del ts_ms, meta
         name = str(field or "").strip()
         if name == "maxExtrapolateMs":
-            return _coerce_int(value, default=3000, minimum=0, maximum=600_000)
+            return coerce_int(value, default=3000, minimum=0, maximum=600_000)
         if name == "playbackRate":
-            rate = _coerce_number(value)
+            rate = parse_number(value)
             if rate is None:
                 raise ValueError("playbackRate must be a number")
             if rate < 0.0 or rate > 16.0:
                 raise ValueError("playbackRate must be in [0, 16]")
             return float(rate)
         if name == "clampToDuration":
-            return _coerce_bool(value, default=True)
+            return coerce_flag(value, default=True)
         return value
 
     async def compute_output(self, port: str, ctx_id: str | int | None = None) -> Any:
@@ -221,7 +179,7 @@ class PlaybackSyncRuntimeNode(OperatorNode):
 
     @staticmethod
     def _coerce_playback_rate(value: Any, *, default: float) -> float:
-        rate = _coerce_number(value)
+        rate = parse_number(value)
         if rate is None:
             return float(default)
         return float(max(0.0, min(16.0, rate)))
@@ -303,10 +261,10 @@ class PlaybackSyncRuntimeNode(OperatorNode):
             return snapshot.stale
         return None
 
-
 PlaybackSyncRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
+    paletteCategory=f"{SERVICE_CLASS}.motion",
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="Playback Sync",
@@ -363,20 +321,13 @@ PlaybackSyncRuntimeNode.SPEC = F8OperatorSpec(
             showOnNode=False,
         ),
     ],
-    editableStateFields=False,
-    editableDataInPorts=False,
-    editableDataOutPorts=False,
-    editableExecInPorts=False,
-    editableExecOutPorts=False,
 )
 
-
-def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
         return PlaybackSyncRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(PlaybackSyncRuntimeNode.SPEC, overwrite=True)
-    return reg
+    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
+    registry.register_operator_spec(PlaybackSyncRuntimeNode.SPEC, overwrite=True)
+    return registry

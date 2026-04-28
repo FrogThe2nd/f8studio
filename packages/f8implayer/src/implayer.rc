@@ -1,0 +1,3 @@
+#include "implayer_resource.h"
+
+IDI_F8IMPLAYER ICON "../resources/icon.ico"

@@ -9,6 +9,8 @@
 #include <cstring>
 #include <ctime>
 #include <fstream>
+#include <iomanip>
+#include <sstream>
 #include <stdexcept>
 #include <tuple>
 #include <unordered_set>
@@ -91,6 +93,126 @@ std::string access_to_string(f8::cppsdk::generated::F8StateAccess a) {
       return "wo";
   }
   return "";
+}
+
+std::string trim_copy(std::string value) {
+  value.erase(value.begin(),
+              std::find_if(value.begin(), value.end(), [](unsigned char ch) { return !std::isspace(ch); }));
+  value.erase(std::find_if(value.rbegin(), value.rend(), [](unsigned char ch) { return !std::isspace(ch); }).base(),
+              value.end());
+  return value;
+}
+
+std::uint32_t fnv1a32(const std::string& text) {
+  std::uint32_t value = 0x811C9DC5u;
+  for (unsigned char ch : text) {
+    value ^= static_cast<std::uint32_t>(ch);
+    value *= 0x01000193u;
+  }
+  return value;
+}
+
+std::string command_key_for_name(const std::string& name) {
+  const std::string raw = trim_copy(name);
+  std::string base;
+  bool last_was_sep = false;
+  for (unsigned char ch : raw) {
+    const char lower = static_cast<char>(std::tolower(ch));
+    if ((lower >= 'a' && lower <= 'z') || (lower >= '0' && lower <= '9')) {
+      base.push_back(lower);
+      last_was_sep = false;
+      continue;
+    }
+    if (!last_was_sep) {
+      base.push_back('_');
+      last_was_sep = true;
+    }
+  }
+  while (!base.empty() && base.front() == '_') base.erase(base.begin());
+  while (!base.empty() && base.back() == '_') base.pop_back();
+  if (base.empty()) base = "command";
+  std::ostringstream out;
+  out << base << "_" << std::hex << std::nouppercase << std::setw(8) << std::setfill('0') << fnv1a32(raw);
+  return out.str();
+}
+
+std::string command_input_state_field(const std::string& name) {
+  return "__cmd__." + command_key_for_name(name) + ".in";
+}
+
+std::string command_output_state_field(const std::string& name) {
+  return "__cmd__." + command_key_for_name(name) + ".out";
+}
+
+bool hidden_command_state_direction(const std::string& field, std::string& direction) {
+  if (field.rfind("__cmd__.", 0) != 0) return false;
+  if (field.size() > 3 && field.compare(field.size() - 3, 3, ".in") == 0) {
+    direction = "in";
+    return true;
+  }
+  if (field.size() > 4 && field.compare(field.size() - 4, 4, ".out") == 0) {
+    direction = "out";
+    return true;
+  }
+  return false;
+}
+
+struct ParsedCommandBinding {
+  std::string node_id;
+  std::string call;
+  std::string input_field;
+  std::string output_field;
+  std::vector<std::string> param_names;
+};
+
+std::vector<ParsedCommandBinding> parse_command_bindings_from_spec(const json& spec, const std::string& node_id) {
+  std::vector<ParsedCommandBinding> bindings;
+  const json* service = nullptr;
+  if (spec.is_object() && spec.contains("service") && spec.at("service").is_object()) {
+    service = &spec.at("service");
+  } else if (spec.is_object()) {
+    service = &spec;
+  }
+  if (service == nullptr || !service->is_object()) return bindings;
+  if (!service->contains("commands") || !service->at("commands").is_array()) return bindings;
+  for (const auto& command : service->at("commands")) {
+    if (!command.is_object()) continue;
+    const std::string call = trim_copy(command.value("name", ""));
+    if (call.empty()) continue;
+    ParsedCommandBinding binding;
+    binding.node_id = node_id;
+    binding.call = call;
+    binding.input_field = command_input_state_field(call);
+    binding.output_field = command_output_state_field(call);
+    if (command.contains("params") && command.at("params").is_array()) {
+      for (const auto& param : command.at("params")) {
+        if (!param.is_object()) continue;
+        const std::string param_name = trim_copy(param.value("name", ""));
+        if (!param_name.empty()) binding.param_names.push_back(param_name);
+      }
+    }
+    bindings.push_back(std::move(binding));
+  }
+  return bindings;
+}
+
+json map_command_args(const json& value, const std::vector<std::string>& param_names) {
+  json args = json::object();
+  if (param_names.empty()) return args;
+  if (value.is_object()) {
+    for (const auto& name : param_names) {
+      if (value.contains(name)) args[name] = value.at(name);
+    }
+    return args;
+  }
+  if (value.is_array()) {
+    for (std::size_t i = 0; i < value.size() && i < param_names.size(); ++i) {
+      args[param_names[i]] = value.at(i);
+    }
+    return args;
+  }
+  args[param_names.front()] = value;
+  return args;
 }
 
 void prune_timed_values(std::deque<std::pair<std::int64_t, double>>& values, const std::int64_t now_ms,
@@ -310,10 +432,13 @@ void ServiceBus::add_rungraph_node(RungraphHandlerNode* node) {
   rungraph_nodes_.push_back(node);
 }
 
-void ServiceBus::add_command_node(CommandableNode* node) {
+void ServiceBus::add_command_node(CommandableNode* node, const json& service_spec) {
   if (node == nullptr) return;
   std::lock_guard<std::mutex> lock(handlers_mu_);
   command_nodes_.push_back(node);
+  if (service_spec.is_object()) {
+    command_specs_by_node_[node] = service_spec;
+  }
 }
 
 std::size_t ServiceBus::drain_main_thread(std::size_t max_tasks) {
@@ -577,16 +702,7 @@ bool ServiceBus::start() {
         }
 
         main_thread_.post([this, node_id, field, value, ts_ms, meta]() {
-          bool allow_fanout = true;
-          try {
-            if (meta.is_object() && meta.contains("_noStateFanout") && meta["_noStateFanout"].is_boolean() &&
-                meta["_noStateFanout"].get<bool>()) {
-              allow_fanout = false;
-            }
-          } catch (...) {
-            allow_fanout = true;
-          }
-          deliver_state_local(node_id, field, value, ts_ms, meta, allow_fanout);
+          deliver_state_local(node_id, field, value, ts_ms, meta, true);
         });
       },
       true);
@@ -911,33 +1027,40 @@ bool ServiceBus::on_set_state(const std::string& node_id, const std::string& fie
     return true;
   }
 
+  std::string node_id_s;
+  try {
+    node_id_s = ensure_token(node_id, "node_id");
+  } catch (...) {
+    error_code = "INVALID_ARGS";
+    error_message = "invalid nodeId";
+    return false;
+  }
+
+  std::string field_s = trim_copy(field);
+  if (field_s.empty()) {
+    error_code = "INVALID_ARGS";
+    error_message = "field must be non-empty";
+    return false;
+  }
+
+  bool is_hidden_command_input = false;
+  {
+    std::lock_guard<std::mutex> lock(state_mu_);
+    is_hidden_command_input = command_input_bindings_.find({node_id_s, field_s}) != command_input_bindings_.end();
+  }
+  if (is_hidden_command_input) {
+    publish_state_local(node_id_s, field_s, value, now_ms(), "endpoint", meta, "external", true, true);
+    error_code.clear();
+    error_message.clear();
+    return true;
+  }
+
   std::vector<SetStateHandlerNode*> nodes;
   {
     std::lock_guard<std::mutex> lock(handlers_mu_);
     nodes = set_state_nodes_;
   }
   if (nodes.empty()) {
-    std::string node_id_s;
-    try {
-      node_id_s = ensure_token(node_id, "node_id");
-    } catch (...) {
-      error_code = "INVALID_ARGS";
-      error_message = "invalid nodeId";
-      return false;
-    }
-    std::string field_s = field;
-    field_s.erase(field_s.begin(),
-                  std::find_if(field_s.begin(), field_s.end(), [](unsigned char ch) { return !std::isspace(ch); }));
-    field_s.erase(std::find_if(field_s.rbegin(), field_s.rend(),
-                               [](unsigned char ch) { return !std::isspace(ch); })
-                      .base(),
-                  field_s.end());
-    if (field_s.empty()) {
-      error_code = "INVALID_ARGS";
-      error_message = "field must be non-empty";
-      return false;
-    }
-
     std::string access;
     {
       std::lock_guard<std::mutex> lock(state_mu_);
@@ -1021,17 +1144,29 @@ bool ServiceBus::on_set_rungraph(const json& graph_obj, const json& meta, std::s
   return true;
 }
 
-bool ServiceBus::on_command(const std::string& call, const json& args, const json& meta, json& result,
-                            std::string& error_code, std::string& error_message) {
-  if (call == "terminate" || call == "quit") {
-    spdlog::info("service_bus terminate requested serviceId={}", cfg_.service_id);
-    terminate_.store(true, std::memory_order_release);
-    term_cv_.notify_all();
-    result = json::object();
-    result["terminating"] = true;
-    return true;
+void ServiceBus::rebuild_command_bindings_locked() {
+  command_input_bindings_.clear();
+  command_output_bindings_.clear();
+  command_hidden_fields_.clear();
+  for (const auto& entry : command_specs_by_node_) {
+    const auto parsed = parse_command_bindings_from_spec(entry.second, cfg_.service_id);
+    for (const auto& binding_in : parsed) {
+      _CommandBinding binding;
+      binding.node_id = binding_in.node_id;
+      binding.call = binding_in.call;
+      binding.input_field = binding_in.input_field;
+      binding.output_field = binding_in.output_field;
+      binding.param_names = binding_in.param_names;
+      command_input_bindings_[{binding.node_id, binding.input_field}] = binding;
+      command_output_bindings_[binding.call] = binding;
+      command_hidden_fields_.insert({binding.node_id, binding.input_field});
+      command_hidden_fields_.insert({binding.node_id, binding.output_field});
+    }
   }
+}
 
+bool ServiceBus::dispatch_command_call(const std::string& call, const json& args, const json& meta, json& result,
+                                       std::string& error_code, std::string& error_message) {
   std::vector<CommandableNode*> nodes;
   {
     std::lock_guard<std::mutex> lock(handlers_mu_);
@@ -1055,6 +1190,106 @@ bool ServiceBus::on_command(const std::string& call, const json& args, const jso
   error_code = "UNKNOWN_CALL";
   error_message = "unknown call: " + call;
   return false;
+}
+
+void ServiceBus::write_command_output(const std::string& node_id, const std::string& call, const json& result,
+                                      std::int64_t ts_ms, const json& meta) {
+  _CommandBinding binding;
+  {
+    std::lock_guard<std::mutex> lock(state_mu_);
+    const auto it = command_output_bindings_.find(call);
+    if (it == command_output_bindings_.end()) return;
+    binding = it->second;
+  }
+  json out_meta = meta.is_object() ? meta : json::object();
+  out_meta["command"] = call;
+  publish_state_local(node_id.empty() ? binding.node_id : node_id, binding.output_field, result,
+                      ts_ms > 0 ? ts_ms : now_ms(), "cmd", out_meta, "runtime", true, true);
+}
+
+void ServiceBus::schedule_command_input_dispatch(const std::string& node_id, const std::string& field, const json& value,
+                                                 std::int64_t ts_ms, const json& meta) {
+  bool should_post = false;
+  {
+    std::lock_guard<std::mutex> lock(state_mu_);
+    auto& dispatch = command_dispatch_[{node_id, field}];
+    dispatch.latest_value = value;
+    dispatch.latest_ts_ms = ts_ms;
+    dispatch.latest_meta = meta.is_object() ? meta : json::object();
+    dispatch.version += 1;
+    if (!dispatch.running) {
+      dispatch.running = true;
+      should_post = true;
+    }
+  }
+  if (!should_post) return;
+  main_thread_.post([this, node_id, field]() { run_command_input_dispatch(node_id, field); });
+}
+
+void ServiceBus::run_command_input_dispatch(const std::string& node_id, const std::string& field) {
+  while (true) {
+    _CommandBinding binding;
+    _CommandDispatchState dispatch;
+    {
+      std::lock_guard<std::mutex> lock(state_mu_);
+      const auto it_binding = command_input_bindings_.find({node_id, field});
+      const auto it_dispatch = command_dispatch_.find({node_id, field});
+      if (it_binding == command_input_bindings_.end() || it_dispatch == command_dispatch_.end()) {
+        if (it_dispatch != command_dispatch_.end()) it_dispatch->second.running = false;
+        return;
+      }
+      binding = it_binding->second;
+      dispatch = it_dispatch->second;
+    }
+
+    const json args = map_command_args(dispatch.latest_value, binding.param_names);
+    json call_meta = dispatch.latest_meta.is_object() ? dispatch.latest_meta : json::object();
+    call_meta["commandInputField"] = field;
+    call_meta["source"] = "cmd";
+
+    json result = json::object();
+    std::string error_code;
+    std::string error_message;
+    const bool ok = dispatch_command_call(binding.call, args, call_meta, result, error_code, error_message);
+    if (ok) {
+      write_command_output(binding.node_id, binding.call, result, dispatch.latest_ts_ms, call_meta);
+    } else if (!error_code.empty() || !error_message.empty()) {
+      monitor_record_error(error_code.empty() ? "COMMAND_FAILED" : error_code,
+                           error_message.empty() ? ("command failed: " + binding.call) : error_message,
+                           dispatch.latest_ts_ms);
+    }
+
+    bool has_newer = false;
+    {
+      std::lock_guard<std::mutex> lock(state_mu_);
+      auto it_dispatch = command_dispatch_.find({node_id, field});
+      if (it_dispatch == command_dispatch_.end()) {
+        return;
+      }
+      has_newer = it_dispatch->second.version != dispatch.version;
+      if (!has_newer) {
+        it_dispatch->second.running = false;
+        return;
+      }
+    }
+  }
+}
+
+bool ServiceBus::on_command(const std::string& call, const json& args, const json& meta, json& result,
+                            std::string& error_code, std::string& error_message) {
+  if (call == "terminate" || call == "quit") {
+    spdlog::info("service_bus terminate requested serviceId={}", cfg_.service_id);
+    terminate_.store(true, std::memory_order_release);
+    term_cv_.notify_all();
+    result = json::object();
+    result["terminating"] = true;
+    return true;
+  }
+  const bool ok = dispatch_command_call(call, args, meta, result, error_code, error_message);
+  if (ok) {
+    write_command_output(cfg_.service_id, call, result, now_ms(), meta);
+  }
+  return ok;
 }
 
 void ServiceBus::load_active_from_kv() {
@@ -1283,6 +1518,7 @@ void ServiceBus::apply_rungraph_local(const json& graph_obj, std::string& error_
     intra_state_out_ = std::move(intra_state_out);
     cross_state_in_ = std::move(cross_state_in);
     cross_state_targets_ = std::move(cross_state_targets);
+    rebuild_command_bindings_locked();
     has_rungraph_ = true;
     state_access_snapshot = state_access_;
   }
@@ -1531,7 +1767,7 @@ void ServiceBus::apply_rungraph_local(const json& graph_obj, std::string& error_
         }
       }
       publish_state_local(node_id, field, v, rungraph_ts > 0 ? rungraph_ts : now_ms(), "rungraph",
-                          json{{"via", "rungraph"}, {"rungraphReconcile", true}, {"_noStateFanout", true}}, "rungraph",
+                          json{{"via", "rungraph"}, {"rungraphReconcile", true}}, "rungraph",
                           true, false);
     }
   }
@@ -1669,11 +1905,11 @@ void ServiceBus::apply_rungraph_local(const json& graph_obj, std::string& error_
     }
     if (has_svc_id) {
       publish_state_local(node_id, "svcId", n.serviceId.empty() ? sid : n.serviceId, rungraph_ts > 0 ? rungraph_ts : now_ms(),
-                          "system", json{{"builtin", true}, {"_noStateFanout", true}}, "system", false, false);
+                          "system", json{{"builtin", true}}, "system", false, false);
     }
     if (has_operator_id) {
       publish_state_local(node_id, "operatorId", n.nodeId, rungraph_ts > 0 ? rungraph_ts : now_ms(), "system",
-                          json{{"builtin", true}, {"_noStateFanout", true}}, "system", false, false);
+                          json{{"builtin", true}}, "system", false, false);
     }
   }
 }
@@ -1715,11 +1951,17 @@ void ServiceBus::publish_state_local(const std::string& node_id, const std::stri
 
   const json extra = meta.is_object() ? meta : json::object();
   (void)kv_set_node_state(kv_, cfg_.service_id, nid, f, value, source, extra, ts_ms, origin);
+  bool is_command_input = false;
   {
     std::lock_guard<std::mutex> lock(state_mu_);
     state_cache_[{nid, f}] = {value, ts_ms};
+    is_command_input = command_input_bindings_.find({nid, f}) != command_input_bindings_.end();
   }
   if (deliver_local) {
+    if (is_command_input) {
+      schedule_command_input_dispatch(nid, f, value, ts_ms, extra);
+      return;
+    }
     main_thread_.post([this, nid, f, value, ts_ms, extra, allow_state_fanout]() {
       deliver_state_local(nid, f, value, ts_ms, extra, allow_state_fanout);
     });
@@ -1728,17 +1970,24 @@ void ServiceBus::publish_state_local(const std::string& node_id, const std::stri
 
 void ServiceBus::deliver_state_local(const std::string& node_id, const std::string& field, const json& value,
                                      std::int64_t ts_ms, const json& meta, bool allow_state_fanout) {
-  std::vector<StatefulNode*> nodes;
-  {
-    std::lock_guard<std::mutex> lock(handlers_mu_);
-    nodes = stateful_nodes_;
+  std::string hidden_direction;
+  const bool is_hidden_command = hidden_command_state_direction(field, hidden_direction);
+  if (is_hidden_command && hidden_direction == "in") {
+    return;
   }
-  for (auto* n : nodes) {
-    if (!n) continue;
-    try {
-      n->on_state(node_id, field, value, ts_ms, meta);
-    } catch (...) {
-      continue;
+  std::vector<StatefulNode*> nodes;
+  if (!(is_hidden_command && hidden_direction == "out")) {
+    {
+      std::lock_guard<std::mutex> lock(handlers_mu_);
+      nodes = stateful_nodes_;
+    }
+    for (auto* n : nodes) {
+      if (!n) continue;
+      try {
+        n->on_state(node_id, field, value, ts_ms, meta);
+      } catch (...) {
+        continue;
+      }
     }
   }
   if (allow_state_fanout) {

@@ -4,7 +4,8 @@ import math
 from typing import Any
 
 import numpy as np
-from f8pysdk import (
+from f8pysdk.codec import coerce_bool, parse_number
+from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
@@ -15,11 +16,10 @@ from f8pysdk import (
     number_schema,
 )
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import OperatorNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import OperatorNode
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from ..constants import SERVICE_CLASS
-from ._signal_processing import coerce_bool, coerce_number
 
 OPERATOR_CLASS = "f8.periodicity_detector"
 _MISSING_DECAY = 0.95
@@ -211,13 +211,13 @@ class PeriodicityDetectorRuntimeNode(OperatorNode):
         self._window = self._coerce_window(self._initial_state.get("window"), default=150, minimum=8)
         self._min_lag = self._coerce_window(self._initial_state.get("min_lag"), default=10, minimum=1)
         self._max_lag = self._coerce_window(self._initial_state.get("max_lag"), default=150, minimum=self._min_lag)
-        self._peak_prominence = max(0.0, float(coerce_number(self._initial_state.get("peak_prominence")) or 0.1))
+        self._peak_prominence = max(0.0, float(parse_number(self._initial_state.get("peak_prominence")) or 0.1))
         self._min_peaks = self._coerce_window(self._initial_state.get("min_peaks"), default=1, minimum=1)
         self._smoothing_alpha = self._coerce_alpha(self._initial_state.get("smoothing_alpha"), default=0.25)
-        self._noise_floor = max(0.0, float(coerce_number(self._initial_state.get("noise_floor")) or 1e-4))
+        self._noise_floor = max(0.0, float(parse_number(self._initial_state.get("noise_floor")) or 1e-4))
         self._threshold = self._coerce_alpha(self._initial_state.get("threshold"), default=0.6)
         self._rms_window = self._coerce_window(self._initial_state.get("rms_window"), default=64, minimum=4)
-        self._reset_on_missing = self._coerce_bool(self._initial_state.get("reset_on_missing"), default=False)
+        self._reset_on_missing = coerce_bool(self._initial_state.get("reset_on_missing"), default=False)
         self._sample_interval_ms = self._coerce_sample_interval_ms(self._initial_state.get("sampleIntervalMs"), default=33.3333333333)
 
         self._estimator = ShortTimeAutocorrelationEstimator(
@@ -244,24 +244,17 @@ class PeriodicityDetectorRuntimeNode(OperatorNode):
 
     @staticmethod
     def _coerce_window(value: Any, *, default: int, minimum: int) -> int:
-        numeric = coerce_number(value)
+        numeric = parse_number(value)
         if numeric is None:
             return int(default)
         return max(minimum, int(round(float(numeric))))
 
     @staticmethod
     def _coerce_alpha(value: Any, *, default: float) -> float:
-        numeric = coerce_number(value)
+        numeric = parse_number(value)
         if numeric is None:
             return float(default)
         return _clamp01(float(numeric))
-
-    @staticmethod
-    def _coerce_bool(value: Any, *, default: bool) -> bool:
-        normalized = coerce_bool(value)
-        if normalized is None:
-            return bool(default)
-        return bool(normalized)
 
     def _apply_state(self) -> None:
         self._max_lag = max(self._min_lag, self._max_lag)
@@ -292,7 +285,7 @@ class PeriodicityDetectorRuntimeNode(OperatorNode):
             self._apply_state()
             return
         if name == "peak_prominence":
-            numeric = coerce_number(value)
+            numeric = parse_number(value)
             if numeric is not None:
                 self._peak_prominence = max(0.0, float(numeric))
                 self._apply_state()
@@ -306,7 +299,7 @@ class PeriodicityDetectorRuntimeNode(OperatorNode):
             self._apply_state()
             return
         if name == "noise_floor":
-            numeric = coerce_number(value)
+            numeric = parse_number(value)
             if numeric is not None:
                 self._noise_floor = max(0.0, float(numeric))
                 self._apply_state()
@@ -320,7 +313,7 @@ class PeriodicityDetectorRuntimeNode(OperatorNode):
             self._apply_state()
             return
         if name == "reset_on_missing":
-            self._reset_on_missing = self._coerce_bool(value, default=self._reset_on_missing)
+            self._reset_on_missing = coerce_bool(value, default=self._reset_on_missing)
             return
         if name == "sampleIntervalMs":
             self._sample_interval_ms = self._coerce_sample_interval_ms(value, default=self._sample_interval_ms)
@@ -331,7 +324,7 @@ class PeriodicityDetectorRuntimeNode(OperatorNode):
         if port_name not in self._last_outputs:
             return None
 
-        numeric = coerce_number(await self.pull("value", ctx_id=ctx_id))
+        numeric = parse_number(await self.pull("value", ctx_id=ctx_id))
         if numeric is None:
             if self._reset_on_missing:
                 confidence = self._estimator.decay(_MISSING_DECAY)
@@ -368,7 +361,7 @@ class PeriodicityDetectorRuntimeNode(OperatorNode):
 
     @staticmethod
     def _coerce_sample_interval_ms(value: Any, *, default: float) -> float:
-        interval_ms = coerce_number(value)
+        interval_ms = parse_number(value)
         if interval_ms is not None:
             return max(1e-6, float(interval_ms))
         return max(1e-6, float(default))
@@ -377,6 +370,7 @@ class PeriodicityDetectorRuntimeNode(OperatorNode):
 PeriodicityDetectorRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
+    paletteCategory=f"{SERVICE_CLASS}.signal",
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="Periodicity Detector",
@@ -495,12 +489,11 @@ PeriodicityDetectorRuntimeNode.SPEC = F8OperatorSpec(
 )
 
 
-def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
         return PeriodicityDetectorRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(PeriodicityDetectorRuntimeNode.SPEC, overwrite=True)
-    return reg
+    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
+    registry.register_operator_spec(PeriodicityDetectorRuntimeNode.SPEC, overwrite=True)
+    return registry

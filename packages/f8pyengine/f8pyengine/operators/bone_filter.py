@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from f8pysdk.codec import coerce_bool
+from f8pysdk.codec import parse_number
 import math
 import time
 from dataclasses import dataclass
 from typing import Any
 
-from f8pysdk import (
+from f8pysdk.specs import (
     F8DataPortSpec,
+    F8ComplexObjectTypeSchema,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
@@ -19,8 +22,8 @@ from f8pysdk import (
     string_schema,
 )
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import OperatorNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import OperatorNode
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from ..constants import SERVICE_CLASS
 from .envelope import DoubleExponentialMovingAverage, ExponentialMovingAverage
@@ -36,24 +39,10 @@ from .smooth_filter import (
 OPERATOR_CLASS = "f8.bone_filter"
 _EPS = 1e-9
 
-
 @dataclass(frozen=True)
 class _Bone:
     pos: tuple[float, float, float]
     rot: tuple[float, float, float, float]
-
-
-def _coerce_number(value: Any) -> float | None:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        numeric = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return None
-    if math.isnan(numeric) or math.isinf(numeric):
-        return None
-    return float(numeric)
-
 
 def _normalize_filter(value: Any) -> str:
     normalized = str(value or FILTER_NONE).strip().upper()
@@ -61,31 +50,14 @@ def _normalize_filter(value: Any) -> str:
         return normalized
     return FILTER_NONE
 
-
 def _clamp_alpha(value: Any, default: float) -> float:
-    numeric = _coerce_number(value)
+    numeric = parse_number(value)
     if numeric is None:
         return float(default)
     return max(0.0, min(1.0, float(numeric)))
 
-
-def _coerce_bool(value: Any, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "off"}:
-            return False
-    return bool(default)
-
-
 def _quat_dot(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
     return float(a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3])
-
 
 def _quat_normalize(q: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
     norm = math.sqrt(_quat_dot(q, q))
@@ -94,14 +66,11 @@ def _quat_normalize(q: tuple[float, float, float, float]) -> tuple[float, float,
     inv = 1.0 / norm
     return (q[0] * inv, q[1] * inv, q[2] * inv, q[3] * inv)
 
-
 def _quat_conjugate(q: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
     return (q[0], -q[1], -q[2], -q[3])
 
-
 def _quat_inverse(q: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
     return _quat_conjugate(_quat_normalize(q))
-
 
 def _quat_mul(
     a: tuple[float, float, float, float], b: tuple[float, float, float, float]
@@ -115,7 +84,6 @@ def _quat_mul(
         aw * bz + ax * by - ay * bx + az * bw,
     )
 
-
 def _quat_rotate_vec(
     q: tuple[float, float, float, float], v: tuple[float, float, float]
 ) -> tuple[float, float, float]:
@@ -124,14 +92,11 @@ def _quat_rotate_vec(
     rotated = _quat_mul(_quat_mul(qn, p), _quat_conjugate(qn))
     return (float(rotated[1]), float(rotated[2]), float(rotated[3]))
 
-
 def _vector_sub(a: tuple[float, float, float], b: tuple[float, float, float]) -> tuple[float, float, float]:
     return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
 
-
 def _vector_norm(v: tuple[float, float, float]) -> float:
     return math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
-
 
 def _quat_relative_angle_deg(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
     dot = abs(_quat_dot(_quat_normalize(a), _quat_normalize(b)))
@@ -139,15 +104,13 @@ def _quat_relative_angle_deg(a: tuple[float, float, float, float], b: tuple[floa
     rad = 2.0 * math.acos(clamped)
     return float(rad * 180.0 / math.pi)
 
-
-def _bone_schema() -> dict[str, Any]:
+def _bone_schema() -> F8ComplexObjectTypeSchema:
     return complex_object_schema(
         properties={
             "pos": array_schema(items=number_schema()),
             "rot": array_schema(items=number_schema()),
         }
     )
-
 
 class BoneFilterRuntimeNode(OperatorNode):
     def __init__(self, *, node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any] | None = None) -> None:
@@ -162,22 +125,22 @@ class BoneFilterRuntimeNode(OperatorNode):
         self._filter_type = _normalize_filter(self._initial_state.get("filter_type") or FILTER_EMA)
         self._ema_alpha = _clamp_alpha(self._initial_state.get("ema_alpha"), 0.4)
         self._dema_alpha = _clamp_alpha(self._initial_state.get("dema_alpha"), 0.4)
-        self._one_euro_min_cutoff = max(1e-6, float(_coerce_number(self._initial_state.get("one_euro_min_cutoff")) or 1.5))
-        self._one_euro_beta = max(0.0, float(_coerce_number(self._initial_state.get("one_euro_beta")) or 0.0))
+        self._one_euro_min_cutoff = max(1e-6, float(parse_number(self._initial_state.get("one_euro_min_cutoff")) or 1.5))
+        self._one_euro_beta = max(0.0, float(parse_number(self._initial_state.get("one_euro_beta")) or 0.0))
         self._one_euro_derivative_cutoff = max(
-            1e-6, float(_coerce_number(self._initial_state.get("one_euro_derivative_cutoff")) or 1.0)
+            1e-6, float(parse_number(self._initial_state.get("one_euro_derivative_cutoff")) or 1.0)
         )
         self._one_euro_default_freq = max(
-            1e-3, float(_coerce_number(self._initial_state.get("one_euro_default_freq")) or 90.0)
+            1e-3, float(parse_number(self._initial_state.get("one_euro_default_freq")) or 90.0)
         )
 
-        self._jump_enabled = _coerce_bool(self._initial_state.get("jumpEnabled"), True)
-        self._jump_pos_threshold = max(0.0, float(_coerce_number(self._initial_state.get("jumpPosThreshold")) or 0.25))
+        self._jump_enabled = coerce_bool(self._initial_state.get("jumpEnabled"), default=True)
+        self._jump_pos_threshold = max(0.0, float(parse_number(self._initial_state.get("jumpPosThreshold")) or 0.25))
         self._jump_rot_deg_threshold = max(
-            0.0, float(_coerce_number(self._initial_state.get("jumpRotDegThreshold")) or 35.0)
+            0.0, float(parse_number(self._initial_state.get("jumpRotDegThreshold")) or 35.0)
         )
-        self._jump_consecutive_frames = max(1, int(_coerce_number(self._initial_state.get("jumpConsecutiveFrames")) or 3))
-        self._jump_cooldown_frames = max(0, int(_coerce_number(self._initial_state.get("jumpCooldownFrames")) or 8))
+        self._jump_consecutive_frames = max(1, int(parse_number(self._initial_state.get("jumpConsecutiveFrames")) or 3))
+        self._jump_cooldown_frames = max(0, int(parse_number(self._initial_state.get("jumpCooldownFrames")) or 8))
 
         self._filters: list[Any] = []
         self._filtered_bone: _Bone | None = None
@@ -230,13 +193,13 @@ class BoneFilterRuntimeNode(OperatorNode):
         if len(pos_raw) != 3 or len(rot_raw) != 4:
             return None
 
-        x = _coerce_number(pos_raw[0])
-        y = _coerce_number(pos_raw[1])
-        z = _coerce_number(pos_raw[2])
-        w = _coerce_number(rot_raw[0])
-        qx = _coerce_number(rot_raw[1])
-        qy = _coerce_number(rot_raw[2])
-        qz = _coerce_number(rot_raw[3])
+        x = parse_number(pos_raw[0])
+        y = parse_number(pos_raw[1])
+        z = parse_number(pos_raw[2])
+        w = parse_number(rot_raw[0])
+        qx = parse_number(rot_raw[1])
+        qy = parse_number(rot_raw[2])
+        qz = parse_number(rot_raw[3])
         if x is None or y is None or z is None or w is None or qx is None or qy is None or qz is None:
             return None
 
@@ -342,50 +305,50 @@ class BoneFilterRuntimeNode(OperatorNode):
             self._reset_bank()
             return
         if name == "one_euro_min_cutoff":
-            numeric = _coerce_number(value)
+            numeric = parse_number(value)
             if numeric is not None:
                 self._one_euro_min_cutoff = max(1e-6, float(numeric))
             self._reset_bank()
             return
         if name == "one_euro_beta":
-            numeric = _coerce_number(value)
+            numeric = parse_number(value)
             if numeric is not None:
                 self._one_euro_beta = max(0.0, float(numeric))
             self._reset_bank()
             return
         if name == "one_euro_derivative_cutoff":
-            numeric = _coerce_number(value)
+            numeric = parse_number(value)
             if numeric is not None:
                 self._one_euro_derivative_cutoff = max(1e-6, float(numeric))
             self._reset_bank()
             return
         if name == "one_euro_default_freq":
-            numeric = _coerce_number(value)
+            numeric = parse_number(value)
             if numeric is not None:
                 self._one_euro_default_freq = max(1e-3, float(numeric))
             self._reset_bank()
             return
         if name == "jumpEnabled":
-            self._jump_enabled = _coerce_bool(value, self._jump_enabled)
+            self._jump_enabled = coerce_bool(value, default=self._jump_enabled)
             self._far_count = 0
             return
         if name == "jumpPosThreshold":
-            numeric = _coerce_number(value)
+            numeric = parse_number(value)
             if numeric is not None:
                 self._jump_pos_threshold = max(0.0, float(numeric))
             return
         if name == "jumpRotDegThreshold":
-            numeric = _coerce_number(value)
+            numeric = parse_number(value)
             if numeric is not None:
                 self._jump_rot_deg_threshold = max(0.0, float(numeric))
             return
         if name == "jumpConsecutiveFrames":
-            numeric = _coerce_number(value)
+            numeric = parse_number(value)
             if numeric is not None:
                 self._jump_consecutive_frames = max(1, int(round(float(numeric))))
             return
         if name == "jumpCooldownFrames":
-            numeric = _coerce_number(value)
+            numeric = parse_number(value)
             if numeric is not None:
                 self._jump_cooldown_frames = max(0, int(round(float(numeric))))
 
@@ -432,10 +395,10 @@ class BoneFilterRuntimeNode(OperatorNode):
         self._dirty = False
         return self._last_outputs.get(port_name)
 
-
 BoneFilterRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
+    paletteCategory=f"{SERVICE_CLASS}.motion",
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="Bone Filter",
@@ -564,13 +527,11 @@ BoneFilterRuntimeNode.SPEC = F8OperatorSpec(
     ],
 )
 
-
-def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
         return BoneFilterRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(BoneFilterRuntimeNode.SPEC, overwrite=True)
-    return reg
+    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
+    registry.register_operator_spec(BoneFilterRuntimeNode.SPEC, overwrite=True)
+    return registry

@@ -1,15 +1,17 @@
 ## When to Use
 
-- Use `f8.dl.humandetector` when the graph only cares about people and not general object classes.
-- It specializes in identifying humans in video streams using optimized ONNX models and is a more focused alternative to the general object detector.
-- It is a cleaner release choice than a broader detector when the downstream logic is human-specific.
+- Use `f8.dl.humandetector` when the graph only cares about people rather than general objects.
+- It is a strong choice for human-presence logic, person ROI filtering, and person-first analysis chains.
+- It usually fits better than a general detector when the scene is fundamentally human-centered.
 
 ## Common Wiring Patterns
 
-- Feed it from `f8.implayer` or `f8.screencap`, then branch detections to overlays, skeleton-related logic, or state summaries.
-- Keep it paired with a visual validation branch during threshold tuning to ensure the subject is captured reliably.
+- A common chain is `video source -> f8.dl.humandetector -> tracking / mp.pose / pyengine`.
+- If later logic depends on people, stabilize the "where is the person?" step before building the rest of the graph.
+- Keep detections visible during development.
 
 ## Pitfalls / Gotchas
 
-- Human-only detectors still depend on source framing and input scale; low-quality or extreme-angle inputs reduce confidence quickly.
-- Users often tune downstream logic before verifying that the detector itself sees the subject reliably in the current environment.
+- Small people, strong backlight, and heavy occlusion reduce quality quickly.
+- Human detection is not the same as pose estimation; use it as a person-localization stage, not as a skeleton source.
+- In multi-person scenes, decide early which person the graph should follow.

@@ -11,7 +11,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-from f8pysdk import (
+from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
@@ -24,10 +24,10 @@ from f8pysdk import (
     number_schema,
     string_schema,
 )
-from f8pysdk.json_unwrap import unwrap_json_value as _unwrap_json_value
+from f8pysdk.codec import coerce_flag, parse_int, parse_number, unwrap_json_value
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import OperatorNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import OperatorNode
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from ..constants import SERVICE_CLASS
 
@@ -35,7 +35,6 @@ logger = logging.getLogger(__name__)
 
 OPERATOR_CLASS: Final[str] = "f8.lovense_out"
 _ERROR_DEDUPE_MS: Final[int] = 2000
-
 
 @dataclass(frozen=True)
 class _LovenseOutConfig:
@@ -47,7 +46,6 @@ class _LovenseOutConfig:
     verify_tls: bool
     default_toy: str
 
-
 @dataclass(frozen=True)
 class _HttpResult:
     status_code: int
@@ -56,51 +54,8 @@ class _HttpResult:
     raw_body: str
     error_message: str
 
-
 def _now_ms() -> int:
     return int(time.time() * 1000.0)
-
-
-def _coerce_bool(value: Any, *, default: bool) -> bool:
-    unwrapped = _unwrap_json_value(value)
-    if isinstance(unwrapped, bool):
-        return unwrapped
-    if isinstance(unwrapped, (int, float)):
-        return bool(unwrapped)
-    text = str(unwrapped or "").strip().lower()
-    if text in ("1", "true", "yes", "on"):
-        return True
-    if text in ("0", "false", "no", "off", ""):
-        return False
-    return bool(default)
-
-
-def _coerce_int(value: Any) -> int | None:
-    unwrapped = _unwrap_json_value(value)
-    if unwrapped is None:
-        return None
-    if isinstance(unwrapped, bool):
-        return int(unwrapped)
-    try:
-        return int(unwrapped)
-    except (TypeError, ValueError):
-        return None
-
-
-def _coerce_float(value: Any) -> float | None:
-    unwrapped = _unwrap_json_value(value)
-    if unwrapped is None or isinstance(unwrapped, bool):
-        return None
-    try:
-        out = float(unwrapped)
-    except (TypeError, ValueError):
-        return None
-    if out != out:
-        return None
-    if out in (float("inf"), float("-inf")):
-        return None
-    return float(out)
-
 
 def _clamp(value: float, minimum: float, maximum: float) -> float:
     if value < minimum:
@@ -109,10 +64,8 @@ def _clamp(value: float, minimum: float, maximum: float) -> float:
         return float(maximum)
     return float(value)
 
-
 def _normalize_url(value: Any) -> str:
-    return str(_unwrap_json_value(value) or "").strip()
-
+    return str(unwrap_json_value(value) or "").strip()
 
 def _validate_command_url(value: str) -> str:
     command_url = str(value or "").strip()
@@ -122,7 +75,6 @@ def _validate_command_url(value: str) -> str:
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         raise ValueError("commandUrl must start with http:// or https:// and include host")
     return command_url
-
 
 class LovenseOutRuntimeNode(OperatorNode):
     def __init__(self, *, node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any] | None = None) -> None:
@@ -185,13 +137,13 @@ class LovenseOutRuntimeNode(OperatorNode):
     ) -> Any:
         del ts_ms, meta
         name = str(field or "").strip()
-        unwrapped = _unwrap_json_value(value)
+        unwrapped = unwrap_json_value(value)
 
         if name in ("enabled", "verifyTls", "stop"):
-            return _coerce_bool(unwrapped, default=False)
+            return coerce_flag(unwrapped, default=False)
 
         if name == "stopPrevious":
-            return _coerce_bool(unwrapped, default=True)
+            return coerce_flag(unwrapped, default=True)
 
         if name == "commandUrl":
             return _validate_command_url(_normalize_url(unwrapped))
@@ -203,13 +155,13 @@ class LovenseOutRuntimeNode(OperatorNode):
             return platform_name
 
         if name == "requestTimeoutMs":
-            timeout_ms = _coerce_int(unwrapped)
+            timeout_ms = parse_int(unwrapped)
             if timeout_ms is None or timeout_ms < 100 or timeout_ms > 120000:
                 raise ValueError("requestTimeoutMs must be in [100, 120000]")
             return int(timeout_ms)
 
         if name == "minSendIntervalMs":
-            min_interval_ms = _coerce_int(unwrapped)
+            min_interval_ms = parse_int(unwrapped)
             if min_interval_ms is None or min_interval_ms < 0 or min_interval_ms > 120000:
                 raise ValueError("minSendIntervalMs must be in [0, 120000]")
             return int(min_interval_ms)
@@ -230,7 +182,7 @@ class LovenseOutRuntimeNode(OperatorNode):
             return self._validate_optional_unit_interval(unwrapped, label=name)
 
         if name == "timeSec":
-            time_sec = _coerce_float(unwrapped)
+            time_sec = parse_number(unwrapped)
             if time_sec is None:
                 raise ValueError("timeSec must be a number")
             if time_sec < 0.0 or time_sec > 86400.0:
@@ -240,7 +192,7 @@ class LovenseOutRuntimeNode(OperatorNode):
         if name in ("loopRunningSec", "loopPauseSec"):
             if self._is_none_like(unwrapped):
                 return None
-            value_sec = _coerce_float(unwrapped)
+            value_sec = parse_number(unwrapped)
             if value_sec is None:
                 raise ValueError(f"{name} must be a number or null")
             if value_sec < 0.0 or value_sec > 86400.0:
@@ -287,7 +239,7 @@ class LovenseOutRuntimeNode(OperatorNode):
 
     async def _handle_position_exec(self, *, exec_id: str | int, cfg: _LovenseOutConfig) -> None:
         raw_position = await self.pull("position", ctx_id=exec_id)
-        position = _coerce_float(raw_position)
+        position = parse_number(raw_position)
         if position is None:
             return
 
@@ -350,7 +302,7 @@ class LovenseOutRuntimeNode(OperatorNode):
             return True
 
     async def _build_apply_payload(self, *, default_toy: str) -> dict[str, Any] | None:
-        stop_enabled = _coerce_bool(await self._read_raw_state("stop"), default=False)
+        stop_enabled = coerce_flag(await self._read_raw_state("stop"), default=False)
         if stop_enabled:
             payload: dict[str, Any] = {
                 "command": "Function",
@@ -416,7 +368,7 @@ class LovenseOutRuntimeNode(OperatorNode):
             return None
 
         time_sec = await self._read_required_time_sec()
-        stop_previous = _coerce_bool(await self._read_raw_state("stopPrevious"), default=True)
+        stop_previous = coerce_flag(await self._read_raw_state("stopPrevious"), default=True)
 
         payload = {
             "command": "Function",
@@ -468,7 +420,7 @@ class LovenseOutRuntimeNode(OperatorNode):
         await self.set_state(field, value)
 
     async def _read_config(self) -> _LovenseOutConfig:
-        enabled = _coerce_bool(await self._read_raw_state("enabled"), default=True)
+        enabled = coerce_flag(await self._read_raw_state("enabled"), default=True)
         command_url = _normalize_url(await self._read_raw_state("commandUrl"))
         if not command_url:
             command_url = "https://127-0-0-1.lovense.club:30010/command"
@@ -478,17 +430,17 @@ class LovenseOutRuntimeNode(OperatorNode):
         if not platform_name:
             platform_name = "Feel8 Studio"
 
-        request_timeout_ms = _coerce_int(await self._read_raw_state("requestTimeoutMs"))
+        request_timeout_ms = parse_int(await self._read_raw_state("requestTimeoutMs"))
         if request_timeout_ms is None:
             request_timeout_ms = 5000
         request_timeout_ms = max(100, min(120000, int(request_timeout_ms)))
 
-        min_send_interval_ms = _coerce_int(await self._read_raw_state("minSendIntervalMs"))
+        min_send_interval_ms = parse_int(await self._read_raw_state("minSendIntervalMs"))
         if min_send_interval_ms is None:
             min_send_interval_ms = 100
         min_send_interval_ms = max(0, min(120000, int(min_send_interval_ms)))
 
-        verify_tls = _coerce_bool(await self._read_raw_state("verifyTls"), default=True)
+        verify_tls = coerce_flag(await self._read_raw_state("verifyTls"), default=True)
         default_toy = str(await self._read_raw_state("defaultToy") or "").strip()
 
         return _LovenseOutConfig(
@@ -503,16 +455,16 @@ class LovenseOutRuntimeNode(OperatorNode):
 
     async def _read_raw_state(self, name: str) -> Any:
         live = await self.get_state_value(name)
-        unwrapped_live = _unwrap_json_value(live)
+        unwrapped_live = unwrap_json_value(live)
         if unwrapped_live is not None:
             return unwrapped_live
-        return _unwrap_json_value(self._initial_state.get(name))
+        return unwrap_json_value(self._initial_state.get(name))
 
     async def _read_optional_level_state(self, field: str) -> float | None:
         raw = await self._read_raw_state(field)
         if self._is_none_like(raw):
             return None
-        parsed = _coerce_float(raw)
+        parsed = parse_number(raw)
         if parsed is None:
             return None
         return _clamp(parsed, 0.0, 1.0)
@@ -521,7 +473,7 @@ class LovenseOutRuntimeNode(OperatorNode):
         raw = await self._read_raw_state(field)
         if self._is_none_like(raw):
             return None
-        parsed = _coerce_float(raw)
+        parsed = parse_number(raw)
         if parsed is None:
             return None
         parsed = _clamp(parsed, 0.0, 86400.0)
@@ -531,7 +483,7 @@ class LovenseOutRuntimeNode(OperatorNode):
 
     async def _read_required_time_sec(self) -> float:
         raw = await self._read_raw_state("timeSec")
-        parsed = _coerce_float(raw)
+        parsed = parse_number(raw)
         if parsed is None:
             return 0.0
         return float(_clamp(parsed, 0.0, 86400.0))
@@ -558,7 +510,7 @@ class LovenseOutRuntimeNode(OperatorNode):
     def _validate_optional_unit_interval(self, value: Any, *, label: str) -> float | None:
         if self._is_none_like(value):
             return None
-        parsed = _coerce_float(value)
+        parsed = parse_number(value)
         if parsed is None:
             raise ValueError(f"{label} must be a number in [0, 1] or null")
         if parsed < 0.0 or parsed > 1.0:
@@ -576,7 +528,7 @@ class LovenseOutRuntimeNode(OperatorNode):
     def _extract_result_code(self, response: _HttpResult) -> int:
         body = response.body
         if isinstance(body, dict):
-            code = _coerce_int(body.get("code"))
+            code = parse_int(body.get("code"))
             if code is not None:
                 return int(code)
         if response.status_code > 0:
@@ -589,7 +541,7 @@ class LovenseOutRuntimeNode(OperatorNode):
 
         body = response.body
         if isinstance(body, dict):
-            code = _coerce_int(body.get("code"))
+            code = parse_int(body.get("code"))
             type_text = str(body.get("type") or "").strip().lower()
             message_text = str(body.get("message") or "").strip()
             if code is not None and code != 200:
@@ -753,10 +705,10 @@ class LovenseOutRuntimeNode(OperatorNode):
             error_message="",
         )
 
-
 LovenseOutRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
+    paletteCategory=f"{SERVICE_CLASS}.output",
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="Lovense Out",
@@ -979,7 +931,7 @@ LovenseOutRuntimeNode.SPEC = F8OperatorSpec(
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
             required=True,
-            uiControl="options:[availableToys]",
+            uiControl="select[availableToys]",
             showOnNode=True,
         ),
         F8StateSpec(
@@ -1001,20 +953,13 @@ LovenseOutRuntimeNode.SPEC = F8OperatorSpec(
             showOnNode=False,
         ),
     ],
-    editableStateFields=False,
-    editableDataInPorts=False,
-    editableDataOutPorts=False,
-    editableExecInPorts=False,
-    editableExecOutPorts=False,
 )
 
-
-def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
         return LovenseOutRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(LovenseOutRuntimeNode.SPEC, overwrite=True)
-    return reg
+    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
+    registry.register_operator_spec(LovenseOutRuntimeNode.SPEC, overwrite=True)
+    return registry

@@ -11,7 +11,7 @@ Use this section when you already know how to launch Studio and want a more comp
 - Service lifecycle, deploy flow, and runtime monitoring
 - State/schema editing, command authoring, and Monaco-based code editing
 - Node Library search, variants, session files, and graph reuse
-- Troubleshooting, headless execution, and common failure patterns
+- Troubleshooting and common failure patterns
 
 ## Recommended Reading Order
 
@@ -20,7 +20,7 @@ Use this section when you already know how to launch Studio and want a more comp
 3. [Lifecycle and Monitoring](lifecycle-and-monitoring.md)
 4. [Schema and Code Editors](schema-and-code-editors.md)
 5. [Node Library and Sessions](node-library-and-sessions.md)
-6. [Debugging and Runner](debugging-and-runner.md)
+6. [Debugging](debugging.md)
 
 ## Launch Recap
 
@@ -40,4 +40,3 @@ python -m f8pystudio.main --discovery-live
 - [Modules Overview](../modules/index.md)
 - [Node Atlas](../node-atlas/index.md)
 - [Scenarios](../scenarios/index.md)
-

@@ -7,8 +7,9 @@ from typing import Any
 
 import numpy as np
 
+from f8pysdk.codec import coerce_float, coerce_int
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import ServiceNode
+from f8pysdk.nodes import ServiceNode
 
 from .constants import CORE_SCHEMA_VERSION, RHYTHM_SCHEMA_VERSION
 from .feature_math import compute_pulse_clarity, compute_tempo_bpm, librosa_available, select_recent_onset
@@ -34,13 +35,13 @@ class AudioRhythmFeatureServiceNode(ServiceNode):
         self._initial_state = dict(initial_state or {})
         self._active = True
 
-        self._tempo_window_sec = self._coerce_float(
+        self._tempo_window_sec = coerce_float(
             self._initial_state.get("tempoWindowSec"), default=RhythmDefaults.tempo_window_sec, minimum=1.0
         )
-        self._pulse_window_sec = self._coerce_float(
+        self._pulse_window_sec = coerce_float(
             self._initial_state.get("pulseWindowSec"), default=RhythmDefaults.pulse_window_sec, minimum=1.0
         )
-        self._emit_every = self._coerce_int(self._initial_state.get("emitEvery"), default=RhythmDefaults.emit_every, minimum=1)
+        self._emit_every = coerce_int(self._initial_state.get("emitEvery"), default=RhythmDefaults.emit_every, minimum=1)
 
         self._emit_counter = 0
         self._emit_seq = 0
@@ -56,13 +57,13 @@ class AudioRhythmFeatureServiceNode(ServiceNode):
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
         del ts_ms
         if field == "tempoWindowSec":
-            self._tempo_window_sec = self._coerce_float(value, default=self._tempo_window_sec, minimum=1.0)
+            self._tempo_window_sec = coerce_float(value, default=self._tempo_window_sec, minimum=1.0)
             return
         if field == "pulseWindowSec":
-            self._pulse_window_sec = self._coerce_float(value, default=self._pulse_window_sec, minimum=1.0)
+            self._pulse_window_sec = coerce_float(value, default=self._pulse_window_sec, minimum=1.0)
             return
         if field == "emitEvery":
-            self._emit_every = self._coerce_int(value, default=self._emit_every, minimum=1)
+            self._emit_every = coerce_int(value, default=self._emit_every, minimum=1)
             return
 
     async def on_data(self, port: str, value: Any, *, ts_ms: int | None = None) -> None:
@@ -75,26 +76,6 @@ class AudioRhythmFeatureServiceNode(ServiceNode):
             await self._set_last_error("coreFeatures payload must be object", signature="bad_payload_type")
             return
         await self._process_core_payload(value)
-
-    @staticmethod
-    def _coerce_int(value: Any, *, default: int, minimum: int) -> int:
-        try:
-            out = int(value)
-        except (TypeError, ValueError):
-            out = int(default)
-        if out < int(minimum):
-            return int(minimum)
-        return out
-
-    @staticmethod
-    def _coerce_float(value: Any, *, default: float, minimum: float) -> float:
-        try:
-            out = float(value)
-        except (TypeError, ValueError):
-            out = float(default)
-        if out < float(minimum):
-            return float(minimum)
-        return out
 
     @staticmethod
     def _now_ms() -> int:

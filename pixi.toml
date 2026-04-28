@@ -2,7 +2,7 @@
 authors = ["sis92 <feel8.fun@gmail.com>"]
 channels = ["conda-forge"]
 name = "feel8-build"
-version = "0.2.1"
+version = "0.3.0"
 description = "Feel8 meta package"
 platforms = ["win-64", "linux-64"]
 preview = ["pixi-build"]
@@ -43,7 +43,6 @@ f8pydl_bench = "python scripts/bench_dl_baseline.py"
 f8pysdk = { path = "packages/f8pysdk", editable = true }
 
 [feature.sdk.tasks]
-runner = "python -m f8pysdk.headless_runner"
 update_describes = "python scripts/update_static_describes.py"
 protocol_codegen_py = "python scripts/protocol_codegen_msgspec.py --protocol schemas/protocol.yml --output packages/f8pysdk/f8pysdk/generated/__init__.py"
 protocol_codegen_cpp = "python scripts/gen_cpp_protocol_models.py --protocol schemas/protocol.yml --out packages/f8cppsdk/include/f8cppsdk/generated/protocol_models.h"
@@ -52,10 +51,17 @@ protocol_codegen_all = "python scripts/protocol_codegen_msgspec.py --protocol sc
 [feature.test.dependencies]
 pytest = ">=8.4.2,<9"
 
+[feature.test.pypi-dependencies]
+ruff = ">=0.12.0,<0.13"
+
 [feature.test.tasks]
 pytest = "python -m pytest"
 pytest_sdk = "python -m pytest -q packages/f8pysdk/tests"
 pytest_studio = "python -m pytest -q packages/f8pystudio/tests"
+# Keep the initial repo-level static guards narrow and green. We can widen the
+# checked surface incrementally as more packages are annotated and cleaned up.
+lint = "ruff check packages/f8proclauncher/f8proclauncher packages/f8pystudio/f8pystudio/global_hotkeys packages/f8pymppose/f8pymppose packages/f8pyscript/f8pyscript packages/f8pyaudiofeat/f8pyaudiofeat packages/f8pydl/f8pydl packages/f8pystudio_ext_viz_tcode/f8pystudio_ext_viz_tcode packages/f8pystudio_ext_template_match/f8pystudio_ext_template_match packages/f8pysdk/f8pysdk packages/f8pyengine/f8pyengine"
+typecheck = "basedpyright -p pyrightconfig.json"
 
 [feature.audio.pypi-dependencies]
 librosa = ">=0.11.0, <0.12"
@@ -84,11 +90,13 @@ f8pystudio-ext-template-match = { path = "packages/f8pystudio_ext_template_match
 f8pystudio-ext-viz-tcode = { path = "packages/f8pystudio_ext_viz_tcode", editable = true }
 pyside6 = ">=6.10.2, <7"
 qtpy = ">=2.4.3, <3"
-pyqt-toast-notification = ">=1.3.3, <2"
 pyqtgraph = ">=0.14.0, <0.15"
 websockets = ">=16.0, <17"
 aiortc = ">=1.14.0, <2"
 basedpyright = ">=1.31.0, <2"
+python-xlib = ">=0.33, <1"
+sqlalchemy = ">=2.0.41, <3"
+keyring = ">=25.6.0, <26"
 
 [feature.studio.tasks]
 f8pystudio = "python -m f8pystudio.main"

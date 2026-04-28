@@ -8,20 +8,22 @@ from dataclasses import dataclass
 from typing import Any
 import numpy as np
 
-from f8pysdk import (
+from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
+    F8SpecEditPolicy,
     F8StateAccess,
     F8StateSpec,
     any_schema,
+    editable_collection_edit_policy,
     string_schema,
 )
 from f8pysdk.capabilities import ClosableNode
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import OperatorNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import OperatorNode
+from f8pysdk.registry import RuntimeNodeRegistry
 from f8pysdk.shm.video import VIDEO_FORMAT_BGRA32, VIDEO_FORMAT_FLOW2_F16, VideoShmHeader, VideoShmReader
 
 from ..constants import SERVICE_CLASS
@@ -31,8 +33,8 @@ from .script_utils.input_binding import (
     INPUT_MODE_MSGSPEC_STRUCT,
     INPUT_MODE_RAW_DICT,
     InputBinding,
+    coerce_input_mode,
     infer_script_input_style,
-    parse_input_mode,
     script_uses_inputs_object_access,
 )
 from .script_utils.python_editor_assist import python_script_field_editor_assist_payload
@@ -200,8 +202,8 @@ DEFAULT_CODE = (
     "# - onStart return values are ignored; use ctx.emit()/ctx.set_state().\n"
     "# - inputs binding mode is configured by state `inputMode`:\n"
     "#   - input_view (default): supports dot and mapping access\n"
-    "#   - raw_dict: plain dict only\n"
-    "#   - msgspec_struct: typed struct from dataIn schema\n"
+    "#   - raw_dict: plain dict only (faster for mapping-style high-frequency scripts)\n"
+    "#   - msgspec_struct: typed struct from dataIn schema (faster for dot-style high-frequency scripts)\n"
     "# - State TypeGuard helpers are available from f8_dynamic_states\n"
     "#   - example: from f8_dynamic_states import is_state_lastError\n"
     "#   - then: if is_state_lastError(value, field): ...\n"
@@ -284,15 +286,17 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         self._closing = False
         self._last_error: str | None = None
         self._error_seq = 0
+        self._pull_error_once: set[str] = set()
         self._self_state_writes: dict[str, Any] = {}
         self._pull_cache_ctx_id: str | int | None = None
         self._pull_cache_outputs: dict[str, Any] = {}
         self._state_key_hint_logged = False
         self._video_subscriptions: dict[str, _VideoShmSubscription] = {}
         self._data_out_port_set: set[str] = set()
+        self._data_in_port_names: tuple[str, ...] = tuple(str(name) for name in self.data_in_ports)
         self._single_data_out_port: str | None = None
         self._has_out_port = False
-        self._input_mode = parse_input_mode(self._initial_state.get("inputMode"), default=INPUT_MODE_INPUT_VIEW)
+        self._input_mode = coerce_input_mode(self._initial_state.get("inputMode"), default=INPUT_MODE_INPUT_VIEW)
         self._input_binding = InputBinding(
             node_id=self.node_id,
             data_in_ports=list(node.dataInPorts or []),
@@ -408,23 +412,14 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
 
     @staticmethod
     def _collect_readable_state_names(node: F8RuntimeNode) -> tuple[str, ...]:
-        raw_states = getattr(node, "stateFields", None)
-        if not isinstance(raw_states, list):
-            raw_states = getattr(node, "state_fields", None)
-        if not isinstance(raw_states, list):
-            return ()
         out: list[str] = []
         seen: set[str] = set()
-        for state in raw_states:
-            if isinstance(state, dict):
-                name = str(state.get("name") or "").strip()
-                access_raw = state.get("access")
-            else:
-                name = str(getattr(state, "name", "") or "").strip()
-                access_raw = getattr(state, "access", None)
+        for state in list(node.stateFields or []):
+            name = str(state.name or "").strip()
+            access_raw = state.access
             if not name or name in seen:
                 continue
-            access = str(getattr(access_raw, "value", access_raw) or "").strip().lower()
+            access = str(access_raw.value if hasattr(access_raw, "value") else access_raw or "").strip().lower()
             if access not in ("rw", "ro", "wo"):
                 continue
             seen.add(name)
@@ -681,6 +676,18 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             self._single_data_out_port = None
         self._has_out_port = "out" in self._data_out_port_set
 
+    async def _pull_inputs_for_context(self, ctx_id: str | int | None) -> dict[str, Any]:
+        inputs: dict[str, Any] = {}
+        for in_port in self._data_in_port_names:
+            try:
+                inputs[in_port] = await self.pull(in_port, ctx_id=ctx_id)
+            except Exception as exc:
+                error_key = f"{in_port}:{type(exc).__name__}:{exc}"
+                if error_key not in self._pull_error_once:
+                    self._pull_error_once.add(error_key)
+                    self._set_error(f"pull:{in_port}", exc)
+        return inputs
+
     async def _await_msg_result(self, result: Any) -> Any:
         if self._hooks.on_msg_is_async:
             return await result
@@ -714,18 +721,9 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
     def _build_states_view(self, state_keys: tuple[str, ...]) -> PyEngineStatesView:
         resolved_keys = [str(key) for key in state_keys if str(key)]
         if not resolved_keys:
-            bus = self._bus
-            state_access_map = getattr(bus, "_state_access_by_node_field", {}) if bus is not None else {}
-            for raw_key, raw_access in dict(state_access_map).items():
-                if not isinstance(raw_key, tuple) or len(raw_key) != 2:
-                    continue
-                node_id, field = raw_key
-                if str(node_id) != self.node_id:
-                    continue
-                access = str(getattr(raw_access, "value", raw_access) or "").strip().lower()
-                if access not in ("rw", "ro", "wo"):
-                    continue
-                resolved_keys.append(str(field))
+            resolved_keys = [str(key) for key in self.state_fields if str(key)]
+        if not resolved_keys:
+            resolved_keys = [str(key) for key in self._readable_state_names if str(key)]
         unique_keys = tuple(sorted({key for key in resolved_keys if key}))
         snapshot: dict[str, Any] = {}
         for key in unique_keys:
@@ -847,7 +845,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             self._compile_and_start()
             return
         if name == "inputMode":
-            self._input_mode = parse_input_mode(value, default=INPUT_MODE_INPUT_VIEW)
+            self._input_mode = coerce_input_mode(value, default=INPUT_MODE_INPUT_VIEW)
             self._input_binding.set_mode(self._input_mode)
             self._input_decode_mode_logged = None
 
@@ -872,7 +870,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         if name == "code":
             return str(value or "")
         if name == "inputMode":
-            mode = parse_input_mode(value, default=INPUT_MODE_INPUT_VIEW)
+            mode = coerce_input_mode(value, default=INPUT_MODE_INPUT_VIEW)
             if str(value or "").strip().lower().replace("-", "_") not in ("raw_dict", "input_view", "msgspec_struct"):
                 raise ValueError(f"invalid inputMode: {value}")
             return mode
@@ -888,12 +886,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         # Exec-driven: pull current values for all inputs.
         if not self._hooks.runtime:
             return list(self._exec_out_ports)
-        inputs: dict[str, Any] = {}
-        for p in self.data_in_ports:
-            try:
-                inputs[str(p)] = await self.pull(str(p), ctx_id=exec_id)
-            except Exception:
-                continue
+        inputs = await self._pull_inputs_for_context(exec_id)
         exec_in = str(in_port or "").strip() or None
         return await self._run_on_exec(inputs, exec_in=exec_in)
 
@@ -908,12 +901,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             if out_port in self._pull_cache_outputs:
                 return self._pull_cache_outputs.get(out_port)
 
-        inputs: dict[str, Any] = {}
-        for in_port in self.data_in_ports:
-            try:
-                inputs[str(in_port)] = await self.pull(str(in_port), ctx_id=ctx_id)
-            except Exception:
-                continue
+        inputs = await self._pull_inputs_for_context(ctx_id)
 
         outputs = await self._compute_outputs_for_pull(inputs, exec_in=None)
         if ctx_id is not None:
@@ -1130,6 +1118,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
 PythonScriptRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
+    paletteCategory=f"{SERVICE_CLASS}.expr",
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="Python Script",
@@ -1137,19 +1126,22 @@ PythonScriptRuntimeNode.SPEC = F8OperatorSpec(
     tags=["script", "python", "programmable"],
     execInPorts=["exec"],
     execOutPorts=["exec"],
-    editableExecInPorts=True,
-    editableExecOutPorts=True,
     dataInPorts=[F8DataPortSpec(name="msg", description="Message input", valueSchema=any_schema(), required=False)],
     dataOutPorts=[F8DataPortSpec(name="out", description="Script output", valueSchema=any_schema(), required=False)],
-    editableDataInPorts=True,
-    editableDataOutPorts=True,
+    editPolicy=F8SpecEditPolicy(
+        stateFields=editable_collection_edit_policy(),
+        commands=editable_collection_edit_policy(),
+        dataInPorts=editable_collection_edit_policy(),
+        dataOutPorts=editable_collection_edit_policy(),
+        execInPorts=editable_collection_edit_policy(),
+        execOutPorts=editable_collection_edit_policy(),
+    ),
     stateFields=[
         F8StateSpec(
             name="code",
             label="Code",
             description="Python source code optionally defining hooks: onStart/onState/onMsg/onExec/onStop.",
-            uiControl="code",
-            uiLanguage="python",
+            uiControl="code[python]",
             valueSchema=string_schema(default=DEFAULT_CODE),
             access=F8StateAccess.rw,
             required=True,
@@ -1159,7 +1151,10 @@ PythonScriptRuntimeNode.SPEC = F8OperatorSpec(
         F8StateSpec(
             name="inputMode",
             label="Input Mode",
-            description="Input binding mode: input_view | raw_dict | msgspec_struct.",
+            description=(
+                "Input binding mode: input_view | raw_dict | msgspec_struct. "
+                "For high-frequency scripts, prefer raw_dict for mapping access or msgspec_struct for dot access."
+            ),
             valueSchema=string_schema(
                 default=INPUT_MODE_INPUT_VIEW,
                 enum=[INPUT_MODE_INPUT_VIEW, INPUT_MODE_RAW_DICT, INPUT_MODE_MSGSPEC_STRUCT],
@@ -1178,16 +1173,14 @@ PythonScriptRuntimeNode.SPEC = F8OperatorSpec(
             showOnNode=False,
         ),
     ],
-    editableStateFields=True,
 )
 
 
-def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
         return PythonScriptRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(PythonScriptRuntimeNode.SPEC, overwrite=True)
-    return reg
+    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
+    registry.register_operator_spec(PythonScriptRuntimeNode.SPEC, overwrite=True)
+    return registry

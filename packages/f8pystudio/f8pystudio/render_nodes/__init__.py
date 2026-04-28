@@ -5,6 +5,8 @@ from .viz_wave import VizWaveRenderNode
 from .viz_track import VizTrackRenderNode
 from .viz_video import VizVideoRenderNode
 from .note import NoteRenderNode
+from .patch_hub import PatchHubRenderNode
+from .backdrop import BackdropRenderNode
 from .registry import RenderNodeRegistry
 
 __all__ = [
@@ -15,5 +17,7 @@ __all__ = [
     "VizTrackRenderNode",
     "VizVideoRenderNode",
     "NoteRenderNode",
+    "PatchHubRenderNode",
+    "BackdropRenderNode",
     "RenderNodeRegistry",
 ]

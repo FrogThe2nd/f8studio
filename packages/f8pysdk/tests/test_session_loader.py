@@ -8,7 +8,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from f8pysdk.service_runtime_tools.session_loader import (  # noqa: E402
+from f8pysdk.service_runtime_tools.session.loader import (  # noqa: E402
     SESSION_SCHEMA_VERSION,
     extract_layout,
     load_session_layout,
@@ -21,10 +21,10 @@ class SessionLoaderTests(unittest.TestCase):
         layout = extract_layout(payload)
         self.assertIn("nodes", layout)
 
-    def test_extract_layout_legacy(self) -> None:
+    def test_extract_layout_rejects_legacy(self) -> None:
         payload = {"nodes": {}, "connections": []}
-        layout = extract_layout(payload)
-        self.assertIn("nodes", layout)
+        with self.assertRaises(ValueError):
+            _ = extract_layout(payload)
 
     def test_load_session_layout_from_file(self) -> None:
         payload = {"schemaVersion": SESSION_SCHEMA_VERSION, "layout": {"nodes": {"n1": {}}, "connections": []}}

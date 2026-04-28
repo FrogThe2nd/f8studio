@@ -6,14 +6,14 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from f8pysdk.generated import F8OperatorSpec, F8ServiceSpec, F8StateAccess, F8StateSpec  # noqa: E402
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry  # noqa: E402
-from f8pysdk.schema_helpers import boolean_schema, string_schema  # noqa: E402
+from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec, F8StateAccess, F8StateSpec  # noqa: E402
+from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
+from f8pysdk.specs import boolean_schema, string_schema  # noqa: E402
 
 
 class RuntimeNodeRegistryBuiltinTests(unittest.TestCase):
     def test_describe_force_overrides_builtin_fields(self) -> None:
-        registry = RuntimeNodeRegistry()
+        registry = create_runtime_node_registry()
         service_spec = F8ServiceSpec(
             serviceClass="f8.tests.svc",
             version="0.0.1",

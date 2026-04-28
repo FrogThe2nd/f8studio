@@ -24,10 +24,9 @@ nav:
       - Lifecycle and Monitoring: pystudio/lifecycle-and-monitoring.md
       - Schema and Code Editors: pystudio/schema-and-code-editors.md
       - Node Library and Sessions: pystudio/node-library-and-sessions.md
-      - Debugging and Runner: pystudio/debugging-and-runner.md
+      - Debugging: pystudio/debugging.md
       - Node Atlas: node-atlas/index.md
       - Scenario Library: scenarios/index.md
-      - Runner (Headless): getting-started/runner.md
   - For Developers:
       - Overview: developers/index.md
       - Build from Source: developers/build-from-source.md

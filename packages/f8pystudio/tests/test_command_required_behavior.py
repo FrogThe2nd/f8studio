@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from qtpy import QtWidgets
 
-from f8pysdk import F8Command, F8ServiceSpec
-from f8pystudio.widgets.spec_mutations import delete_command
-from f8pystudio.widgets.node_property_panel import _F8EditCommandDialog, _F8SpecCommandEditor
+from f8pysdk.specs import F8Command, F8ServiceSpec, F8SpecEditPolicy, editable_collection_edit_policy
+from f8pystudio.nodegraph.spec_mutations import delete_command
+from f8pystudio.ui.widgets.node_property_panel import _F8EditCommandDialog, _F8SpecCommandEditor
 
 
 class _FakeModel:
@@ -17,9 +17,17 @@ class _FakeNode:
         self.spec = spec
         self.model = _FakeModel()
         self.id = "svc.test"
+        self._ui_overrides: dict[str, object] = {}
 
     def effective_commands(self) -> list[F8Command]:
         return list(self.spec.commands or [])
+
+    def ui_overrides(self) -> dict[str, object]:
+        return dict(self._ui_overrides)
+
+    def set_ui_overrides(self, value: dict[str, object] | None, *, rebuild: bool = True) -> None:
+        _ = rebuild
+        self._ui_overrides = dict(value or {})
 
 
 def _ensure_app() -> QtWidgets.QApplication:
@@ -30,7 +38,12 @@ def _ensure_app() -> QtWidgets.QApplication:
 
 
 def _make_spec(commands: list[F8Command]) -> F8ServiceSpec:
-    return F8ServiceSpec(serviceClass="f8.test", label="Test", editableCommands=True, commands=commands)
+    return F8ServiceSpec(
+        serviceClass="f8.test",
+        label="Test",
+        editPolicy=F8SpecEditPolicy(commands=editable_collection_edit_policy()),
+        commands=commands,
+    )
 
 
 def test_spec_delete_command_keeps_required() -> None:
@@ -103,3 +116,23 @@ def test_command_editor_hides_delete_for_required_command(monkeypatch) -> None:
     assert asked["called"] is True
     names = [str(c.name or "") for c in list(node.spec.commands or [])]
     assert names == ["required_cmd"]
+
+
+def test_command_editor_delete_cleans_list_order_override(monkeypatch) -> None:
+    _ensure_app()
+    spec = _make_spec(
+        [
+            F8Command(name="first", required=False, params=[]),
+            F8Command(name="second", required=False, params=[]),
+        ]
+    )
+    node = _FakeNode(spec)
+    node.set_ui_overrides({"listOrder": {"commands": ["second", "first"]}}, rebuild=False)
+    editor = _F8SpecCommandEditor(None, node=node, on_apply=None)
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", lambda *args, **kwargs: QtWidgets.QMessageBox.Yes)
+
+    editor._delete_command("second")
+
+    assert [str(command.name or "") for command in list(node.spec.commands or [])] == ["first"]
+    assert node.ui_overrides() == {}

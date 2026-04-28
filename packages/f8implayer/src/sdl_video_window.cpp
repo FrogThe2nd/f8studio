@@ -1,14 +1,27 @@
 #include "sdl_video_window.h"
 
 #include <algorithm>
+#include <cstdint>
+#include <cstring>
 #include <cmath>
+#include <filesystem>
 #include <string>
+#include <system_error>
+#include <vector>
 
 #include <glad/glad.h>
 #include <spdlog/spdlog.h>
 
 #include "gl_loader.h"
 #include "mpv_player.h"
+
+#if defined(_WIN32)
+#include <windows.h>
+
+#include "implayer_resource.h"
+#else
+#include <png.h>
+#endif
 
 namespace f8::implayer {
 
@@ -88,6 +101,119 @@ void aspect_fit_rect(unsigned src_w, unsigned src_h, unsigned dst_w, unsigned ds
   }
 }
 
+#if defined(_WIN32)
+void apply_window_icon(SDL_Window* window) {
+  if (!window) {
+    return;
+  }
+
+  const SDL_PropertiesID window_properties = SDL_GetWindowProperties(window);
+  if (window_properties == 0) {
+    spdlog::warn("SDL_GetWindowProperties failed while applying implayer icon: {}", SDL_GetError());
+    return;
+  }
+
+  auto* hwnd = static_cast<HWND>(SDL_GetPointerProperty(window_properties, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
+  if (!hwnd) {
+    spdlog::warn("SDL window HWND was unavailable while applying implayer icon");
+    return;
+  }
+
+  HMODULE module_handle = GetModuleHandleW(nullptr);
+  if (!module_handle) {
+    spdlog::warn("GetModuleHandleW failed while applying implayer icon");
+    return;
+  }
+
+  auto* icon = static_cast<HICON>(
+      LoadImageW(module_handle, MAKEINTRESOURCEW(IDI_F8IMPLAYER), IMAGE_ICON, 0, 0, LR_DEFAULTSIZE | LR_SHARED));
+  if (!icon) {
+    spdlog::warn("LoadImageW failed while applying implayer icon");
+    return;
+  }
+
+  SetClassLongPtrW(hwnd, GCLP_HICON, reinterpret_cast<LONG_PTR>(icon));
+  SetClassLongPtrW(hwnd, GCLP_HICONSM, reinterpret_cast<LONG_PTR>(icon));
+  SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(icon));
+  SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(icon));
+}
+#else
+std::filesystem::path icon_png_path() {
+  constexpr const char* kIconRelativePath = "resources/icon.png";
+
+  const char* base_path = SDL_GetBasePath();
+  if (base_path && *base_path) {
+    std::filesystem::path bundled_path = std::filesystem::path(base_path) / kIconRelativePath;
+    std::error_code exists_error;
+    if (std::filesystem::exists(bundled_path, exists_error)) {
+      return bundled_path;
+    }
+  }
+
+  return std::filesystem::path("packages") / "f8implayer" / kIconRelativePath;
+}
+
+SDL_Surface* load_png_surface(const std::filesystem::path& path) {
+  png_image image{};
+  image.version = PNG_IMAGE_VERSION;
+
+  const std::string path_string = path.string();
+  if (png_image_begin_read_from_file(&image, path_string.c_str()) == 0) {
+    spdlog::warn("Failed to open implayer icon PNG '{}': {}", path_string, image.message);
+    return nullptr;
+  }
+
+  image.format = PNG_FORMAT_RGBA;
+  std::vector<std::uint8_t> pixels(PNG_IMAGE_SIZE(image));
+  if (png_image_finish_read(&image, nullptr, pixels.data(), 0, nullptr) == 0) {
+    spdlog::warn("Failed to read implayer icon PNG '{}': {}", path_string, image.message);
+    png_image_free(&image);
+    return nullptr;
+  }
+
+  auto* surface = SDL_CreateSurface(static_cast<int>(image.width), static_cast<int>(image.height), SDL_PIXELFORMAT_RGBA32);
+  if (!surface) {
+    spdlog::warn("SDL_CreateSurface failed while applying implayer icon: {}", SDL_GetError());
+    png_image_free(&image);
+    return nullptr;
+  }
+
+  const std::size_t source_pitch = static_cast<std::size_t>(image.width) * 4U;
+  auto* destination_pixels = static_cast<std::uint8_t*>(surface->pixels);
+  for (png_uint_32 row = 0; row < image.height; ++row) {
+    std::memcpy(destination_pixels + static_cast<std::size_t>(row) * static_cast<std::size_t>(surface->pitch),
+                pixels.data() + static_cast<std::size_t>(row) * source_pitch, source_pitch);
+  }
+
+  png_image_free(&image);
+  return surface;
+}
+
+void apply_window_icon(SDL_Window* window) {
+  if (!window) {
+    return;
+  }
+
+  const std::filesystem::path icon_path = icon_png_path();
+  std::error_code exists_error;
+  if (!std::filesystem::exists(icon_path, exists_error)) {
+    spdlog::warn("Implayer icon PNG not found: {}", icon_path.string());
+    return;
+  }
+
+  SDL_Surface* icon_surface = load_png_surface(icon_path);
+  if (!icon_surface) {
+    return;
+  }
+
+  if (!SDL_SetWindowIcon(window, icon_surface)) {
+    spdlog::warn("SDL_SetWindowIcon failed while applying implayer icon: {}", SDL_GetError());
+  }
+  SDL_DestroySurface(icon_surface);
+}
+#endif
+
+
 }  // namespace
 
 SdlVideoWindow::SdlVideoWindow(Config cfg) : cfg_(std::move(cfg)) {}
@@ -138,6 +264,8 @@ bool SdlVideoWindow::start() {
       spdlog::error("SDL_CreateWindow failed (GL {}.{}): {}", gl_major, gl_minor, SDL_GetError());
       return false;
     }
+
+    apply_window_icon(window_);
 
     gl_context_ = SDL_GL_CreateContext(window_);
     if (!gl_context_) {

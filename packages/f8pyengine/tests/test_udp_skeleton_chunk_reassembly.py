@@ -10,9 +10,9 @@ if ROOT not in sys.path:
 if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
-from f8pysdk.generated import F8RuntimeNode  # noqa: E402
+from f8pysdk.specs import F8RuntimeNode  # noqa: E402
 
-from f8pyengine.operators.udp_skeleton import UdpSkeletonRuntimeNode  # noqa: E402
+from f8pyengine.operators.skeleton_decoder import SkeletonDecoderRuntimeNode  # noqa: E402
 
 
 def _mk_payload(frame_id: int, chunk_index: int, chunk_count: int, bones: list[dict[str, Any]]) -> dict[str, Any]:
@@ -35,32 +35,22 @@ def _mk_payload(frame_id: int, chunk_index: int, chunk_count: int, bones: list[d
     }
 
 
-class UdpSkeletonChunkReassemblyTests(unittest.TestCase):
-    def _new_node(self) -> UdpSkeletonRuntimeNode:
+class SkeletonDecoderChunkReassemblyTests(unittest.TestCase):
+    def _new_node(self) -> SkeletonDecoderRuntimeNode:
         node = F8RuntimeNode(
-            nodeId="udp1",
+            nodeId="decoder1",
             serviceId="svcA",
             serviceClass="f8.pyengine",
-            operatorClass=UdpSkeletonRuntimeNode.SPEC.operatorClass,
-            stateFields=list(UdpSkeletonRuntimeNode.SPEC.stateFields or []),
+            operatorClass=SkeletonDecoderRuntimeNode.SPEC.operatorClass,
+            stateFields=list(SkeletonDecoderRuntimeNode.SPEC.stateFields or []),
             stateValues={},
         )
-        return UdpSkeletonRuntimeNode(node_id="udp1", node=node, initial_state={})
+        return SkeletonDecoderRuntimeNode(node_id="decoder1", node=node, initial_state={})
 
     def test_reassembles_chunks_before_publish(self) -> None:
         runtime_node = self._new_node()
-        part0 = _mk_payload(
-            frame_id=10,
-            chunk_index=0,
-            chunk_count=2,
-            bones=[{"name": "b0"}, {"name": "b1"}],
-        )
-        part1 = _mk_payload(
-            frame_id=10,
-            chunk_index=1,
-            chunk_count=2,
-            bones=[{"name": "b2"}, {"name": "b3"}],
-        )
+        part0 = _mk_payload(frame_id=10, chunk_index=0, chunk_count=2, bones=[{"name": "b0"}, {"name": "b1"}])
+        part1 = _mk_payload(frame_id=10, chunk_index=1, chunk_count=2, bones=[{"name": "b2"}, {"name": "b3"}])
 
         result0 = runtime_node._merge_or_defer_chunk_payload(key="Model_A", payload=part0, rx_ts_ms=1000)
         self.assertIsNone(result0)
@@ -69,7 +59,7 @@ class UdpSkeletonChunkReassemblyTests(unittest.TestCase):
         self.assertIsInstance(result1, dict)
         assert isinstance(result1, dict)
         self.assertEqual(int(result1["boneCount"]), 4)
-        self.assertEqual([b["name"] for b in result1["bones"]], ["b0", "b1", "b2", "b3"])
+        self.assertEqual([bone["name"] for bone in result1["bones"]], ["b0", "b1", "b2", "b3"])
         self.assertEqual(int(result1["trailer"]["assembledChunkCount"]), 2)
         self.assertEqual(int(result1["trailer"]["chunkCount"]), 1)
 

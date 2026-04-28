@@ -2,20 +2,24 @@ from __future__ import annotations
 
 from typing import Any
 
-from f8pysdk import (
+from f8pysdk.specs import (
+    F8CollectionEditPolicy,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
+    F8SpecEditPolicy,
     F8StateAccess,
     F8StateSpec,
     array_schema,
     string_schema,
 )
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import OperatorNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import OperatorNode
+from f8pysdk.registry import RuntimeNodeRegistry
+from f8pysdk.specs import integer_schema
 
-from ..constants import SERVICE_CLASS
+from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
+from .categories import PALETTE_CATEGORY_CONTROL
 
 OPERATOR_CLASS = "f8.control_panel"
 
@@ -32,9 +36,10 @@ class ControlPanelRuntimeNode(OperatorNode):
     SPEC = F8OperatorSpec(
         schemaVersion=F8OperatorSchemaVersion.f8operator_1,
         serviceClass=SERVICE_CLASS,
+        paletteCategory=PALETTE_CATEGORY_CONTROL,
         operatorClass=OPERATOR_CLASS,
         version="0.0.1",
-        label="ControlPanel",
+        label="Control Panel",
         description="Centralized state control panel for wiring key parameters through state edges.",
         tags=["panel", "state", "control", "ui"],
         dataInPorts=[],
@@ -42,27 +47,18 @@ class ControlPanelRuntimeNode(OperatorNode):
         execInPorts=[],
         execOutPorts=[],
         rendererClass="default_op",
-        editableStateFields=True,
+        editPolicy=F8SpecEditPolicy(
+            stateFields=F8CollectionEditPolicy(canAdd=True, canDelete=True, canEditExisting=True)
+        ),
         stateFields=[
             F8StateSpec(
                 name="value",
-                label="Value",
-                description="Selected/current value published to downstream subscribers.",
-                valueSchema=string_schema(default=""),
+                description="The value of this control panel field.",
+                valueSchema=integer_schema(),
                 access=F8StateAccess.rw,
-                required=True,
-                uiControl="select:[options]",
+                required=False,
                 showOnNode=True,
-            ),
-            F8StateSpec(
-                name="options",
-                label="Options",
-                description="Option pool used by the `value` dropdown control.",
-                valueSchema=array_schema(items=string_schema()),
-                access=F8StateAccess.wo,
-                required=True,
-                showOnNode=True,
-            ),
+            )
         ],
     )
 
@@ -78,12 +74,11 @@ class ControlPanelRuntimeNode(OperatorNode):
         )
 
 
-def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
         return ControlPanelRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(ControlPanelRuntimeNode.SPEC, overwrite=True)
-    return reg
+    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
+    registry.register_operator_spec(ControlPanelRuntimeNode.SPEC, overwrite=True)
+    return registry

@@ -10,10 +10,10 @@ if ROOT not in sys.path:
 if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
-from f8pysdk import F8DataPortSpec, F8RuntimeGraph, F8RuntimeNode, any_schema  # noqa: E402
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry  # noqa: E402
-from f8pysdk.service_host import ServiceHost, ServiceHostConfig  # noqa: E402
-from f8pysdk.service_bus.routing_data import buffer_input  # noqa: E402
+from f8pysdk.specs import F8DataPortSpec, F8RuntimeGraph, F8RuntimeNode, any_schema  # noqa: E402
+from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
+from f8pysdk.host import ServiceHost, ServiceHostConfig  # noqa: E402
+from f8pysdk.testing import buffer_input  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
 from f8pyengine.constants import SERVICE_CLASS  # noqa: E402
@@ -24,7 +24,7 @@ class PlaybackSyncTests(unittest.IsolatedAsyncioTestCase):
     async def _build_node(self, *, state_values: dict[str, object] | None = None) -> tuple[ServiceBusHarness, object, PlaybackSyncRuntimeNode]:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_operator(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 

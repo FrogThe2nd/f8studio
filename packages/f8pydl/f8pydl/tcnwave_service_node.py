@@ -9,8 +9,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from f8pysdk.codec import coerce_bool, coerce_float, coerce_int, coerce_str
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import ServiceNode
+from f8pysdk.nodes import ServiceNode
 from f8pysdk.shm.video import VideoShmReader
 
 from .model_config import ModelSpec, ModelTask, build_model_index, build_model_index_with_errors, load_model_spec
@@ -57,48 +58,6 @@ def _default_weights_dir() -> Path:
         except Exception:
             continue
     return candidates[0] if candidates else Path.cwd().resolve()
-
-
-def _coerce_int(v: Any, *, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
-    try:
-        out = int(v)
-    except Exception:
-        out = int(default)
-    if minimum is not None and out < minimum:
-        out = int(minimum)
-    if maximum is not None and out > maximum:
-        out = int(maximum)
-    return out
-
-
-def _coerce_float(v: Any, *, default: float) -> float:
-    try:
-        return float(v)
-    except Exception:
-        return float(default)
-
-
-def _coerce_str(v: Any, *, default: str = "") -> str:
-    try:
-        s = str(v) if v is not None else ""
-    except Exception:
-        s = ""
-    s = s.strip()
-    return s if s else default
-
-
-def _coerce_bool(v: Any, *, default: bool) -> bool:
-    if isinstance(v, bool):
-        return v
-    if isinstance(v, (int, float)):
-        return bool(v)
-    if isinstance(v, str):
-        s = v.strip().lower()
-        if s in ("1", "true", "yes", "on"):
-            return True
-        if s in ("0", "false", "no", "off"):
-            return False
-    return bool(default)
 
 
 def _resolve_path_from_cwd_or_repo(raw: str) -> Path:
@@ -351,6 +310,7 @@ class OnnxTcnWaveServiceNode(ServiceNode):
         self._runtime_warning = ""
 
         self._window: deque[Any] = deque()
+        self._sequence_buffer: Any = None
         self._aggregator = DelayedAverageAggregator()
         self._new_frame_counter = 0
         self._last_processed_frame_id: int | None = None
@@ -371,6 +331,7 @@ class OnnxTcnWaveServiceNode(ServiceNode):
             await asyncio.gather(t, return_exceptions=True)
         self._close_shm()
         self._window.clear()
+        self._sequence_buffer = None
         self._aggregator.reset()
 
     async def on_lifecycle(self, active: bool, meta: dict[str, Any]) -> None:
@@ -384,30 +345,30 @@ class OnnxTcnWaveServiceNode(ServiceNode):
         await self._ensure_config_loaded()
 
         if name == "weightsDir":
-            raw = _coerce_str(await self.get_state_value("weightsDir"), default=str(self._weights_dir))
+            raw = coerce_str(await self.get_state_value("weightsDir"), default=str(self._weights_dir))
             self._weights_dir = _resolve_path_from_cwd_or_repo(raw)
             await self._publish_model_index()
             await self._reset_runtime()
             return
 
         if name == "modelId":
-            self._model_id = _coerce_str(await self.get_state_value("modelId"), default=self._model_id)
+            self._model_id = coerce_str(await self.get_state_value("modelId"), default=self._model_id)
             await self._reset_runtime()
             return
 
         if name == "modelYamlPath":
-            self._model_yaml_path = _coerce_str(await self.get_state_value("modelYamlPath"), default=self._model_yaml_path)
+            self._model_yaml_path = coerce_str(await self.get_state_value("modelYamlPath"), default=self._model_yaml_path)
             await self._reset_runtime()
             return
 
         if name == "ortProvider":
-            v = _coerce_str(await self.get_state_value("ortProvider"), default=str(self._ort_provider)).lower()
+            v = coerce_str(await self.get_state_value("ortProvider"), default=str(self._ort_provider)).lower()
             self._ort_provider = v if v in ("auto", "cuda", "cpu") else "auto"
             await self._reset_runtime()
             return
 
         if name == "inferEveryN":
-            self._infer_every_n = _coerce_int(
+            self._infer_every_n = coerce_int(
                 await self.get_state_value("inferEveryN"),
                 default=self._infer_every_n,
                 minimum=1,
@@ -416,7 +377,7 @@ class OnnxTcnWaveServiceNode(ServiceNode):
             return
 
         if name == "outputScale":
-            self._output_scale = _coerce_float(
+            self._output_scale = coerce_float(
                 await self.get_state_value("outputScale"),
                 default=self._output_scale,
             )
@@ -424,7 +385,7 @@ class OnnxTcnWaveServiceNode(ServiceNode):
             return
 
         if name == "outputBias":
-            self._output_bias = _coerce_float(
+            self._output_bias = coerce_float(
                 await self.get_state_value("outputBias"),
                 default=self._output_bias,
             )
@@ -432,19 +393,19 @@ class OnnxTcnWaveServiceNode(ServiceNode):
             return
 
         if name == "useVrFocusCrop":
-            self._use_vr_focus_crop = _coerce_bool(
+            self._use_vr_focus_crop = coerce_bool(
                 await self.get_state_value("useVrFocusCrop"),
                 default=self._use_vr_focus_crop,
             )
             return
 
         if name == "shmName":
-            self._shm_name = _coerce_str(await self.get_state_value("shmName"), default=self._shm_name)
+            self._shm_name = coerce_str(await self.get_state_value("shmName"), default=self._shm_name)
             await self._maybe_reopen_shm()
             return
 
         if name == "autoDownloadWeights":
-            self._auto_download_weights = _coerce_bool(
+            self._auto_download_weights = coerce_bool(
                 await self.get_state_value("autoDownloadWeights"),
                 default=self._auto_download_weights,
             )
@@ -454,41 +415,41 @@ class OnnxTcnWaveServiceNode(ServiceNode):
         if self._config_loaded:
             return
 
-        raw_weights = _coerce_str(
+        raw_weights = coerce_str(
             await self.get_state_value("weightsDir"),
             default=str(self._initial_state.get("weightsDir") or _default_weights_dir()),
         )
         self._weights_dir = _resolve_path_from_cwd_or_repo(raw_weights)
-        self._model_id = _coerce_str(await self.get_state_value("modelId"), default=str(self._initial_state.get("modelId") or ""))
-        self._model_yaml_path = _coerce_str(
+        self._model_id = coerce_str(await self.get_state_value("modelId"), default=str(self._initial_state.get("modelId") or ""))
+        self._model_yaml_path = coerce_str(
             await self.get_state_value("modelYamlPath"),
             default=str(self._initial_state.get("modelYamlPath") or ""),
         )
-        provider = _coerce_str(await self.get_state_value("ortProvider"), default=str(self._initial_state.get("ortProvider") or "auto")).lower()
+        provider = coerce_str(await self.get_state_value("ortProvider"), default=str(self._initial_state.get("ortProvider") or "auto")).lower()
         self._ort_provider = provider if provider in ("auto", "cuda", "cpu") else "auto"
-        self._infer_every_n = _coerce_int(
+        self._infer_every_n = coerce_int(
             await self.get_state_value("inferEveryN"),
             default=int(self._initial_state.get("inferEveryN") or 1),
             minimum=1,
             maximum=10000,
         )
-        self._output_scale = _coerce_float(
+        self._output_scale = coerce_float(
             await self.get_state_value("outputScale"),
             default=float(self._initial_state.get("outputScale") or 10.0),
         )
-        self._output_bias = _coerce_float(
+        self._output_bias = coerce_float(
             await self.get_state_value("outputBias"),
             default=float(self._initial_state.get("outputBias") or 0.0),
         )
-        self._use_vr_focus_crop = _coerce_bool(
+        self._use_vr_focus_crop = coerce_bool(
             await self.get_state_value("useVrFocusCrop"),
             default=bool(self._initial_state.get("useVrFocusCrop", False)),
         )
-        self._auto_download_weights = _coerce_bool(
+        self._auto_download_weights = coerce_bool(
             await self.get_state_value("autoDownloadWeights"),
             default=bool(self._initial_state.get("autoDownloadWeights", True)),
         )
-        self._shm_name = _coerce_str(await self.get_state_value("shmName"), default=str(self._initial_state.get("shmName") or ""))
+        self._shm_name = coerce_str(await self.get_state_value("shmName"), default=str(self._initial_state.get("shmName") or ""))
         self._config_loaded = True
         await self._publish_model_index()
 
@@ -564,6 +525,7 @@ class OnnxTcnWaveServiceNode(ServiceNode):
         self._runtime_yaml = None
         self._model = None
         self._window.clear()
+        self._sequence_buffer = None
         self._aggregator.reset()
         self._new_frame_counter = 0
         self._last_processed_frame_id = None
@@ -584,6 +546,7 @@ class OnnxTcnWaveServiceNode(ServiceNode):
             return
         self._close_shm()
         self._window.clear()
+        self._sequence_buffer = None
         self._aggregator.reset()
         self._new_frame_counter = 0
         self._last_processed_frame_id = None
@@ -690,6 +653,7 @@ class OnnxTcnWaveServiceNode(ServiceNode):
         self._runtime_yaml = yaml_path
         self._model = spec
         self._window = deque(maxlen=runtime.sequence_length)
+        self._sequence_buffer = None
         self._aggregator.reset()
         self._new_frame_counter = 0
         self._last_processed_frame_id = None
@@ -787,7 +751,7 @@ class OnnxTcnWaveServiceNode(ServiceNode):
                 buf = np.frombuffer(payload, dtype=np.uint8)
                 rows = buf.reshape((height, pitch))
                 bgra = rows[:, : width * 4].reshape((height, width, 4))
-                frame_bgr = np.ascontiguousarray(bgra[:, :, 0:3])
+                frame_bgr = bgra[:, :, 0:3]
                 if self._use_vr_focus_crop and int(frame_bgr.shape[1]) > 1:
                     frame_bgr = apply_vr_focus_crop(frame_bgr)
 
@@ -807,7 +771,21 @@ class OnnxTcnWaveServiceNode(ServiceNode):
                 if not do_infer:
                     continue
 
-                sequence = np.stack(tuple(self._window), axis=0)
+                sequence_buffer = self._sequence_buffer
+                if sequence_buffer is None:
+                    sequence_buffer = np.empty(
+                        (
+                            int(self._runtime.sequence_length),
+                            int(self._runtime.channels),
+                            int(self._runtime.input_height),
+                            int(self._runtime.input_width),
+                        ),
+                        dtype=np.float32,
+                    )
+                    self._sequence_buffer = sequence_buffer
+                for sequence_index, frame in enumerate(self._window):
+                    sequence_buffer[sequence_index] = frame
+                sequence = sequence_buffer
                 t_infer0 = time.perf_counter()
                 values_np = self._runtime.infer_sequence(sequence)
                 values = self._to_float_list(values_np.tolist())
