@@ -376,6 +376,41 @@ class DistCiCppBuildTest(unittest.TestCase):
         self.assertNotIn("f8implayer_service_deploy_runtime", build_command)
         self.assertNotIn("f8cvkit_template_match_service_deploy_runtime", build_command)
 
+    def test_build_cpp_runtime_accepts_conan_user_preset_include_path(self) -> None:
+        preset_path = self.root / "build" / "generators" / "CMakePresets.json"
+        preset_path.parent.mkdir(parents=True, exist_ok=True)
+        preset_path.write_text(
+            "{\n"
+            '  "version": 3,\n'
+            '  "buildPresets": [{"name": "conan-release"}],\n'
+            '  "configurePresets": [{"name": "conan-release"}]\n'
+            "}\n",
+            encoding="utf-8",
+        )
+        user_presets_path = self.root / "CMakeUserPresets.json"
+        user_presets_path.write_text(
+            "{\n"
+            '  "version": 4,\n'
+            '  "include": ["build/generators/CMakePresets.json"]\n'
+            "}\n",
+            encoding="utf-8",
+        )
+        recorded_commands: list[list[str]] = []
+
+        def _record_run(command: list[str]) -> None:
+            recorded_commands.append(command)
+
+        with (
+            mock.patch.object(self.module, "REPO_ROOT", self.root),
+            mock.patch.object(self.module, "CPP_USER_PRESETS_PATH", user_presets_path),
+            mock.patch.object(self.module, "_run", side_effect=_record_run),
+        ):
+            self.module._build_cpp_runtime()
+
+        bootstrap_command = ["pixi", "run", "--frozen", "-e", "cpp", "cpp_bootstrap"]
+        self.assertNotIn(bootstrap_command, recorded_commands)
+        self.assertTrue(any("--build" in command for command in recorded_commands))
+
     def test_build_cpp_runtime_reports_actionable_error_for_missing_registration(self) -> None:
         preset_path = self._write_preset_file()
 

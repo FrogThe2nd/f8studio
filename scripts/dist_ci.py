@@ -14,7 +14,13 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PIXI_TOML_PATH = REPO_ROOT / "pixi.toml"
-CPP_PRESET_PATH = REPO_ROOT / "build" / "Release" / "generators" / "CMakePresets.json"
+CPP_USER_PRESETS_PATH = REPO_ROOT / "CMakeUserPresets.json"
+DEFAULT_CPP_PRESET_PATH = REPO_ROOT / "build" / "Release" / "generators" / "CMakePresets.json"
+CPP_PRESET_PATH = DEFAULT_CPP_PRESET_PATH
+CPP_PRESET_CANDIDATES = (
+    REPO_ROOT / "build" / "generators" / "CMakePresets.json",
+    DEFAULT_CPP_PRESET_PATH,
+)
 CPP_BUILD_PRESET_NAME = "conan-release"
 PACKAGE_PATH_PREFIX = "packages/"
 # C++ runtime deploy targets are owned by CMake's f8_deploy_all_runtime aggregator.
@@ -41,6 +47,47 @@ def _platform_info() -> tuple[str, str]:
     if sys.platform.startswith("linux"):
         return ("linux-x86_64", "linux")
     raise RuntimeError(f"Unsupported platform for dist packaging: {sys.platform}")
+
+
+def _repo_relative_path(path: Path) -> str:
+    try:
+        return path.relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _cpp_preset_path_from_user_presets() -> Path | None:
+    if not CPP_USER_PRESETS_PATH.is_file():
+        return None
+
+    user_presets = json.loads(CPP_USER_PRESETS_PATH.read_text(encoding="utf-8"))
+    include_entries = user_presets.get("include")
+    if not isinstance(include_entries, list):
+        return None
+
+    for include_entry in include_entries:
+        if not isinstance(include_entry, str):
+            continue
+        include_path = (REPO_ROOT / include_entry).resolve()
+        if include_path.name == "CMakePresets.json" and include_path.is_file():
+            return include_path
+    return None
+
+
+def _resolve_cpp_preset_path() -> Path:
+    if CPP_PRESET_PATH != DEFAULT_CPP_PRESET_PATH and CPP_PRESET_PATH.is_file():
+        return CPP_PRESET_PATH
+
+    user_preset_path = _cpp_preset_path_from_user_presets()
+    if user_preset_path is not None:
+        return user_preset_path
+
+    for candidate_path in CPP_PRESET_CANDIDATES:
+        if candidate_path.is_file():
+            return candidate_path
+
+    checked_paths = ", ".join(_repo_relative_path(candidate_path) for candidate_path in CPP_PRESET_CANDIDATES)
+    raise FileNotFoundError(f"Expected Conan-generated preset file is missing. Checked: {checked_paths}")
 
 
 def _normalize_dist_name(name: str) -> str:
@@ -448,12 +495,8 @@ def _bundle_studio_launcher(dist_dir: Path) -> None:
 
 def _build_cpp_runtime() -> None:
     def _require_conan_release_build_preset() -> None:
-        if not CPP_PRESET_PATH.is_file():
-            raise FileNotFoundError(
-                "Expected Conan-generated preset file is missing: build/Release/generators/CMakePresets.json"
-            )
-
-        presets = json.loads(CPP_PRESET_PATH.read_text(encoding="utf-8"))
+        cpp_preset_path = _resolve_cpp_preset_path()
+        presets = json.loads(cpp_preset_path.read_text(encoding="utf-8"))
         build_presets = presets.get("buildPresets", [])
         build_preset_names = {
             preset.get("name") for preset in build_presets if isinstance(preset, dict) and isinstance(preset.get("name"), str)
@@ -464,7 +507,9 @@ def _build_cpp_runtime() -> None:
                 f"buildPresets={sorted(build_preset_names)}"
             )
 
-    if not CPP_PRESET_PATH.is_file():
+    try:
+        _resolve_cpp_preset_path()
+    except FileNotFoundError:
         _run(["pixi", "run", "--frozen", "-e", "cpp", "cpp_bootstrap"])
 
     _require_conan_release_build_preset()
