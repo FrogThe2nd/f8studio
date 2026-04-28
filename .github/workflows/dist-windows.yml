@@ -42,7 +42,7 @@ jobs:
     env:
       CONAN_HOME: ${{ github.workspace }}/.conan2
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: prefix-dev/setup-pixi@v0.9.3
         with:
@@ -54,13 +54,33 @@ jobs:
             launcher
 
       - name: Setup MSVC
-        uses: ilammy/msvc-dev-cmd@v1
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsInstallPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vsInstallPath) {
+            throw "Visual Studio with MSVC x64 tools was not found."
+          }
+
+          $vsDevCmd = Join-Path $vsInstallPath "Common7\Tools\VsDevCmd.bat"
+          if (-not (Test-Path $vsDevCmd)) {
+            throw "VsDevCmd.bat was not found: $vsDevCmd"
+          }
+
+          cmd /s /c "`"$vsDevCmd`" -arch=x64 -host_arch=x64 && set" |
+            ForEach-Object {
+              if ($_ -match "^(.*?)=(.*)$") {
+                $name = $matches[1]
+                $value = $matches[2]
+                "$name=$value" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+              }
+            }
 
       # Tag-scoped caches cannot be restored by other tag runs, so keep the
       # canonical Windows build caches warm on the default branch instead.
       - name: Restore Conan cache
         id: conan_cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: ${{ env.CONAN_HOME }}
           key: conan-Windows-${{ hashFiles('conanfile.py', 'conan_recipes/**', 'conan.lock') }}
@@ -76,7 +96,7 @@ jobs:
 
       - name: Save Conan cache
         if: success() && steps.conan_cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: ${{ env.CONAN_HOME }}
           key: conan-Windows-${{ hashFiles('conanfile.py', 'conan_recipes/**', 'conan.lock') }}
@@ -87,7 +107,7 @@ jobs:
     env:
       CONAN_HOME: ${{ github.workspace }}/.conan2
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.git_ref || github.ref }}
 
@@ -101,10 +121,30 @@ jobs:
             launcher
 
       - name: Setup MSVC
-        uses: ilammy/msvc-dev-cmd@v1
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsInstallPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vsInstallPath) {
+            throw "Visual Studio with MSVC x64 tools was not found."
+          }
+
+          $vsDevCmd = Join-Path $vsInstallPath "Common7\Tools\VsDevCmd.bat"
+          if (-not (Test-Path $vsDevCmd)) {
+            throw "VsDevCmd.bat was not found: $vsDevCmd"
+          }
+
+          cmd /s /c "`"$vsDevCmd`" -arch=x64 -host_arch=x64 && set" |
+            ForEach-Object {
+              if ($_ -match "^(.*?)=(.*)$") {
+                $name = $matches[1]
+                $value = $matches[2]
+                "$name=$value" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+              }
+            }
 
       - name: Restore Conan cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: ${{ env.CONAN_HOME }}
           key: conan-Windows-${{ hashFiles('conanfile.py', 'conan_recipes/**', 'conan.lock') }}
@@ -173,7 +213,7 @@ jobs:
           "value=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Upload Windows dist artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: f8studio-windows-${{ steps.version.outputs.value }}
           path: |
@@ -182,7 +222,7 @@ jobs:
 
       - name: Attach archive to GitHub Release
         if: steps.release_target.outputs.should_upload == 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.release_target.outputs.tag }}
           generate_release_notes: true
