@@ -23,7 +23,9 @@ from f8pysdk.specs import (  # noqa: E402
 from f8pysdk.specs import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
 from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
 from f8pysdk.host import ServiceHost, ServiceHostConfig  # noqa: E402
+from f8pysdk.service_bus.runtime import ServiceBus  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
+from f8pysdk.time_utils import now_ms  # noqa: E402
 
 from f8pyengine.constants import SERVICE_CLASS  # noqa: E402
 from f8pyengine.operators.python_script import (  # noqa: E402
@@ -58,6 +60,11 @@ def _runtime_python_script_node(
         stateFields=list(state_fields if state_fields is not None else (spec.stateFields or [])),
         stateValues=merged_state_values,
     )
+
+
+def _monitor_current_error_message(bus: ServiceBus) -> str:
+    snapshot = bus.monitor_collector._build_snapshot(ts_ms=int(now_ms()))
+    return str(snapshot.error.currentMessage or "")
 
 
 class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
@@ -746,7 +753,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         counters = node.get_performance_counters()
         self.assertGreaterEqual(float(counters.get("input_decode_time_us", 0.0)), 0.0)
 
-    async def test_no_hooks_sets_last_error(self) -> None:
+    async def test_no_hooks_reports_monitor_error(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
@@ -762,18 +769,17 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         node = bus.get_node("ps_no_hooks")
         self.assertIsInstance(node, PythonScriptRuntimeNode)
         assert isinstance(node, PythonScriptRuntimeNode)
-        last_error = await node.get_state_value("lastError")
-        error_text = str(last_error or node._last_error or "")
+        error_text = _monitor_current_error_message(bus)
         self.assertIn("no hooks defined", error_text)
 
-    async def test_last_error_clears_after_successful_recompile(self) -> None:
+    async def test_monitor_error_clears_after_successful_recompile(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
         register_operator(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
-        bad_code = "def onMsg(ctx, inputs)\\n    return 1\\n"
+        bad_code = "def onMsg(ctx, inputs)\n    return 1\n"
         op = _runtime_python_script_node(node_id="ps_err_clear", code=bad_code)
         graph = F8RuntimeGraph(graphId="g_err_clear", revision="r1", nodes=[op], edges=[])
         await bus.set_rungraph(graph)
@@ -782,16 +788,14 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         node = bus.get_node("ps_err_clear")
         self.assertIsInstance(node, PythonScriptRuntimeNode)
         assert isinstance(node, PythonScriptRuntimeNode)
-        last_error = await node.get_state_value("lastError")
-        self.assertIn("compile:", str(last_error or node._last_error or ""))
+        self.assertIn("compile:", _monitor_current_error_message(bus))
 
-        good_code = "def onMsg(ctx, inputs):\\n    return 1\\n"
+        good_code = "def onMsg(ctx, inputs):\n    return 1\n"
         await node.on_state("code", good_code, ts_ms=123)
         await asyncio.sleep(0.05)
-        cleared = await node.get_state_value("lastError")
-        self.assertEqual(str(cleared or ""), "")
+        self.assertEqual(_monitor_current_error_message(bus), "")
 
-    async def test_legacy_ctx_dict_access_sets_last_error(self) -> None:
+    async def test_legacy_ctx_dict_access_reports_monitor_error(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
@@ -810,8 +814,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         node = bus.get_node("ps8")
         self.assertIsInstance(node, PythonScriptRuntimeNode)
         assert isinstance(node, PythonScriptRuntimeNode)
-        last_error = await node.get_state_value("lastError")
-        error_text = str(last_error or node._last_error or "")
+        error_text = _monitor_current_error_message(bus)
         self.assertIn("not subscriptable", error_text)
 
 if __name__ == "__main__":

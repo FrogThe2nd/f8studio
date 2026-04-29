@@ -31,7 +31,7 @@ No description.
 ### How to Run
 
 ```bash
-../win/f8cvkit_video_stab_service.exe
+../linux/f8cvkit_video_stab_service
 ```
 
 - Workdir: `./`
@@ -62,7 +62,6 @@ No description.
 | `sceneCutTrackRatioThreshold` | `rw` | `true` | `false` | `number / default=0.25` | Scene cut threshold for trackedPoints/max(prevPoints,1). |
 | `sceneCutCooldownFrames` | `rw` | `true` | `false` | `integer / default=5` | Suppress repeated scene cut triggers for N frames after a cut. |
 | `sceneChangeCount` | `ro` | `true` | `false` | `integer` | Monotonic counter incremented when a scene cut is detected. |
-| `lastError` | `ro` | `true` | `false` | `string` | Last error message. |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 

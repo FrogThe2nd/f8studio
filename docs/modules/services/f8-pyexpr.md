@@ -50,7 +50,6 @@ pixi run -e default f8pyexpr
 | `code` | `rw` | `true` | `true` | `string / default=msg` | Single-line expression. Available names: inputs + identifier-safe input ports. |
 | `allowNumpy` | `wo` | `true` | `false` | `boolean / default=False` | Enable numpy calls in expressions (np.*, numpy.*). |
 | `unpackDictOutputs` | `wo` | `true` | `false` | `boolean / default=False` | When enabled, dict results are emitted per matching output port key. |
-| `lastError` | `ro` | `true` | `false` | `string / default=` | Last expression compile/eval error. |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
@@ -59,7 +58,6 @@ pixi run -e default f8pyexpr
 - `code` (Expr, `rw`): Single-line expression. Available names: inputs + identifier-safe input ports. Schema: `string / default=msg`.
 - `allowNumpy` (Allow Numpy, `wo`): Enable numpy calls in expressions (np.*, numpy.*). Schema: `boolean / default=False`.
 - `unpackDictOutputs` (Unpack Dict Outputs, `wo`): When enabled, dict results are emitted per matching output port key. Schema: `boolean / default=False`.
-- `lastError` (Last Error, `ro`): Last expression compile/eval error. Schema: `string / default=`.
 - `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 

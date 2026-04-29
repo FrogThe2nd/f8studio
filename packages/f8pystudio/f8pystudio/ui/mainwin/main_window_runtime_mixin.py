@@ -14,6 +14,7 @@ from f8pystudio.studio_specs.registry import SERVICE_CLASS as STUDIO_SERVICE_CLA
 
 if TYPE_CHECKING:
     from ...global_hotkeys.controller import ControlPanelGlobalHotkeyController
+    from ...monitoring.alerts import MonitorAlertNotifier
     from ...nodegraph.node_graph import F8StudioGraph
     from ..support.runtime_state_sync import RuntimeStateSyncController
     from ..widgets.node_property_panel import F8StudioSingleNodePropertiesWidget
@@ -33,6 +34,7 @@ class MainWindowRuntimeMixin:
         _prop_editor: F8StudioSingleNodePropertiesWidget
         _runtime_state_sync: RuntimeStateSyncController
         _global_hotkey_controller: ControlPanelGlobalHotkeyController
+        _monitor_alert_notifier: MonitorAlertNotifier
 
         def _mark_auto_deploy_synced(self, *, compiled: CompiledRuntimeGraphs | None = None) -> None: ...
 
@@ -191,8 +193,12 @@ class MainWindowRuntimeMixin:
     def _on_ui_command(self, cmd: UiCommand) -> None:
         command = str(cmd.command)
         if command == "monitor.update":
+            payload_obj = cmd.payload
+            if isinstance(payload_obj, dict):
+                self._monitor_alert_notifier.handle_snapshot(payload_obj, parent=self)
             if self._service_manager is not None:
                 self._service_manager.queue_refresh()
+            return
         if command == "state.update":
             payload = dict(cmd.payload or {})
             field = str(payload.get("field") or "")

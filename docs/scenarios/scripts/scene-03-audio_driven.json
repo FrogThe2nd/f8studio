@@ -559,29 +559,6 @@
               "showOnNode": true
             },
             {
-              "name": "lastError",
-              "label": "Last Error",
-              "description": "Last runtime error string.",
-              "valueSchema": {
-                "title": null,
-                "description": null,
-                "default": "",
-                "examples": null,
-                "field_comment": null,
-                "type": "string",
-                "enum": null,
-                "minimum": null,
-                "maximum": null,
-                "exclusiveMinimum": null,
-                "exclusiveMaximum": null,
-                "multipleOf": null
-              },
-              "access": "ro",
-              "required": false,
-              "uiControl": null,
-              "showOnNode": false
-            },
-            {
               "name": "active",
               "label": "Active",
               "description": "Service lifecycle state (activate/deactivate).",
@@ -675,7 +652,6 @@
           "windowMs": 768,
           "hopMs": 64,
           "emitEveryHops": 1,
-          "lastError": "",
           "active": true,
           "svcId": "MVWG"
         }
@@ -798,29 +774,6 @@
               "showOnNode": true
             },
             {
-              "name": "lastError",
-              "label": "Last Error",
-              "description": "Last runtime error string.",
-              "valueSchema": {
-                "title": null,
-                "description": null,
-                "default": "",
-                "examples": null,
-                "field_comment": null,
-                "type": "string",
-                "enum": null,
-                "minimum": null,
-                "maximum": null,
-                "exclusiveMinimum": null,
-                "exclusiveMaximum": null,
-                "multipleOf": null
-              },
-              "access": "ro",
-              "required": false,
-              "uiControl": null,
-              "showOnNode": false
-            },
-            {
               "name": "active",
               "label": "Active",
               "description": "Service lifecycle state (activate/deactivate).",
@@ -925,7 +878,6 @@
           "tempoWindowSec": 8.0,
           "pulseWindowSec": 6.0,
           "emitEvery": 1,
-          "lastError": "",
           "active": true,
           "svcId": "MVhQ"
         }
@@ -2168,29 +2120,6 @@
               "showOnNode": false
             },
             {
-              "name": "lastError",
-              "label": "Last Error",
-              "description": "Last expression compile/eval error.",
-              "valueSchema": {
-                "title": null,
-                "description": null,
-                "default": "",
-                "examples": null,
-                "field_comment": null,
-                "type": "string",
-                "enum": null,
-                "minimum": null,
-                "maximum": null,
-                "exclusiveMinimum": null,
-                "exclusiveMaximum": null,
-                "multipleOf": null
-              },
-              "access": "ro",
-              "required": false,
-              "uiControl": null,
-              "showOnNode": false
-            },
-            {
               "name": "active",
               "label": "Active",
               "description": "Service lifecycle state (activate/deactivate).",
@@ -2310,7 +2239,6 @@
           "code": "msg['rms']",
           "allowNumpy": false,
           "unpackDictOutputs": false,
-          "lastError": "",
           "active": true,
           "svcId": "fHxA"
         }
@@ -5690,4 +5618,3 @@
     ]
   }
 }
-

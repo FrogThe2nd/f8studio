@@ -125,7 +125,7 @@ bool FlowMetricService::start() {
   publish_state_if_changed("metricScale", metric_scale_, "init", json::object());
   publish_state_if_changed("scalarShmName", scalar_shm_name_, "init", json::object());
   publish_state_if_changed("scalarShmFormat", scalar_shm_format_, "init", json::object());
-  publish_state_if_changed("lastError", "", "init", json::object());
+  publish_error_if_changed("", "init", json::object());
 
   running_.store(true, std::memory_order_release);
   stop_requested_.store(false, std::memory_order_release);
@@ -164,6 +164,11 @@ void FlowMetricService::publish_state_if_changed(const std::string& field, const
                                                  const json& meta) {
   service_runtime::publish_state_if_changed(state_mu_, published_state_, bus_.get(), cfg_.service_id, field, value,
                                             source, meta);
+}
+
+void FlowMetricService::publish_error_if_changed(const json& value, const std::string& source, const json& meta) {
+  service_runtime::publish_error_if_changed(state_mu_, published_state_, bus_.get(), cfg_.service_id, value, source,
+                                            meta);
 }
 
 void FlowMetricService::emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms,
@@ -236,19 +241,19 @@ void FlowMetricService::on_state(const std::string& node_id, const std::string& 
   if (field == "computeEveryNFrames") {
     int v = 0;
     if (!service_runtime::parse_json_int(value, v)) {
-      publish_state_if_changed("lastError", "invalid computeEveryNFrames", "state", meta);
+      publish_error_if_changed("invalid computeEveryNFrames", "state", meta);
       return;
     }
     v = std::max(1, std::min(120, v));
     compute_every_n_frames_ = v;
     publish_state_if_changed("computeEveryNFrames", compute_every_n_frames_, "state", meta);
-    publish_state_if_changed("lastError", "", "state", meta);
+    publish_error_if_changed("", "state", meta);
     return;
   }
 
   if (field == "metricMode") {
     if (!value.is_string()) {
-      publish_state_if_changed("lastError", "invalid metricMode", "state", meta);
+      publish_error_if_changed("invalid metricMode", "state", meta);
       return;
     }
     const std::string mode = service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(value.get<std::string>()));
@@ -265,23 +270,23 @@ void FlowMetricService::on_state(const std::string& node_id, const std::string& 
       metric_mode_ = MetricMode::Strain;
       metric_mode_state_ = "strain";
     } else {
-      publish_state_if_changed("lastError", "invalid metricMode: " + value.get<std::string>(), "state", meta);
+      publish_error_if_changed("invalid metricMode: " + value.get<std::string>(), "state", meta);
       return;
     }
     publish_state_if_changed("metricMode", metric_mode_state_, "state", meta);
-    publish_state_if_changed("lastError", "", "state", meta);
+    publish_error_if_changed("", "state", meta);
     return;
   }
 
   if (field == "metricScale") {
     double v = 0.0;
     if (!service_runtime::parse_json_double(value, v)) {
-      publish_state_if_changed("lastError", "invalid metricScale", "state", meta);
+      publish_error_if_changed("invalid metricScale", "state", meta);
       return;
     }
     metric_scale_ = std::max(-1000.0, std::min(1000.0, v));
     publish_state_if_changed("metricScale", metric_scale_, "state", meta);
-    publish_state_if_changed("lastError", "", "state", meta);
+    publish_error_if_changed("", "state", meta);
     return;
   }
 }
@@ -309,7 +314,7 @@ bool FlowMetricService::ensure_flow_open() {
   last_flow_open_attempt_ms_ = now;
 
   if (input_flow_shm_name_.empty()) {
-    publish_state_if_changed("lastError", "missing inputFlowShmName", "runtime", json::object());
+    publish_error_if_changed("missing inputFlowShmName", "runtime", json::object());
     return false;
   }
 
@@ -318,36 +323,36 @@ bool FlowMetricService::ensure_flow_open() {
   // 2) remap with exact required bytes (header + slot_count * payload_capacity)
   const std::size_t header_bytes = sizeof(f8::cppsdk::VideoSharedMemoryHeader);
   if (!flow_reader_.open(input_flow_shm_name_, header_bytes)) {
-    publish_state_if_changed("lastError", "flow shm open failed: " + input_flow_shm_name_, "runtime", json::object());
+    publish_error_if_changed("flow shm open failed: " + input_flow_shm_name_, "runtime", json::object());
     return false;
   }
   f8::cppsdk::VideoSharedMemoryHeader discovered{};
   if (!flow_reader_.readHeader(discovered) || discovered.slot_count == 0 || discovered.payload_capacity == 0) {
     flow_reader_.close();
-    publish_state_if_changed("lastError", "flow shm header invalid: " + input_flow_shm_name_, "runtime", json::object());
+    publish_error_if_changed("flow shm header invalid: " + input_flow_shm_name_, "runtime", json::object());
     return false;
   }
   std::size_t payload_total = 0;
   if (discovered.payload_capacity > (std::numeric_limits<std::size_t>::max)() / discovered.slot_count) {
     flow_reader_.close();
-    publish_state_if_changed("lastError", "flow shm size overflow: " + input_flow_shm_name_, "runtime", json::object());
+    publish_error_if_changed("flow shm size overflow: " + input_flow_shm_name_, "runtime", json::object());
     return false;
   }
   payload_total = static_cast<std::size_t>(discovered.payload_capacity) * static_cast<std::size_t>(discovered.slot_count);
   if (header_bytes > (std::numeric_limits<std::size_t>::max)() - payload_total) {
     flow_reader_.close();
-    publish_state_if_changed("lastError", "flow shm size overflow: " + input_flow_shm_name_, "runtime", json::object());
+    publish_error_if_changed("flow shm size overflow: " + input_flow_shm_name_, "runtime", json::object());
     return false;
   }
   const std::size_t required_bytes = header_bytes + payload_total;
   flow_reader_.close();
   if (!flow_reader_.open(input_flow_shm_name_, required_bytes)) {
-    publish_state_if_changed("lastError", "flow shm reopen failed: " + input_flow_shm_name_, "runtime", json::object());
+    publish_error_if_changed("flow shm reopen failed: " + input_flow_shm_name_, "runtime", json::object());
     return false;
   }
 
   last_notify_seq_ = 0;
-  publish_state_if_changed("lastError", "", "runtime", json::object());
+  publish_error_if_changed("", "runtime", json::object());
   return true;
 }
 
@@ -379,18 +384,18 @@ void FlowMetricService::process_frame_once() {
 
   if (hdr.format != f8::cppsdk::kVideoFormatFlow2F16 || hdr.width == 0 || hdr.height == 0 || hdr.pitch == 0) {
     ++monitor_fail_frames_;
-    publish_state_if_changed("lastError", "unsupported flow shm format", "runtime", json::object());
+    publish_error_if_changed("unsupported flow shm format", "runtime", json::object());
     return;
   }
   const std::size_t row_bytes = static_cast<std::size_t>(hdr.pitch);
   if (row_bytes < static_cast<std::size_t>(hdr.width) * 4u) {
     ++monitor_fail_frames_;
-    publish_state_if_changed("lastError", "invalid flow shm pitch", "runtime", json::object());
+    publish_error_if_changed("invalid flow shm pitch", "runtime", json::object());
     return;
   }
   if (flow_payload_.size() < row_bytes * static_cast<std::size_t>(hdr.height)) {
     ++monitor_fail_frames_;
-    publish_state_if_changed("lastError", "flow shm frame too small", "runtime", json::object());
+    publish_error_if_changed("flow shm frame too small", "runtime", json::object());
     return;
   }
 
@@ -403,7 +408,7 @@ void FlowMetricService::process_frame_once() {
   const int height = static_cast<int>(hdr.height);
   if (width <= 0 || height <= 0) {
     ++monitor_fail_frames_;
-    publish_state_if_changed("lastError", "invalid flow dimensions", "runtime", json::object());
+    publish_error_if_changed("invalid flow dimensions", "runtime", json::object());
     return;
   }
 
@@ -454,7 +459,7 @@ void FlowMetricService::process_frame_once() {
     metric_output_ *= static_cast<float>(metric_scale_);
   } catch (const cv::Exception& ex) {
     ++monitor_fail_frames_;
-    publish_state_if_changed("lastError", std::string("opencv flow metric failed: ") + ex.what(), "runtime",
+    publish_error_if_changed(std::string("opencv flow metric failed: ") + ex.what(), "runtime",
                              json::object());
     return;
   }
@@ -468,14 +473,14 @@ void FlowMetricService::process_frame_once() {
   if (scalar_sink_.regionName() != shm_name) {
     if (!scalar_sink_.initialize(shm_name, f8::cppsdk::shm::kDefaultVideoShmBytes, f8::cppsdk::shm::kDefaultVideoShmSlots)) {
       ++monitor_fail_frames_;
-      publish_state_if_changed("lastError", "scalar shm init failed: " + shm_name, "runtime", json::object());
+      publish_error_if_changed("scalar shm init failed: " + shm_name, "runtime", json::object());
       return;
     }
   }
   if (!scalar_sink_.ensureConfigurationForFormat(static_cast<unsigned>(width), static_cast<unsigned>(height),
                                                  f8::cppsdk::kVideoFormatScalar1F32, 4)) {
     ++monitor_fail_frames_;
-    publish_state_if_changed("lastError", "scalar shm ensureConfiguration failed", "runtime", json::object());
+    publish_error_if_changed("scalar shm ensureConfiguration failed", "runtime", json::object());
     return;
   }
 
@@ -490,14 +495,14 @@ void FlowMetricService::process_frame_once() {
   if (!scalar_sink_.writeFrameWithFormat(scalar_payload_.data(), static_cast<unsigned>(scalar_pitch),
                                          f8::cppsdk::kVideoFormatScalar1F32)) {
     ++monitor_fail_frames_;
-    publish_state_if_changed("lastError", "scalar shm write failed", "runtime", json::object());
+    publish_error_if_changed("scalar shm write failed", "runtime", json::object());
     return;
   }
 
   publish_state_if_changed("metricMode", metric_mode_state_, "runtime", json::object());
   publish_state_if_changed("metricScale", metric_scale_, "runtime", json::object());
   publish_state_if_changed("scalarShmFormat", scalar_shm_format_, "runtime", json::object());
-  publish_state_if_changed("lastError", "", "runtime", json::object());
+  publish_error_if_changed("", "runtime", json::object());
 
   const std::int64_t end_ts_ms = f8::cppsdk::now_ms();
   const std::uint64_t points = static_cast<std::uint64_t>(std::max(0, width)) * static_cast<std::uint64_t>(std::max(0, height));
@@ -525,7 +530,6 @@ json FlowMetricService::describe() {
                   true),
       state_field("scalarShmFormat", schema_string(), "ro", "Scalar SHM Format",
                   "Output payload format. Fixed to scalar1_f32.", false),
-      state_field("lastError", schema_string(), "ro", "Last Error", "Last error message.", false),
   });
   service["commands"] = json::array();
   service["dataInPorts"] = json::array();

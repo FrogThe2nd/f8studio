@@ -29,9 +29,12 @@ def log_error_once(
         error_message = str(message)
         if exc is not None:
             error_message = f"{message}: {type(exc).__name__}: {exc}"
-        bus._monitor_collector.record_error(
+        bus.report_error(
+            str(bus.service_id),
             code="SERVICE_BUS_ERROR",
             message=error_message,
+            severity="error",
+            fingerprint=str(key),
         )
     if exc is None:
         log.error("service_bus[%s] %s", bus.service_id, message)

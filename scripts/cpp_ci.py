@@ -28,14 +28,56 @@ class ConanPresetSelection:
     build_preset_name: str
 
 
-def _run(command: list[str]) -> None:
+def _pixi_cpp_env_path() -> Path:
+    return REPO_ROOT / ".pixi" / "envs" / "cpp"
+
+
+def _cpp_tool(name: str) -> str:
+    tool_path = _pixi_cpp_env_path() / "bin" / name
+    if tool_path.is_file():
+        return str(tool_path)
+    return name
+
+
+def _run(command: list[str], *, use_pixi_cpp_paths: bool = False, use_host_pkg_config: bool = False) -> None:
     ccache_tmp_dir = REPO_ROOT / ".ccache-tmp"
     ccache_tmp_dir.mkdir(parents=True, exist_ok=True)
 
     command_env = os.environ.copy()
     command_env["CCACHE_TEMPDIR"] = str(ccache_tmp_dir)
+    if use_host_pkg_config:
+        _prepend_path_list(command_env, "PATH", [Path("/usr/bin"), Path("/usr/local/bin")])
+    if use_pixi_cpp_paths:
+        _apply_pixi_cpp_env(command_env)
 
     subprocess.run(command, check=True, cwd=REPO_ROOT, env=command_env)
+
+
+def _prepend_path_list(env: dict[str, str], name: str, paths: list[Path]) -> None:
+    existing_value = env.get(name, "")
+    path_values = [str(path) for path in paths if path.exists()]
+    if existing_value:
+        path_values.append(existing_value)
+    if path_values:
+        env[name] = os.pathsep.join(path_values)
+
+
+def _apply_pixi_cpp_env(env: dict[str, str]) -> None:
+    pixi_cpp_env = _pixi_cpp_env_path()
+    if not pixi_cpp_env.is_dir():
+        return
+
+    _prepend_path_list(env, "CMAKE_PREFIX_PATH", [pixi_cpp_env])
+    _prepend_path_list(env, "CMAKE_LIBRARY_PATH", [pixi_cpp_env / "lib"])
+    _prepend_path_list(env, "CMAKE_INCLUDE_PATH", [pixi_cpp_env / "include"])
+    _prepend_path_list(
+        env,
+        "PKG_CONFIG_PATH",
+        [
+            pixi_cpp_env / "lib" / "pkgconfig",
+            pixi_cpp_env / "share" / "pkgconfig",
+        ],
+    )
 
 
 def _repo_relative_path(path: Path) -> str:
@@ -88,10 +130,10 @@ def _bootstrap() -> None:
             "Missing conan.lock at repository root. Run `python scripts/cpp_ci.py lock-refresh` first."
         )
 
-    _run(["conan", "profile", "detect", "--force"])
+    _run([_cpp_tool("conan"), "profile", "detect", "--force"], use_host_pkg_config=True)
     _run(
         [
-            "conan",
+            _cpp_tool("conan"),
             "install",
             ".",
             "-of",
@@ -104,7 +146,8 @@ def _bootstrap() -> None:
             "--lockfile",
             "conan.lock",
             "--lockfile-partial",
-        ]
+        ],
+        use_host_pkg_config=True,
     )
 
     _generated_presets_path()
@@ -157,27 +200,29 @@ def _configure() -> None:
     conan_presets = _select_conan_release_presets()
     _run(
         [
-            "cmake",
+            _cpp_tool("cmake"),
             "--preset",
             conan_presets.configure_preset_name,
             "-DF8_DEPLOY_SERVICE_CLEAN=OFF",
             "-DF8_DEPLOY_SERVICE_RUNTIME_POST_BUILD=OFF",
-        ]
+            f"-DPKG_CONFIG_EXECUTABLE={_cpp_tool('pkg-config')}",
+        ],
+        use_pixi_cpp_paths=True,
     )
 
 
 def _build() -> None:
     conan_presets = _select_conan_release_presets()
-    _run(["cmake", "--build", "--preset", conan_presets.build_preset_name, "--parallel"])
+    _run([_cpp_tool("cmake"), "--build", "--preset", conan_presets.build_preset_name, "--parallel"], use_pixi_cpp_paths=True)
 
 
 def _lock_refresh() -> None:
-    _run(["conan", "profile", "detect", "--force"])
+    _run([_cpp_tool("conan"), "profile", "detect", "--force"], use_host_pkg_config=True)
     if LOCKFILE_PATH.is_file():
         LOCKFILE_PATH.unlink()
     _run(
         [
-            "conan",
+            _cpp_tool("conan"),
             "lock",
             "create",
             ".",
@@ -186,7 +231,8 @@ def _lock_refresh() -> None:
             "--lockfile-out",
             "conan.lock",
             "--build=missing",
-        ]
+        ],
+        use_host_pkg_config=True,
     )
 
 

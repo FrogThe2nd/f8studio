@@ -89,7 +89,6 @@ class F8Build(ConanFile):
         # Video Player
         self.requires("iconfontcppheaders/cci.20240620")
         self.requires("opencv/4.12.0")
-        self.requires("sdl/3.2.20")
         self.requires("glad/0.1.36")
         self.requires("opengl/system")
         self.requires("imgui/1.92.4")

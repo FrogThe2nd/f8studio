@@ -16,13 +16,21 @@ find_package(spdlog REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(SDL3 REQUIRED)
 
+if (TARGET SDL3::SDL3)
+  set(F8_SDL3_TARGET SDL3::SDL3)
+elseif (TARGET sdl::sdl)
+  set(F8_SDL3_TARGET sdl::sdl)
+else()
+  message(FATAL_ERROR "SDL3 package did not provide SDL3::SDL3 or sdl::sdl")
+endif()
+
 target_link_libraries(f8audiocap_service
   PRIVATE
     f8cppsdk
     cxxopts::cxxopts
     spdlog::spdlog
     nlohmann_json::nlohmann_json
-    sdl::sdl
+    ${F8_SDL3_TARGET}
 )
 
 target_compile_definitions(f8audiocap_service PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)

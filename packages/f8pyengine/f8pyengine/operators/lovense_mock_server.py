@@ -560,11 +560,18 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
 
         if self._server is None:
             await self._safe_set_state("listening", False)
-            await self._safe_set_state("lastError", str(self._last_error or ""))
+            message = str(self._last_error or "")
+            if message:
+                await self.report_error(
+                    "LOVENSE_MOCK_SERVER_ERROR",
+                    message,
+                    severity="error",
+                    fingerprint=f"lovense-mock-server:{message}",
+                )
             return
 
         await self._safe_set_state("listening", True)
-        await self._safe_set_state("lastError", "")
+        await self.clear_error()
 
     async def _stop_server(self) -> None:
         server: asyncio.AbstractServer | None = None
@@ -1492,15 +1499,6 @@ LovenseMockServerRuntimeNode.SPEC = F8OperatorSpec(
             label="Listening",
             description="True if the HTTP server is currently listening.",
             valueSchema=boolean_schema(default=False),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=True,
-        ),
-        F8StateSpec(
-            name="lastError",
-            label="Last Error",
-            description="Last server error (e.g. bind failure).",
-            valueSchema=string_schema(default=""),
             access=F8StateAccess.ro,
             required=True,
             showOnNode=True,

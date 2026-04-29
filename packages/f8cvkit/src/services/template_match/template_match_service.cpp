@@ -188,7 +188,7 @@ bool TemplateMatchService::start() {
   publish_state_if_changed("searchRoiPaddingPx", search_roi_padding_px_, "init", json::object());
   publish_state_if_changed("pyramidScale", pyramid_scale_, "init", json::object());
   publish_state_if_changed("shmName", "", "init", json::object());
-  publish_state_if_changed("lastError", "", "init", json::object());
+  publish_error_if_changed("", "init", json::object());
 
   template_loaded_ = false;
   template_error_.clear();
@@ -262,6 +262,11 @@ void TemplateMatchService::publish_state_if_changed(const std::string& field, co
                                             source, meta);
 }
 
+void TemplateMatchService::publish_error_if_changed(const json& value, const std::string& source, const json& meta) {
+  service_runtime::publish_error_if_changed(state_mu_, published_state_, bus_.get(), cfg_.service_id, value, source,
+                                            meta);
+}
+
 void TemplateMatchService::on_lifecycle(bool active, const json& meta) {
   active_.store(active, std::memory_order_release);
   (void)meta;
@@ -290,57 +295,57 @@ void TemplateMatchService::on_state(const std::string& node_id, const std::strin
   if (field == "matchThreshold") {
     double v = 0.0;
     if (!service_runtime::parse_json_double(value, v)) {
-      publish_state_if_changed("lastError", "invalid matchThreshold", "state", meta);
+      publish_error_if_changed("invalid matchThreshold", "state", meta);
       return;
     }
     match_threshold_ = std::clamp(v, 0.0, 1.0);
     publish_state_if_changed("matchThreshold", match_threshold_, "state", meta);
-    publish_state_if_changed("lastError", "", "state", meta);
+    publish_error_if_changed("", "state", meta);
     return;
   }
   if (field == "matchingIntervalMs") {
     int v = 0;
     if (!service_runtime::parse_json_int(value, v)) {
-      publish_state_if_changed("lastError", "invalid matchingIntervalMs", "state", meta);
+      publish_error_if_changed("invalid matchingIntervalMs", "state", meta);
       return;
     }
     matching_interval_ms_ = std::clamp<std::int64_t>(static_cast<std::int64_t>(v), 0, 60000);
     publish_state_if_changed("matchingIntervalMs", matching_interval_ms_, "state", meta);
-    publish_state_if_changed("lastError", "", "state", meta);
+    publish_error_if_changed("", "state", meta);
     return;
   }
   if (field == "matchColorMode" && value.is_string()) {
     const std::string mode = service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(value.get<std::string>()));
     if (mode != "gray" && mode != "bgr") {
-      publish_state_if_changed("lastError", "invalid matchColorMode", "state", meta);
+      publish_error_if_changed("invalid matchColorMode", "state", meta);
       return;
     }
     match_color_mode_ = mode;
     has_last_detection_ = false;
     publish_state_if_changed("matchColorMode", match_color_mode_, "state", meta);
-    publish_state_if_changed("lastError", "", "state", meta);
+    publish_error_if_changed("", "state", meta);
     return;
   }
   if (field == "searchRoiPaddingPx") {
     int v = 0;
     if (!service_runtime::parse_json_int(value, v)) {
-      publish_state_if_changed("lastError", "invalid searchRoiPaddingPx", "state", meta);
+      publish_error_if_changed("invalid searchRoiPaddingPx", "state", meta);
       return;
     }
     search_roi_padding_px_ = std::clamp(v, 0, 10000);
     publish_state_if_changed("searchRoiPaddingPx", search_roi_padding_px_, "state", meta);
-    publish_state_if_changed("lastError", "", "state", meta);
+    publish_error_if_changed("", "state", meta);
     return;
   }
   if (field == "pyramidScale") {
     double v = 0.0;
     if (!service_runtime::parse_json_double(value, v)) {
-      publish_state_if_changed("lastError", "invalid pyramidScale", "state", meta);
+      publish_error_if_changed("invalid pyramidScale", "state", meta);
       return;
     }
     pyramid_scale_ = std::clamp(v, 0.25, 1.0);
     publish_state_if_changed("pyramidScale", pyramid_scale_, "state", meta);
-    publish_state_if_changed("lastError", "", "state", meta);
+    publish_error_if_changed("", "state", meta);
     return;
   }
 }
@@ -373,14 +378,14 @@ void TemplateMatchService::set_template_png_b64(const std::string& b64, const js
 
   if (template_png_b64_.empty()) {
     template_error_ = "missing templateImagePngB64";
-    publish_state_if_changed("lastError", template_error_, "state", meta);
+    publish_error_if_changed(template_error_, "state", meta);
     return;
   }
 
   const auto dec = f8::cvkit::base64_decode(template_png_b64_);
   if (!dec.error.empty()) {
     template_error_ = "base64 decode failed: " + dec.error;
-    publish_state_if_changed("lastError", template_error_, "state", meta);
+    publish_error_if_changed(template_error_, "state", meta);
     return;
   }
 
@@ -388,7 +393,7 @@ void TemplateMatchService::set_template_png_b64(const std::string& b64, const js
   cv::Mat img = cv::imdecode(buf, cv::IMREAD_COLOR);
   if (img.empty()) {
     template_error_ = "imdecode failed (templateImagePngB64)";
-    publish_state_if_changed("lastError", template_error_, "state", meta);
+    publish_error_if_changed(template_error_, "state", meta);
     return;
   }
 
@@ -399,11 +404,11 @@ void TemplateMatchService::set_template_png_b64(const std::string& b64, const js
     template_error_ = std::string("opencv template cvtColor failed: ") + ex.what();
     template_bgr_.release();
     template_gray_.release();
-    publish_state_if_changed("lastError", template_error_, "state", meta);
+    publish_error_if_changed(template_error_, "state", meta);
     return;
   }
   template_loaded_ = true;
-  publish_state_if_changed("lastError", "", "state", meta);
+  publish_error_if_changed("", "state", meta);
 }
 
 bool TemplateMatchService::ensure_video_open() {
@@ -420,18 +425,18 @@ bool TemplateMatchService::ensure_video_open() {
 
   const std::string shm_name = shm_name_override_;
   if (shm_name.empty()) {
-    publish_state_if_changed("lastError", "missing shmName", "runtime", json::object());
+    publish_error_if_changed("missing shmName", "runtime", json::object());
     return false;
   }
   // Use the default SHM size. If producers override capacity, expose a state/config
   // field later; for now keep the contract simple and consistent.
   const std::size_t bytes = f8::cppsdk::shm::kDefaultVideoShmBytes;
   if (!video_.open(shm_name, bytes)) {
-    publish_state_if_changed("lastError", "video shm open failed: " + shm_name, "runtime", json::object());
+    publish_error_if_changed("video shm open failed: " + shm_name, "runtime", json::object());
     return false;
   }
   last_notify_seq_ = 0;
-  publish_state_if_changed("lastError", "", "runtime", json::object());
+  publish_error_if_changed("", "runtime", json::object());
   return true;
 }
 
@@ -440,7 +445,7 @@ void TemplateMatchService::detect_once() {
     return;
   if (!template_loaded_) {
     if (!template_error_.empty()) {
-      publish_state_if_changed("lastError", template_error_, "runtime", json::object());
+      publish_error_if_changed(template_error_, "runtime", json::object());
     }
     return;
   }
@@ -481,22 +486,22 @@ void TemplateMatchService::detect_once() {
     }
 
     if (hdr.format != 1 || hdr.width == 0 || hdr.height == 0 || hdr.pitch == 0) {
-      publish_state_if_changed("lastError", "unsupported video shm format", "runtime", json::object());
+      publish_error_if_changed("unsupported video shm format", "runtime", json::object());
       return;
     }
     const std::size_t row_bytes = static_cast<std::size_t>(hdr.pitch);
     if (row_bytes < static_cast<std::size_t>(hdr.width) * 4) {
-      publish_state_if_changed("lastError", "invalid video shm pitch", "runtime", json::object());
+      publish_error_if_changed("invalid video shm pitch", "runtime", json::object());
       return;
     }
     if (frame_bgra_.size() < row_bytes * static_cast<std::size_t>(hdr.height)) {
-      publish_state_if_changed("lastError", "video shm frame too small", "runtime", json::object());
+      publish_error_if_changed("video shm frame too small", "runtime", json::object());
       return;
     }
     if (template_bgr_.empty()) {
       template_loaded_ = false;
       template_error_ = "template empty";
-      publish_state_if_changed("lastError", template_error_, "runtime", json::object());
+      publish_error_if_changed(template_error_, "runtime", json::object());
       return;
     }
 
@@ -504,7 +509,7 @@ void TemplateMatchService::detect_once() {
                      const_cast<std::byte*>(frame_bgra_.data()), static_cast<std::size_t>(hdr.pitch));
 
     if (template_bgr_.cols > bgra_mat.cols || template_bgr_.rows > bgra_mat.rows) {
-      publish_state_if_changed("lastError", "template larger than frame", "runtime", json::object());
+      publish_error_if_changed("template larger than frame", "runtime", json::object());
       return;
     }
 
@@ -521,7 +526,7 @@ void TemplateMatchService::detect_once() {
         template_for_match = template_gray_;
       }
     } catch (const cv::Exception& ex) {
-      publish_state_if_changed("lastError", std::string("opencv cvtColor failed: ") + ex.what(), "runtime",
+      publish_error_if_changed(std::string("opencv cvtColor failed: ") + ex.what(), "runtime",
                                json::object());
       return;
     }
@@ -551,7 +556,7 @@ void TemplateMatchService::detect_once() {
           match_template = templ_small_;
           inverse_scale = 1.0 / pyramid_scale;
         } catch (const cv::Exception& ex) {
-          publish_state_if_changed("lastError", std::string("opencv pyramid resize failed: ") + ex.what(), "runtime",
+          publish_error_if_changed(std::string("opencv pyramid resize failed: ") + ex.what(), "runtime",
                                    json::object());
           return;
         }
@@ -561,7 +566,7 @@ void TemplateMatchService::detect_once() {
     try {
       cv::matchTemplate(match_source, match_template, match_result_, cv::TM_CCOEFF_NORMED);
     } catch (const cv::Exception& ex) {
-      publish_state_if_changed("lastError", std::string("opencv matchTemplate failed: ") + ex.what(), "runtime",
+      publish_error_if_changed(std::string("opencv matchTemplate failed: ") + ex.what(), "runtime",
                                json::object());
       return;
     }
@@ -603,7 +608,7 @@ void TemplateMatchService::detect_once() {
     out["skeletonProtocol"] = "none";
     out["detections"] = std::move(detections);
 
-    publish_state_if_changed("lastError", "", "runtime", json::object());
+    publish_error_if_changed("", "runtime", json::object());
     last_match_ts_ms_ = now_ms;
     (void)bus_->emit_data(cfg_.service_id, "detections", out);
     const std::int64_t end_ts_ms = f8::cppsdk::now_ms();
@@ -789,7 +794,6 @@ json TemplateMatchService::describe() {
                   "Optional downscale factor for faster coarse template matching.", false),
       state_field("shmName", schema_string(), "rw", "Video SHM", "Optional SHM name override (e.g. shm.xxx.video).",
                   true),
-      state_field("lastError", schema_string(), "ro", "Last Error", "Last error message.", false),
   });
   service["commands"] = json::array({
       json{{"name", "captureTemplateFrame"},

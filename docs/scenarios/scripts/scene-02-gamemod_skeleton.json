@@ -548,29 +548,6 @@
               "showOnNode": false
             },
             {
-              "name": "lastError",
-              "label": "Last Error",
-              "description": "Last script error (compile/runtime).",
-              "valueSchema": {
-                "title": null,
-                "description": null,
-                "default": "",
-                "examples": null,
-                "field_comment": null,
-                "type": "string",
-                "enum": null,
-                "minimum": null,
-                "maximum": null,
-                "exclusiveMinimum": null,
-                "exclusiveMaximum": null,
-                "multipleOf": null
-              },
-              "access": "wo",
-              "required": false,
-              "uiControl": null,
-              "showOnNode": false
-            },
-            {
               "name": "svcId",
               "label": "Service Id",
               "description": "Readonly: current service instance id (svcId).",
@@ -691,7 +668,6 @@
         "f8_ui_overrides": {},
         "custom": {
           "code": "# Define hooks (any subset is ok):\n# - onStart(ctx)\n# - onState(ctx, field, value, tsMs=None)      # called on state updates (except 'code')\n# - onMsg(ctx, inputs)                        # called on data arrival (push mode) or as fallback for exec\n# - onExec(ctx, execIn, inputs)               # called on exec trigger (pull mode)\n# - onStop(ctx)\n# - ctx.locals is preserved between calls\n# - execIn is the triggering exec input name\n# - State helpers:\n#   - await ctx.read_state(field)           # read state value\n#   - ctx.set_state(field, value)          # write state (fire-and-forget)\n#   - await ctx.set_state_async(field, value)\n#   Note: for best UI/graph support, add the target state fields on the node with editPolicy.stateFields.canAdd=true.\n# - inputs is a dict keyed by input port names\n# Return value protocol:\n# - onMsg: return {'outputs': {...}} or any value (emits to 'out' if present)\n# - onExec: return {'exec': ['exec','exec2'], 'outputs': {...}}\n#   - 'exec' selects exec out port(s) to trigger (defaults to pass-through)\n#   - 'outputs' is a dict mapping dataOutPort -> value\nimport numpy as np\n\ndef onStart(ctx):\n    ctx.log('python_script started')\n\ndef onState(ctx, field, value, tsMs=None):\n    # Example: react to a state change.\n    # ctx.log(f'state {field}={value} tsMs={tsMs}')\n    return\n\ndef onMsg(ctx, inputs):\n    msg = inputs.get('msg')\n\n    return {'outputs': {'out': msg}}\n\ndef _process(ctx, skeletons) -> dict:\n    penis = None\n    vagina = None\n\n    for model in skeletons:\n        for b in model['bones']:\n            # ctx.log(b)\n            # break\n            if b['name'] == 'MalePenisBase':\n                penis = b\n                break\n            elif b['name'] == 'Vagina':\n                vagina = b\n                break\n\n    if penis and vagina:\n        p0 = np.array(penis['pos'])\n        p1 = np.array(vagina['pos'])\n        dist = np.linalg.norm(p0-p1)\n    else:\n        dist = 0\n    return dist\n\ndef onExec(ctx, execIn, inputs):\n    # Example: choose different exec outputs by execIn port name.\n    if execIn == 'exec2':        \n        return {'exec': ['exec2'], 'outputs': {'out': inputs.get('msg')}}\n        \n    return {'exec': ['exec'],  'outputs':{\"out\": _process(ctx, inputs.get(\"msg\")) }}\n\ndef onStop(ctx):\n    ctx.log('python_script stopped')\n",
-          "lastError": "",
           "svcId": "a4sQ",
           "operatorId": "cW4J"
         }
@@ -4473,19 +4449,6 @@
               "required": true,
               "showOnNode": false,
               "redactOnPublish": false
-            },
-            {
-              "name": "lastError",
-              "valueSchema": {
-                "type": "string",
-                "default": ""
-              },
-              "access": "ro",
-              "label": "Last Error",
-              "description": "Readonly receiver/socket error, if any.",
-              "required": true,
-              "showOnNode": true,
-              "redactOnPublish": false
             }
           ],
           "commands": [],
@@ -4575,7 +4538,6 @@
           "lastRemotePort": 0,
           "lastByteLength": 0,
           "lastParseError": "",
-          "lastError": "",
           "svcId": "a4sQ",
           "operatorId": "uDPI"
         }

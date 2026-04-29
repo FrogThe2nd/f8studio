@@ -102,15 +102,6 @@ def _core_state_fields() -> list[F8StateSpec]:
             required=True,
             showOnNode=True,
         ),
-        F8StateSpec(
-            name="lastError",
-            label="Last Error",
-            description="Last runtime error string.",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=False,
-        ),
     ]
 
 
@@ -142,15 +133,6 @@ def _rhythm_state_fields() -> list[F8StateSpec]:
             access=F8StateAccess.rw,
             required=True,
             showOnNode=True,
-        ),
-        F8StateSpec(
-            name="lastError",
-            label="Last Error",
-            description="Last runtime error string.",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=False,
         ),
     ]
 

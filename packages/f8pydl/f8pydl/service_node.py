@@ -471,7 +471,15 @@ class OnnxVisionServiceNode(ServiceNode):
 
     async def _set_last_error(self, message: str) -> None:
         self._last_error = str(message or "")
-        await self.set_state("lastError", self._last_error)
+        if self._last_error:
+            await self.report_error(
+                "DL_RUNTIME",
+                self._last_error,
+                severity="warning" if self._last_error.lower().startswith("downloading ") else "error",
+                fingerprint=f"dl:{self._last_error}",
+            )
+            return
+        await self.clear_error()
 
     async def _record_exception(self, *, where: str, exc: Exception) -> None:
         signature = f"{type(exc).__name__}:{exc}"
@@ -499,7 +507,7 @@ class OnnxVisionServiceNode(ServiceNode):
         self._last_error_signature = ""
         self._last_error_repeats = 0
         await self.set_state("loadedModel", "")
-        await self.set_state("lastError", "")
+        await self.clear_error()
         await self.set_state("ortActiveProviders", "")
         await self._publish_selected_model_metadata()
         if self._model_index_warning:

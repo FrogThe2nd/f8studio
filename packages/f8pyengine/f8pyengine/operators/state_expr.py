@@ -41,7 +41,6 @@ logger = logging.getLogger(__name__)
 _PROTECTED_STATE_FIELDS = {
     "allowNumpy",
     "code",
-    "lastError",
     "operatorId",
     "out",
     "svcId",
@@ -91,7 +90,6 @@ class StateExprRuntimeNode(OperatorNode):
             "allowNumpy",
             "code",
             "out",
-            "lastError",
         ]
         super().__init__(
             node_id=ensure_token(node_id, label="node_id"),
@@ -151,7 +149,7 @@ class StateExprRuntimeNode(OperatorNode):
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
         del ts_ms
         name = str(field or "").strip()
-        if name in {"out", "lastError"}:
+        if name == "out":
             return
 
         if name == "allowNumpy":
@@ -253,8 +251,25 @@ class StateExprRuntimeNode(OperatorNode):
             self._published_out_value = self._out_value
 
         if force or not self._values_equal(self._published_last_error, self._last_error):
-            await self._safe_set_state("lastError", self._last_error)
+            await self._safe_publish_monitor_error(self._last_error)
             self._published_last_error = self._last_error
+
+    async def _safe_publish_monitor_error(self, message: str) -> None:
+        try:
+            if message:
+                await self.report_error(
+                    "STATE_EXPR_ERROR",
+                    message,
+                    severity="error",
+                    fingerprint=f"state-expr:{message}",
+                )
+                return
+            await self.clear_error()
+        except Exception as exc:
+            now_ms = int(time.time() * 1000.0)
+            sig = f"monitor:{type(exc).__name__}:{exc}"
+            if self._should_log_repeating_error(sig, now_ms=now_ms, kind="publish"):
+                logger.exception("[%s:state_expr] failed to publish monitor error", self.node_id)
 
     async def _safe_set_state(self, field: str, value: Any) -> None:
         try:
@@ -333,15 +348,6 @@ StateExprRuntimeNode.SPEC = F8OperatorSpec(
             valueSchema=any_schema(),
             access=F8StateAccess.ro,
             showOnNode=True,
-            required=False,
-        ),
-        F8StateSpec(
-            name="lastError",
-            label="Last Error",
-            description="Last compile or evaluation error.",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.ro,
-            showOnNode=False,
             required=False,
         ),
     ],

@@ -52,7 +52,6 @@ pixi run -e default f8pyaudiofeat_core
 | `windowMs` | `rw` | `true` | `true` | `integer / default=768` | Feature analysis window size in milliseconds. |
 | `hopMs` | `rw` | `true` | `true` | `integer / default=64` | Feature analysis hop size in milliseconds. |
 | `emitEveryHops` | `rw` | `true` | `true` | `integer / default=1` | Emit one coreFeatures payload every N analysis hops. |
-| `lastError` | `ro` | `true` | `false` | `string / default=` | Last runtime error string. |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
@@ -63,7 +62,6 @@ pixi run -e default f8pyaudiofeat_core
 - `windowMs` (Window (ms), `rw`): Feature analysis window size in milliseconds. Schema: `integer / default=768`.
 - `hopMs` (Hop (ms), `rw`): Feature analysis hop size in milliseconds. Schema: `integer / default=64`.
 - `emitEveryHops` (Emit Every Hops, `rw`): Emit one coreFeatures payload every N analysis hops. Schema: `integer / default=1`.
-- `lastError` (Last Error, `ro`): Last runtime error string. Schema: `string / default=`.
 - `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 

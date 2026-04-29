@@ -133,6 +133,44 @@ inline bool parse_json_double(const json& value, double& out) {
   return false;
 }
 
+inline std::string monitor_error_message_from_json(const json& value) {
+  if (value.is_string()) {
+    return value.get<std::string>();
+  }
+  if (value.is_null()) {
+    return {};
+  }
+  return value.dump();
+}
+
+inline void publish_error_if_changed(std::mutex& state_mu,
+                                     std::unordered_map<std::string, json>& published_state,
+                                     f8::cppsdk::ServiceBus* bus,
+                                     const std::string& service_id,
+                                     const json& value,
+                                     const std::string& source,
+                                     const json& meta) {
+  (void)meta;
+  const std::string message = monitor_error_message_from_json(value);
+  const json cached_message = message;
+  std::lock_guard<std::mutex> lock(state_mu);
+  const std::string cache_key = "$monitor.currentError";
+  const auto it = published_state.find(cache_key);
+  if (it != published_state.end() && it->second == cached_message) {
+    return;
+  }
+
+  published_state[cache_key] = cached_message;
+  if (bus == nullptr) {
+    return;
+  }
+  if (message.empty()) {
+    bus->clear_error(service_id);
+  } else {
+    bus->report_error(service_id, "CVKIT_SERVICE_ERROR", message, "error", service_id + ":" + source + ":" + message);
+  }
+}
+
 inline void publish_state_if_changed(std::mutex& state_mu,
                                      std::unordered_map<std::string, json>& published_state,
                                      f8::cppsdk::ServiceBus* bus,

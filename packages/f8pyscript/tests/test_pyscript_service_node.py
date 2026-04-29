@@ -20,11 +20,17 @@ from f8pysdk.codec import dump_json  # noqa: E402
 from f8pysdk.host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.shm.video import VideoShmWriter  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
+from f8pysdk.time_utils import now_ms  # noqa: E402
 
 from f8pyscript.constants import SERVICE_CLASS  # noqa: E402
 from f8pyscript.main_script import build_app  # noqa: E402
 from f8pyscript.script_node_registry import create_pyscript_registry  # noqa: E402
 from f8pyscript.script_service_node import PythonScriptServiceNode  # noqa: E402
+
+
+def _monitor_error_message(bus: object) -> str:
+    snapshot = bus.monitor_collector._build_snapshot(ts_ms=int(now_ms()))
+    return str(snapshot.error.currentMessage or "")
 
 
 def _service_node(*, code: str, state_fields: list[F8StateSpec] | None = None, state_values: dict[str, object] | None = None) -> F8RuntimeNode:
@@ -399,7 +405,7 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         )
         await node.on_state("code", code, ts_ms=1)
         await asyncio.sleep(0.05)
-        self.assertIn("not subscriptable", str(await node.get_state_value("lastError") or ""))
+        self.assertIn("not subscriptable", _monitor_error_message(bus))
 
     async def test_on_data_passes_raw_value(self) -> None:
         harness = ServiceBusHarness()

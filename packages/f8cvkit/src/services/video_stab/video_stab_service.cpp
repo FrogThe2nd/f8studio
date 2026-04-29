@@ -190,7 +190,7 @@ bool VideoStabService::start() {
   publish_state_if_changed("sceneCutTrackRatioThreshold", scene_cut_track_ratio_threshold_, "init", json::object());
   publish_state_if_changed("sceneCutCooldownFrames", scene_cut_cooldown_frames_, "init", json::object());
   publish_state_if_changed("sceneChangeCount", scene_change_count_, "init", json::object());
-  publish_state_if_changed("lastError", "", "init", json::object());
+  publish_error_if_changed("", "init", json::object());
 
   running_.store(true, std::memory_order_release);
   stop_requested_.store(false, std::memory_order_release);
@@ -232,6 +232,11 @@ void VideoStabService::publish_state_if_changed(const std::string& field, const 
                                                 const json& meta) {
   service_runtime::publish_state_if_changed(state_mu_, published_state_, bus_.get(), cfg_.service_id, field, value,
                                             source, meta);
+}
+
+void VideoStabService::publish_error_if_changed(const json& value, const std::string& source, const json& meta) {
+  service_runtime::publish_error_if_changed(state_mu_, published_state_, bus_.get(), cfg_.service_id, value, source,
+                                            meta);
 }
 
 void VideoStabService::emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms) {
@@ -304,12 +309,12 @@ void VideoStabService::set_motion_model(const std::string& model, const json& me
     motion_model_ = MotionModel::Homography;
     motion_model_state_ = "homography";
   } else {
-    publish_state_if_changed("lastError", "invalid motionModel: " + model, "state", meta);
+    publish_error_if_changed("invalid motionModel: " + model, "state", meta);
     return;
   }
   reset_stabilizer_internal(meta, "motion_model_changed");
   publish_state_if_changed("motionModel", motion_model_state_, "state", meta);
-  publish_state_if_changed("lastError", "", "state", meta);
+  publish_error_if_changed("", "state", meta);
 }
 
 void VideoStabService::set_stabilization_mode(const std::string& mode, const json& meta) {
@@ -321,12 +326,12 @@ void VideoStabService::set_stabilization_mode(const std::string& mode, const jso
     stabilization_mode_ = StabilizationMode::Instant;
     stabilization_mode_state_ = "instant";
   } else {
-    publish_state_if_changed("lastError", "invalid stabilizationMode: " + mode, "state", meta);
+    publish_error_if_changed("invalid stabilizationMode: " + mode, "state", meta);
     return;
   }
   reset_stabilizer_internal(meta, "stabilization_mode_changed");
   publish_state_if_changed("stabilizationMode", stabilization_mode_state_, "state", meta);
-  publish_state_if_changed("lastError", "", "state", meta);
+  publish_error_if_changed("", "state", meta);
 }
 
 void VideoStabService::on_state(const std::string& node_id, const std::string& field, const json& value,
@@ -351,119 +356,119 @@ void VideoStabService::on_state(const std::string& node_id, const std::string& f
   if (field == "smoothAlpha") {
     double v = 0.0;
     if (!parse_double_field(value, v)) {
-      publish_state_if_changed("lastError", "invalid smoothAlpha", "state", meta);
+      publish_error_if_changed("invalid smoothAlpha", "state", meta);
       return;
     }
     smooth_alpha_ = std::max(0.01, std::min(0.5, v));
     publish_state_if_changed("smoothAlpha", smooth_alpha_, "state", meta);
-    publish_state_if_changed("lastError", "", "state", meta);
+    publish_error_if_changed("", "state", meta);
     return;
   }
 
   if (field == "maxCornerCount") {
     int v = 0;
     if (!parse_int_field(value, v)) {
-      publish_state_if_changed("lastError", "invalid maxCornerCount", "state", meta);
+      publish_error_if_changed("invalid maxCornerCount", "state", meta);
       return;
     }
     max_corner_count_ = std::max(20, std::min(2000, v));
     publish_state_if_changed("maxCornerCount", max_corner_count_, "state", meta);
-    publish_state_if_changed("lastError", "", "state", meta);
+    publish_error_if_changed("", "state", meta);
     return;
   }
 
   if (field == "qualityLevel") {
     double v = 0.0;
     if (!parse_double_field(value, v)) {
-      publish_state_if_changed("lastError", "invalid qualityLevel", "state", meta);
+      publish_error_if_changed("invalid qualityLevel", "state", meta);
       return;
     }
     quality_level_ = std::max(0.0001, std::min(0.3, v));
     publish_state_if_changed("qualityLevel", quality_level_, "state", meta);
-    publish_state_if_changed("lastError", "", "state", meta);
+    publish_error_if_changed("", "state", meta);
     return;
   }
 
   if (field == "minDistance") {
     double v = 0.0;
     if (!parse_double_field(value, v)) {
-      publish_state_if_changed("lastError", "invalid minDistance", "state", meta);
+      publish_error_if_changed("invalid minDistance", "state", meta);
       return;
     }
     min_distance_ = std::max(1.0, std::min(100.0, v));
     publish_state_if_changed("minDistance", min_distance_, "state", meta);
-    publish_state_if_changed("lastError", "", "state", meta);
+    publish_error_if_changed("", "state", meta);
     return;
   }
 
   if (field == "ransacReprojThreshold") {
     double v = 0.0;
     if (!parse_double_field(value, v)) {
-      publish_state_if_changed("lastError", "invalid ransacReprojThreshold", "state", meta);
+      publish_error_if_changed("invalid ransacReprojThreshold", "state", meta);
       return;
     }
     ransac_reproj_threshold_ = std::max(0.1, std::min(20.0, v));
     publish_state_if_changed("ransacReprojThreshold", ransac_reproj_threshold_, "state", meta);
-    publish_state_if_changed("lastError", "", "state", meta);
+    publish_error_if_changed("", "state", meta);
     return;
   }
 
   if (field == "resetOnFailureFrames") {
     int v = 0;
     if (!parse_int_field(value, v)) {
-      publish_state_if_changed("lastError", "invalid resetOnFailureFrames", "state", meta);
+      publish_error_if_changed("invalid resetOnFailureFrames", "state", meta);
       return;
     }
     reset_on_failure_frames_ = std::max(1, std::min(120, v));
     publish_state_if_changed("resetOnFailureFrames", reset_on_failure_frames_, "state", meta);
-    publish_state_if_changed("lastError", "", "state", meta);
+    publish_error_if_changed("", "state", meta);
     return;
   }
 
   if (field == "sceneCutEnabled") {
     if (!value.is_boolean()) {
-      publish_state_if_changed("lastError", "invalid sceneCutEnabled", "state", meta);
+      publish_error_if_changed("invalid sceneCutEnabled", "state", meta);
       return;
     }
     scene_cut_enabled_ = value.get<bool>();
     publish_state_if_changed("sceneCutEnabled", scene_cut_enabled_, "state", meta);
-    publish_state_if_changed("lastError", "", "state", meta);
+    publish_error_if_changed("", "state", meta);
     return;
   }
 
   if (field == "sceneCutFrameDiffThreshold") {
     double v = 0.0;
     if (!parse_double_field(value, v)) {
-      publish_state_if_changed("lastError", "invalid sceneCutFrameDiffThreshold", "state", meta);
+      publish_error_if_changed("invalid sceneCutFrameDiffThreshold", "state", meta);
       return;
     }
     scene_cut_frame_diff_threshold_ = std::max(1.0, std::min(80.0, v));
     publish_state_if_changed("sceneCutFrameDiffThreshold", scene_cut_frame_diff_threshold_, "state", meta);
-    publish_state_if_changed("lastError", "", "state", meta);
+    publish_error_if_changed("", "state", meta);
     return;
   }
 
   if (field == "sceneCutTrackRatioThreshold") {
     double v = 0.0;
     if (!parse_double_field(value, v)) {
-      publish_state_if_changed("lastError", "invalid sceneCutTrackRatioThreshold", "state", meta);
+      publish_error_if_changed("invalid sceneCutTrackRatioThreshold", "state", meta);
       return;
     }
     scene_cut_track_ratio_threshold_ = std::max(0.01, std::min(0.95, v));
     publish_state_if_changed("sceneCutTrackRatioThreshold", scene_cut_track_ratio_threshold_, "state", meta);
-    publish_state_if_changed("lastError", "", "state", meta);
+    publish_error_if_changed("", "state", meta);
     return;
   }
 
   if (field == "sceneCutCooldownFrames") {
     int v = 0;
     if (!parse_int_field(value, v)) {
-      publish_state_if_changed("lastError", "invalid sceneCutCooldownFrames", "state", meta);
+      publish_error_if_changed("invalid sceneCutCooldownFrames", "state", meta);
       return;
     }
     scene_cut_cooldown_frames_ = std::max(0, std::min(120, v));
     publish_state_if_changed("sceneCutCooldownFrames", scene_cut_cooldown_frames_, "state", meta);
-    publish_state_if_changed("lastError", "", "state", meta);
+    publish_error_if_changed("", "state", meta);
     return;
   }
 }
@@ -523,17 +528,17 @@ bool VideoStabService::ensure_input_open() {
   input_last_open_attempt_ms_ = now;
 
   if (input_shm_name_.empty()) {
-    publish_state_if_changed("lastError", "missing inputShmName", "runtime", json::object());
+    publish_error_if_changed("missing inputShmName", "runtime", json::object());
     return false;
   }
 
   if (!input_video_.open(input_shm_name_, f8::cppsdk::shm::kDefaultVideoShmBytes)) {
-    publish_state_if_changed("lastError", "video shm open failed: " + input_shm_name_, "runtime", json::object());
+    publish_error_if_changed("video shm open failed: " + input_shm_name_, "runtime", json::object());
     return false;
   }
 
   input_last_notify_seq_ = 0;
-  publish_state_if_changed("lastError", "", "runtime", json::object());
+  publish_error_if_changed("", "runtime", json::object());
   return true;
 }
 
@@ -551,12 +556,12 @@ bool VideoStabService::ensure_output_open() {
   if (!output_video_->initialize(output_shm_name_, f8::cppsdk::shm::kDefaultVideoShmBytes,
                                  f8::cppsdk::shm::kDefaultVideoShmSlots)) {
     output_video_.reset();
-    publish_state_if_changed("lastError", "output shm init failed: " + output_shm_name_, "runtime", json::object());
+    publish_error_if_changed("output shm init failed: " + output_shm_name_, "runtime", json::object());
     return false;
   }
 
   output_initialized_ = true;
-  publish_state_if_changed("lastError", "", "runtime", json::object());
+  publish_error_if_changed("", "runtime", json::object());
   return true;
 }
 
@@ -593,18 +598,18 @@ void VideoStabService::process_frame_once() {
 
   if (hdr.format != 1 || hdr.width == 0 || hdr.height == 0 || hdr.pitch == 0) {
     ++monitor_fail_frames_;
-    publish_state_if_changed("lastError", "unsupported video shm format", "runtime", json::object());
+    publish_error_if_changed("unsupported video shm format", "runtime", json::object());
     return;
   }
   const std::size_t row_bytes = static_cast<std::size_t>(hdr.pitch);
   if (row_bytes < static_cast<std::size_t>(hdr.width) * 4) {
     ++monitor_fail_frames_;
-    publish_state_if_changed("lastError", "invalid video shm pitch", "runtime", json::object());
+    publish_error_if_changed("invalid video shm pitch", "runtime", json::object());
     return;
   }
   if (input_frame_bgra_.size() < row_bytes * static_cast<std::size_t>(hdr.height)) {
     ++monitor_fail_frames_;
-    publish_state_if_changed("lastError", "video shm frame too small", "runtime", json::object());
+    publish_error_if_changed("video shm frame too small", "runtime", json::object());
     return;
   }
 
@@ -616,7 +621,7 @@ void VideoStabService::process_frame_once() {
     cv::cvtColor(src_bgra, gray, cv::COLOR_BGRA2GRAY);
   } catch (const cv::Exception& ex) {
     ++monitor_fail_frames_;
-    publish_state_if_changed("lastError", std::string("opencv cvtColor failed: ") + ex.what(), "runtime",
+    publish_error_if_changed(std::string("opencv cvtColor failed: ") + ex.what(), "runtime",
                              json::object());
     return;
   }
@@ -652,7 +657,7 @@ void VideoStabService::process_frame_once() {
     } catch (const cv::Exception& ex) {
       ++monitor_fail_frames_;
       ++consecutive_failures_;
-      publish_state_if_changed("lastError", std::string("opencv optical flow failed: ") + ex.what(), "runtime",
+      publish_error_if_changed(std::string("opencv optical flow failed: ") + ex.what(), "runtime",
                                json::object());
       if (consecutive_failures_ >= reset_on_failure_frames_) {
         reset_stabilizer_internal(json::object(), "opencv_exception");
@@ -708,7 +713,7 @@ void VideoStabService::process_frame_once() {
       prev_gray_ = gray;
       has_prev_gray_ = true;
       consecutive_failures_ = 0;
-      publish_state_if_changed("lastError", "", "runtime", json::object());
+      publish_error_if_changed("", "runtime", json::object());
     } else if (tracked_points >= 8) {
       cv::Mat inliers;
       try {
@@ -732,7 +737,7 @@ void VideoStabService::process_frame_once() {
       } catch (const cv::Exception& ex) {
         ++monitor_fail_frames_;
         ++consecutive_failures_;
-        publish_state_if_changed("lastError", std::string("opencv transform estimate failed: ") + ex.what(), "runtime",
+        publish_error_if_changed(std::string("opencv transform estimate failed: ") + ex.what(), "runtime",
                                  json::object());
       }
     }
@@ -784,7 +789,7 @@ void VideoStabService::process_frame_once() {
       } catch (const cv::Exception& ex) {
         ++monitor_fail_frames_;
         ++consecutive_failures_;
-        publish_state_if_changed("lastError", std::string("opencv warp failed: ") + ex.what(), "runtime",
+        publish_error_if_changed(std::string("opencv warp failed: ") + ex.what(), "runtime",
                                  json::object());
         stabilized = src_bgra.clone();
         motion_valid = false;
@@ -801,7 +806,7 @@ void VideoStabService::process_frame_once() {
       }
     } else {
       consecutive_failures_ = 0;
-      publish_state_if_changed("lastError", "", "runtime", json::object());
+      publish_error_if_changed("", "runtime", json::object());
     }
 
     prev_gray_ = gray;
@@ -810,13 +815,13 @@ void VideoStabService::process_frame_once() {
 
   if (!output_video_ || !output_video_->ensureConfiguration(hdr.width, hdr.height)) {
     ++monitor_fail_frames_;
-    publish_state_if_changed("lastError", "output shm ensureConfiguration failed", "runtime", json::object());
+    publish_error_if_changed("output shm ensureConfiguration failed", "runtime", json::object());
     return;
   }
 
   if (!output_video_->writeFrame(stabilized.data, static_cast<unsigned>(stabilized.step[0]))) {
     ++monitor_fail_frames_;
-    publish_state_if_changed("lastError", "output shm writeFrame failed", "runtime", json::object());
+    publish_error_if_changed("output shm writeFrame failed", "runtime", json::object());
     return;
   }
 
@@ -932,7 +937,6 @@ json VideoStabService::describe() {
                   "Suppress repeated scene cut triggers for N frames after a cut.", false),
       state_field("sceneChangeCount", schema_integer(), "ro", "Scene Change Count",
                   "Monotonic counter incremented when a scene cut is detected.", false),
-      state_field("lastError", schema_string(), "ro", "Last Error", "Last error message.", false),
   });
 
   service["commands"] = json::array({

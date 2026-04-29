@@ -147,7 +147,7 @@ bool DenseOptflowService::start() {
   publish_state_if_changed("outputScaleMode", output_scale_mode_, "init", json::object());
   publish_state_if_changed("flowOutputScaleX", 1.0, "init", json::object());
   publish_state_if_changed("flowOutputScaleY", 1.0, "init", json::object());
-  publish_state_if_changed("lastError", "", "init", json::object());
+  publish_error_if_changed("", "init", json::object());
 
   running_.store(true, std::memory_order_release);
   stop_requested_.store(false, std::memory_order_release);
@@ -186,6 +186,11 @@ void DenseOptflowService::publish_state_if_changed(const std::string& field, con
                                                    const json& meta) {
   service_runtime::publish_state_if_changed(state_mu_, published_state_, bus_.get(), cfg_.service_id, field, value,
                                             source, meta);
+}
+
+void DenseOptflowService::publish_error_if_changed(const json& value, const std::string& source, const json& meta) {
+  service_runtime::publish_error_if_changed(state_mu_, published_state_, bus_.get(), cfg_.service_id, value, source,
+                                            meta);
 }
 
 void DenseOptflowService::emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms,
@@ -260,37 +265,37 @@ void DenseOptflowService::on_state(const std::string& node_id, const std::string
   if (field == "computeEveryNFrames") {
     int v = 0;
     if (!service_runtime::parse_json_int(value, v)) {
-      publish_state_if_changed("lastError", "invalid computeEveryNFrames", "state", meta);
+      publish_error_if_changed("invalid computeEveryNFrames", "state", meta);
       return;
     }
     v = std::max(1, std::min(120, v));
     compute_every_n_frames_ = v;
     publish_state_if_changed("computeEveryNFrames", compute_every_n_frames_, "state", meta);
-    publish_state_if_changed("lastError", "", "state", meta);
+    publish_error_if_changed("", "state", meta);
     return;
   }
 
   if (field == "computeScale") {
     double v = 0.0;
     if (!service_runtime::parse_json_double(value, v)) {
-      publish_state_if_changed("lastError", "invalid computeScale", "state", meta);
+      publish_error_if_changed("invalid computeScale", "state", meta);
       return;
     }
     compute_scale_ = std::max(0.25, std::min(1.0, v));
     publish_state_if_changed("computeScale", compute_scale_, "state", meta);
-    publish_state_if_changed("lastError", "", "state", meta);
+    publish_error_if_changed("", "state", meta);
     return;
   }
 
   if (field == "outputScaleMode" && value.is_string()) {
     const std::string mode = service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(value.get<std::string>()));
     if (mode != "full" && mode != "compute") {
-      publish_state_if_changed("lastError", "invalid outputScaleMode", "state", meta);
+      publish_error_if_changed("invalid outputScaleMode", "state", meta);
       return;
     }
     output_scale_mode_ = mode;
     publish_state_if_changed("outputScaleMode", output_scale_mode_, "state", meta);
-    publish_state_if_changed("lastError", "", "state", meta);
+    publish_error_if_changed("", "state", meta);
     return;
   }
 
@@ -319,17 +324,17 @@ bool DenseOptflowService::ensure_video_open() {
   last_video_open_attempt_ms_ = now;
 
   if (input_shm_name_.empty()) {
-    publish_state_if_changed("lastError", "missing inputShmName", "runtime", json::object());
+    publish_error_if_changed("missing inputShmName", "runtime", json::object());
     return false;
   }
 
   if (!video_.open(input_shm_name_, f8::cppsdk::shm::kDefaultVideoShmBytes)) {
-    publish_state_if_changed("lastError", "video shm open failed: " + input_shm_name_, "runtime", json::object());
+    publish_error_if_changed("video shm open failed: " + input_shm_name_, "runtime", json::object());
     return false;
   }
 
   last_notify_seq_ = 0;
-  publish_state_if_changed("lastError", "", "runtime", json::object());
+  publish_error_if_changed("", "runtime", json::object());
   return true;
 }
 
@@ -374,18 +379,18 @@ void DenseOptflowService::process_frame_once() {
 
   if (hdr.format != 1 || hdr.width == 0 || hdr.height == 0 || hdr.pitch == 0) {
     ++monitor_fail_frames_;
-    publish_state_if_changed("lastError", "unsupported video shm format", "runtime", json::object());
+    publish_error_if_changed("unsupported video shm format", "runtime", json::object());
     return;
   }
   const std::size_t row_bytes = static_cast<std::size_t>(hdr.pitch);
   if (row_bytes < static_cast<std::size_t>(hdr.width) * 4) {
     ++monitor_fail_frames_;
-    publish_state_if_changed("lastError", "invalid video shm pitch", "runtime", json::object());
+    publish_error_if_changed("invalid video shm pitch", "runtime", json::object());
     return;
   }
   if (frame_bgra_.size() < row_bytes * static_cast<std::size_t>(hdr.height)) {
     ++monitor_fail_frames_;
-    publish_state_if_changed("lastError", "video shm frame too small", "runtime", json::object());
+    publish_error_if_changed("video shm frame too small", "runtime", json::object());
     return;
   }
 
@@ -395,7 +400,7 @@ void DenseOptflowService::process_frame_once() {
     cv::cvtColor(bgra, gray_, cv::COLOR_BGRA2GRAY);
   } catch (const cv::Exception& ex) {
     ++monitor_fail_frames_;
-    publish_state_if_changed("lastError", std::string("opencv cvtColor failed: ") + ex.what(), "runtime", json::object());
+    publish_error_if_changed(std::string("opencv cvtColor failed: ") + ex.what(), "runtime", json::object());
     return;
   }
 
@@ -426,7 +431,7 @@ void DenseOptflowService::process_frame_once() {
       gray_compute = gray_compute_;
     } catch (const cv::Exception& ex) {
       ++monitor_fail_frames_;
-      publish_state_if_changed("lastError", std::string("opencv resize failed: ") + ex.what(), "runtime", json::object());
+      publish_error_if_changed(std::string("opencv resize failed: ") + ex.what(), "runtime", json::object());
       gray_.copyTo(prev_gray_);
       return;
     }
@@ -436,7 +441,7 @@ void DenseOptflowService::process_frame_once() {
     cv::calcOpticalFlowFarneback(prev_compute, gray_compute, flow_compute_, 0.5, 3, 15, 3, 5, 1.2, 0);
   } catch (const cv::Exception& ex) {
     ++monitor_fail_frames_;
-    publish_state_if_changed("lastError", std::string("opencv farneback failed: ") + ex.what(), "runtime", json::object());
+    publish_error_if_changed(std::string("opencv farneback failed: ") + ex.what(), "runtime", json::object());
     gray_.copyTo(prev_gray_);
     return;
   }
@@ -450,7 +455,7 @@ void DenseOptflowService::process_frame_once() {
       flow *= static_cast<float>(1.0 / scale);
     } catch (const cv::Exception& ex) {
       ++monitor_fail_frames_;
-      publish_state_if_changed("lastError", std::string("opencv flow upscale failed: ") + ex.what(), "runtime", json::object());
+      publish_error_if_changed(std::string("opencv flow upscale failed: ") + ex.what(), "runtime", json::object());
       gray_.copyTo(prev_gray_);
       return;
     }
@@ -465,7 +470,7 @@ void DenseOptflowService::process_frame_once() {
   if (flow_sink_.regionName() != shm_name) {
     if (!flow_sink_.initialize(shm_name, f8::cppsdk::shm::kDefaultVideoShmBytes, f8::cppsdk::shm::kDefaultVideoShmSlots)) {
       ++monitor_fail_frames_;
-      publish_state_if_changed("lastError", "flow shm init failed: " + shm_name, "runtime", json::object());
+      publish_error_if_changed("flow shm init failed: " + shm_name, "runtime", json::object());
       gray_.copyTo(prev_gray_);
       return;
     }
@@ -473,7 +478,7 @@ void DenseOptflowService::process_frame_once() {
   if (!flow_sink_.ensureConfigurationForFormat(static_cast<unsigned>(flow.cols), static_cast<unsigned>(flow.rows),
                                                f8::cppsdk::kVideoFormatFlow2F16, 4)) {
     ++monitor_fail_frames_;
-    publish_state_if_changed("lastError", "flow shm ensureConfiguration failed", "runtime", json::object());
+    publish_error_if_changed("flow shm ensureConfiguration failed", "runtime", json::object());
     gray_.copyTo(prev_gray_);
     return;
   }
@@ -499,7 +504,7 @@ void DenseOptflowService::process_frame_once() {
 
   if (!flow_sink_.writeFrameWithFormat(flow_payload_.data(), static_cast<unsigned>(flow_pitch), f8::cppsdk::kVideoFormatFlow2F16)) {
     ++monitor_fail_frames_;
-    publish_state_if_changed("lastError", "flow shm write failed", "runtime", json::object());
+    publish_error_if_changed("flow shm write failed", "runtime", json::object());
     gray_.copyTo(prev_gray_);
     return;
   }
@@ -511,7 +516,7 @@ void DenseOptflowService::process_frame_once() {
                            "runtime", json::object());
   publish_state_if_changed("flowOutputScaleY", static_cast<double>(flow.rows) / static_cast<double>(std::max(1, gray_.rows)),
                            "runtime", json::object());
-  publish_state_if_changed("lastError", "", "runtime", json::object());
+  publish_error_if_changed("", "runtime", json::object());
 
   const std::int64_t end_ts_ms = f8::cppsdk::now_ms();
   const std::uint64_t dense_vectors = static_cast<std::uint64_t>(std::max(0, flow.cols)) *
@@ -541,7 +546,6 @@ json DenseOptflowService::describe() {
                   "full keeps legacy full-resolution flow; compute emits flow at computeScale resolution.", false),
       state_field("flowOutputScaleX", schema_number(), "ro", "Flow Output Scale X", "Output flow width / source width.", false),
       state_field("flowOutputScaleY", schema_number(), "ro", "Flow Output Scale Y", "Output flow height / source height.", false),
-      state_field("lastError", schema_string(), "ro", "Last Error", "Last error message.", false),
   });
   service["commands"] = json::array();
   service["dataInPorts"] = json::array();

@@ -14,11 +14,17 @@ from f8pysdk.specs import number_schema  # noqa: E402
 from f8pysdk.testing import buffer_input  # noqa: E402
 from f8pysdk.host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
+from f8pysdk.time_utils import now_ms  # noqa: E402
 
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS  # noqa: E402
 from f8pystudio.operators.data_expr import DataExprRuntimeNode  # noqa: E402
 from f8pystudio.operators.state_expr import StateExprRuntimeNode  # noqa: E402
 from f8pystudio.studio_specs.registry import create_pystudio_registry  # noqa: E402
+
+
+def _monitor_error_message(bus: object) -> str:
+    snapshot = bus.monitor_collector._build_snapshot(ts_ms=int(now_ms()))
+    return str(snapshot.error.currentMessage or "")
 
 
 class PyStudioExprNodeTests(unittest.IsolatedAsyncioTestCase):
@@ -89,4 +95,4 @@ class PyStudioExprNodeTests(unittest.IsolatedAsyncioTestCase):
 
         await runtime.on_state("a", 4.0, ts_ms=1)
         self.assertEqual(await runtime.get_state_value("out"), 6.5)
-        self.assertEqual(await runtime.get_state_value("lastError"), "")
+        self.assertEqual(_monitor_error_message(bus), "")

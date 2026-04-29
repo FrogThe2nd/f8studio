@@ -961,7 +961,6 @@ Receives UDP packets and exposes explicit raw/text/json views plus packet metada
 | `maxQueue` | `rw` | `true` | `false` | `integer / default=512` | Max queued packets before dropping (1..4096). |
 | `reuseAddress` | `rw` | `true` | `false` | `boolean / default=False` | Best-effort: allow multiple listeners on the same bind tuple if the OS supports it. |
 | `listening` | `ro` | `true` | `true` | `boolean / default=False` | Readonly flag telling whether the UDP socket is active. |
-| `lastError` | `ro` | `true` | `true` | `string / default=` | Readonly receiver/socket error, updated only when the error state changes. |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
@@ -973,8 +972,8 @@ Receives UDP packets and exposes explicit raw/text/json views plus packet metada
 - `maxQueue` (Max Queue, `rw`): Max queued packets before dropping (1..4096). Schema: `integer / default=512`.
 - `reuseAddress` (Reuse Address, `rw`): Best-effort: allow multiple listeners on the same bind tuple if the OS supports it. Schema: `boolean / default=False`.
 - `listening` (Listening, `ro`): Readonly flag telling whether the UDP socket is active. Schema: `boolean / default=False`.
-- `lastError` (Last Error, `ro`): Readonly receiver/socket error, updated only when the error state changes. Schema: `string / default=`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
 
 ##### Data Input Ports
 
@@ -1251,9 +1250,8 @@ Execute Python code with onStart/onState/onMsg/onExec/onStop hooks.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `code` | `rw` | `true` | `false` | `string / default=# Hooks template (uncomment what you need):<br># - onStart(ctx)<br># - onState(ctx, field, value, ts_ms=None)<br># - onMsg(ctx, inputs)<br># - onExec(ctx, exec_in, inputs)<br># - onStop(ctx)<br>#<br># Notes:<br># - If you define no hooks, the node is a no-op.<br># - ctx.locals is preserved between calls (script-local memory)<br># - ctx.exec_in is set only for exec-triggered calls<br># - ctx.states.<field> reads cached rw/ro/wo state snapshot<br>#   - example: ctx.states.foo / ctx.states.pose.x<br># - await ctx.read_state(field)  # fresh runtime read<br># - ctx.states.get(field)  # cached snapshot<br># - ctx.set_state(field, value)<br>#   - await ctx.set_state_async(field, value)<br># - onStart return values are ignored; use ctx.emit()/ctx.set_state().<br># - inputs binding mode is configured by state `inputMode`:<br>#   - input_view (default): supports dot and mapping access<br>#   - raw_dict: plain dict only (faster for mapping-style high-frequency scripts)<br>#   - msgspec_struct: typed struct from dataIn schema (faster for dot-style high-frequency scripts)<br># - State TypeGuard helpers are available from f8_dynamic_states<br>#   - example: from f8_dynamic_states import is_state_lastError<br>#   - then: if is_state_lastError(value, field): ...<br># - Video SHM helpers:<br>#   - ctx.subscribe_video_shm(key, shm_name, decode='auto', use_event=False)<br>#   - pkt = ctx.get_video_shm(key)<br>#   - ctx.unsubscribe_video_shm(key)<br>#   - ctx.list_video_shm_subscriptions()<br>#<br># Return value protocol:<br># - onMsg: {'outputs': {...}} or any value (emits to 'out' if present)<br># - onExec: {'exec': ['exec', ...], 'outputs': {...}}<br><br>from typing import TYPE_CHECKING, Any<br>if TYPE_CHECKING:<br>    from f8_script_api import F8Inputs, F8PyEngineContext, F8States<br><br>def onStart(ctx: 'F8PyEngineContext') -> None:<br>    ctx.log('python_script started')<br><br># def onState(<br>#     ctx: 'F8PyEngineContext',<br>#     field: str,<br>#     value: Any,<br>#     ts_ms: int \| None = None,<br># ) -> None:<br>#     ctx.log(f'state {field}={value} ts_ms={ts_ms}')<br>#<br># def onMsg(ctx: 'F8PyEngineContext', inputs: 'F8Inputs') -> dict[str, Any]:<br>#     msg = inputs.msg<br>#     return {'outputs': {'out': msg}}<br>#<br># def onExec(ctx: 'F8PyEngineContext', exec_in: str, inputs: 'F8Inputs') -> dict[str, Any]:<br>#     if exec_in == 'exec2':<br>#         return {'exec': ['exec2'], 'outputs': {'out': inputs.msg}}<br>#     return {'exec': ['exec'], 'outputs': {'out': inputs.msg}}<br>#<br># def onStop(ctx: 'F8PyEngineContext') -> None:<br>#     ctx.log('python_script stopped')<br>` | Python source code optionally defining hooks: onStart/onState/onMsg/onExec/onStop. |
+| `code` | `rw` | `true` | `false` | `string / default=# Hooks template (uncomment what you need):<br># - onStart(ctx)<br># - onState(ctx, field, value, ts_ms=None)<br># - onMsg(ctx, inputs)<br># - onExec(ctx, exec_in, inputs)<br># - onStop(ctx)<br>#<br># Notes:<br># - If you define no hooks, the node is a no-op.<br># - ctx.locals is preserved between calls (script-local memory)<br># - ctx.exec_in is set only for exec-triggered calls<br># - ctx.states.<field> reads cached rw/ro/wo state snapshot<br>#   - example: ctx.states.foo / ctx.states.pose.x<br># - await ctx.read_state(field)  # fresh runtime read<br># - ctx.states.get(field)  # cached snapshot<br># - ctx.set_state(field, value)<br>#   - await ctx.set_state_async(field, value)<br># - onStart return values are ignored; use ctx.emit()/ctx.set_state().<br># - inputs binding mode is configured by state `inputMode`:<br>#   - input_view (default): supports dot and mapping access<br>#   - raw_dict: plain dict only (faster for mapping-style high-frequency scripts)<br>#   - msgspec_struct: typed struct from dataIn schema (faster for dot-style high-frequency scripts)<br># - State TypeGuard helpers are available from f8_dynamic_states<br>#   - example: from f8_dynamic_states import is_state_inputMode<br>#   - then: if is_state_inputMode(value, field): ...<br># - Video SHM helpers:<br>#   - ctx.subscribe_video_shm(key, shm_name, decode='auto', use_event=False)<br>#   - pkt = ctx.get_video_shm(key)<br>#   - ctx.unsubscribe_video_shm(key)<br>#   - ctx.list_video_shm_subscriptions()<br>#<br># Return value protocol:<br># - onMsg: {'outputs': {...}} or any value (emits to 'out' if present)<br># - onExec: {'exec': ['exec', ...], 'outputs': {...}}<br><br>from typing import TYPE_CHECKING, Any<br>if TYPE_CHECKING:<br>    from f8_script_api import F8Inputs, F8PyEngineContext, F8States<br><br>def onStart(ctx: 'F8PyEngineContext') -> None:<br>    ctx.log('python_script started')<br><br># def onState(<br>#     ctx: 'F8PyEngineContext',<br>#     field: str,<br>#     value: Any,<br>#     ts_ms: int \| None = None,<br># ) -> None:<br>#     ctx.log(f'state {field}={value} ts_ms={ts_ms}')<br>#<br># def onMsg(ctx: 'F8PyEngineContext', inputs: 'F8Inputs') -> dict[str, Any]:<br>#     msg = inputs.msg<br>#     return {'outputs': {'out': msg}}<br>#<br># def onExec(ctx: 'F8PyEngineContext', exec_in: str, inputs: 'F8Inputs') -> dict[str, Any]:<br>#     if exec_in == 'exec2':<br>#         return {'exec': ['exec2'], 'outputs': {'out': inputs.msg}}<br>#     return {'exec': ['exec'], 'outputs': {'out': inputs.msg}}<br>#<br># def onStop(ctx: 'F8PyEngineContext') -> None:<br>#     ctx.log('python_script stopped')<br>` | Python source code optionally defining hooks: onStart/onState/onMsg/onExec/onStop. |
 | `inputMode` | `rw` | `true` | `false` | `string / enum[input_view, raw_dict, msgspec_struct] / default=input_view` | Input binding mode: input_view \| raw_dict \| msgspec_struct. For high-frequency scripts, prefer raw_dict for mapping access or msgspec_struct for dot access. |
-| `lastError` | `wo` | `true` | `false` | `string / default=` | Last script error (compile/runtime). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
@@ -1282,8 +1280,8 @@ Execute Python code with onStart/onState/onMsg/onExec/onStop hooks.
 #   - raw_dict: plain dict only (faster for mapping-style high-frequency scripts)
 #   - msgspec_struct: typed struct from dataIn schema (faster for dot-style high-frequency scripts)
 # - State TypeGuard helpers are available from f8_dynamic_states
-#   - example: from f8_dynamic_states import is_state_lastError
-#   - then: if is_state_lastError(value, field): ...
+#   - example: from f8_dynamic_states import is_state_inputMode
+#   - then: if is_state_inputMode(value, field): ...
 # - Video SHM helpers:
 #   - ctx.subscribe_video_shm(key, shm_name, decode='auto', use_event=False)
 #   - pkt = ctx.get_video_shm(key)
@@ -1322,7 +1320,6 @@ def onStart(ctx: 'F8PyEngineContext') -> None:
 #     ctx.log('python_script stopped')
 `.
 - `inputMode` (Input Mode, `rw`): Input binding mode: input_view | raw_dict | msgspec_struct. For high-frequency scripts, prefer raw_dict for mapping access or msgspec_struct for dot access. Schema: `string / enum[input_view, raw_dict, msgspec_struct] / default=input_view`.
-- `lastError` (Last Error, `wo`): Last script error (compile/runtime). Schema: `string / default=`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 - `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
 
@@ -1651,7 +1648,6 @@ Event-driven input node that mocks the Lovense Local API and emits received comm
 | `eventIncludePayload` | `rw` | `true` | `false` | `boolean / default=False` | Include the parsed request payload in the `event` data output (debug). |
 | `eventIncludeRequest` | `rw` | `true` | `false` | `boolean / default=False` | Include request headers/body in the `event` data output (debug). |
 | `listening` | `ro` | `true` | `true` | `boolean / default=False` | True if the HTTP server is currently listening. |
-| `lastError` | `ro` | `true` | `true` | `string / default=` | Last server error (e.g. bind failure). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
@@ -1664,7 +1660,7 @@ Event-driven input node that mocks the Lovense Local API and emits received comm
 - `eventIncludePayload` (Event Include Payload, `rw`): Include the parsed request payload in the `event` data output (debug). Schema: `boolean / default=False`.
 - `eventIncludeRequest` (Event Include Request, `rw`): Include request headers/body in the `event` data output (debug). Schema: `boolean / default=False`.
 - `listening` (Listening, `ro`): True if the HTTP server is currently listening. Schema: `boolean / default=False`.
-- `lastError` (Last Error, `ro`): Last server error (e.g. bind failure). Schema: `string / default=`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 
 ##### Data Input Ports
 
@@ -2003,7 +1999,6 @@ Drive The Handy via HDSP using normalized 0..1 input values.
 | `minSendIntervalMs` | `rw` | `true` | `true` | `integer / default=0` | Minimum interval between sent commands (0 means follow tick rate). |
 | `immediateResponse` | `rw` | `true` | `false` | `boolean / default=False` | Default immediateResponse value for /hdsp/xpt. |
 | `stopOnTarget` | `rw` | `true` | `false` | `boolean / default=False` | Default stopOnTarget value for /hdsp/xpt. |
-| `lastError` | `ro` | `false` | `true` | `string / default=` | Last runtime error message. |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
@@ -2138,7 +2133,7 @@ Examples
 #### Pitfalls / Gotchas
 
 - **Type Restrictions**: Only writable numeric state fields (float, int) are automatically extracted as symbols. Non-numeric fields or read-only properties will not be available in the expression.
-- **Error Visibility**: If an expression fails (e.g., division by zero), the operator will publish the error to its `lastError` field and clear the output. If your downstream graph seems "stuck," check the `lastError` field first.
+- **Error Visibility**: If an expression fails (e.g., division by zero), the operator reports the error through the monitor alert channel and clears the output. If your downstream graph seems "stuck," check Studio notifications or the service monitor report.
 - **Circular Dependencies**: Be careful not to create logical loops where an expression depends on a value that is eventually affected by its own output, as this can lead to unstable behavior.
 
 #### Operator Reference
@@ -2158,7 +2153,6 @@ Examples
 | `allowNumpy` | `rw` | `false` | `false` | `boolean / default=False` | Enable `np.*` and `numpy.*` inside the expression. |
 | `code` | `rw` | `false` | `true` | `string / default=0` | Single Python expression. Editable RW/WO state fields are available directly by name; non-identifier names remain available through `states[...]`. |
 | `out` | `ro` | `false` | `true` | `any` | Expression result published by the node. |
-| `lastError` | `ro` | `false` | `false` | `string / default=` | Last compile or evaluation error. |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
@@ -2525,7 +2519,6 @@ Examples
 | `maxValue` | `rw` | `true` | `false` | `number / default=0.0` | Preview window upper bound (Y-axis). Auto zoom when minValue >= maxValue. |
 | `express` | `ro` | `true` | `false` | `string / default=` | Rendered expression after numeric state substitution. `t` remains symbolic so you can inspect the final formula. |
 | `preview` | `ro` | `true` | `true` | `array[array] / default=[]` | Preview waveform samples as `[t, value]` pairs over `[0, maxT)`. Changes in preview coordinates trigger redraw. |
-| `lastError` | `ro` | `true` | `false` | `string / default=` | Last template compile, preview evaluation, or runtime evaluation error. |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
@@ -2537,8 +2530,8 @@ Examples
 - `maxValue` (Max Value, `rw`): Preview window upper bound (Y-axis). Auto zoom when minValue >= maxValue. Schema: `number / default=0.0`.
 - `express` (Express, `ro`): Rendered expression after numeric state substitution. `t` remains symbolic so you can inspect the final formula. Schema: `string / default=`.
 - `preview` (Preview, `ro`): Preview waveform samples as `[t, value]` pairs over `[0, maxT)`. Changes in preview coordinates trigger redraw. Schema: `array[array] / default=[]`.
-- `lastError` (Last Error, `ro`): Last template compile, preview evaluation, or runtime evaluation error. Schema: `string / default=`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
 
 ##### Data Input Ports
 
@@ -2604,7 +2597,6 @@ Core
 | `maxValue` | `rw` | `true` | `true` | `number / default=1.0` | Editor and preview upper Y bound. |
 | `interp` | `rw` | `true` | `true` | `string / enum[linear, pchip, akima, cubic_spline] / default=pchip` | Interpolation method used to generate the periodic waveform. |
 | `preview` | `ro` | `true` | `false` | `array[array]` | Preview waveform samples as `[t, value]` pairs over `[0, maxT)`. |
-| `lastError` | `ro` | `true` | `false` | `string / default=` | Last interpolation build or preview evaluation error. |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
@@ -2616,8 +2608,8 @@ Core
 - `maxValue` (Max Value, `rw`): Editor and preview upper Y bound. Schema: `number / default=1.0`.
 - `interp` (Interp, `rw`): Interpolation method used to generate the periodic waveform. Schema: `string / enum[linear, pchip, akima, cubic_spline] / default=pchip`.
 - `preview` (Preview, `ro`): Preview waveform samples as `[t, value]` pairs over `[0, maxT)`. Schema: `array[array]`.
-- `lastError` (Last Error, `ro`): Last interpolation build or preview evaluation error. Schema: `string / default=`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
 
 ##### Data Input Ports
 
@@ -2679,7 +2671,6 @@ Load a .funscript JSON file and expose one axis as a looping linear waveform.
 | `maxT` | `rw` | `true` | `true` | `number / default=10.0` | Loop period in seconds. Initialized from the funscript duration and user-overridable. |
 | `interp` | `rw` | `true` | `true` | `string / enum[linear, pchip, akima, cubic_spline] / default=linear` | Interpolation method used for runtime output. Heatmap remains linear. |
 | `heatmap` | `ro` | `true` | `true` | `array[number] / default=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]` | Per-time-bin activity heatmap derived from the selected axis. |
-| `lastError` | `ro` | `true` | `false` | `string / default=` | Last load or parse error. |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
@@ -2692,7 +2683,7 @@ Load a .funscript JSON file and expose one axis as a looping linear waveform.
 - `maxT` (Max T, `rw`): Loop period in seconds. Initialized from the funscript duration and user-overridable. Schema: `number / default=10.0`.
 - `interp` (Interp, `rw`): Interpolation method used for runtime output. Heatmap remains linear. Schema: `string / enum[linear, pchip, akima, cubic_spline] / default=linear`.
 - `heatmap` (Heatmap, `ro`): Per-time-bin activity heatmap derived from the selected axis. Schema: `array[number] / default=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]`.
-- `lastError` (Last Error, `ro`): Last load or parse error. Schema: `string / default=`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 
 ##### Data Input Ports
 
@@ -3107,7 +3098,6 @@ Tick-driven debug recorder that captures data samples and sparse state changes.
 | `append` | `rw` | `true` | `true` | `boolean / default=True` | Append to an existing compatible recording file. |
 | `recording` | `ro` | `true` | `true` | `boolean / default=False` | Readonly flag indicating whether the file is open and writable. |
 | `sessionStartTsMs` | `ro` | `true` | `false` | `integer` | Readonly session start timestamp in milliseconds. |
-| `lastError` | `ro` | `true` | `true` | `string` | Last recording error message. |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
@@ -3118,7 +3108,6 @@ Tick-driven debug recorder that captures data samples and sparse state changes.
 - `append` (Append, `rw`): Append to an existing compatible recording file. Schema: `boolean / default=True`.
 - `recording` (Recording, `ro`): Readonly flag indicating whether the file is open and writable. Schema: `boolean / default=False`.
 - `sessionStartTsMs` (Session Start, `ro`): Readonly session start timestamp in milliseconds. Schema: `integer`.
-- `lastError` (Last Error, `ro`): Last recording error message. Schema: `string`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 - `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
 
@@ -3178,7 +3167,6 @@ Playback recorded data and sparse state changes for debugging.
 | `playing` | `rw` | `true` | `true` | `boolean / default=False` | Whether playback is currently running. |
 | `durationMs` | `ro` | `true` | `true` | `integer / default=0` | Readonly recording duration in milliseconds. |
 | `loaded` | `ro` | `true` | `true` | `boolean / default=False` | Readonly flag indicating whether the recording is loaded. |
-| `lastError` | `ro` | `true` | `true` | `string` | Last playback error message. |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
@@ -3190,8 +3178,8 @@ Playback recorded data and sparse state changes for debugging.
 - `playing` (Playing, `rw`): Whether playback is currently running. Schema: `boolean / default=False`.
 - `durationMs` (Duration, `ro`): Readonly recording duration in milliseconds. Schema: `integer / default=0`.
 - `loaded` (Loaded, `ro`): Readonly flag indicating whether the recording is loaded. Schema: `boolean / default=False`.
-- `lastError` (Last Error, `ro`): Last playback error message. Schema: `string`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
 
 ##### Data Input Ports
 

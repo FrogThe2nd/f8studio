@@ -96,6 +96,7 @@ class ScreenCapService final : public f8::cppsdk::LifecycleNode,
 
   mutable std::mutex state_mu_;
   std::unordered_map<std::string, json> published_state_;
+  std::string published_error_message_;
 
   std::atomic<bool> capture_restart_{false};
   std::atomic<bool> capture_running_{false};

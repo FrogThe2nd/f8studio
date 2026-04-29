@@ -13,5 +13,5 @@
 ## Pitfalls / Gotchas
 
 - **Type Restrictions**: Only writable numeric state fields (float, int) are automatically extracted as symbols. Non-numeric fields or read-only properties will not be available in the expression.
-- **Error Visibility**: If an expression fails (e.g., division by zero), the operator will publish the error to its `lastError` field and clear the output. If your downstream graph seems "stuck," check the `lastError` field first.
+- **Error Visibility**: If an expression fails (e.g., division by zero), the operator reports the error through the monitor alert channel and clears the output. If your downstream graph seems "stuck," check Studio notifications or the service monitor report.
 - **Circular Dependencies**: Be careful not to create logical loops where an expression depends on a value that is eventually affected by its own output, as this can lead to unstable behavior.

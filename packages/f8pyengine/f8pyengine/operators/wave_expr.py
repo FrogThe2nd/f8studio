@@ -43,7 +43,6 @@ _PROTECTED_STATE_FIELDS = {
     "maxValue",
     "express",
     "preview",
-    "lastError",
     "svcId",
     "operatorId",
 }
@@ -133,7 +132,6 @@ class WaveExprRuntimeNode(OperatorNode):
             "maxValue",
             "express",
             "preview",
-            "lastError",
         ]
 
         super().__init__(
@@ -212,7 +210,7 @@ class WaveExprRuntimeNode(OperatorNode):
         del ts_ms
         name = str(field or "").strip()
 
-        if name in {"express", "preview", "lastError"}:
+        if name in {"express", "preview"}:
             return
 
         if name == "template":
@@ -348,7 +346,21 @@ class WaveExprRuntimeNode(OperatorNode):
         self._publish_pending = False
         await self._safe_set_state("express", str(self._express))
         await self._safe_set_state("preview", [list(point) for point in self._preview_cycle])
-        await self._safe_set_state("lastError", str(self._last_error))
+        await self._safe_publish_monitor_error(str(self._last_error))
+
+    async def _safe_publish_monitor_error(self, message: str) -> None:
+        try:
+            if message:
+                await self.report_error(
+                    "WAVE_EXPR_ERROR",
+                    message,
+                    severity="error",
+                    fingerprint=f"wave-expr:{message}",
+                )
+                return
+            await self.clear_error()
+        except Exception:
+            logger.exception("[%s:wave_expr] failed to publish monitor error", self.node_id)
 
     async def _safe_set_state(self, field: str, value: Any) -> None:
         try:
@@ -524,15 +536,6 @@ WaveExprRuntimeNode.SPEC = F8OperatorSpec(
             required=True,
             uiControl="wave_preview",
             showOnNode=True,
-        ),
-        F8StateSpec(
-            name="lastError",
-            label="Last Error",
-            description="Last template compile, preview evaluation, or runtime evaluation error.",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=False,
         ),
     ],
     editPolicy=F8SpecEditPolicy(stateFields=editable_collection_edit_policy()),

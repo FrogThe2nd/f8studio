@@ -14,6 +14,7 @@ from f8pysdk.specs import F8DataPortSpec, F8Edge, F8EdgeKindEnum, F8EdgeStrategy
 from f8pysdk.specs import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
 from f8pysdk.host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
+from f8pysdk.time_utils import now_ms  # noqa: E402
 
 from f8pyscript.constants import EXPR_SERVICE_CLASS  # noqa: E402
 from f8pyscript.expr_node_registry import create_pyexpr_registry  # noqa: E402
@@ -49,6 +50,11 @@ def _any_port(name: str) -> F8DataPortSpec:
     return F8DataPortSpec(name=name, description="", valueSchema=any_schema(), required=False)
 
 
+def _monitor_error_message(bus: object) -> str:
+    snapshot = bus.monitor_collector._build_snapshot(ts_ms=int(now_ms()))
+    return str(snapshot.error.currentMessage or "")
+
+
 class PyExprServiceNodeTests(unittest.IsolatedAsyncioTestCase):
     def _register_runtime(self, bus: object) -> None:
         reg = create_pyexpr_registry()
@@ -70,8 +76,7 @@ class PyExprServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(bool(state_fields["allowNumpy"].required))
         self.assertIn("unpackDictOutputs", state_fields)
         self.assertTrue(bool(state_fields["unpackDictOutputs"].required))
-        self.assertIn("lastError", state_fields)
-        self.assertTrue(bool(state_fields["lastError"].required))
+        self.assertNotIn("lastError", state_fields)
         data_in_ports = {str(port.name or ""): port for port in list(spec.dataInPorts or [])}
         data_out_ports = {str(port.name or ""): port for port in list(spec.dataOutPorts or [])}
         self.assertIn("msg", data_in_ports)
@@ -246,8 +251,7 @@ class PyExprServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         await node.on_state("allowNumpy", False, ts_ms=2)
 
         await node.on_data("in", 1.5, ts_ms=4)
-        last_error = await node.get_state_value("lastError")
-        self.assertTrue(str(last_error or "").strip() != "")
+        self.assertTrue(_monitor_error_message(bus).strip() != "")
 
     @unittest.skipIf(np is None, "numpy not available in test environment")
     async def test_numpy_enabled_evaluates_expression(self) -> None:

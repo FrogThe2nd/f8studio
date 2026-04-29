@@ -213,7 +213,6 @@ class WavePatternRuntimeNode(OperatorNode):
             "maxValue",
             "interp",
             "preview",
-            "lastError",
         ]
 
         super().__init__(
@@ -288,7 +287,7 @@ class WavePatternRuntimeNode(OperatorNode):
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
         del ts_ms
         name = str(field or "").strip()
-        if name in {"preview", "lastError"}:
+        if name == "preview":
             return
 
         if name == "points":
@@ -380,7 +379,21 @@ class WavePatternRuntimeNode(OperatorNode):
         self._publish_pending = False
         await self._safe_set_state("points", _serialize_points(self._points))
         await self._safe_set_state("preview", [list(point) for point in self._preview_cycle])
-        await self._safe_set_state("lastError", str(self._last_error))
+        await self._safe_publish_monitor_error(str(self._last_error))
+
+    async def _safe_publish_monitor_error(self, message: str) -> None:
+        try:
+            if message:
+                await self.report_error(
+                    "WAVE_PATTERN_ERROR",
+                    message,
+                    severity="error",
+                    fingerprint=f"wave-pattern:{message}",
+                )
+                return
+            await self.clear_error()
+        except Exception:
+            logger.exception("[%s:wave_pattern] failed to publish monitor error", self.node_id)
 
     async def _safe_set_state(self, field: str, value: Any) -> None:
         try:
@@ -523,15 +536,6 @@ WavePatternRuntimeNode.SPEC = F8OperatorSpec(
             access=F8StateAccess.ro,
             required=True,
             uiControl="wave_preview",
-            showOnNode=False,
-        ),
-        F8StateSpec(
-            name="lastError",
-            label="Last Error",
-            description="Last interpolation build or preview evaluation error.",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.ro,
-            required=True,
             showOnNode=False,
         ),
     ],

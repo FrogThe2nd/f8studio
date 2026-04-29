@@ -64,15 +64,6 @@ def register_expr_specs(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
                     uiControl="toggle",
                     showOnNode=False,
                 ),
-                F8StateSpec(
-                    name="lastError",
-                    label="Last Error",
-                    description="Last expression compile/eval error.",
-                    valueSchema=string_schema(default=""),
-                    access=F8StateAccess.ro,
-                    required=True,
-                    showOnNode=False,
-                ),
             ],
             dataInPorts=[F8DataPortSpec(name="msg", description="Default input value.", valueSchema=any_schema(), required=False)],
             dataOutPorts=[

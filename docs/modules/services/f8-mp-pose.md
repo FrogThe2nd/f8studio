@@ -53,7 +53,6 @@ pixi run -e mediapipe f8pymppose
 | `minDetectionConfidence` | `rw` | `true` | `false` | `number / default=0.5` | Minimum confidence threshold for pose detection. |
 | `minTrackingConfidence` | `rw` | `true` | `false` | `number / default=0.5` | Minimum confidence threshold for pose tracking. |
 | `visibilityThreshold` | `rw` | `true` | `false` | `number / default=0.5` | Landmark visibility threshold (below threshold => hidden point). |
-| `lastError` | `ro` | `true` | `false` | `string / default=` | Last runtime error string (best-effort). |
 | `skeletonSource` | `rw` | `true` | `false` | `string / enum[camera, world] / default=camera` | Skeleton data source (camera-relative vs world-relative). |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
@@ -66,8 +65,8 @@ pixi run -e mediapipe f8pymppose
 - `minDetectionConfidence` (Min Detection Confidence, `rw`): Minimum confidence threshold for pose detection. Schema: `number / default=0.5`.
 - `minTrackingConfidence` (Min Tracking Confidence, `rw`): Minimum confidence threshold for pose tracking. Schema: `number / default=0.5`.
 - `visibilityThreshold` (Visibility Threshold, `rw`): Landmark visibility threshold (below threshold => hidden point). Schema: `number / default=0.5`.
-- `lastError` (Last Error, `ro`): Last runtime error string (best-effort). Schema: `string / default=`.
 - `skeletonSource` (Skeleton Source, `rw`): Skeleton data source (camera-relative vs world-relative). Schema: `string / enum[camera, world] / default=camera`.
+- `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
 
 ### Service Commands
 

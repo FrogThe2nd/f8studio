@@ -156,15 +156,6 @@ def _state_fields() -> list[F8StateSpec]:
             showOnNode=False,
         ),
         F8StateSpec(
-            name="lastError",
-            label="Last Error",
-            description="Last runtime error string (best-effort).",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=False,
-        ),
-        F8StateSpec(
             name="skeletonSource",
             label="Skeleton Source",
             description="Skeleton data source (camera-relative vs world-relative).",

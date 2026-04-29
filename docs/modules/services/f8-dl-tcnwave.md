@@ -57,7 +57,6 @@ pixi run -e onnx f8pydl_tcnwave
 | `availableModels` | `ro` | `true` | `false` | `array[string]` | List of model ids discovered from weightsDir. |
 | `loadedModel` | `ro` | `true` | `false` | `string / default=` | Current loaded model id/task. |
 | `ortActiveProviders` | `ro` | `true` | `false` | `string / default=` | JSON list of active ONNX Runtime providers for this session. |
-| `lastError` | `ro` | `true` | `false` | `string / default=` | Last runtime error string (best-effort). |
 | `outputScale` | `rw` | `true` | `false` | `number / default=10.0` | Denormalization scale applied to raw model output values. |
 | `outputBias` | `rw` | `true` | `false` | `number / default=0.0` | Denormalization bias applied after outputScale. |
 | `useVrFocusCrop` | `rw` | `true` | `false` | `boolean / default=False` | Apply focus crop before inference. This assumes SHM already provides the target eye view and crops top 20% + left/right 10%. |

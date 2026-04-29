@@ -51,7 +51,6 @@ pixi run -e onnx f8pydl_detsorter
 | `scoreShmName` | `rw` | `true` | `true` | `string / default=` | Score-map SHM name (supports scalar1_f32 and flow2_f16). |
 | `sortDirection` | `rw` | `true` | `true` | `string / enum[desc, asc] / default=desc` | Prefer larger scores first (desc) or smaller scores first (asc). |
 | `scoreAggregation` | `rw` | `true` | `true` | `string / enum[mean, max, sum, median] / default=mean` | ROI reduction mode used to rank each bbox. |
-| `lastError` | `ro` | `true` | `false` | `string / default=` | Last runtime error string (best-effort). |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
@@ -61,7 +60,6 @@ pixi run -e onnx f8pydl_detsorter
 - `scoreShmName` (Score SHM, `rw`): Score-map SHM name (supports scalar1_f32 and flow2_f16). Schema: `string / default=`.
 - `sortDirection` (Sort Direction, `rw`): Prefer larger scores first (desc) or smaller scores first (asc). Schema: `string / enum[desc, asc] / default=desc`.
 - `scoreAggregation` (Score Aggregation, `rw`): ROI reduction mode used to rank each bbox. Schema: `string / enum[mean, max, sum, median] / default=mean`.
-- `lastError` (Last Error, `ro`): Last runtime error string (best-effort). Schema: `string / default=`.
 - `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 

@@ -42,7 +42,7 @@ DEFAULT_CODE = (
     "#\n"
     "# Useful context helpers:\n"
     "# - ctx.states.<field> reads cached rw/ro/wo state snapshot\n"
-    "#   - example: ctx.states.tickEnabled / ctx.states.lastError\n"
+    "#   - example: ctx.states.tickEnabled\n"
     "# - await ctx.read_state(field)  # fresh runtime read\n"
     "# - ctx.states.get(field)  # cached snapshot\n"
     "# - ctx.set_state(field, value)\n"
@@ -467,13 +467,18 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         except RuntimeError:
             return
 
-        async def _set_last_error() -> None:
+        async def _report_monitor_error() -> None:
             try:
-                await self.set_state("lastError", msg)
+                await self.report_error(
+                    "PYSCRIPT_ERROR",
+                    msg,
+                    severity="error",
+                    fingerprint=f"pyscript:{stage}:{type(exc).__name__}:{exc}",
+                )
             except Exception as set_exc:
-                logger.error("[%s:pyscript] set_state(lastError) failed", self.node_id, exc_info=set_exc)
+                logger.error("[%s:pyscript] report monitor error failed", self.node_id, exc_info=set_exc)
 
-        loop.create_task(_set_last_error(), name=f"pyscript:lastError:{self.node_id}")
+        loop.create_task(_report_monitor_error(), name=f"pyscript:reportError:{self.node_id}")
 
     def _log_error_deduped(self, key: str, message: str, exc: BaseException) -> None:
         now_ms = self._now_ms()

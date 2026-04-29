@@ -61,7 +61,14 @@ class MonitorCollectorTests(unittest.IsolatedAsyncioTestCase):
         collector.record_suppressed_cross_publish()
         collector.record_callback_delivery()
         collector.record_buffer_pull_delivery()
-        collector.record_error(code="X_ERR", message="boom", ts_ms=ts)
+        collector.report_error(
+            node_id="n1",
+            code="X_ERR",
+            message="boom",
+            severity="warning",
+            fingerprint="fp-boom",
+            ts_ms=ts,
+        )
 
         snapshot = collector._build_snapshot(ts_ms=ts)
         payload = dump_json(snapshot, mode="json", by_alias=True)
@@ -77,7 +84,17 @@ class MonitorCollectorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(int(snapshot.frame.callbackDeliveries), 1)
         self.assertEqual(int(snapshot.frame.bufferPullDeliveries), 1)
         self.assertEqual(int(snapshot.queue.depth), 3)
+        self.assertEqual(str(snapshot.error.lastNodeId), "n1")
         self.assertEqual(str(snapshot.error.lastCode), "X_ERR")
+        self.assertEqual(str(snapshot.error.lastMessage), "boom")
+        self.assertEqual(str(snapshot.error.lastSeverity.value), "warning")
+        self.assertEqual(str(snapshot.error.lastFingerprint), "fp-boom")
+        self.assertEqual(int(snapshot.error.lastRepeatCount), 1)
+        self.assertEqual(str(snapshot.error.currentNodeId), "n1")
+        self.assertEqual(str(snapshot.error.currentCode), "X_ERR")
+        self.assertEqual(str(snapshot.error.currentMessage), "boom")
+        self.assertEqual(str(snapshot.error.currentSeverity.value), "warning")
+        self.assertEqual(int(snapshot.error.currentTsMs or 0), ts)
         self.assertFalse(bool(snapshot.gpu.available))
         self.assertGreaterEqual(float(snapshot.timing.latencyMsP95 or 0.0), 0.0)
 
@@ -87,6 +104,37 @@ class MonitorCollectorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(".monitor", subject)
         envelope = decode_obj(raw)
         self.assertEqual(envelope.get("value", {}).get("schemaVersion"), "f8monitor/1")
+
+    async def test_report_error_repeats_and_clear_current(self) -> None:
+        bus = _FakeBus()
+        collector = MonitorCollector(
+            bus, MonitorCollectorConfig(enabled=True, interval_ms=200, window_ms=2000, gpu_enabled=False)
+        )
+        ts = int(now_ms())
+
+        collector.report_error(node_id="nodeA", code="E_A", message="first", fingerprint="same", ts_ms=ts)
+        collector.report_error(node_id="nodeA", code="E_A", message="first", fingerprint="same", ts_ms=ts + 1)
+        snapshot = collector._build_snapshot(ts_ms=ts + 1)
+
+        self.assertEqual(int(snapshot.error.countWindow), 2)
+        self.assertEqual(str(snapshot.error.lastFingerprint), "same")
+        self.assertEqual(int(snapshot.error.lastRepeatCount), 2)
+        self.assertEqual(str(snapshot.error.currentMessage), "first")
+
+        collector.clear_error(node_id="nodeA", fingerprint="same", ts_ms=ts + 2)
+        cleared = collector._build_snapshot(ts_ms=ts + 2)
+
+        self.assertEqual(int(cleared.error.countWindow), 2)
+        self.assertEqual(str(cleared.error.lastFingerprint), "same")
+        self.assertEqual(int(cleared.error.lastRepeatCount), 2)
+        self.assertEqual(str(cleared.error.currentNodeId), "")
+        self.assertEqual(str(cleared.error.currentMessage), "")
+        self.assertIsNone(cleared.error.currentTsMs)
+
+        collector.report_error(node_id="nodeA", code="E_B", message="second", fingerprint="other", ts_ms=ts + 3)
+        next_snapshot = collector._build_snapshot(ts_ms=ts + 3)
+        self.assertEqual(str(next_snapshot.error.lastFingerprint), "other")
+        self.assertEqual(int(next_snapshot.error.lastRepeatCount), 1)
 
     async def test_monitor_loop_emits_periodically(self) -> None:
         bus = _FakeBus()

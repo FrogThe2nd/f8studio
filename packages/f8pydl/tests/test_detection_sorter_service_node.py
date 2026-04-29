@@ -23,6 +23,7 @@ from f8pydl.detection_sorter_service_node import (
 class _BusStub:
     def __init__(self, initial_state: dict[str, Any] | None = None) -> None:
         self.state: dict[str, Any] = dict(initial_state or {})
+        self.errors: list[tuple[str, str, str]] = []
         self.emitted: list[tuple[str, str, Any, int | None, str | int | None]] = []
         self.published_state: list[tuple[str, str, Any, int | None]] = []
 
@@ -50,6 +51,22 @@ class _BusStub:
     def get_state_cached(self, node_id: str, field: str, default: Any = None) -> Any:
         del node_id
         return self.state.get(field, default)
+
+    def report_error(
+        self,
+        node_id: str,
+        code: str,
+        message: str,
+        severity: str = "error",
+        fingerprint: str | None = None,
+        ts_ms: int | None = None,
+    ) -> None:
+        del severity, fingerprint, ts_ms
+        self.errors.append((str(node_id), str(code), str(message)))
+
+    def clear_error(self, node_id: str, fingerprint: str | None = None, ts_ms: int | None = None) -> None:
+        del node_id, fingerprint, ts_ms
+        self.errors.clear()
 
 
 def _make_detection_payload(
@@ -356,7 +373,7 @@ class DetectionSorterServiceNodeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(bus.emitted), 1)
             emitted_payload = bus.emitted[0][2]
             self.assertEqual([item["cls"] for item in emitted_payload["detections"]], ["right", "left"])
-            self.assertEqual(bus.state.get("lastError", ""), "")
+            self.assertEqual(bus.errors, [])
             node._close_score_reader()
         finally:
             writer.close(unlink=True)
@@ -434,7 +451,7 @@ class DetectionSorterServiceNodeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(bus.emitted), 1)
             emitted_payload = bus.emitted[0][2]
             self.assertEqual([item["cls"] for item in emitted_payload["detections"]], ["x"])
-            self.assertIn("score SHM unavailable", str(bus.state.get("lastError", "")))
+            self.assertIn("score SHM unavailable", bus.errors[-1][2])
             node._close_score_reader()
         finally:
             writer.close(unlink=True)
@@ -450,7 +467,7 @@ class DetectionSorterServiceNodeTests(unittest.IsolatedAsyncioTestCase):
             await node.on_data("detections", payload)
 
             self.assertEqual(len(bus.emitted), 1)
-            self.assertEqual(bus.state.get("lastError", ""), "")
+            self.assertEqual(bus.errors, [])
             node._close_score_reader()
         finally:
             writer.close(unlink=True)
@@ -474,7 +491,7 @@ class DetectionSorterServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(bus.emitted), 1)
         emitted_payload = bus.emitted[0][2]
         self.assertEqual([item["cls"] for item in emitted_payload["detections"]], ["a", "b"])
-        self.assertIn("score SHM unavailable", str(bus.state.get("lastError", "")))
+        self.assertIn("score SHM unavailable", bus.errors[-1][2])
 
     def test_decode_score_map_from_frame_scalar(self) -> None:
         values = np.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)

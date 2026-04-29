@@ -62,7 +62,6 @@ pixi run -e onnx f8pydl_humandetector
 | `availableModels` | `ro` | `true` | `false` | `array[string]` | List of model ids discovered from weightsDir. |
 | `loadedModel` | `ro` | `true` | `false` | `string / default=` | Current loaded model id/task. |
 | `ortActiveProviders` | `ro` | `true` | `false` | `string / default=` | JSON list of active ONNX Runtime providers for this session. |
-| `lastError` | `ro` | `true` | `false` | `string / default=` | Last runtime error string (best-effort). |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 

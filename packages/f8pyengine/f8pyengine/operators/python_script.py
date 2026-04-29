@@ -205,8 +205,8 @@ DEFAULT_CODE = (
     "#   - raw_dict: plain dict only (faster for mapping-style high-frequency scripts)\n"
     "#   - msgspec_struct: typed struct from dataIn schema (faster for dot-style high-frequency scripts)\n"
     "# - State TypeGuard helpers are available from f8_dynamic_states\n"
-    "#   - example: from f8_dynamic_states import is_state_lastError\n"
-    "#   - then: if is_state_lastError(value, field): ...\n"
+    "#   - example: from f8_dynamic_states import is_state_inputMode\n"
+    "#   - then: if is_state_inputMode(value, field): ...\n"
     "# - Video SHM helpers:\n"
     "#   - ctx.subscribe_video_shm(key, shm_name, decode='auto', use_event=False)\n"
     "#   - pkt = ctx.get_video_shm(key)\n"
@@ -379,15 +379,20 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         try:
             loop = asyncio.get_running_loop()
 
-            async def _set_last_error() -> None:
+            async def _report_monitor_error() -> None:
                 try:
-                    await self.set_state("lastError", msg)
-                except Exception:
-                    return
+                    await self.report_error(
+                        "PYTHON_SCRIPT_ERROR",
+                        msg,
+                        severity="error",
+                        fingerprint=f"python-script:{stage}:{type(exc).__name__}:{exc}",
+                    )
+                except Exception as report_exc:
+                    logger.error("[%s:python_script] report monitor error failed", self.node_id, exc_info=report_exc)
 
-            loop.create_task(_set_last_error(), name=f"python_script:lastError:{self.node_id}")
-        except Exception:
-            pass
+            loop.create_task(_report_monitor_error(), name=f"python_script:reportError:{self.node_id}")
+        except RuntimeError as loop_exc:
+            logger.debug("[%s:python_script] cannot schedule monitor error report", self.node_id, exc_info=loop_exc)
 
     def _clear_last_error(self) -> None:
         if not self._last_error:
@@ -398,13 +403,13 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         except RuntimeError:
             return
 
-        async def _clear_last_error_state() -> None:
+        async def _clear_monitor_error() -> None:
             try:
-                await self.set_state("lastError", "")
+                await self.clear_error()
             except Exception as exc:
-                logger.error("[%s:python_script] clear lastError failed", self.node_id, exc_info=exc)
+                logger.error("[%s:python_script] clear monitor error failed", self.node_id, exc_info=exc)
 
-        loop.create_task(_clear_last_error_state(), name=f"python_script:lastErrorClear:{self.node_id}")
+        loop.create_task(_clear_monitor_error(), name=f"python_script:clearError:{self.node_id}")
 
     @staticmethod
     def _now_ms() -> int:
@@ -1160,15 +1165,6 @@ PythonScriptRuntimeNode.SPEC = F8OperatorSpec(
                 enum=[INPUT_MODE_INPUT_VIEW, INPUT_MODE_RAW_DICT, INPUT_MODE_MSGSPEC_STRUCT],
             ),
             access=F8StateAccess.rw,
-            required=True,
-            showOnNode=False,
-        ),
-        F8StateSpec(
-            name="lastError",
-            label="Last Error",
-            description="Last script error (compile/runtime).",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.wo,
             required=True,
             showOnNode=False,
         ),

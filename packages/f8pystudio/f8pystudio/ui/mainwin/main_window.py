@@ -9,6 +9,7 @@ from ...assets.common.asset_cache_events import subscribe_asset_cache_changed
 from ...assets.subscriptions import SubscriptionSyncService
 from ...assets.variants.variant_sync import VariantSyncClient
 from ...global_hotkeys.controller import ControlPanelGlobalHotkeyController
+from ...monitoring.alerts import MonitorAlertNotifier
 from ...nodegraph.node_graph import F8StudioGraph
 from ...nodegraph.session import last_session_path
 from ...nodegraph.viewer import F8StudioNodeViewer
@@ -123,6 +124,7 @@ class F8StudioMainWin(
     _auto_load_worker: _ProjectAutoLoadWorker | None
     _runtime_state_sync: RuntimeStateSyncController
     _global_hotkey_controller: ControlPanelGlobalHotkeyController
+    _monitor_alert_notifier: MonitorAlertNotifier
 
     def __init__(
         self,
@@ -202,6 +204,7 @@ class F8StudioMainWin(
         self._setup_docks()
         self._create_graph_actions()
         self._service_manager = None
+        self._monitor_alert_notifier = MonitorAlertNotifier()
 
         self._bridge = bridge or PyStudioServiceBridge(PyStudioServiceBridgeConfig(), parent=self)
         if bridge is not None and self._bridge.parent() is None:

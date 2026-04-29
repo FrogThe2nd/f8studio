@@ -103,6 +103,25 @@ std::string trim_copy(std::string value) {
   return value;
 }
 
+std::string normalize_monitor_error_severity(std::string severity) {
+  severity = trim_copy(std::move(severity));
+  std::transform(severity.begin(), severity.end(), severity.begin(),
+                 [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+  if (severity == "info" || severity == "warning" || severity == "critical") {
+    return severity;
+  }
+  return "error";
+}
+
+std::string derive_monitor_error_fingerprint(const std::string& node_id, const std::string& code,
+                                             const std::string& message, const std::string& fingerprint) {
+  const std::string explicit_fingerprint = trim_copy(fingerprint);
+  if (!explicit_fingerprint.empty()) {
+    return explicit_fingerprint;
+  }
+  return node_id + ":" + code + ":" + message;
+}
+
 std::uint32_t fnv1a32(const std::string& text) {
   std::uint32_t value = 0x811C9DC5u;
   for (unsigned char ch : text) {
@@ -817,6 +836,10 @@ void ServiceBus::start_monitor_thread() {
   if (!cfg_.monitor_enabled) return;
   monitor_started_ts_ms_ = now_ms();
   {
+    std::lock_guard<std::mutex> wake_lock(monitor_wake_mu_);
+    monitor_publish_requested_ = false;
+  }
+  {
     std::lock_guard<std::mutex> lock(monitor_mu_);
     monitor_observed_ = 0;
     monitor_processed_ = 0;
@@ -834,9 +857,20 @@ void ServiceBus::start_monitor_thread() {
 
 void ServiceBus::stop_monitor_thread() {
   monitor_running_.store(false, std::memory_order_release);
+  monitor_wake_cv_.notify_all();
   if (monitor_thread_.joinable()) {
     monitor_thread_.join();
   }
+}
+
+void ServiceBus::request_monitor_publish_once() {
+  if (!cfg_.monitor_enabled) return;
+  if (!monitor_running_.load(std::memory_order_acquire)) return;
+  {
+    std::lock_guard<std::mutex> wake_lock(monitor_wake_mu_);
+    monitor_publish_requested_ = true;
+  }
+  monitor_wake_cv_.notify_all();
 }
 
 void ServiceBus::monitor_record_observed(const std::string& port) {
@@ -872,14 +906,64 @@ void ServiceBus::monitor_record_dropped(const std::int64_t dropped_count) {
   monitor_dropped_ += static_cast<std::uint64_t>(dropped_count);
 }
 
-void ServiceBus::monitor_record_error(const std::string& code, const std::string& message, std::int64_t ts_ms) {
+void ServiceBus::report_error(const std::string& node_id, const std::string& code, const std::string& message,
+                              const std::string& severity, const std::string& fingerprint, std::int64_t ts_ms) {
   if (!cfg_.monitor_enabled) return;
   if (ts_ms <= 0) ts_ms = now_ms();
+  std::string node_id_s = trim_copy(node_id);
+  if (node_id_s.empty()) node_id_s = cfg_.service_id;
+  std::string code_s = trim_copy(code);
+  if (code_s.empty()) code_s = "ERROR";
+  const std::string severity_s = normalize_monitor_error_severity(severity);
+  const std::string fingerprint_s = derive_monitor_error_fingerprint(node_id_s, code_s, message, fingerprint);
+
   std::lock_guard<std::mutex> lock(monitor_mu_);
-  monitor_last_error_code_ = code;
+  if (fingerprint_s == monitor_last_error_fingerprint_) {
+    monitor_last_error_repeat_count_ = std::max<std::int64_t>(1, monitor_last_error_repeat_count_) + 1;
+  } else {
+    monitor_last_error_repeat_count_ = 1;
+  }
+  monitor_last_error_node_id_ = node_id_s;
+  monitor_last_error_code_ = code_s;
   monitor_last_error_message_ = message;
+  monitor_last_error_severity_ = severity_s;
+  monitor_last_error_fingerprint_ = fingerprint_s;
   monitor_last_error_ts_ms_ = ts_ms;
+  monitor_current_error_node_id_ = node_id_s;
+  monitor_current_error_code_ = code_s;
+  monitor_current_error_message_ = message;
+  monitor_current_error_severity_ = severity_s;
+  monitor_current_error_fingerprint_ = fingerprint_s;
+  monitor_current_error_ts_ms_ = ts_ms;
   monitor_error_ts_ms_.push_back(ts_ms);
+  request_monitor_publish_once();
+}
+
+void ServiceBus::clear_error(const std::string& node_id, const std::string& fingerprint, std::int64_t ts_ms) {
+  if (!cfg_.monitor_enabled) return;
+  std::string node_id_s = trim_copy(node_id);
+  if (node_id_s.empty()) node_id_s = cfg_.service_id;
+  const std::string fingerprint_s = trim_copy(fingerprint);
+  std::lock_guard<std::mutex> lock(monitor_mu_);
+  if (!monitor_current_error_node_id_.empty() && monitor_current_error_node_id_ != node_id_s) {
+    return;
+  }
+  if (!fingerprint_s.empty() && !monitor_current_error_fingerprint_.empty() &&
+      monitor_current_error_fingerprint_ != fingerprint_s) {
+    return;
+  }
+  monitor_current_error_node_id_.clear();
+  monitor_current_error_code_.clear();
+  monitor_current_error_message_.clear();
+  monitor_current_error_severity_.clear();
+  monitor_current_error_fingerprint_.clear();
+  monitor_current_error_ts_ms_.reset();
+  (void)ts_ms;
+  request_monitor_publish_once();
+}
+
+void ServiceBus::monitor_record_error(const std::string& code, const std::string& message, std::int64_t ts_ms) {
+  report_error(cfg_.service_id, code, message, "error", "", ts_ms);
 }
 
 std::size_t ServiceBus::monitor_queue_depth() const {
@@ -907,7 +991,13 @@ void ServiceBus::monitor_loop() {
   std::clock_t last_cpu = std::clock();
 
   while (monitor_running_.load(std::memory_order_acquire)) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
+    {
+      std::unique_lock<std::mutex> wake_lock(monitor_wake_mu_);
+      monitor_wake_cv_.wait_for(wake_lock, std::chrono::milliseconds(interval_ms), [this]() {
+        return !monitor_running_.load(std::memory_order_acquire) || monitor_publish_requested_;
+      });
+      monitor_publish_requested_ = false;
+    }
     if (!monitor_running_.load(std::memory_order_acquire)) {
       break;
     }
@@ -935,9 +1025,18 @@ void ServiceBus::monitor_loop() {
     double wait_avg = 0.0;
     double wait_p95 = 0.0;
     std::size_t error_count_window = 0;
+    std::string last_error_node_id;
     std::string last_error_code;
     std::string last_error_message;
+    std::string last_error_severity = "error";
+    std::string last_error_fingerprint;
+    std::int64_t last_error_repeat_count = 0;
     std::optional<std::int64_t> last_error_ts_ms;
+    std::string current_error_node_id;
+    std::string current_error_code;
+    std::string current_error_message;
+    std::string current_error_severity;
+    std::optional<std::int64_t> current_error_ts_ms;
 
     {
       std::lock_guard<std::mutex> lock(monitor_mu_);
@@ -952,9 +1051,18 @@ void ServiceBus::monitor_loop() {
       wait_avg = average_values(monitor_wait_ms_);
       wait_p95 = percentile95_values(monitor_wait_ms_);
       error_count_window = monitor_error_ts_ms_.size();
+      last_error_node_id = monitor_last_error_node_id_;
       last_error_code = monitor_last_error_code_;
       last_error_message = monitor_last_error_message_;
+      last_error_severity = monitor_last_error_severity_.empty() ? "error" : monitor_last_error_severity_;
+      last_error_fingerprint = monitor_last_error_fingerprint_;
+      last_error_repeat_count = monitor_last_error_repeat_count_;
       last_error_ts_ms = monitor_last_error_ts_ms_;
+      current_error_node_id = monitor_current_error_node_id_;
+      current_error_code = monitor_current_error_code_;
+      current_error_message = monitor_current_error_message_;
+      current_error_severity = monitor_current_error_severity_;
+      current_error_ts_ms = monitor_current_error_ts_ms_;
     }
 
     const json gpu = json{
@@ -978,16 +1086,35 @@ void ServiceBus::monitor_loop() {
         {"cpu", json{{"processPercent", process_percent}, {"systemPercent", 0.0}}},
         {"memory", json{{"rssBytes", memory.first}, {"vmsBytes", memory.second}}},
         {"gpu", gpu},
-        {"frame", json{{"observed", observed}, {"processed", processed}, {"dropped", dropped}}},
+        {"frame", json{{"observed", observed},
+                       {"processed", processed},
+                       {"dropped", dropped},
+                       {"localOnlyEmits", 0},
+                       {"routedCrossEmits", 0},
+                       {"suppressedCrossPublishes", 0},
+                       {"callbackDeliveries", 0},
+                       {"bufferPullDeliveries", 0}}},
         {"timing", json{{"processMsAvg", process_avg},
                         {"processMsP95", process_p95},
                         {"waitMsAvg", wait_avg},
-                        {"waitMsP95", wait_p95}}},
+                        {"waitMsP95", wait_p95},
+                        {"latencyMsAvg", nullptr},
+                        {"latencyMsP95", nullptr}}},
         {"queue", json{{"depth", monitor_queue_depth()}}},
         {"error", json{{"countWindow", error_count_window},
+                       {"lastNodeId", last_error_node_id},
                        {"lastCode", last_error_code},
                        {"lastMessage", last_error_message},
-                       {"lastTsMs", last_error_ts_ms.has_value() ? json(last_error_ts_ms.value()) : json(nullptr)}}},
+                       {"lastSeverity", last_error_severity},
+                       {"lastFingerprint", last_error_fingerprint},
+                       {"lastRepeatCount", last_error_repeat_count},
+                       {"lastTsMs", last_error_ts_ms.has_value() ? json(last_error_ts_ms.value()) : json(nullptr)},
+                       {"currentNodeId", current_error_node_id},
+                       {"currentCode", current_error_code},
+                       {"currentMessage", current_error_message},
+                       {"currentSeverity", current_error_severity},
+                       {"currentTsMs",
+                        current_error_ts_ms.has_value() ? json(current_error_ts_ms.value()) : json(nullptr)}}},
     };
     {
       f8::cppsdk::generated::F8MonitorSnapshot parsed;

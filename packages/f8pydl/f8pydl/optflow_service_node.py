@@ -426,7 +426,15 @@ class OnnxOptflowServiceNode(ServiceNode):
 
     async def _set_last_error(self, message: str) -> None:
         self._last_error = str(message or "")
-        await self.set_state("lastError", self._last_error)
+        if self._last_error:
+            await self.report_error(
+                "DL_OPTFLOW_RUNTIME",
+                self._last_error,
+                severity="warning" if self._last_error.lower().startswith("downloading ") else "error",
+                fingerprint=f"dl-optflow:{self._last_error}",
+            )
+            return
+        await self.clear_error()
 
     async def _record_exception(self, *, where: str, exc: Exception) -> None:
         signature = f"{type(exc).__name__}:{exc}"
@@ -572,7 +580,7 @@ class OnnxOptflowServiceNode(ServiceNode):
         self._last_error_repeats = 0
         self._runtime_warning = ""
         await self.set_state("loadedModel", "")
-        await self.set_state("lastError", "")
+        await self.clear_error()
         await self.set_state("ortActiveProviders", "")
         await self.set_state("flowShmName", self._flow_shm_name)
         await self.set_state("flowShmFormat", self._flow_shm_format)

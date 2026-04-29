@@ -502,7 +502,15 @@ class OnnxTcnWaveServiceNode(ServiceNode):
 
     async def _set_last_error(self, message: str) -> None:
         self._last_error = str(message or "")
-        await self.set_state("lastError", self._last_error)
+        if self._last_error:
+            await self.report_error(
+                "DL_TCNWAVE_RUNTIME",
+                self._last_error,
+                severity="warning" if self._last_error.lower().startswith("downloading ") else "error",
+                fingerprint=f"dl-tcnwave:{self._last_error}",
+            )
+            return
+        await self.clear_error()
 
     async def _handle_missing_shm_name(self, *, now_ms: int) -> None:
         await self._set_last_error("missing shmName")
@@ -535,7 +543,7 @@ class OnnxTcnWaveServiceNode(ServiceNode):
         self._last_error_signature = ""
         self._last_error_repeats = 0
         await self.set_state("loadedModel", "")
-        await self.set_state("lastError", "")
+        await self.clear_error()
         await self.set_state("ortActiveProviders", "")
         if self._model_index_warning:
             await self._set_last_error(self._model_index_warning)

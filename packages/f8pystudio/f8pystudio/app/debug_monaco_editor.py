@@ -16,6 +16,7 @@ from f8pystudio.diagnostics.logging import configure_root_logging_from_env
 from f8pystudio.editor_assist.protocol import editor_assist_context_for_field
 from f8pystudio.editor_assist.session import EditorSessionKey
 from f8pystudio.editor_assist.workspace import EditorAssistContext
+from f8pystudio.nodegraph.session_payload_sanitizer import strip_runtime_only_state_fields_from_layout
 from f8pystudio.ui.support.monaco_editor_host import open_code_editor_window
 from f8pystudio.ui.support.qt_font_utils import normalize_application_font
 from f8pystudio.ui.support.webengine_utils import configure_default_webengine_profile
@@ -70,6 +71,9 @@ def _target_matches(raw_spec: dict[str, Any]) -> bool:
 def load_session_editor_targets(session_path: Path) -> list[SessionEditorTarget]:
     resolved_path = session_path.expanduser().resolve()
     payload = _load_json_file(resolved_path)
+    raw_layout = payload.get("layout")
+    if isinstance(raw_layout, dict):
+        strip_runtime_only_state_fields_from_layout(raw_layout)
     targets: list[SessionEditorTarget] = []
 
     for node_id, node_payload in _iter_layout_nodes(payload):

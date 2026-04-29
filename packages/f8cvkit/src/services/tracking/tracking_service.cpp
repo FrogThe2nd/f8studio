@@ -700,7 +700,7 @@ bool TrackingService::start() {
   publish_state_if_changed("stopTrackingCooldownUntilTsMs", 0, "init", json::object());
   publish_state_if_changed("isTracking", false, "init", json::object());
   publish_state_if_changed("isNotTracking", true, "init", json::object());
-  publish_state_if_changed("lastError", "", "init", json::object());
+  publish_error_if_changed("", "init", json::object());
 
   video_.close();
   frame_bgra_.clear();
@@ -773,6 +773,11 @@ void TrackingService::publish_state_if_changed(const std::string& field, const j
                                             source, meta);
 }
 
+void TrackingService::publish_error_if_changed(const json& value, const std::string& source, const json& meta) {
+  service_runtime::publish_error_if_changed(state_mu_, published_state_, bus_.get(), cfg_.service_id, value, source,
+                                            meta);
+}
+
 void TrackingService::emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms) {
   if (!bus_)
     return;
@@ -829,19 +834,19 @@ void TrackingService::on_state(const std::string& node_id, const std::string& fi
   }
   if (field == "autoDownloadModels") {
     if (!value.is_boolean()) {
-      publish_state_if_changed("lastError", "invalid autoDownloadModels", "state", meta);
+      publish_error_if_changed("invalid autoDownloadModels", "state", meta);
       return;
     }
     auto_download_models_ = value.get<bool>();
     model_download_retry_after_ms_ = 0;
     publish_state_if_changed("autoDownloadModels", auto_download_models_, "state", meta);
-    publish_state_if_changed("lastError", "", "state", meta);
+    publish_error_if_changed("", "state", meta);
     return;
   }
   if (field == "stopTrackingCooldownMs") {
     int v = 0;
     if (!json_number_to_int(value, v)) {
-      publish_state_if_changed("lastError", "invalid stopTrackingCooldownMs", "state", meta);
+      publish_error_if_changed("invalid stopTrackingCooldownMs", "state", meta);
       return;
     }
     v = std::max(0, std::min(60000, v));
@@ -953,7 +958,7 @@ void TrackingService::set_init_select(const std::string& mode, const json& meta)
   bool ok = false;
   const TrackingInitSelectMode parsed = parse_init_select_mode(mode, normalized, ok);
   if (!ok) {
-    publish_state_if_changed("lastError", "invalid initSelect: " + mode, "state", meta);
+    publish_error_if_changed("invalid initSelect: " + mode, "state", meta);
     return;
   }
   init_select_mode_ = parsed;
@@ -966,7 +971,7 @@ void TrackingService::set_tracker_kind(const std::string& kind, const json& meta
   bool ok = false;
   const TrackerKind parsed = parse_tracker_kind(kind, normalized, ok);
   if (!ok) {
-    publish_state_if_changed("lastError", "invalid trackerKind: " + kind, "state", meta);
+    publish_error_if_changed("invalid trackerKind: " + kind, "state", meta);
     return;
   }
   {
@@ -976,7 +981,7 @@ void TrackingService::set_tracker_kind(const std::string& kind, const json& meta
   }
   model_download_retry_after_ms_ = 0;
   publish_state_if_changed("trackerKind", normalized, "state", meta);
-  publish_state_if_changed("lastError", "", "state", meta);
+  publish_error_if_changed("", "state", meta);
 }
 
 void TrackingService::set_model_dir(const std::string& model_dir, const json& meta) {
@@ -984,7 +989,7 @@ void TrackingService::set_model_dir(const std::string& model_dir, const json& me
   model_dir_path_ = resolve_model_dir_path(model_dir_state_);
   model_download_retry_after_ms_ = 0;
   publish_state_if_changed("modelDir", model_dir_state_, "state", meta);
-  publish_state_if_changed("lastError", "", "state", meta);
+  publish_error_if_changed("", "state", meta);
 }
 
 bool TrackingService::ensure_video_open() {
@@ -1006,10 +1011,10 @@ bool TrackingService::ensure_video_open() {
 
   const std::size_t bytes = f8::cppsdk::shm::kDefaultVideoShmBytes;
   if (!video_.open(shm_name, bytes)) {
-    publish_state_if_changed("lastError", "video shm open failed: " + shm_name, "runtime", json::object());
+    publish_error_if_changed("video shm open failed: " + shm_name, "runtime", json::object());
     return false;
   }
-  publish_state_if_changed("lastError", "", "runtime", json::object());
+  publish_error_if_changed("", "runtime", json::object());
   return true;
 }
 
@@ -1036,16 +1041,16 @@ void TrackingService::apply_init_box_if_any() {
 
   f8::cppsdk::VideoSharedMemoryHeader hdr{};
   if (!video_.copyLatestFrame(frame_bgra_, hdr)) {
-    publish_state_if_changed("lastError", "failed to read video frame for init", "runtime", json::object());
+    publish_error_if_changed("failed to read video frame for init", "runtime", json::object());
     return;
   }
   if (hdr.format != 1 || hdr.width == 0 || hdr.height == 0 || hdr.pitch == 0) {
-    publish_state_if_changed("lastError", "unsupported video shm format", "runtime", json::object());
+    publish_error_if_changed("unsupported video shm format", "runtime", json::object());
     return;
   }
   const std::size_t row_bytes = static_cast<std::size_t>(hdr.pitch);
   if (frame_bgra_.size() < row_bytes * static_cast<std::size_t>(hdr.height)) {
-    publish_state_if_changed("lastError", "video shm frame too small", "runtime", json::object());
+    publish_error_if_changed("video shm frame too small", "runtime", json::object());
     return;
   }
 
@@ -1054,7 +1059,7 @@ void TrackingService::apply_init_box_if_any() {
   try {
     cv::cvtColor(bgra_mat, frame_bgr_, cv::COLOR_BGRA2BGR);
   } catch (const cv::Exception& ex) {
-    publish_state_if_changed("lastError", std::string("opencv cvtColor failed: ") + ex.what(), "runtime",
+    publish_error_if_changed(std::string("opencv cvtColor failed: ") + ex.what(), "runtime",
                              json::object());
     return;
   }
@@ -1063,7 +1068,7 @@ void TrackingService::apply_init_box_if_any() {
   cv::Rect frame_rect(0, 0, static_cast<int>(hdr.width), static_cast<int>(hdr.height));
   const std::optional<cv::Rect> selected = pick_best_bbox(candidates, frame_rect, init_select_mode_);
   if (!selected.has_value()) {
-    publish_state_if_changed("lastError", "initBox has no valid bbox candidate", "runtime", json::object());
+    publish_error_if_changed("initBox has no valid bbox candidate", "runtime", json::object());
     return;
   }
   cv::Rect bb = selected.value();
@@ -1073,8 +1078,7 @@ void TrackingService::apply_init_box_if_any() {
     const std::int64_t remain_ms = model_download_retry_after_ms_ - now;
     spdlog::warn("cvkit_tracking model download cooldown active trackerKind={} retryInMs={}", tracker_kind_state_,
                  remain_ms);
-    publish_state_if_changed("lastError",
-                             "tracker model download cooldown active for " + tracker_kind_state_ + " ; retry in " +
+    publish_error_if_changed("tracker model download cooldown active for " + tracker_kind_state_ + " ; retry in " +
                                  std::to_string(std::max<std::int64_t>(1, remain_ms / 1000)) + "s",
                              "runtime", json::object({{"source", "initBox"}}));
     return;
@@ -1086,7 +1090,7 @@ void TrackingService::apply_init_box_if_any() {
       model_download_retry_after_ms_ = now + kModelDownloadRetryCooldownMs;
       spdlog::error("cvkit_tracking model preparation failed trackerKind={} modelDir={} retryAfterMs={} error={}",
                     tracker_kind_state_, model_dir_path_.string(), model_download_retry_after_ms_, download_error);
-      publish_state_if_changed("lastError", download_error, "runtime", json::object({{"source", "initBox"}}));
+      publish_error_if_changed(download_error, "runtime", json::object({{"source", "initBox"}}));
       return;
     }
     model_download_retry_after_ms_ = 0;
@@ -1101,7 +1105,7 @@ void TrackingService::apply_init_box_if_any() {
       tracker_ = create_tracker_for_kind(tracker_kind_, model_dir_path_);
       if (tracker_.empty()) {
         spdlog::error("cvkit_tracking tracker create returned empty kind={}", tracker_kind_state_);
-        publish_state_if_changed("lastError", "tracker create failed: " + tracker_kind_state_, "runtime",
+        publish_error_if_changed("tracker create failed: " + tracker_kind_state_, "runtime",
                                  json::object());
         return;
       }
@@ -1110,17 +1114,17 @@ void TrackingService::apply_init_box_if_any() {
                    bb.width, bb.height);
       active_tracker_kind_state_ = tracker_kind_state_;
       bbox_ = bb;
-      publish_state_if_changed("lastError", "", "runtime", json::object({{"source", "initBox"}}));
+      publish_error_if_changed("", "runtime", json::object({{"source", "initBox"}}));
       set_tracking(true, json::object({{"source", "initBox"}, {"candidates", static_cast<int>(candidates.size())}}));
     } catch (const cv::Exception& ex) {
       spdlog::error("cvkit_tracking tracker init OpenCV exception kind={} error={}", tracker_kind_state_, ex.what());
-      publish_state_if_changed("lastError", std::string("opencv tracker init failed: ") + ex.what(), "runtime",
+      publish_error_if_changed(std::string("opencv tracker init failed: ") + ex.what(), "runtime",
                                json::object({{"source", "initBox"}}));
       stop_tracking_internal(json::object({{"reason", "opencv_exception"}, {"source", "initBox"}}));
       return;
     } catch (const std::exception& ex) {
       spdlog::error("cvkit_tracking tracker init exception kind={} error={}", tracker_kind_state_, ex.what());
-      publish_state_if_changed("lastError", std::string("tracker init failed: ") + ex.what(), "runtime",
+      publish_error_if_changed(std::string("tracker init failed: ") + ex.what(), "runtime",
                                json::object({{"source", "initBox"}}));
       stop_tracking_internal(json::object({{"reason", "std_exception"}, {"source", "initBox"}}));
       return;
@@ -1159,13 +1163,13 @@ void TrackingService::process_frame_once() {
   last_header_ = hdr;
 
   if (hdr.format != 1 || hdr.width == 0 || hdr.height == 0 || hdr.pitch == 0) {
-    publish_state_if_changed("lastError", "unsupported video shm format", "runtime", json::object());
+    publish_error_if_changed("unsupported video shm format", "runtime", json::object());
     set_tracking(false, json::object({{"reason", "bad_format"}}));
     return;
   }
   const std::size_t row_bytes = static_cast<std::size_t>(hdr.pitch);
   if (frame_bgra_.size() < row_bytes * static_cast<std::size_t>(hdr.height)) {
-    publish_state_if_changed("lastError", "video shm frame too small", "runtime", json::object());
+    publish_error_if_changed("video shm frame too small", "runtime", json::object());
     set_tracking(false, json::object({{"reason", "bad_frame"}}));
     return;
   }
@@ -1175,7 +1179,7 @@ void TrackingService::process_frame_once() {
   try {
     cv::cvtColor(bgra_mat, frame_bgr_, cv::COLOR_BGRA2BGR);
   } catch (const cv::Exception& ex) {
-    publish_state_if_changed("lastError", std::string("opencv cvtColor failed: ") + ex.what(), "runtime",
+    publish_error_if_changed(std::string("opencv cvtColor failed: ") + ex.what(), "runtime",
                              json::object());
     std::lock_guard<std::mutex> lock(tracking_mu_);
     stop_tracking_internal(json::object({{"reason", "opencv_exception"}, {"where", "cvtColor"}}));
@@ -1187,13 +1191,13 @@ void TrackingService::process_frame_once() {
   try {
     ok = tracker->update(frame_bgr_, out_bbox);
   } catch (const cv::Exception& ex) {
-    publish_state_if_changed("lastError", std::string("opencv tracker update failed: ") + ex.what(), "runtime",
+    publish_error_if_changed(std::string("opencv tracker update failed: ") + ex.what(), "runtime",
                              json::object());
     std::lock_guard<std::mutex> lock(tracking_mu_);
     stop_tracking_internal(json::object({{"reason", "opencv_exception"}, {"where", "update"}}));
     return;
   } catch (const std::exception& ex) {
-    publish_state_if_changed("lastError", std::string("tracker update failed: ") + ex.what(), "runtime",
+    publish_error_if_changed(std::string("tracker update failed: ") + ex.what(), "runtime",
                              json::object());
     std::lock_guard<std::mutex> lock(tracking_mu_);
     stop_tracking_internal(json::object({{"reason", "std_exception"}, {"where", "update"}}));
@@ -1221,7 +1225,7 @@ void TrackingService::process_frame_once() {
   out["bbox"] = json::array({emit_bbox.x, emit_bbox.y, emit_bbox.x + emit_bbox.width, emit_bbox.y + emit_bbox.height});
   out["tracker"] = json::object({{"kind", active_tracker_kind}, {"ok", true}});
 
-  publish_state_if_changed("lastError", "", "runtime", json::object());
+  publish_error_if_changed("", "runtime", json::object());
   if (bus_) {
     (void)bus_->emit_data(cfg_.service_id, "tracking", out);
   }
@@ -1317,7 +1321,6 @@ json TrackingService::describe() {
                   "When > 0, initBox is ignored until this timestamp (ms).", true),
       state_field("isTracking", schema_boolean(), "ro", "Is Tracking", "True when tracker is running.", true),
       state_field("isNotTracking", schema_boolean(), "ro", "Is Not Tracking", "Negation of isTracking.", true),
-      state_field("lastError", schema_string(), "ro", "Last Error", "Last error message.", true),
   });
   service["commands"] = json::array({
       json{{"name", "stopTracking"},

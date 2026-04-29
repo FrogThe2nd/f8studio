@@ -254,7 +254,26 @@ class StateIOBus(Protocol):
 
 
 @runtime_checkable
-class NodeBus(StateIOBus, DataIOBus, ExecIOBus, BusActive, Protocol):
+class MonitorErrorBus(Protocol):
+    """
+    Node-facing monitor error reporting operations.
+    """
+
+    def report_error(
+        self,
+        node_id: str,
+        code: str,
+        message: str,
+        severity: str = "error",
+        fingerprint: str | None = None,
+        ts_ms: int | None = None,
+    ) -> None: ...
+
+    def clear_error(self, node_id: str, fingerprint: str | None = None, ts_ms: int | None = None) -> None: ...
+
+
+@runtime_checkable
+class NodeBus(StateIOBus, DataIOBus, ExecIOBus, MonitorErrorBus, BusActive, Protocol):
     """
     Composition of bus capabilities used by `RuntimeNode`.
     """

@@ -139,6 +139,7 @@ class ImPlayerService final : public f8::cppsdk::LifecycleNode,
   std::string last_error_;
   std::string video_id_;
   std::unordered_map<std::string, nlohmann::json> published_state_;
+  std::string published_error_message_;
 
   std::atomic<double> position_seconds_{0.0};
   std::atomic<double> duration_seconds_{0.0};

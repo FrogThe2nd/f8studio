@@ -789,9 +789,23 @@ void ScreenCapService::publish_dynamic_state() {
     if (bus_)
       f8::cppsdk::kv_set_node_state(bus_->kv(), cfg_.service_id, cfg_.service_id, field, v, "tick", json::object());
   };
+  auto publish_error_if_changed = [&](const std::string& message) {
+    if (published_error_message_ == message) {
+      return;
+    }
+    published_error_message_ = message;
+    if (!bus_) {
+      return;
+    }
+    if (message.empty()) {
+      bus_->clear_error(cfg_.service_id);
+    } else {
+      bus_->report_error(cfg_.service_id, "SCREENCAP_ERROR", message, "error", cfg_.service_id + ":" + message);
+    }
+  };
 
   set_if_changed("captureRunning", capture_running_.load(std::memory_order_relaxed));
-  set_if_changed("lastError", last_error_);
+  publish_error_if_changed(last_error_);
 
   if (shm_) {
     set_if_changed("videoWidth", shm_->outputWidth());
@@ -831,7 +845,6 @@ json ScreenCapService::describe() {
       state_field("region", rect_schema(), "ro", "Region", "Virtual desktop coordinates", false),
       state_field("scale", size_schema(), "ro", "Scale", "Optional output size (0 disables)", false),
       state_field("captureRunning", schema_boolean(), "ro", "Capture Running", "Is capture currently running", false),
-      state_field("lastError", schema_string(), "ro", "Last Error", "Last error message", false),
       state_field("videoWidth", schema_integer(), "ro", "Video Width", "Width of the video frame in pixels", true),
       state_field("videoHeight", schema_integer(), "ro", "Video Height", "Height of the video frame in pixels", true),
       state_field("videoPitch", schema_integer(), "ro", "Video Pitch", "Number of bytes per row of the video frame",

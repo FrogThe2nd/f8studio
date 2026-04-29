@@ -31,7 +31,7 @@ No description.
 ### How to Run
 
 ```bash
-../win/f8cvkit_dense_optflow_service.exe
+../linux/f8cvkit_dense_optflow_service
 ```
 
 - Workdir: `./`
@@ -52,7 +52,6 @@ No description.
 | `flowShmName` | `ro` | `true` | `true` | `string` | Output SHM name for UV flow field. |
 | `flowShmFormat` | `ro` | `true` | `false` | `string` | Flow payload format. Fixed to flow2_f16. |
 | `computeScale` | `rw` | `true` | `false` | `number / default=0.5` | Farneback compute scale, flow is upscaled back to full size. |
-| `lastError` | `ro` | `true` | `false` | `string` | Last error message. |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
@@ -63,7 +62,6 @@ No description.
 - `flowShmName` (Flow SHM Name, `ro`): Output SHM name for UV flow field. Schema: `string`.
 - `flowShmFormat` (Flow SHM Format, `ro`): Flow payload format. Fixed to flow2_f16. Schema: `string`.
 - `computeScale` (Compute Scale, `rw`): Farneback compute scale, flow is upscaled back to full size. Schema: `number / default=0.5`.
-- `lastError` (Last Error, `ro`): Last error message. Schema: `string`.
 - `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 

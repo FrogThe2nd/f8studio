@@ -16,6 +16,7 @@ from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
 from f8pysdk.specs import any_schema, number_schema, string_schema  # noqa: E402
 from f8pysdk.host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
+from f8pysdk.time_utils import now_ms  # noqa: E402
 
 from f8pyengine.constants import SERVICE_CLASS  # noqa: E402
 from f8pyengine.operators import state_expr as state_expr_mod  # noqa: E402
@@ -49,6 +50,11 @@ def _build_state_expr_runtime_node(
         dataInPorts=[],
         dataOutPorts=[],
     )
+
+
+def _monitor_error_message(bus: object) -> str:
+    snapshot = bus.monitor_collector._build_snapshot(ts_ms=int(now_ms()))
+    return str(snapshot.error.currentMessage or "")
 
 
 class StateExprNodeTests(unittest.IsolatedAsyncioTestCase):
@@ -110,7 +116,7 @@ class StateExprNodeTests(unittest.IsolatedAsyncioTestCase):
 
         await runtime.on_state("a", 4.0, ts_ms=1)
         self.assertEqual(await runtime.get_state_value("out"), 6.5)
-        self.assertEqual(await runtime.get_state_value("lastError"), "")
+        self.assertEqual(_monitor_error_message(bus), "")
 
     async def test_non_identifier_state_name_available_via_states_mapping(self) -> None:
         bus = self._setup_bus(service_id="svcA")
@@ -222,11 +228,11 @@ class StateExprNodeTests(unittest.IsolatedAsyncioTestCase):
 
         await runtime.on_state("code", "a +", ts_ms=1)
         self.assertIsNone(await runtime.get_state_value("out"))
-        self.assertIn("syntax error", str(await runtime.get_state_value("lastError") or ""))
+        self.assertIn("syntax error", _monitor_error_message(bus))
 
         await runtime.on_state("code", "a + 2", ts_ms=2)
         self.assertEqual(await runtime.get_state_value("out"), 3.0)
-        self.assertEqual(await runtime.get_state_value("lastError"), "")
+        self.assertEqual(_monitor_error_message(bus), "")
 
     @unittest.skipIf(state_expr_mod.np is None, "numpy not available in test environment")
     async def test_allow_numpy_enables_numpy_calls(self) -> None:
@@ -305,7 +311,7 @@ class StateExprNodeTests(unittest.IsolatedAsyncioTestCase):
 
         await runtime.on_state("public_value", 2.0, ts_ms=1)
         self.assertIsNone(await runtime.get_state_value("out"))
-        self.assertIn("NameError", str(await runtime.get_state_value("lastError") or ""))
+        self.assertIn("NameError", _monitor_error_message(bus))
 
 
 if __name__ == "__main__":

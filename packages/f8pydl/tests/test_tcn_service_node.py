@@ -31,6 +31,7 @@ class _NodeStub:
 class _FakeBus:
     def __init__(self) -> None:
         self.state_values: dict[str, Any] = {}
+        self.errors: list[tuple[str, str, str]] = []
         self.emits: list[tuple[str, str, Any, int | None, str | int | None]] = []
 
     async def emit_data(
@@ -60,6 +61,22 @@ class _FakeBus:
         _ = node_id
         return self.state_values.get(str(field), default)
 
+    def report_error(
+        self,
+        node_id: str,
+        code: str,
+        message: str,
+        severity: str = "error",
+        fingerprint: str | None = None,
+        ts_ms: int | None = None,
+    ) -> None:
+        del severity, fingerprint, ts_ms
+        self.errors.append((str(node_id), str(code), str(message)))
+
+    def clear_error(self, node_id: str, fingerprint: str | None = None, ts_ms: int | None = None) -> None:
+        del node_id, fingerprint, ts_ms
+        self.errors.clear()
+
 
 class TcnServiceNodeTests(unittest.TestCase):
     def test_missing_shm_name_sets_last_error_and_does_not_crash(self) -> None:
@@ -75,7 +92,7 @@ class TcnServiceNodeTests(unittest.TestCase):
             RuntimeNode.attach(node, bus)
             await node._ensure_config_loaded()
             await node._handle_missing_shm_name(now_ms=1234)
-            self.assertEqual(bus.state_values.get("lastError"), "missing shmName")
+            self.assertEqual(bus.errors[-1][2], "missing shmName")
 
         asyncio.run(_run())
 

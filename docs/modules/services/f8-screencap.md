@@ -31,7 +31,7 @@ No description.
 ### How to Run
 
 ```bash
-win/f8screencap_service.exe
+linux/f8screencap_service
 ```
 
 - Workdir: `./`
@@ -57,7 +57,6 @@ win/f8screencap_service.exe
 | `region` | `ro` | `true` | `false` | `object{h, w, x, y}` | Virtual desktop coordinates |
 | `scale` | `ro` | `true` | `false` | `object{h, w}` | Optional output size (0 disables) |
 | `captureRunning` | `ro` | `true` | `false` | `boolean` | Is capture currently running |
-| `lastError` | `ro` | `true` | `false` | `string` | Last error message |
 | `videoWidth` | `ro` | `true` | `true` | `integer` | Width of the video frame in pixels |
 | `videoHeight` | `ro` | `true` | `true` | `integer` | Height of the video frame in pixels |
 | `videoPitch` | `ro` | `true` | `false` | `integer` | Number of bytes per row of the video frame |

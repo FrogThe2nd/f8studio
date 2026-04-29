@@ -50,7 +50,6 @@ pixi run -e default f8pyaudiofeat_rhythm
 | `tempoWindowSec` | `rw` | `true` | `true` | `number / default=8.0` | Window length in seconds for tempo estimation. |
 | `pulseWindowSec` | `rw` | `true` | `true` | `number / default=6.0` | Window length in seconds for pulse clarity. |
 | `emitEvery` | `rw` | `true` | `true` | `integer / default=1` | Emit one rhythmFeatures payload every N coreFeatures inputs. |
-| `lastError` | `ro` | `true` | `false` | `string / default=` | Last runtime error string. |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
@@ -59,7 +58,6 @@ pixi run -e default f8pyaudiofeat_rhythm
 - `tempoWindowSec` (Tempo Window (s), `rw`): Window length in seconds for tempo estimation. Schema: `number / default=8.0`.
 - `pulseWindowSec` (Pulse Window (s), `rw`): Window length in seconds for pulse clarity. Schema: `number / default=6.0`.
 - `emitEvery` (Emit Every, `rw`): Emit one rhythmFeatures payload every N coreFeatures inputs. Schema: `integer / default=1`.
-- `lastError` (Last Error, `ro`): Last runtime error string. Schema: `string / default=`.
 - `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 

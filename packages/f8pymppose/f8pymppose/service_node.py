@@ -240,7 +240,16 @@ class MediaPipePoseServiceNode(ServiceNode):
         self._skeleton_source = config.skeleton_source
 
     async def _set_last_error(self, message: str) -> None:
-        await self.set_state("lastError", str(message or ""))
+        normalized = str(message or "")
+        if normalized:
+            await self.report_error(
+                "MPPOSE_RUNTIME",
+                normalized,
+                severity="error",
+                fingerprint=f"mppose:{normalized}",
+            )
+            return
+        await self.clear_error()
 
     async def _record_exception(self, *, where: str, exc: Exception) -> None:
         signature = f"{where}:{type(exc).__name__}:{exc}"

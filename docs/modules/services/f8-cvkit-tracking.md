@@ -31,7 +31,7 @@ No description.
 ### How to Run
 
 ```bash
-../win/f8cvkit_tracking_service.exe
+../linux/f8cvkit_tracking_service
 ```
 
 - Workdir: `./`
@@ -56,7 +56,6 @@ No description.
 | `stopTrackingCooldownUntilTsMs` | `ro` | `true` | `true` | `integer` | When > 0, initBox is ignored until this timestamp (ms). |
 | `isTracking` | `ro` | `true` | `true` | `boolean` | True when tracker is running. |
 | `isNotTracking` | `ro` | `true` | `true` | `boolean` | Negation of isTracking. |
-| `lastError` | `ro` | `true` | `true` | `string` | Last error message. |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 

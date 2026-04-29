@@ -54,6 +54,7 @@ class TemplateMatchService final : public f8::cppsdk::LifecycleNode,
 
   void publish_state_if_changed(const std::string& field, const json& value, const std::string& source,
                                 const json& meta);
+  void publish_error_if_changed(const json& value, const std::string& source, const json& meta);
   void emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms);
   void set_template_png_b64(const std::string& b64, const json& meta);
   bool ensure_video_open();

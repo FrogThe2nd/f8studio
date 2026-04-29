@@ -15,6 +15,7 @@ from f8pysdk.specs import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
 from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
 from f8pysdk.host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
+from f8pysdk.time_utils import now_ms  # noqa: E402
 
 from f8pyengine.constants import SERVICE_CLASS  # noqa: E402
 from f8pyengine.operators.handy_out import (  # noqa: E402
@@ -22,6 +23,11 @@ from f8pyengine.operators.handy_out import (  # noqa: E402
     _HttpResult,
     register_operator,
 )
+
+
+def _monitor_error_message(bus: object) -> str:
+    snapshot = bus.monitor_collector._build_snapshot(ts_ms=int(now_ms()))
+    return str(snapshot.error.currentMessage or "")
 
 
 class HandyOutTests(unittest.IsolatedAsyncioTestCase):
@@ -201,8 +207,7 @@ class HandyOutTests(unittest.IsolatedAsyncioTestCase):
         await node.on_exec("e1")
         await asyncio.sleep(0.05)
 
-        last_error = (await bus.get_state("handy1", "lastError")).value
-        self.assertIn("3000", str(last_error))
+        self.assertIn("3000", _monitor_error_message(bus))
         self.assertEqual(int(node._last_http_status), 200)
         await node.close()
 

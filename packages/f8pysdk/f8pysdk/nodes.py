@@ -95,7 +95,46 @@ class RuntimeNode(BusAttachableNode, StatefulNode, DataReceivableNode, Computabl
     async def set_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
         if self._bus is None:
             return
+        # Legacy compatibility: old scripts may still try to write this removed runtime state.
+        if str(field) == "lastError":
+            message = str(value or "")
+            if message:
+                self._bus.report_error(
+                    self.node_id,
+                    "RUNTIME_NODE_ERROR",
+                    message,
+                    severity="error",
+                    fingerprint=f"{self.node_id}:legacy_state_error:{message}",
+                    ts_ms=ts_ms,
+                )
+            else:
+                self._bus.clear_error(self.node_id, fingerprint=None, ts_ms=ts_ms)
+            return
         await self._bus.publish_state_runtime(self.node_id, field, value, ts_ms=ts_ms)
+
+    async def report_error(
+        self,
+        code: str,
+        message: str,
+        severity: str = "error",
+        fingerprint: str | None = None,
+        ts_ms: int | None = None,
+    ) -> None:
+        if self._bus is None:
+            return
+        self._bus.report_error(
+            self.node_id,
+            code,
+            message,
+            severity=severity,
+            fingerprint=fingerprint,
+            ts_ms=ts_ms,
+        )
+
+    async def clear_error(self, fingerprint: str | None = None, ts_ms: int | None = None) -> None:
+        if self._bus is None:
+            return
+        self._bus.clear_error(self.node_id, fingerprint=fingerprint, ts_ms=ts_ms)
 
     async def get_state(self, field: str) -> StateRead:
         if self._bus is None:

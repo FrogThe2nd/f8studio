@@ -466,7 +466,15 @@ class UdpInRuntimeNode(OperatorNode, EntrypointNode):
 
         last_error = str(self._last_error or "")
         if self._published_last_error != last_error:
-            await self.set_state("lastError", last_error)
+            if last_error:
+                await self.report_error(
+                    "UDP_IN_ERROR",
+                    last_error,
+                    severity="error",
+                    fingerprint=f"udp-in:{last_error}",
+                )
+            else:
+                await self.clear_error()
             self._published_last_error = last_error
 
     def _request_exec_emit(self, *, exec_id: str | int) -> None:
@@ -606,15 +614,6 @@ UdpInRuntimeNode.SPEC = F8OperatorSpec(
             label="Listening",
             description="Readonly flag telling whether the UDP socket is active.",
             valueSchema=boolean_schema(default=False),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=True,
-        ),
-        F8StateSpec(
-            name="lastError",
-            label="Last Error",
-            description="Readonly receiver/socket error, updated only when the error state changes.",
-            valueSchema=string_schema(default=""),
             access=F8StateAccess.ro,
             required=True,
             showOnNode=True,

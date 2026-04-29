@@ -117,7 +117,12 @@ class AudioCoreFeatureServiceNode(ServiceNode):
     async def _set_last_error(self, msg: str, *, signature: str, exc: BaseException | None = None) -> None:
         if self._last_error != msg:
             self._last_error = msg
-            await self.set_state("lastError", msg)
+            await self.report_error(
+                "AUDIOFEAT_CORE_RUNTIME",
+                msg,
+                severity="error",
+                fingerprint=f"audiofeat-core:{signature}",
+            )
 
         now_ms = self._now_ms()
         if signature == self._last_error_signature and (now_ms - self._last_error_log_ms) < 2000:
@@ -135,7 +140,7 @@ class AudioCoreFeatureServiceNode(ServiceNode):
             return
         self._last_error = ""
         self._last_error_signature = ""
-        await self.set_state("lastError", "")
+        await self.clear_error()
 
     def _close_reader(self) -> None:
         if self._reader is not None:

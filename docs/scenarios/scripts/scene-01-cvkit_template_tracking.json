@@ -2126,29 +2126,6 @@
               "showOnNode": true
             },
             {
-              "name": "lastError",
-              "label": "Last Error",
-              "description": "Last error message.",
-              "valueSchema": {
-                "title": null,
-                "description": null,
-                "default": null,
-                "examples": null,
-                "field_comment": null,
-                "type": "string",
-                "enum": null,
-                "minimum": null,
-                "maximum": null,
-                "exclusiveMinimum": null,
-                "exclusiveMaximum": null,
-                "multipleOf": null
-              },
-              "access": "ro",
-              "required": false,
-              "uiControl": null,
-              "showOnNode": false
-            },
-            {
               "name": "active",
               "label": "Active",
               "description": "Service lifecycle state (activate/deactivate).",
@@ -2769,7 +2746,6 @@
           "matchThreshold": 0.5,
           "matchingIntervalMs": 200,
           "shmName": "shm.player.video",
-          "lastError": "",
           "active": false,
           "svcId": "HnT2"
         }
@@ -2903,29 +2879,6 @@
                 "examples": null,
                 "field_comment": null,
                 "type": "boolean",
-                "enum": null,
-                "minimum": null,
-                "maximum": null,
-                "exclusiveMinimum": null,
-                "exclusiveMaximum": null,
-                "multipleOf": null
-              },
-              "access": "ro",
-              "required": false,
-              "uiControl": null,
-              "showOnNode": true
-            },
-            {
-              "name": "lastError",
-              "label": "Last Error",
-              "description": "Last error message.",
-              "valueSchema": {
-                "title": null,
-                "description": null,
-                "default": null,
-                "examples": null,
-                "field_comment": null,
-                "type": "string",
                 "enum": null,
                 "minimum": null,
                 "maximum": null,
@@ -3311,7 +3264,6 @@
           "initSelect": "closest_center",
           "isTracking": true,
           "isNotTracking": false,
-          "lastError": "",
           "active": true,
           "svcId": "KdMN"
         }
@@ -4193,29 +4145,6 @@
               "showOnNode": true
             },
             {
-              "name": "lastError",
-              "label": "Last Error",
-              "description": "Last error message.",
-              "valueSchema": {
-                "title": null,
-                "description": null,
-                "default": null,
-                "examples": null,
-                "field_comment": null,
-                "type": "string",
-                "enum": null,
-                "minimum": null,
-                "maximum": null,
-                "exclusiveMinimum": null,
-                "exclusiveMaximum": null,
-                "multipleOf": null
-              },
-              "access": "ro",
-              "required": false,
-              "uiControl": null,
-              "showOnNode": false
-            },
-            {
               "name": "videoShmName",
               "label": "Video SHM",
               "description": "Shared memory region name.",
@@ -4766,7 +4695,6 @@
           "volume": 1.0,
           "playing": true,
           "duration": 723.4894333333334,
-          "lastError": "",
           "videoShmName": "shm.player.video",
           "videoShmEvent": "shm.player.video_evt",
           "videoShmMaxWidth": 1000,
@@ -4849,29 +4777,6 @@
               "access": "rw",
               "required": false,
               "uiControl": "code[python]",
-              "showOnNode": false
-            },
-            {
-              "name": "lastError",
-              "label": "Last Error",
-              "description": "Last script error (compile/runtime).",
-              "valueSchema": {
-                "title": null,
-                "description": null,
-                "default": "",
-                "examples": null,
-                "field_comment": null,
-                "type": "string",
-                "enum": null,
-                "minimum": null,
-                "maximum": null,
-                "exclusiveMinimum": null,
-                "exclusiveMaximum": null,
-                "multipleOf": null
-              },
-              "access": "wo",
-              "required": false,
-              "uiControl": null,
               "showOnNode": false
             },
             {
@@ -5017,7 +4922,6 @@
         "f8_ui_overrides": {},
         "custom": {
           "code": "# Define hooks (any subset is ok):\n# - onStart(ctx)\n# - onState(ctx, field, value, tsMs=None)      # called on state updates (except 'code')\n# - onMsg(ctx, inputs)                        # called on data arrival (push mode) or as fallback for exec\n# - onExec(ctx, execIn, inputs)               # called on exec trigger (pull mode)\n# - onStop(ctx)\n# - ctx.locals is preserved between calls (script-local memory)\n# - execIn is the triggering exec input name\n# - State helpers:\n#   - await ctx.read_state(field)           # read state value\n#   - ctx.set_state(field, value)          # write state (fire-and-forget)\n#   - await ctx.set_state_async(field, value)\n#   Note: for best UI/graph support, add the target state fields on the node with editPolicy.stateFields.canAdd=true.\n# - inputs is a dict keyed by input port names\n# Return value protocol:\n# - onMsg: return {'outputs': {...}} or any value (emits to 'out' if present)\n# - onExec: return {'exec': ['exec','exec2'], 'outputs': {...}}\n#   - 'exec' selects exec out port(s) to trigger (defaults to pass-through)\n#   - 'outputs' is a dict mapping dataOutPort -> value\n\ndef onStart(ctx):\n    ctx.log('python_script started')\n\ndef onState(ctx, field, value, tsMs=None):\n    # Example: react to a state change.\n    # ctx.log(f'state {field}={value} tsMs={tsMs}')\n    return\n\ndef onMsg(ctx, inputs):\n    msg = inputs.get('msg')\n    x = (msg.bbox[1]+msg.bbox[3])*0.5\n    y = (msg.bbox[0]+msg.bbox[2])*0.5\n    return {'outputs': {'x': x, 'y': y}}\n\ndef onExec(ctx, execIn, inputs):\n    # Example: choose different exec outputs by execIn port name.\n    msg = inputs.get('msg')\n    if msg is None:\n        return {'outputs': {'x': None, 'y': None}}\n    x = (msg.bbox[1]+msg.bbox[3])*0.5\n    y = (msg.bbox[0]+msg.bbox[2])*0.5\n    return {'outputs': {'x': x, 'y': y}}\n\ndef onStop(ctx):\n    ctx.log('python_script stopped')\n",
-          "lastError": "",
           "svcId": "5TYp",
           "operatorId": "3PUX"
         }
@@ -5442,29 +5346,6 @@
               "showOnNode": false
             },
             {
-              "name": "lastError",
-              "label": "Last Error",
-              "description": "Last script error (compile/runtime).",
-              "valueSchema": {
-                "title": null,
-                "description": null,
-                "default": "",
-                "examples": null,
-                "field_comment": null,
-                "type": "string",
-                "enum": null,
-                "minimum": null,
-                "maximum": null,
-                "exclusiveMinimum": null,
-                "exclusiveMaximum": null,
-                "multipleOf": null
-              },
-              "access": "wo",
-              "required": false,
-              "uiControl": null,
-              "showOnNode": false
-            },
-            {
               "name": "svcId",
               "label": "Service Id",
               "description": "Readonly: current service instance id (svcId).",
@@ -5622,7 +5503,6 @@
         },
         "custom": {
           "code": "# Define hooks (any subset is ok):\n# - onStart(ctx)\n# - onState(ctx, field, value, tsMs=None)      # called on state updates (except 'code')\n# - onMsg(ctx, inputs)                        # called on data arrival (push mode) or as fallback for exec\n# - onExec(ctx, execIn, inputs)               # called on exec trigger (pull mode)\n# - onStop(ctx)\n# - ctx.locals is preserved between calls (script-local memory)\n# - execIn is the triggering exec input name\n# - State helpers:\n#   - await ctx.read_state(field)           # read state value\n#   - ctx.set_state(field, value)          # write state (fire-and-forget)\n#   - await ctx.set_state_async(field, value)\n#   Note: for best UI/graph support, add the target state fields on the node with editPolicy.stateFields.canAdd=true.\n# - inputs is a dict keyed by input port names\n# Return value protocol:\n# - onMsg: return {'outputs': {...}} or any value (emits to 'out' if present)\n# - onExec: return {'exec': ['exec','exec2'], 'outputs': {...}}\n#   - 'exec' selects exec out port(s) to trigger (defaults to pass-through)\n#   - 'outputs' is a dict mapping dataOutPort -> value\nimport math\n\ndef onStart(ctx):\n    ctx.log('python_script started')\n\ndef onState(ctx, field, value, tsMs=None):\n    # Example: react to a state change.\n    # ctx.log(f'state {field}={value} tsMs={tsMs}')\n    return\n\ndef onMsg(ctx, inputs):\n    msg = inputs.get('msg')\n    return {'outputs': {'out': msg}}\n\nasync def onExec(ctx, execIn, inputs):\n    # Example: choose different exec outputs by execIn port name.\n    angle = await ctx.read_state(\"angle\")\n    x = inputs.get(\"x\")\n    y = inputs.get(\"y\")\n    if angle is None or x is None or y is None:\n        return {'outputs': {'out': 0}}\n    rad = math.radians(float(angle))\n    o = math.sin(rad) * x + math.cos(rad) * y\n    return {'outputs': {'out': o}}\n\ndef onStop(ctx):\n    ctx.log('python_script stopped')\n",
-          "lastError": "",
           "svcId": "5TYp",
           "operatorId": "CnMk",
           "angle": 106.10602360999144

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import threading
 import time
 from copy import deepcopy
 from collections import deque
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from .codec import dump_json, encode_obj, validate_as
 from .generated import (
@@ -37,10 +38,46 @@ _FORBIDDEN_TELEMETRY_PORT_NAME = "telemetry"
 MONITOR_SNAPSHOT_SCHEMA_VERSION = "f8monitor/1"
 MONITOR_REPORT_SCHEMA_VERSION = "f8monitorReport/1"
 _MONITOR_SNAPSHOT_SCHEMA_DICT: dict[str, object] | None = None
+MonitorErrorSeverity = Literal["info", "warning", "error", "critical"]
+_MONITOR_ERROR_SEVERITIES: frozenset[str] = frozenset({"info", "warning", "error", "critical"})
 
 
 class MonitorContractError(ValueError):
     """Raised when monitor payloads/describe contracts violate the unified schema contract."""
+
+
+def _normalize_monitor_error_severity(severity: str) -> MonitorErrorSeverity:
+    text = str(severity or "").strip().lower()
+    if text == "info":
+        return "info"
+    if text == "warning":
+        return "warning"
+    if text == "critical":
+        return "critical"
+    return "error"
+
+
+def _normalize_monitor_error_ts(ts_ms: int | None) -> int:
+    if ts_ms is None:
+        return int(now_ms())
+    ts = int(ts_ms)
+    if ts <= 0:
+        return int(now_ms())
+    return ts
+
+
+def _derive_monitor_error_fingerprint(
+    *,
+    node_id: str,
+    code: str,
+    message: str,
+    fingerprint: str | None,
+) -> str:
+    explicit = str(fingerprint or "").strip()
+    if explicit:
+        return explicit
+    raw = f"{node_id}\0{code}\0{message}".encode("utf-8", errors="replace")
+    return hashlib.sha256(raw).hexdigest()[:24]
 
 
 def monitor_snapshot_value_schema() -> F8DataTypeSchema:
@@ -96,9 +133,18 @@ def monitor_snapshot_value_schema() -> F8DataTypeSchema:
     error = complex_object_schema(
         properties={
             "countWindow": integer_schema(default=0, minimum=0),
+            "lastNodeId": string_schema(default=""),
             "lastCode": string_schema(default=""),
             "lastMessage": string_schema(default=""),
+            "lastSeverity": string_schema(default="error", enum=sorted(_MONITOR_ERROR_SEVERITIES)),
+            "lastFingerprint": string_schema(default=""),
+            "lastRepeatCount": integer_schema(default=0, minimum=0),
             "lastTsMs": integer_schema(default=0, minimum=0),
+            "currentNodeId": string_schema(default=""),
+            "currentCode": string_schema(default=""),
+            "currentMessage": string_schema(default=""),
+            "currentSeverity": string_schema(default="", enum=["", "info", "warning", "error", "critical"]),
+            "currentTsMs": integer_schema(default=0, minimum=0),
         }
     )
     root = complex_object_schema(
@@ -402,9 +448,19 @@ class MonitorCollector:
         self._suppressed_cross_publishes = 0
         self._callback_deliveries = 0
         self._buffer_pull_deliveries = 0
+        self._last_error_node_id = ""
         self._last_error_code = ""
         self._last_error_message = ""
+        self._last_error_severity: MonitorErrorSeverity = "error"
+        self._last_error_fingerprint = ""
+        self._last_error_repeat_count = 0
         self._last_error_ts_ms: int | None = None
+        self._current_error_node_id = ""
+        self._current_error_code = ""
+        self._current_error_message = ""
+        self._current_error_severity: MonitorErrorSeverity | Literal[""] = ""
+        self._current_error_fingerprint = ""
+        self._current_error_ts_ms: int | None = None
         self._error_events: deque[int] = deque()
         self._wait_values = _TimedValues(window_ms=self._window_ms)
         self._process_values = _TimedValues(window_ms=self._window_ms)
@@ -412,6 +468,7 @@ class MonitorCollector:
         self._node_last_input_ts_ms: dict[str, int] = {}
         self._started_ts_ms = int(now_ms())
         self._task: asyncio.Task[object] | None = None
+        self._publish_once_task: asyncio.Task[object] | None = None
         self._latest: F8MonitorSnapshot | None = None
 
     @property
@@ -513,15 +570,120 @@ class MonitorCollector:
         with self._lock:
             self._buffer_pull_deliveries += 1
 
-    def record_error(self, *, code: str, message: str, ts_ms: int | None = None) -> None:
+    def report_error(
+        self,
+        *,
+        node_id: str,
+        code: str,
+        message: str,
+        severity: str = "error",
+        fingerprint: str | None = None,
+        ts_ms: int | None = None,
+    ) -> None:
         if not self._enabled:
             return
-        now_ts = int(ts_ms) if ts_ms is not None else int(now_ms())
+        node_id_s = str(node_id or "").strip() or str(self._bus.service_id)
+        code_s = str(code or "").strip() or "ERROR"
+        message_s = str(message or "")
+        severity_s = _normalize_monitor_error_severity(severity)
+        now_ts = _normalize_monitor_error_ts(ts_ms)
+        fingerprint_s = _derive_monitor_error_fingerprint(
+            node_id=node_id_s,
+            code=code_s,
+            message=message_s,
+            fingerprint=fingerprint,
+        )
         with self._lock:
-            self._last_error_code = str(code or "")
-            self._last_error_message = str(message or "")
+            if fingerprint_s == self._last_error_fingerprint:
+                self._last_error_repeat_count = max(1, int(self._last_error_repeat_count)) + 1
+            else:
+                self._last_error_repeat_count = 1
+            self._last_error_node_id = node_id_s
+            self._last_error_code = code_s
+            self._last_error_message = message_s
+            self._last_error_severity = severity_s
+            self._last_error_fingerprint = fingerprint_s
             self._last_error_ts_ms = now_ts
+            self._current_error_node_id = node_id_s
+            self._current_error_code = code_s
+            self._current_error_message = message_s
+            self._current_error_severity = severity_s
+            self._current_error_fingerprint = fingerprint_s
+            self._current_error_ts_ms = now_ts
             self._error_events.append(now_ts)
+        self._request_publish_once()
+
+    def clear_error(self, *, node_id: str, fingerprint: str | None = None, ts_ms: int | None = None) -> None:
+        if not self._enabled:
+            return
+        node_id_s = str(node_id or "").strip() or str(self._bus.service_id)
+        fingerprint_s = str(fingerprint or "").strip()
+        with self._lock:
+            if self._current_error_node_id and self._current_error_node_id != node_id_s:
+                return
+            if fingerprint_s and self._current_error_fingerprint and self._current_error_fingerprint != fingerprint_s:
+                return
+            self._current_error_node_id = ""
+            self._current_error_code = ""
+            self._current_error_message = ""
+            self._current_error_severity = ""
+            self._current_error_fingerprint = ""
+            self._current_error_ts_ms = None
+        _ = ts_ms
+        self._request_publish_once()
+
+    def record_error(self, *, code: str, message: str, ts_ms: int | None = None) -> None:
+        self.report_error(
+            node_id=str(self._bus.service_id),
+            code=code,
+            message=message,
+            severity="error",
+            fingerprint=None,
+            ts_ms=ts_ms,
+        )
+
+    def _record_monitor_internal_error(self, *, code: str, message: str, ts_ms: int) -> None:
+        if not self._enabled:
+            return
+        node_id_s = str(self._bus.service_id)
+        code_s = str(code or "").strip() or "ERROR"
+        message_s = str(message or "")
+        fingerprint_s = _derive_monitor_error_fingerprint(
+            node_id=node_id_s,
+            code=code_s,
+            message=message_s,
+            fingerprint=None,
+        )
+        with self._lock:
+            if fingerprint_s == self._last_error_fingerprint:
+                self._last_error_repeat_count = max(1, int(self._last_error_repeat_count)) + 1
+            else:
+                self._last_error_repeat_count = 1
+            self._last_error_node_id = node_id_s
+            self._last_error_code = code_s
+            self._last_error_message = message_s
+            self._last_error_severity = "error"
+            self._last_error_fingerprint = fingerprint_s
+            self._last_error_ts_ms = int(ts_ms)
+            self._current_error_node_id = node_id_s
+            self._current_error_code = code_s
+            self._current_error_message = message_s
+            self._current_error_severity = "error"
+            self._current_error_fingerprint = fingerprint_s
+            self._current_error_ts_ms = int(ts_ms)
+            self._error_events.append(int(ts_ms))
+
+    def _request_publish_once(self) -> None:
+        if self._task is None:
+            return
+        task = self._publish_once_task
+        if task is not None and not task.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._publish_once_task = loop.create_task(self._publish_once(), name="monitor_collector:publish_once")
 
     async def start(self) -> None:
         if (not self._enabled) or self._task is not None:
@@ -531,6 +693,11 @@ class MonitorCollector:
     async def stop(self) -> None:
         task = self._task
         self._task = None
+        publish_once_task = self._publish_once_task
+        self._publish_once_task = None
+        if publish_once_task is not None:
+            publish_once_task.cancel()
+            await asyncio.gather(publish_once_task, return_exceptions=True)
         if task is not None:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
@@ -568,9 +735,18 @@ class MonitorCollector:
             )
             error = F8MonitorError(
                 countWindow=int(len(self._error_events)),
+                lastNodeId=str(self._last_error_node_id),
                 lastCode=str(self._last_error_code),
                 lastMessage=str(self._last_error_message),
+                lastSeverity=str(self._last_error_severity),
+                lastFingerprint=str(self._last_error_fingerprint),
+                lastRepeatCount=int(self._last_error_repeat_count),
                 lastTsMs=int(self._last_error_ts_ms) if self._last_error_ts_ms is not None else None,
+                currentNodeId=str(self._current_error_node_id),
+                currentCode=str(self._current_error_code),
+                currentMessage=str(self._current_error_message),
+                currentSeverity=str(self._current_error_severity),
+                currentTsMs=int(self._current_error_ts_ms) if self._current_error_ts_ms is not None else None,
             )
             ready = bool(self._ready)
 
@@ -610,6 +786,29 @@ class MonitorCollector:
         )
         return validate_as(F8MonitorSnapshot, dump_json(snapshot, mode="json", by_alias=True))
 
+    async def _publish_once(self) -> None:
+        await asyncio.sleep(0)
+        ts = int(now_ms())
+        try:
+            snapshot = self._build_snapshot(ts_ms=ts)
+        except Exception as exc:
+            self._record_monitor_internal_error(
+                code="MONITOR_BUILD_ERROR",
+                message=f"{type(exc).__name__}: {exc}",
+                ts_ms=ts,
+            )
+            return
+        with self._lock:
+            self._latest = snapshot
+        try:
+            await self._publish_snapshot(snapshot)
+        except Exception as exc:
+            self._record_monitor_internal_error(
+                code="MONITOR_PUBLISH_ERROR",
+                message=f"{type(exc).__name__}: {exc}",
+                ts_ms=ts,
+            )
+
     async def _publish_snapshot(self, snapshot: F8MonitorSnapshot) -> None:
         ts_value = int(snapshot.tsMs)
         payload = {
@@ -631,14 +830,22 @@ class MonitorCollector:
             try:
                 snapshot = self._build_snapshot(ts_ms=ts)
             except Exception as exc:
-                self.record_error(code="MONITOR_BUILD_ERROR", message=f"{type(exc).__name__}: {exc}", ts_ms=ts)
+                self._record_monitor_internal_error(
+                    code="MONITOR_BUILD_ERROR",
+                    message=f"{type(exc).__name__}: {exc}",
+                    ts_ms=ts,
+                )
                 continue
             with self._lock:
                 self._latest = snapshot
             try:
                 await self._publish_snapshot(snapshot)
             except Exception as exc:
-                self.record_error(code="MONITOR_PUBLISH_ERROR", message=f"{type(exc).__name__}: {exc}", ts_ms=ts)
+                self._record_monitor_internal_error(
+                    code="MONITOR_PUBLISH_ERROR",
+                    message=f"{type(exc).__name__}: {exc}",
+                    ts_ms=ts,
+                )
 
 
 __all__ = [

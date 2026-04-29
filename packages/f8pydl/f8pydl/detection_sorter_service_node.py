@@ -467,4 +467,12 @@ class DetectionSorterServiceNode(ServiceNode):
         if normalized == self._last_error:
             return
         self._last_error = normalized
-        await self.set_state("lastError", self._last_error)
+        if self._last_error:
+            await self.report_error(
+                "DL_DETECTION_SORTER_RUNTIME",
+                self._last_error,
+                severity="error",
+                fingerprint=f"dl-detection-sorter:{self._last_error}",
+            )
+            return
+        await self.clear_error()

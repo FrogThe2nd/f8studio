@@ -427,6 +427,27 @@ class ServiceBus:
     def monitor_collector(self) -> MonitorCollector:
         return self._monitor_collector
 
+    def report_error(
+        self,
+        node_id: str,
+        code: str,
+        message: str,
+        severity: str = "error",
+        fingerprint: str | None = None,
+        ts_ms: int | None = None,
+    ) -> None:
+        self._monitor_collector.report_error(
+            node_id=node_id,
+            code=code,
+            message=message,
+            severity=severity,
+            fingerprint=fingerprint,
+            ts_ms=ts_ms,
+        )
+
+    def clear_error(self, node_id: str, fingerprint: str | None = None, ts_ms: int | None = None) -> None:
+        self._monitor_collector.clear_error(node_id=node_id, fingerprint=fingerprint, ts_ms=ts_ms)
+
     async def set_active(
         self,
         active: bool,

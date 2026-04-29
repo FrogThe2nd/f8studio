@@ -85,6 +85,11 @@ class ServiceBus final : public ServiceControlHandler {
   bool active() const { return active_.load(std::memory_order_acquire); }
   bool terminate_requested() const { return terminate_.load(std::memory_order_acquire); }
 
+  void report_error(const std::string& node_id, const std::string& code, const std::string& message,
+                    const std::string& severity = "error", const std::string& fingerprint = "",
+                    std::int64_t ts_ms = 0);
+  void clear_error(const std::string& node_id, const std::string& fingerprint = "", std::int64_t ts_ms = 0);
+
   // Block until terminate/quit is requested.
   void wait_terminate();
 
@@ -146,6 +151,7 @@ class ServiceBus final : public ServiceControlHandler {
   void start_monitor_thread();
   void stop_monitor_thread();
   void monitor_loop();
+  void request_monitor_publish_once();
   void monitor_record_observed(const std::string& port);
   void monitor_record_processed(const std::string& port, std::int64_t emit_ts_ms, std::int64_t now_ts_ms);
   void monitor_record_wait_ms(double wait_ms);
@@ -281,6 +287,9 @@ class ServiceBus final : public ServiceControlHandler {
   bool has_rungraph_ = false;
 
   std::thread monitor_thread_;
+  mutable std::mutex monitor_wake_mu_;
+  std::condition_variable monitor_wake_cv_;
+  bool monitor_publish_requested_ = false;
   mutable std::mutex monitor_mu_;
   std::deque<std::pair<std::int64_t, double>> monitor_wait_ms_;
   std::deque<std::pair<std::int64_t, double>> monitor_process_ms_;
@@ -289,9 +298,19 @@ class ServiceBus final : public ServiceControlHandler {
   std::uint64_t monitor_observed_ = 0;
   std::uint64_t monitor_processed_ = 0;
   std::uint64_t monitor_dropped_ = 0;
+  std::string monitor_last_error_node_id_;
   std::string monitor_last_error_code_;
   std::string monitor_last_error_message_;
+  std::string monitor_last_error_severity_ = "error";
+  std::string monitor_last_error_fingerprint_;
+  std::int64_t monitor_last_error_repeat_count_ = 0;
   std::optional<std::int64_t> monitor_last_error_ts_ms_;
+  std::string monitor_current_error_node_id_;
+  std::string monitor_current_error_code_;
+  std::string monitor_current_error_message_;
+  std::string monitor_current_error_severity_;
+  std::string monitor_current_error_fingerprint_;
+  std::optional<std::int64_t> monitor_current_error_ts_ms_;
 };
 
 }  // namespace f8::cppsdk

@@ -190,7 +190,7 @@ def test_load_session_editor_target_reads_matching_node_and_code() -> None:
     assert target.context.dynamic_inputs_binding is not None
     assert target.context.dynamic_states_binding is not None
     assert tuple(port.name for port in target.context.data_in_ports) == ("track",)
-    assert tuple(field.name for field in target.context.state_fields) == ("code", "lastError")
+    assert tuple(field.name for field in target.context.state_fields) == ("code",)
 
 
 def test_load_session_editor_target_falls_back_to_state_default() -> None:
@@ -216,4 +216,3 @@ def test_load_session_editor_targets_returns_all_matching_nodes() -> None:
 
     assert [target.node_id for target in targets] == ["nodeA", "nodeB"]
     assert [target.code for target in targets] == ["print('live')\n", "print('live b')\n"]
-

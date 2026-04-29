@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from f8pysdk.codec import dump_json
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any, Callable, Iterable, Mapping
 
 from f8pysdk.specs import F8MonitorSnapshot
+from msgspec import UNSET
 
 
 @dataclass(frozen=True)
@@ -21,7 +23,26 @@ class ServiceMonitorRow:
     latency_ms_p95: float | None
     wait_ms_p95: float | None
     error_count_window: int | None
-    latest_snapshot: dict[str, Any] | None
+    current_error_node_id: str = ""
+    current_error_code: str = ""
+    current_error_message: str = ""
+    current_error_severity: str = ""
+    current_error_ts_ms: int | None = None
+    latest_snapshot: dict[str, Any] | None = None
+
+
+def _monitor_text(value: Any) -> str:
+    if value is None or value is UNSET:
+        return ""
+    if isinstance(value, Enum):
+        return str(value.value)
+    return str(value)
+
+
+def _monitor_int(value: Any) -> int | None:
+    if value is None or value is UNSET:
+        return None
+    return int(value)
 
 
 def collect_known_service_ids(
@@ -78,6 +99,11 @@ def build_service_monitor_rows(
         latency_ms_p95: float | None = None
         wait_ms_p95: float | None = None
         error_count_window: int | None = None
+        current_error_node_id = ""
+        current_error_code = ""
+        current_error_message = ""
+        current_error_severity = ""
+        current_error_ts_ms: int | None = None
         latest_payload: dict[str, Any] | None = None
 
         if latest_snapshot is not None:
@@ -96,6 +122,11 @@ def build_service_monitor_rows(
             latency_ms_p95 = latest_snapshot.timing.latencyMsP95
             wait_ms_p95 = latest_snapshot.timing.waitMsP95
             error_count_window = int(latest_snapshot.error.countWindow)
+            current_error_node_id = _monitor_text(latest_snapshot.error.currentNodeId)
+            current_error_code = _monitor_text(latest_snapshot.error.currentCode)
+            current_error_message = _monitor_text(latest_snapshot.error.currentMessage)
+            current_error_severity = _monitor_text(latest_snapshot.error.currentSeverity)
+            current_error_ts_ms = _monitor_int(latest_snapshot.error.currentTsMs)
         else:
             alive_cache = service_alive_cache.get(service_id)
             if alive_cache is not None:
@@ -115,6 +146,11 @@ def build_service_monitor_rows(
                 latency_ms_p95=latency_ms_p95,
                 wait_ms_p95=wait_ms_p95,
                 error_count_window=error_count_window,
+                current_error_node_id=current_error_node_id,
+                current_error_code=current_error_code,
+                current_error_message=current_error_message,
+                current_error_severity=current_error_severity,
+                current_error_ts_ms=current_error_ts_ms,
                 latest_snapshot=latest_payload,
             )
         )

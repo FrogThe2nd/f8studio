@@ -259,7 +259,6 @@ class PythonExprServiceNode(ServiceNode, ClosableNode):
             "code",
             "allowNumpy",
             "unpackDictOutputs",
-            "lastError",
             "active",
         ]
         super().__init__(
@@ -354,19 +353,18 @@ class PythonExprServiceNode(ServiceNode, ClosableNode):
 
     async def _set_last_error(self, message: str) -> None:
         self._last_error = str(message)
-        try:
-            await self.set_state("lastError", self._last_error)
-        except Exception as exc:
-            logger.debug("[%s:pyexpr] failed to set lastError", self.node_id, exc_info=exc)
+        await self.report_error(
+            "PYEXPR_ERROR",
+            self._last_error,
+            severity="error",
+            fingerprint=f"pyexpr:{self._last_error}",
+        )
 
     async def _clear_last_error(self) -> None:
         if not self._last_error:
             return
         self._last_error = ""
-        try:
-            await self.set_state("lastError", "")
-        except Exception as exc:
-            logger.debug("[%s:pyexpr] failed to clear lastError", self.node_id, exc_info=exc)
+        await self.clear_error()
 
     def _should_log_error(self, sig: str, *, kind: str, now_ms: int) -> bool:
         if kind == "eval":

@@ -18,6 +18,7 @@ from f8pysdk.specs import any_schema, number_schema, string_schema  # noqa: E402
 from f8pysdk.testing import buffer_input  # noqa: E402
 from f8pysdk.host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
+from f8pysdk.time_utils import now_ms  # noqa: E402
 
 from f8pyengine.constants import SERVICE_CLASS  # noqa: E402
 from f8pyengine.operators.wave_expr import WaveExprRuntimeNode  # noqa: E402
@@ -54,6 +55,11 @@ def _build_wave_expr_runtime_node(
         dataInPorts=list(WaveExprRuntimeNode.SPEC.dataInPorts or []),
         dataOutPorts=list(WaveExprRuntimeNode.SPEC.dataOutPorts or []),
     )
+
+
+def _monitor_error_message(bus: object) -> str:
+    snapshot = bus.monitor_collector._build_snapshot(ts_ms=int(now_ms()))
+    return str(snapshot.error.currentMessage or "")
 
 
 class WaveExprNodeTests(unittest.IsolatedAsyncioTestCase):
@@ -408,7 +414,7 @@ class WaveExprNodeTests(unittest.IsolatedAsyncioTestCase):
 
         express = str(await runtime.get_state_value("express") or "")
         preview = list(await runtime.get_state_value("preview") or [])
-        last_error = str(await runtime.get_state_value("lastError") or "")
+        last_error = _monitor_error_message(bus)
 
         self.assertIn("0.25", express)
         self.assertGreaterEqual(len(preview), 64)
@@ -457,7 +463,7 @@ class WaveExprNodeTests(unittest.IsolatedAsyncioTestCase):
 
         express_after = str(await runtime.get_state_value("express") or "")
         preview_after = list(await runtime.get_state_value("preview") or [])
-        last_error = str(await runtime.get_state_value("lastError") or "")
+        last_error = _monitor_error_message(bus)
 
         self.assertEqual(express_after, express_before)
         self.assertEqual(preview_after, preview_before)
@@ -525,7 +531,7 @@ class WaveExprNodeTests(unittest.IsolatedAsyncioTestCase):
         await runtime.on_state("template", "a + noise", ts_ms=3)
 
         express_after_invalid = str(await runtime.get_state_value("express") or "")
-        last_error = str(await runtime.get_state_value("lastError") or "")
+        last_error = _monitor_error_message(bus)
 
         self.assertEqual(express_after_invalid, express_valid)
         self.assertNotEqual(last_error, "")

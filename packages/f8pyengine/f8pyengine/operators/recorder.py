@@ -38,7 +38,6 @@ _CONTROL_STATE_NAMES = {
     "sessionStartTsMs",
     "sampleCount",
     "stateEventCount",
-    "lastError",
     SVC_ID_FIELD_NAME,
     OPERATOR_ID_FIELD_NAME,
 }
@@ -190,12 +189,17 @@ class RecorderRuntimeNode(OperatorNode):
             session_start_ts_ms = now_ms()
         await self._safe_set_state_if_changed("recording", self._writer is not None)
         await self._safe_set_state_if_changed("sessionStartTsMs", int(session_start_ts_ms))
-        await self._safe_set_state_if_changed("lastError", "")
+        await self.clear_error()
 
     async def _set_last_error(self, message: str) -> None:
         self._close_writer()
         await self._safe_set_state_if_changed("recording", False)
-        await self._safe_set_state_if_changed("lastError", str(message))
+        await self.report_error(
+            "RECORDER_ERROR",
+            str(message),
+            severity="error",
+            fingerprint=f"recorder:{message}",
+        )
 
     async def _safe_set_state_if_changed(self, field: str, value: Any) -> None:
         prev = self._published_state_cache.get(field)
@@ -287,15 +291,6 @@ RecorderRuntimeNode.SPEC = F8OperatorSpec(
             access=F8StateAccess.ro,
             required=True,
             showOnNode=False,
-        ),
-        F8StateSpec(
-            name="lastError",
-            label="Last Error",
-            description="Last recording error message.",
-            valueSchema=string_schema(),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=True,
         ),
     ],
 )

@@ -52,6 +52,34 @@ def sanitize_session_layout_for_persistence(
     return sanitized_layout
 
 
+def strip_runtime_only_state_fields_from_layout(layout_data: dict[str, Any]) -> dict[str, Any]:
+    nodes = layout_data.get("nodes")
+    if not isinstance(nodes, dict):
+        return layout_data
+    for node_data in nodes.values():
+        if not isinstance(node_data, dict):
+            continue
+        raw_spec = node_data.get("f8_spec")
+        if isinstance(raw_spec, dict):
+            _strip_runtime_only_state_fields_from_spec(raw_spec)
+        custom = node_data.get("custom")
+        if isinstance(custom, dict):
+            for field_name in _RUNTIME_ONLY_STATE_FIELD_NAMES:
+                custom.pop(field_name, None)
+        ui_overrides = node_data.get("f8_ui_overrides")
+        if isinstance(ui_overrides, dict):
+            state_fields_ui = ui_overrides.get("stateFields")
+            if isinstance(state_fields_ui, dict):
+                for field_name in _RUNTIME_ONLY_STATE_FIELD_NAMES:
+                    state_fields_ui.pop(field_name, None)
+        f8_sys = node_data.get("f8_sys")
+        if isinstance(f8_sys, dict):
+            missing_spec = f8_sys.get("missingSpec")
+            if isinstance(missing_spec, dict):
+                _strip_runtime_only_state_fields_from_spec(missing_spec)
+    return layout_data
+
+
 def sanitize_session_content_for_persistence(
     content: dict[str, Any],
     *,
@@ -61,6 +89,20 @@ def sanitize_session_content_for_persistence(
         content,
         redact_publish_state_values=redact_publish_state_values,
     )
+
+
+def _strip_runtime_only_state_fields_from_spec(raw_spec: dict[str, Any]) -> None:
+    raw_state_fields = raw_spec.get("stateFields")
+    if not isinstance(raw_state_fields, list):
+        return
+    raw_spec["stateFields"] = [
+        raw_field
+        for raw_field in raw_state_fields
+        if not (
+            isinstance(raw_field, dict)
+            and str(raw_field.get("name") or "").strip() in _RUNTIME_ONLY_STATE_FIELD_NAMES
+        )
+    ]
 
 
 def _sanitize_node_data_for_persistence(
@@ -153,4 +195,5 @@ __all__ = [
     "sanitize_session_content_for_persistence",
     "sanitize_session_layout_for_persistence",
     "sanitize_session_payload_for_persistence",
+    "strip_runtime_only_state_fields_from_layout",
 ]

@@ -84,7 +84,12 @@ class AudioRhythmFeatureServiceNode(ServiceNode):
     async def _set_last_error(self, msg: str, *, signature: str, exc: BaseException | None = None) -> None:
         if self._last_error != msg:
             self._last_error = msg
-            await self.set_state("lastError", msg)
+            await self.report_error(
+                "AUDIOFEAT_RHYTHM_RUNTIME",
+                msg,
+                severity="error",
+                fingerprint=f"audiofeat-rhythm:{signature}",
+            )
 
         now_ms = self._now_ms()
         if signature == self._last_error_signature and (now_ms - self._last_error_log_ms) < 2000:
@@ -102,7 +107,7 @@ class AudioRhythmFeatureServiceNode(ServiceNode):
             return
         self._last_error = ""
         self._last_error_signature = ""
-        await self.set_state("lastError", "")
+        await self.clear_error()
 
     async def _process_core_payload(self, payload: dict[str, Any]) -> None:
         try:

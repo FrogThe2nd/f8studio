@@ -59,7 +59,6 @@ pixi run -e onnx f8pydl_optflow
 | `ortActiveProviders` | `ro` | `true` | `false` | `string / default=` | JSON list of active ONNX Runtime providers for this session. |
 | `flowShmName` | `ro` | `true` | `true` | `string / default=` | Output flow SHM name. |
 | `flowShmFormat` | `ro` | `true` | `false` | `string / default=flow2_f16` | Flow payload format. Fixed to flow2_f16. |
-| `lastError` | `ro` | `true` | `false` | `string / default=` | Last runtime error string (best-effort). |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 

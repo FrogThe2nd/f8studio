@@ -27,6 +27,7 @@ from .edge_rules import EdgeRuleNodeInfo, layout_node_info, validate_layout_conn
 from .layers import augment_layer_defs_for_layout_nodes, layer_defs_to_json, layout_layer_defs_from_layout
 from .viewer import F8StudioNodeViewer
 from f8pystudio.nodegraph.session_payload_sanitizer import sanitize_session_layout_for_persistence
+from f8pystudio.nodegraph.session_payload_sanitizer import strip_runtime_only_state_fields_from_layout
 from f8pystudio.nodegraph.session_schema import extract_layout as _extract_session_layout
 from f8pystudio.nodegraph.session_schema import wrap_layout_for_save as _wrap_layout_for_save
 
@@ -645,6 +646,10 @@ class SessionLayoutCodecMixin:
         return layout_data
 
     @staticmethod
+    def _strip_runtime_only_state_fields_on_load(layout_data: dict) -> dict:
+        return strip_runtime_only_state_fields_from_layout(layout_data)
+
+    @staticmethod
     def _inject_node_ids(layout_data: dict) -> None:
         """
         NodeGraphQt stores node ids as keys under `nodes`, but does not include
@@ -880,9 +885,11 @@ class SessionLayoutCodecMixin:
                 layout_data.get("nodes"),
             )
             self._inject_node_ids(layout_data)
+            layout_data = self._strip_runtime_only_state_fields_on_load(layout_data)
             layout_data = self._restore_missing_session_nodes(layout_data)
             layout_data = self._coerce_missing_session_nodes(layout_data)
             layout_data = self._merge_session_specs(layout_data)
+            layout_data = self._strip_runtime_only_state_fields_on_load(layout_data)
             layout_data = self._strip_port_restore_data(layout_data)
             layout_data = self._strip_unknown_session_custom_properties(layout_data)
             layout_data = self._strip_invalid_connections(layout_data)

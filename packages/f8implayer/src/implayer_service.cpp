@@ -1938,6 +1938,8 @@ void ImPlayerService::publish_dynamic_state() {
   const auto player_stats = player_ ? player_->statsSnapshot() : MpvPlayer::Stats{};
 
   std::vector<std::pair<std::string, json>> updates;
+  bool error_changed = false;
+  std::string error_message;
   {
     std::lock_guard<std::mutex> lock(state_mu_);
     const double vol = volume_;
@@ -1958,7 +1960,11 @@ void ImPlayerService::publish_dynamic_state() {
     want("volume", vol);
     want("loop", loop);
     want("mediaUrl", url);
-    want("lastError", err);
+    if (published_error_message_ != err) {
+      published_error_message_ = err;
+      error_message = err;
+      error_changed = true;
+    }
 
     want("decodedWidth", static_cast<std::int64_t>(decoded_w));
     want("decodedHeight", static_cast<std::int64_t>(decoded_h));
@@ -1978,6 +1984,15 @@ void ImPlayerService::publish_dynamic_state() {
     want("videoShmLastMapWriteMs", player_stats.lastShmMapWriteMs);
     want("videoShmEmaMapWriteMs", player_stats.emaShmMapWriteMs);
     want("videoShmPboBytes", static_cast<std::int64_t>(player_stats.estReadbackPboBytes));
+  }
+
+  if (bus_ && error_changed) {
+    if (error_message.empty()) {
+      bus_->clear_error(cfg_.service_id);
+    } else {
+      bus_->report_error(cfg_.service_id, "IMPLAYER_ERROR", error_message, "error",
+                         cfg_.service_id + ":" + error_message);
+    }
   }
 
   for (const auto& [field, v] : updates) {
@@ -2005,7 +2020,6 @@ json ImPlayerService::describe() {
       state_field("volume", schema_number(1.0, 0.0, 1.0), "rw", "Volume", "", true, "slider"),
       state_field("playing", schema_boolean(), "ro", "Playing", "Playback state.", false),
       state_field("duration", schema_number(), "ro", "Duration", "Duration (seconds).", true),
-      state_field("lastError", schema_string(), "ro", "Last Error", "Last error message.", false),
       state_field("videoShmName", schema_string(), "ro", "Video SHM", "Shared memory region name.", true),
       state_field("videoShmEvent", schema_string(), "ro", "Video Event", "Optional named event to signal new frames.",
                   false),

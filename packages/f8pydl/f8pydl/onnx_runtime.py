@@ -756,6 +756,13 @@ class OnnxClassifierRuntime:
 
         input_type = str(self._session.input_meta.type or "").lower()
         is_float_input = "float" in input_type
+        input_shape = list(self._session.input_meta.shape) if isinstance(self._session.input_meta.shape, list) else []
+        is_nchw = True
+        if len(input_shape) == 4:
+            channel_first = input_shape[1]
+            channel_last = input_shape[3]
+            if channel_last in (1, 3) and channel_first not in (1, 3):
+                is_nchw = False
 
         if is_float_input:
             x = img_rgb.astype(np.float32) / 255.0

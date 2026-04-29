@@ -48,6 +48,14 @@ if(NOT WIN32)
   find_package(PNG REQUIRED)
 endif()
 
+if (TARGET SDL3::SDL3)
+  set(F8_SDL3_TARGET SDL3::SDL3)
+elseif (TARGET sdl::sdl)
+  set(F8_SDL3_TARGET sdl::sdl)
+else()
+  message(FATAL_ERROR "SDL3 package did not provide SDL3::SDL3 or sdl::sdl")
+endif()
+
 if(WIN32)
   set(_implayer_mpv_root "${CMAKE_CURRENT_BINARY_DIR}/third_party/mpv-dev")
   set(_implayer_mpv_include "${_implayer_mpv_root}/include")
@@ -101,7 +109,7 @@ target_link_libraries(f8implayer_service
     cxxopts::cxxopts
     spdlog::spdlog
     nlohmann_json::nlohmann_json
-    sdl::sdl
+    ${F8_SDL3_TARGET}
     glad::glad
     f8_implayer_mpv
     opengl::opengl

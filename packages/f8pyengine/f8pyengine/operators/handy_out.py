@@ -360,7 +360,16 @@ class HandyOutRuntimeNode(OperatorNode):
         await self._publish_runtime_states()
 
     async def _publish_runtime_states(self) -> None:
-        await self._publish_state_if_changed("lastError", str(self._last_error_message))
+        message = str(self._last_error_message)
+        if message:
+            await self.report_error(
+                "HANDY_OUT_ERROR",
+                message,
+                severity="error",
+                fingerprint=f"handy-out:{self._last_error_signature or message}",
+            )
+            return
+        await self.clear_error()
 
     async def _emit_data_ports(self) -> None:
         await self.emit("sentPosition", float(self._last_sent_position))
@@ -737,15 +746,6 @@ HandyOutRuntimeNode.SPEC = F8OperatorSpec(
             access=F8StateAccess.rw,
             required=True,
             showOnNode=False,
-        ),
-        F8StateSpec(
-            name="lastError",
-            label="Last Error",
-            description="Last runtime error message.",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.ro,
-            showOnNode=True,
-            required=False,
         ),
     ],
 )

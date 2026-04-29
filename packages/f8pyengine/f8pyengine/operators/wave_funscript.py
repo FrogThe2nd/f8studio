@@ -326,7 +326,6 @@ class WaveFunscriptRuntimeNode(OperatorNode):
             "maxT",
             "interp",
             "heatmap",
-            "lastError",
         ]
         super().__init__(
             node_id=ensure_token(node_id, label="node_id"),
@@ -390,7 +389,7 @@ class WaveFunscriptRuntimeNode(OperatorNode):
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
         del ts_ms
         name = str(field or "").strip()
-        if name in {"allAxes", "points", "heatmap", "lastError"}:
+        if name in {"allAxes", "points", "heatmap"}:
             return
         if name == "funscriptPath":
             self._path = _coerce_path(value)
@@ -491,7 +490,21 @@ class WaveFunscriptRuntimeNode(OperatorNode):
         await self._safe_set_state("points", _serialize_points(self._points))
         await self._safe_set_state("interp", str(self._interp))
         await self._safe_set_state("heatmap", list(self._heatmap))
-        await self._safe_set_state("lastError", str(self._last_error))
+        await self._safe_publish_monitor_error(str(self._last_error))
+
+    async def _safe_publish_monitor_error(self, message: str) -> None:
+        try:
+            if message:
+                await self.report_error(
+                    "WAVE_FUNSCRIPT_ERROR",
+                    message,
+                    severity="error",
+                    fingerprint=f"wave-funscript:{message}",
+                )
+                return
+            await self.clear_error()
+        except Exception:
+            logger.exception("[%s:wave_funscript] failed to publish monitor error", self.node_id)
 
     async def _safe_set_state(self, field: str, value: Any) -> None:
         try:
@@ -626,15 +639,6 @@ WaveFunscriptRuntimeNode.SPEC = F8OperatorSpec(
             required=True,
             uiControl="wave_heatmap",
             showOnNode=True,
-        ),
-        F8StateSpec(
-            name="lastError",
-            label="Last Error",
-            description="Last load or parse error.",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=False,
         ),
     ],
     editPolicy=F8SpecEditPolicy(stateFields=editable_collection_edit_policy()),

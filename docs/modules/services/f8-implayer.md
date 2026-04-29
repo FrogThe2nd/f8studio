@@ -31,7 +31,7 @@ C++ MPV-based player service with shared-memory video output.
 ### How to Run
 
 ```bash
-win/f8implayer_service.exe
+linux/f8implayer_service
 ```
 
 - Workdir: `./`
@@ -54,7 +54,6 @@ win/f8implayer_service.exe
 | `volume` | `rw` | `true` | `true` | `number / default=1.0` | Volume |
 | `playing` | `ro` | `true` | `false` | `boolean` | Playback state. |
 | `duration` | `ro` | `true` | `true` | `number` | Duration (seconds). |
-| `lastError` | `ro` | `true` | `false` | `string` | Last error message. |
 | `videoShmName` | `ro` | `true` | `true` | `string` | Shared memory region name. |
 | `videoShmEvent` | `ro` | `true` | `false` | `string` | Optional named event to signal new frames. |
 | `videoShmMaxWidth` | `rw` | `true` | `false` | `integer` | Downsample limit (0 = auto). |
@@ -81,7 +80,7 @@ win/f8implayer_service.exe
 - `volume` (Volume, `rw`): Volume Schema: `number / default=1.0`.
 - `playing` (Playing, `ro`): Playback state. Schema: `boolean`.
 - `duration` (Duration, `ro`): Duration (seconds). Schema: `number`.
-- `lastError` (Last Error, `ro`): Last error message. Schema: `string`.
+- `videoShmName` (Video SHM, `ro`): Shared memory region name. Schema: `string`.
 
 ### Service Commands
 

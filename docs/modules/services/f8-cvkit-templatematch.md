@@ -31,7 +31,7 @@ No description.
 ### How to Run
 
 ```bash
-../win/f8cvkit_template_match_service.exe
+../linux/f8cvkit_template_match_service
 ```
 
 - Workdir: `./`
@@ -51,7 +51,6 @@ No description.
 | `matchThreshold` | `rw` | `true` | `true` | `number / default=0.5` | 0..1 score threshold used to emit detections. |
 | `matchingIntervalMs` | `rw` | `true` | `false` | `integer / default=200` | Minimum milliseconds between template matching passes. |
 | `shmName` | `rw` | `true` | `true` | `string` | Optional SHM name override (e.g. shm.xxx.video). |
-| `lastError` | `ro` | `true` | `false` | `string` | Last error message. |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
@@ -61,7 +60,6 @@ No description.
 - `matchThreshold` (Match Threshold, `rw`): 0..1 score threshold used to emit detections. Schema: `number / default=0.5`.
 - `matchingIntervalMs` (Matching Interval (ms), `rw`): Minimum milliseconds between template matching passes. Schema: `integer / default=200`.
 - `shmName` (Video SHM, `rw`): Optional SHM name override (e.g. shm.xxx.video). Schema: `string`.
-- `lastError` (Last Error, `ro`): Last error message. Schema: `string`.
 - `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 

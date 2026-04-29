@@ -50,15 +50,6 @@ def register_specs(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
                     editorAssist=pyscript_code_field_editor_assist_payload(),
                 ),
                 F8StateSpec(
-                    name="lastError",
-                    label="Last Error",
-                    description="Last script compile/runtime error.",
-                    valueSchema=string_schema(default=""),
-                    access=F8StateAccess.ro,
-                    required=True,
-                    showOnNode=False,
-                ),
-                F8StateSpec(
                     name="tickEnabled",
                     label="Tick Enabled",
                     description="Enable onTick scheduler.",

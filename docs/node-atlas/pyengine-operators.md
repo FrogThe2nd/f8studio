@@ -25,7 +25,7 @@
 | `f8.data_expr` | Data Expr | Evaluate a small Python expression using input values. | [Open](../modules/services/f8-pyengine.md#operator-f8-data-expr) |
 | `f8.lovense_out` | Lovense Out | Send Lovense Local API commands with split channels: sendPositionCmd->Position, sendFunctionCmd->Function. | [Open](../modules/services/f8-pyengine.md#operator-f8-lovense-out) |
 | `f8.buttplug_out` | Buttplug Out | Connect to Intiface/Buttplug with split channels: sendPositionCmd->position, sendFunctionCmd->state. | [Open](../modules/services/f8-pyengine.md#operator-f8-buttplug-out) |
-| `f8.lovense_mock_server` | Lovense Mock Server | Event-driven input node that mocks the Lovense Local API, publishes received commands as state, and emits exec. | [Open](../modules/services/f8-pyengine.md#operator-f8-lovense-mock-server) |
+| `f8.lovense_mock_server` | Lovense Mock Server | Event-driven input node that mocks the Lovense Local API and emits received commands. | [Open](../modules/services/f8-pyengine.md#operator-f8-lovense-mock-server) |
 | `f8.sequence_player` | Sequence Player | Play a step-sequence over time (epoch-based), outputting the current step value. | [Open](../modules/services/f8-pyengine.md#operator-f8-sequence-player) |
 | `f8.silence_detector` | Silence Detector | Detect whether a signal has stayed nearly unchanged for long enough to be considered silent. | [Open](../modules/services/f8-pyengine.md#operator-f8-silence-detector) |
 | `f8.switch_mixer` | Switch Mixer | Switch between any number of user-defined input channels with an optional smooth crossfade. | [Open](../modules/services/f8-pyengine.md#operator-f8-switch-mixer) |

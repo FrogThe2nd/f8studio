@@ -138,15 +138,6 @@ def _detection_sorter_state_fields() -> list[F8StateSpec]:
             required=True,
             showOnNode=True,
         ),
-        F8StateSpec(
-            name="lastError",
-            label="Last Error",
-            description="Last runtime error string (best-effort).",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=False,
-        ),
     ]
 
 
@@ -324,15 +315,6 @@ def _common_state_fields(
                 required=True,
                 showOnNode=False,
             ),
-            F8StateSpec(
-                name="lastError",
-                label="Last Error",
-                description="Last runtime error string (best-effort).",
-                valueSchema=string_schema(default=""),
-                access=F8StateAccess.ro,
-                required=True,
-                showOnNode=False,
-            ),
         ]
     )
     return fields
@@ -447,15 +429,6 @@ def _optflow_state_fields() -> list[F8StateSpec]:
             label="Flow SHM Format",
             description="Flow payload format. Fixed to flow2_f16.",
             valueSchema=string_schema(default="flow2_f16"),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=False,
-        ),
-        F8StateSpec(
-            name="lastError",
-            label="Last Error",
-            description="Last runtime error string (best-effort).",
-            valueSchema=string_schema(default=""),
             access=F8StateAccess.ro,
             required=True,
             showOnNode=False,

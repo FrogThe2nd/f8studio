@@ -25,6 +25,7 @@ class _ServiceMonitorTableModel(QtCore.QAbstractTableModel):
         "GPU%",
         "LatencyP95(ms)",
         "Errors",
+        "Current Error",
     )
 
     def __init__(self, parent: QtCore.QObject | None = None) -> None:
@@ -49,6 +50,21 @@ class _ServiceMonitorTableModel(QtCore.QAbstractTableModel):
             return "-"
         return f"{float(value) / 1024.0 / 1024.0:.1f}"
 
+    @staticmethod
+    def _format_current_error(row: ServiceMonitorRow) -> str:
+        if not row.current_error_message:
+            return "-"
+        severity = str(row.current_error_severity or "error").upper()
+        code = str(row.current_error_code or "").strip()
+        node_id = str(row.current_error_node_id or row.service_id).strip()
+        prefix = f"{node_id} {severity}"
+        if code:
+            prefix = f"{prefix} {code}"
+        message = str(row.current_error_message)
+        if len(message) > 96:
+            message = message[:93].rstrip() + "..."
+        return f"{prefix}: {message}"
+
     @classmethod
     def row_texts(cls, row: ServiceMonitorRow) -> tuple[str, ...]:
         error_count = "-" if row.error_count_window is None else str(int(row.error_count_window))
@@ -64,6 +80,7 @@ class _ServiceMonitorTableModel(QtCore.QAbstractTableModel):
             cls._format_float(row.gpu_util_percent),
             cls._format_float(row.latency_ms_p95, digits=2),
             error_count,
+            cls._format_current_error(row),
         )
 
     def rowCount(self, parent: QtCore.QModelIndex = QtCore.QModelIndex()) -> int:
@@ -116,6 +133,8 @@ class _ServiceMonitorTableModel(QtCore.QAbstractTableModel):
             return _ServiceMonitorTableModel._sort_optional_float(row.latency_ms_p95)
         if column_index == 10:
             return _ServiceMonitorTableModel._sort_optional_int(row.error_count_window)
+        if column_index == 11:
+            return str(row.current_error_message or "")
         return ""
 
     @staticmethod
@@ -516,6 +535,11 @@ class ServiceManagerWidget(QtWidgets.QWidget):
                         latency_ms_p95=None,
                         wait_ms_p95=None,
                         error_count_window=None,
+                        current_error_node_id="",
+                        current_error_code="",
+                        current_error_message="",
+                        current_error_severity="",
+                        current_error_ts_ms=None,
                         latest_snapshot=None,
                     )
                 )

@@ -21,6 +21,7 @@ from f8pysdk.nodes import OperatorNode  # noqa: E402
 from f8pysdk.host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import buffer_input  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
+from f8pysdk.time_utils import now_ms  # noqa: E402
 
 from f8pyengine.constants import SERVICE_CLASS  # noqa: E402
 from f8pyengine.operators.recorder import RecorderRuntimeNode  # noqa: E402
@@ -111,7 +112,12 @@ def _exec_edge(*, edge_id: str, from_node: str, from_port: str, to_node: str, to
         toPort=to_port,
         kind=F8EdgeKindEnum.exec,
         strategy=F8EdgeStrategyEnum.latest,
-    )
+)
+
+
+def _monitor_error_message(bus: object) -> str:
+    snapshot = bus.monitor_collector._build_snapshot(ts_ms=int(now_ms()))
+    return str(snapshot.error.currentMessage or "")
 
 
 class RecorderReplayerTests(unittest.IsolatedAsyncioTestCase):
@@ -329,8 +335,7 @@ class RecorderReplayerTests(unittest.IsolatedAsyncioTestCase):
                         buffer_input(bus3, "rec3", "a", 3, ts_ms=1020, edge=None, ctx_id=1020)
                         buffer_input(bus3, "rec3", "b", 4, ts_ms=1020, edge=None, ctx_id=1020)
                         await node3.on_exec(1020, "record")
-                        last_error = (await bus3.get_state("rec3", "lastError")).value
-                        self.assertIn("header mismatch", str(last_error))
+                        self.assertIn("header mismatch", _monitor_error_message(bus3))
                     finally:
                         await node3.close()
                 finally:
@@ -538,10 +543,11 @@ class RecorderReplayerTests(unittest.IsolatedAsyncioTestCase):
 
             _, bus = await self._build_runtime(nodes=[self._replayer_node(path=path)])
             await bus.publish_state_runtime("rep1", "path", path, ts_ms=1)
+            await asyncio.sleep(0.05)
             loaded = (await bus.get_state("rep1", "loaded")).value
-            last_error = (await bus.get_state("rep1", "lastError")).value
             self.assertEqual(bool(loaded), False)
-            self.assertTrue(str(last_error))
+            snapshot = bus.monitor_collector._build_snapshot(ts_ms=int(now_ms()))
+            self.assertTrue(str(snapshot.error.lastMessage or ""))
 
     def test_position_ms_is_not_a_state_field(self) -> None:
         state_names = [str(field.name) for field in list(ReplayerRuntimeNode.SPEC.stateFields or [])]

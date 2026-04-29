@@ -31,7 +31,7 @@ No description.
 ### How to Run
 
 ```bash
-../win/f8cvkit_flow_metric_service.exe
+../linux/f8cvkit_flow_metric_service
 ```
 
 - Workdir: `./`
@@ -53,7 +53,6 @@ No description.
 | `metricScale` | `rw` | `true` | `false` | `number / default=1.0` | Scale factor applied to computed metric values before output. |
 | `scalarShmName` | `ro` | `true` | `true` | `string` | Output SHM name for scalar metric field. |
 | `scalarShmFormat` | `ro` | `true` | `false` | `string` | Output payload format. Fixed to scalar1_f32. |
-| `lastError` | `ro` | `true` | `false` | `string` | Last error message. |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
@@ -65,8 +64,8 @@ No description.
 - `metricScale` (Metric Scale, `rw`): Scale factor applied to computed metric values before output. Schema: `number / default=1.0`.
 - `scalarShmName` (Scalar SHM Name, `ro`): Output SHM name for scalar metric field. Schema: `string`.
 - `scalarShmFormat` (Scalar SHM Format, `ro`): Output payload format. Fixed to scalar1_f32. Schema: `string`.
-- `lastError` (Last Error, `ro`): Last error message. Schema: `string`.
 - `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 
 ### Service Commands
 

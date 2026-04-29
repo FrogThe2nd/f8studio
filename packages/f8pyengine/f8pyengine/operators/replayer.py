@@ -44,7 +44,6 @@ _CONTROL_STATE_NAMES = {
     "playing",
     "durationMs",
     "loaded",
-    "lastError",
     SVC_ID_FIELD_NAME,
     OPERATOR_ID_FIELD_NAME,
 }
@@ -219,7 +218,7 @@ class ReplayerRuntimeNode(OperatorNode):
             self._loaded = True
             await self._safe_set_state("loaded", True)
             await self._safe_set_state("durationMs", int(self._duration_ms))
-            await self._safe_set_state("lastError", "")
+            await self.clear_error()
         except Exception as exc:
             self._loaded = False
             self._events = []
@@ -228,7 +227,12 @@ class ReplayerRuntimeNode(OperatorNode):
             logger.exception("[%s:replayer] failed to load recording", self.node_id)
             await self._safe_set_state("loaded", False)
             await self._safe_set_state("durationMs", 0)
-            await self._safe_set_state("lastError", str(exc))
+            await self.report_error(
+                "REPLAYER_LOAD_ERROR",
+                str(exc),
+                severity="error",
+                fingerprint=f"replayer-load:{exc}",
+            )
 
     async def _run_playback(self) -> None:
         try:
@@ -248,7 +252,12 @@ class ReplayerRuntimeNode(OperatorNode):
             logger.exception("[%s:replayer] playback failed", self.node_id)
             self._playing = False
             await self._safe_set_state("playing", False)
-            await self._safe_set_state("lastError", str(exc))
+            await self.report_error(
+                "REPLAYER_PLAYBACK_ERROR",
+                str(exc),
+                severity="error",
+                fingerprint=f"replayer-playback:{exc}",
+            )
 
     async def _play_once(self) -> None:
         if not self._events:
@@ -416,15 +425,6 @@ ReplayerRuntimeNode.SPEC = F8OperatorSpec(
             label="Loaded",
             description="Readonly flag indicating whether the recording is loaded.",
             valueSchema=boolean_schema(default=False),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=True,
-        ),
-        F8StateSpec(
-            name="lastError",
-            label="Last Error",
-            description="Last playback error message.",
-            valueSchema=string_schema(),
             access=F8StateAccess.ro,
             required=True,
             showOnNode=True,

@@ -55,11 +55,11 @@ def test_format_assist_context_includes_node_metadata_outputs_and_descriptions()
             ),
             state_fields=(
                 EditorAssistStateField(
-                    name="lastError",
+                    name="inputMode",
                     required=False,
                     value_schema={"type": "string"},
-                    access="wo",
-                    description="Most recent execution error.",
+                    access="rw",
+                    description="Input binding mode.",
                 ),
             ),
         )
@@ -82,7 +82,7 @@ def test_format_assist_context_includes_node_metadata_outputs_and_descriptions()
     assert "## Output Ports (`dataOutPorts`)" in text
     assert "`result` (optional, schema=string) | description=Script output text." in text
     assert "## State Fields (`stateFields`)" in text
-    assert "`lastError` (optional, access=wo, schema=string) | description=Most recent execution error." in text
+    assert "`inputMode` (optional, access=rw, schema=string) | description=Input binding mode." in text
 
 
 def test_get_system_prompt_biases_json_generation_toward_json() -> None:

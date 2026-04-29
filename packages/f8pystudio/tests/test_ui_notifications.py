@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from qtpy import QtTest, QtWidgets
 
+from f8pystudio.monitoring import alerts
+from f8pystudio.monitoring.alerts import MonitorAlertNotifier
 from f8pystudio.ui.support.ui_notifications import (
     _ACTIVE_TOASTS,
     _INFO_STYLE,
@@ -17,6 +19,100 @@ def _ensure_app() -> QtWidgets.QApplication:
     if app is not None:
         return app
     return QtWidgets.QApplication([])
+
+
+def _monitor_payload(
+    *,
+    service_id: str = "svcA",
+    node_id: str = "node1",
+    code: str = "E_TEST",
+    message: str = "boom",
+    severity: str = "error",
+    fingerprint: str = "fp-a",
+    repeat_count: int = 1,
+    ts_ms: int = 1000,
+) -> dict[str, object]:
+    return {
+        "schemaVersion": "f8monitor/1",
+        "serviceId": service_id,
+        "serviceClass": "f8.tests",
+        "nodeId": service_id,
+        "tsMs": ts_ms,
+        "error": {
+            "countWindow": repeat_count,
+            "lastNodeId": node_id,
+            "lastCode": code,
+            "lastMessage": message,
+            "lastSeverity": severity,
+            "lastFingerprint": fingerprint,
+            "lastRepeatCount": repeat_count,
+            "lastTsMs": ts_ms,
+            "currentNodeId": node_id,
+            "currentCode": code,
+            "currentMessage": message,
+            "currentSeverity": severity,
+            "currentTsMs": ts_ms,
+        },
+    }
+
+
+def test_monitor_alert_notifier_toasts_and_debounces(monkeypatch) -> None:
+    shown: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(alerts, "now_ms", lambda: 100_000)
+    monkeypatch.setattr(alerts, "show_warning", lambda parent, title, message: shown.append(("warning", title, message)))
+    monkeypatch.setattr(alerts, "show_error", lambda parent, title, message: shown.append(("error", title, message)))
+    notifier = MonitorAlertNotifier(debounce_ms=10_000)
+
+    assert notifier.handle_snapshot(_monitor_payload(severity="warning", ts_ms=1000), parent=None) is True
+    assert shown == [("warning", "svcA/node1 warning", "E_TEST: boom")]
+
+    assert notifier.handle_snapshot(_monitor_payload(severity="warning", repeat_count=2, ts_ms=1001), parent=None) is False
+    assert len(shown) == 1
+
+    assert notifier.handle_snapshot(
+        _monitor_payload(severity="warning", fingerprint="fp-b", repeat_count=1, ts_ms=1002),
+        parent=None,
+    ) is True
+    assert shown[-1] == ("warning", "svcA/node1 warning", "E_TEST: boom")
+
+
+def test_monitor_alert_notifier_allows_repeat_summary(monkeypatch) -> None:
+    shown: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(alerts, "now_ms", lambda: 100_000)
+    monkeypatch.setattr(alerts, "show_warning", lambda parent, title, message: shown.append(("warning", title, message)))
+    monkeypatch.setattr(alerts, "show_error", lambda parent, title, message: shown.append(("error", title, message)))
+    notifier = MonitorAlertNotifier(debounce_ms=10_000)
+
+    assert notifier.handle_snapshot(_monitor_payload(severity="error", repeat_count=1, ts_ms=1000), parent=None) is True
+    assert notifier.handle_snapshot(_monitor_payload(severity="error", repeat_count=2, ts_ms=1001), parent=None) is False
+    assert notifier.handle_snapshot(_monitor_payload(severity="error", repeat_count=10, ts_ms=1002), parent=None) is True
+
+    assert shown[0][0] == "error"
+    assert shown[1][0] == "error"
+    assert "Repeated 10 times." in shown[1][2]
+
+
+def test_monitor_alert_notifier_ignores_info_and_clear_snapshots(monkeypatch) -> None:
+    shown: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(alerts, "now_ms", lambda: 100_000)
+    monkeypatch.setattr(alerts, "show_warning", lambda parent, title, message: shown.append(("warning", title, message)))
+    monkeypatch.setattr(alerts, "show_error", lambda parent, title, message: shown.append(("error", title, message)))
+    notifier = MonitorAlertNotifier(debounce_ms=10_000)
+
+    assert notifier.handle_snapshot(_monitor_payload(severity="info", ts_ms=1000), parent=None) is False
+
+    error_payload = _monitor_payload(severity="critical", ts_ms=1001)
+    assert notifier.handle_snapshot(error_payload, parent=None) is True
+    clear_payload = dict(error_payload)
+    clear_payload["error"] = dict(error_payload["error"])  # type: ignore[arg-type]
+    clear_payload["error"]["currentNodeId"] = ""  # type: ignore[index]
+    clear_payload["error"]["currentCode"] = ""  # type: ignore[index]
+    clear_payload["error"]["currentMessage"] = ""  # type: ignore[index]
+    clear_payload["error"]["currentSeverity"] = ""  # type: ignore[index]
+    clear_payload["error"]["currentTsMs"] = None  # type: ignore[index]
+
+    assert notifier.handle_snapshot(clear_payload, parent=None) is False
+    assert len(shown) == 1
 
 
 def test_rich_text_message_preserves_newlines_and_wrap_hints() -> None:

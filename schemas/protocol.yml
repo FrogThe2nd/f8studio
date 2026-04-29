@@ -1787,18 +1787,63 @@ components:
           type: integer
           minimum: 0
           default: 0
+        lastNodeId:
+          type: string
+          default: ""
         lastCode:
           type: string
           default: ""
         lastMessage:
           type: string
           default: ""
+        lastSeverity:
+          type: string
+          enum: [info, warning, error, critical]
+          default: error
+        lastFingerprint:
+          type: string
+          default: ""
+        lastRepeatCount:
+          type: integer
+          minimum: 0
+          default: 0
         lastTsMs:
           anyOf:
             - type: integer
             - type: "null"
           default: null
-      required: [countWindow, lastCode, lastMessage, lastTsMs]
+        currentNodeId:
+          type: string
+          default: ""
+        currentCode:
+          type: string
+          default: ""
+        currentMessage:
+          type: string
+          default: ""
+        currentSeverity:
+          type: string
+          enum: ["", info, warning, error, critical]
+          default: ""
+        currentTsMs:
+          anyOf:
+            - type: integer
+            - type: "null"
+          default: null
+      required:
+        - countWindow
+        - lastNodeId
+        - lastCode
+        - lastMessage
+        - lastSeverity
+        - lastFingerprint
+        - lastRepeatCount
+        - lastTsMs
+        - currentNodeId
+        - currentCode
+        - currentMessage
+        - currentSeverity
+        - currentTsMs
       additionalProperties: false
 
     F8MonitorSnapshot:
