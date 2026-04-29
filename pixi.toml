@@ -23,6 +23,7 @@ opencv-contrib-python = ">=4.13.0.92, <5"
 
 [feature.onnx.dependencies]
 cuda-version = "12.*"
+cuda-libraries = "12.*"
 cudnn = ">=9,<10"
 
 [feature.onnx.pypi-dependencies]
