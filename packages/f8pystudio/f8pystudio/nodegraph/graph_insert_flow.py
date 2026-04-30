@@ -112,6 +112,8 @@ class _GraphInsertHost(Protocol):
 
     def _refresh_all_inline_state_read_only(self) -> None: ...
 
+    def schedule_global_hotkey_refresh(self) -> None: ...
+
     def _notification_parent(self) -> QtWidgets.QWidget | None: ...
 
 
@@ -333,6 +335,7 @@ class GraphInsertFlowMixin:
                 except (AttributeError, RuntimeError, TypeError):
                     continue
             self._refresh_viewer_after_insert()
+            host.schedule_global_hotkey_refresh()
         finally:
             host.end_undo()
 

@@ -23,12 +23,14 @@ from f8pystudio.global_hotkeys.backend import (
 from f8pystudio.global_hotkeys.controller import ControlPanelGlobalHotkeyController
 from f8pystudio.global_hotkeys.models import GlobalHotkeyBinding
 from f8pystudio.global_hotkeys.parser import parse_global_hotkey
+from f8pystudio.nodegraph.node_graph import F8StudioGraph
 from f8pystudio.nodegraph.node_model import F8StudioNodeModel
 from f8pystudio.ui.widgets import node_property_panel as npw
 from f8pystudio.nodegraph.ui_state_mutations import (
     set_state_field_global_hotkey_override,
     state_field_global_hotkey,
 )
+from f8pystudio.render_nodes.backdrop import BackdropRenderNode
 
 
 def _ensure_app() -> QtWidgets.QApplication:
@@ -112,6 +114,21 @@ class _BackendStub:
 
     def close(self) -> None:
         self.closed = True
+
+
+class _RefreshControllerStub:
+    def __init__(self) -> None:
+        self.schedule_calls = 0
+        self.property_events: list[tuple[str, object]] = []
+
+    def schedule_refresh(self) -> None:
+        self.schedule_calls += 1
+
+    def on_graph_property_changed(self, node: object, name: str, value: object) -> None:
+        _ = node
+        self.property_events.append((str(name or ""), value))
+        if str(name or "").strip() in {"f8_ui_state", "f8_spec"}:
+            self.schedule_refresh()
 
 
 class _FakeX:
@@ -649,6 +666,45 @@ def test_controller_discovers_valid_button_bindings_and_triggers_increment() -> 
     assert valid_node.set_calls == [("trigger", 1, False)]
     controller.close()
     assert backend.closed is True
+
+
+def test_graph_node_lifecycle_schedules_global_hotkey_refresh_for_create_delete_undo() -> None:
+    _ensure_app()
+    graph = F8StudioGraph()
+    graph.node_factory.clear_registered_nodes()
+    graph.node_factory.register_node(BackdropRenderNode)
+    controller = _RefreshControllerStub()
+    graph.set_global_hotkey_controller(controller)
+
+    node = graph.create_node(str(BackdropRenderNode.type_ or ""), selected=False, push_undo=True)
+
+    assert node is not None
+    assert controller.schedule_calls == 1
+
+    controller.schedule_calls = 0
+    graph.delete_node(node, push_undo=True)
+
+    assert controller.schedule_calls == 1
+
+    controller.schedule_calls = 0
+    graph._undo_stack.undo()
+
+    assert graph.get_node_by_id(str(node.id or "")) is not None
+    assert controller.schedule_calls == 1
+
+
+def test_graph_hotkey_relevant_property_change_is_owned_by_graph() -> None:
+    _ensure_app()
+    graph = F8StudioGraph()
+    controller = _RefreshControllerStub()
+    graph.set_global_hotkey_controller(controller)
+
+    graph.property_changed.emit(object(), "f8_ui_state", {"stateFieldHotkeys": {"trigger": "Ctrl+Alt+P"}})
+
+    assert controller.property_events == [
+        ("f8_ui_state", {"stateFieldHotkeys": {"trigger": "Ctrl+Alt+P"}}),
+    ]
+    assert controller.schedule_calls == 1
 
 
 def test_controller_registry_marks_duplicate_hotkeys_as_conflict() -> None:
