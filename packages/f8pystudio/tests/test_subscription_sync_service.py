@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 import threading
 import time
 
@@ -13,6 +14,7 @@ from f8pystudio.assets.components.component_models import (
     F8ComponentRecord,
     F8ComponentRemoteAuthError,
     F8ComponentRemoteListPage,
+    F8ComponentRemoteRequestError,
     F8ComponentRemoteUser,
     F8ComponentSourceKind,
     F8ComponentVisibility,
@@ -22,6 +24,7 @@ from f8pystudio.assets.variants.variant_models import (
     F8VariantEntry,
     F8VariantRemoteAuthError,
     F8VariantRemoteListPage,
+    F8VariantRemoteRequestError,
     F8VariantRemoteUser,
     F8VariantSourceKind,
     F8VariantVisibility,
@@ -127,6 +130,8 @@ class _FakeVariantClient:
     gate_install_by_id: dict[str, threading.Event]
     refresh_calls: int = 0
     refresh_auth_error: str = ""
+    refresh_request_error: str = ""
+    install_request_error_ids: set[str] | None = None
 
     def clone_for_background(self) -> _FakeVariantClient:
         return self
@@ -151,6 +156,8 @@ class _FakeVariantClient:
         assert scope == "subscribed"
         if self.refresh_auth_error:
             raise F8VariantRemoteAuthError(self.refresh_auth_error)
+        if self.refresh_request_error:
+            raise F8VariantRemoteRequestError(self.refresh_request_error)
         index = 0 if not cursor else int(cursor)
         self.refresh_calls += 1
         entries = self.page_sequences[index] if index < len(self.page_sequences) else []
@@ -182,6 +189,8 @@ class _FakeVariantClient:
         gate = self.gate_install_by_id.get(normalized_variant_id)
         if gate is not None:
             gate.wait(timeout=2.0)
+        if normalized_variant_id in set(self.install_request_error_ids or set()):
+            raise F8VariantRemoteRequestError(f"failed to download {normalized_variant_id}")
         if normalized_variant_id in self.fail_install_ids:
             raise RuntimeError(f"failed to install {normalized_variant_id}")
         entry = self.remote_entries[normalized_variant_id]
@@ -205,6 +214,8 @@ class _FakeComponentClient:
     gate_install_by_id: dict[str, threading.Event]
     refresh_calls: int = 0
     refresh_auth_error: str = ""
+    refresh_request_error: str = ""
+    install_request_error_ids: set[str] | None = None
 
     def clone_for_background(self) -> _FakeComponentClient:
         return self
@@ -225,6 +236,8 @@ class _FakeComponentClient:
         assert scope == "subscribed"
         if self.refresh_auth_error:
             raise F8ComponentRemoteAuthError(self.refresh_auth_error)
+        if self.refresh_request_error:
+            raise F8ComponentRemoteRequestError(self.refresh_request_error)
         index = 0 if not cursor else int(cursor)
         self.refresh_calls += 1
         entries = self.page_sequences[index] if index < len(self.page_sequences) else []
@@ -256,6 +269,8 @@ class _FakeComponentClient:
         gate = self.gate_install_by_id.get(normalized_component_id)
         if gate is not None:
             gate.wait(timeout=2.0)
+        if normalized_component_id in set(self.install_request_error_ids or set()):
+            raise F8ComponentRemoteRequestError(f"failed to download {normalized_component_id}")
         if normalized_component_id in self.fail_install_ids:
             raise RuntimeError(f"failed to install {normalized_component_id}")
         entry = self.remote_entries[normalized_component_id]
@@ -281,6 +296,10 @@ def _make_service(
     component_gate_install_by_id: dict[str, threading.Event] | None = None,
     variant_refresh_auth_error: str = "",
     component_refresh_auth_error: str = "",
+    variant_refresh_request_error: str = "",
+    component_refresh_request_error: str = "",
+    variant_install_request_error_ids: set[str] | None = None,
+    component_install_request_error_ids: set[str] | None = None,
 ) -> tuple[SubscriptionSyncService, _FakeVariantClient, _FakeComponentClient]:
     variant_user = None if not logged_in else F8VariantRemoteUser(userId="user-1", name="Alice", email="alice@example.com")
     component_user = None if not logged_in else F8ComponentRemoteUser(userId="user-1", name="Alice", email="alice@example.com")
@@ -293,6 +312,8 @@ def _make_service(
         fail_install_ids=set() if variant_fail_install_ids is None else set(variant_fail_install_ids),
         gate_install_by_id={} if variant_gate_install_by_id is None else dict(variant_gate_install_by_id),
         refresh_auth_error=variant_refresh_auth_error,
+        refresh_request_error=variant_refresh_request_error,
+        install_request_error_ids=set() if variant_install_request_error_ids is None else set(variant_install_request_error_ids),
     )
     component_client = _FakeComponentClient(
         user=component_user,
@@ -303,6 +324,8 @@ def _make_service(
         fail_install_ids=set() if component_fail_install_ids is None else set(component_fail_install_ids),
         gate_install_by_id={} if component_gate_install_by_id is None else dict(component_gate_install_by_id),
         refresh_auth_error=component_refresh_auth_error,
+        refresh_request_error=component_refresh_request_error,
+        install_request_error_ids=set() if component_install_request_error_ids is None else set(component_install_request_error_ids),
     )
     service = SubscriptionSyncService(variant_client=variant_client, component_client=component_client)
     return service, variant_client, component_client
@@ -425,6 +448,74 @@ def test_subscription_sync_service_finishes_without_traceback_when_component_col
     assert variant_client.refresh_calls == 1
     assert component_client.refresh_calls == 0
     assert service.is_running() is False
+
+
+def test_subscription_sync_service_finishes_without_traceback_when_variant_collection_request_fails(caplog) -> None:
+    _ensure_app()
+    caplog.set_level(logging.WARNING, logger="f8pystudio.assets.subscriptions.subscription_sync_service")
+    service, _variant_client, component_client = _make_service(
+        variant_refresh_request_error="POST /v1/auth/desktop/refresh timed out after 10s",
+    )
+    started_spy = QtTest.QSignalSpy(service.sync_started)
+    failed_spy = QtTest.QSignalSpy(service.sync_item_failed)
+    finished_spy = QtTest.QSignalSpy(service.sync_finished)
+
+    service.start_initial_sync()
+
+    _wait_until(lambda: _spy_count(finished_spy) == 1 and not service.is_running())
+    assert _spy_count(started_spy) == 0
+    assert _spy_count(failed_spy) == 0
+    assert list(finished_spy.at(0)) == [0, 1, 0]
+    assert component_client.refresh_calls == 0
+    assert service.is_running() is False
+    assert all(record.levelno < logging.ERROR for record in caplog.records)
+    assert any("remote request failure" in record.getMessage() for record in caplog.records)
+
+
+def test_subscription_sync_service_finishes_without_traceback_when_component_collection_request_fails(caplog) -> None:
+    _ensure_app()
+    caplog.set_level(logging.WARNING, logger="f8pystudio.assets.subscriptions.subscription_sync_service")
+    service, variant_client, _component_client = _make_service(
+        variant_pages=[[]],
+        component_refresh_request_error="GET /v1/components timed out after 10s",
+    )
+    started_spy = QtTest.QSignalSpy(service.sync_started)
+    failed_spy = QtTest.QSignalSpy(service.sync_item_failed)
+    finished_spy = QtTest.QSignalSpy(service.sync_finished)
+
+    service.start_initial_sync()
+
+    _wait_until(lambda: _spy_count(finished_spy) == 1 and not service.is_running())
+    assert _spy_count(started_spy) == 0
+    assert _spy_count(failed_spy) == 0
+    assert list(finished_spy.at(0)) == [0, 1, 0]
+    assert variant_client.refresh_calls == 1
+    assert service.is_running() is False
+    assert all(record.levelno < logging.ERROR for record in caplog.records)
+    assert any("remote request failure" in record.getMessage() for record in caplog.records)
+
+
+def test_subscription_sync_service_halts_without_traceback_after_install_request_failure(caplog) -> None:
+    _ensure_app()
+    caplog.set_level(logging.WARNING, logger="f8pystudio.assets.subscriptions.subscription_sync_service")
+    service, variant_client, component_client = _make_service(
+        variant_pages=[[_variant_entry(variant_id="variant-timeout", version_number=1, installed=False)]],
+        component_pages=[[_component_entry(component_id="component-skipped", version_number=1, installed=False)]],
+        variant_install_request_error_ids={"variant-timeout"},
+    )
+    failed_spy = QtTest.QSignalSpy(service.sync_item_failed)
+    finished_spy = QtTest.QSignalSpy(service.sync_finished)
+
+    service.start_initial_sync()
+
+    _wait_until(lambda: _spy_count(finished_spy) == 1 and not service.is_running())
+    assert _spy_count(failed_spy) == 1
+    assert list(failed_spy.at(0)) == ["variant-timeout", "failed to download variant-timeout"]
+    assert variant_client.install_started == ["variant-timeout"]
+    assert component_client.install_started == []
+    assert list(finished_spy.at(0)) == [0, 1, 1]
+    assert all(record.levelno < logging.ERROR for record in caplog.records)
+    assert any("remote request failure" in record.getMessage() for record in caplog.records)
 
 
 def test_subscription_sync_service_collapses_reentrant_manual_refreshes() -> None:
