@@ -6,6 +6,7 @@ import math
 import os
 import sys
 from dataclasses import dataclass
+from enum import Enum
 from typing import Callable
 
 from qtpy import QtCore, QtGui, QtWidgets
@@ -22,6 +23,14 @@ _TOAST_MAX_WIDTH = 520
 _TOAST_DURATION_MS = 4200
 _TOAST_FADE_MS = 180
 _TOAST_BREAK_HINTS = ("/", "\\", "_", "-", ".", ":", "=", "?")
+_MAX_VISIBLE_STICKY_DETAIL_TOASTS = 3
+_ROLLUP_MAX_ITEMS = 50
+
+
+class _ToastSeverity(Enum):
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
 
 
 @dataclass(frozen=True)
@@ -35,6 +44,35 @@ class _ToastStyle:
     badge_foreground: str
     glyph: str
     close_icon: str
+
+
+@dataclass(frozen=True)
+class _ToastPolicy:
+    severity: _ToastSeverity
+    style: _ToastStyle
+    duration_ms: int
+    sticky: bool
+    copy_enabled: bool
+
+
+@dataclass(frozen=True)
+class _FoldedToastSummary:
+    severity: _ToastSeverity
+    title: str
+    message: str
+    repeat_count: int
+    created_at_text: str
+
+    def copy_text(self) -> str:
+        lines = [
+            f"Severity: {self.severity.value}",
+            f"Title: {self.title}",
+            f"Created: {self.created_at_text}",
+        ]
+        if self.repeat_count > 1:
+            lines.append(f"Repeat count: {self.repeat_count}")
+        lines.extend(["Message:", self.message])
+        return "\n".join(lines).strip()
 
 
 _INFO_STYLE = _ToastStyle(
@@ -69,6 +107,28 @@ _ERROR_STYLE = _ToastStyle(
     badge_foreground="#FFF1F0",
     glyph="x",
     close_icon="#FFD2CF",
+)
+
+_INFO_POLICY = _ToastPolicy(
+    severity=_ToastSeverity.INFO,
+    style=_INFO_STYLE,
+    duration_ms=_TOAST_DURATION_MS,
+    sticky=False,
+    copy_enabled=False,
+)
+_WARNING_POLICY = _ToastPolicy(
+    severity=_ToastSeverity.WARNING,
+    style=_WARNING_STYLE,
+    duration_ms=0,
+    sticky=True,
+    copy_enabled=True,
+)
+_ERROR_POLICY = _ToastPolicy(
+    severity=_ToastSeverity.ERROR,
+    style=_ERROR_STYLE,
+    duration_ms=0,
+    sticky=True,
+    copy_enabled=True,
 )
 
 _ACTIVE_TOASTS: list["_StudioToast"] = []
@@ -174,6 +234,10 @@ class _ToastLevelBadge(QtWidgets.QWidget):
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Fixed)
         self.setFixedSize(24, 24)
 
+    def set_style(self, style: _ToastStyle) -> None:
+        self._style = style
+        self.update()
+
     def paintEvent(self, event: QtGui.QPaintEvent) -> None:
         del event
         painter = QtGui.QPainter(self)
@@ -202,18 +266,36 @@ class _StudioToast(QtWidgets.QFrame):
         message: str,
         style: _ToastStyle,
         duration_ms: int = _TOAST_DURATION_MS,
+        severity: _ToastSeverity = _ToastSeverity.INFO,
+        sticky: bool = False,
+        copy_enabled: bool = False,
+        copy_text_override: str = "",
+        is_rollup: bool = False,
     ) -> None:
         super().__init__(None)
         self._anchor = anchor.window() if anchor is not None else None
         self._anchor_stack_key = None if self._anchor is None else id(self._anchor)
         self._style = style
+        self._severity = severity
+        self._title_text = str(title or "").strip()
+        self._message_text = str(message or "").strip()
         self._duration_ms = max(0, duration_ms)
+        self._sticky = bool(sticky)
+        self._copy_enabled = bool(copy_enabled)
+        self._copy_text_override = str(copy_text_override or "")
+        self._is_rollup = bool(is_rollup)
+        self._repeat_count = 1
+        self._created_at = QtCore.QDateTime.currentDateTime()
+        self._folded_summaries: list[_FoldedToastSummary] = []
+        self._folded_omitted_count = 0
         self._safe_window_mode = _use_safe_toast_window_mode()
         self._fade_animation: QtCore.QPropertyAnimation | None = None
         self._lifetime_animation: QtCore.QVariantAnimation | None = None
         self._is_closing = False
         self._progress_fraction = 1.0
         self._watched_anchor: QtWidgets.QWidget | None = None
+        self._copy_button: QtWidgets.QToolButton | None = None
+        self._logs_button: QtWidgets.QToolButton | None = None
 
         self.setObjectName("studio-toast")
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
@@ -229,6 +311,79 @@ class _StudioToast(QtWidgets.QFrame):
             window_flags |= QtCore.Qt.WindowType.NoDropShadowWindowHint
         self.setWindowFlags(window_flags)
         self.setWindowOpacity(1.0 if self._safe_window_mode else 0.0)
+        self._apply_style_sheet()
+
+        if not self._safe_window_mode:
+            shadow = QtWidgets.QGraphicsDropShadowEffect(self)
+            shadow.setBlurRadius(24)
+            shadow.setOffset(0, 10)
+            shadow.setColor(QtGui.QColor(0, 0, 0, 110))
+            self.setGraphicsEffect(shadow)
+
+        self._level_badge = _ToastLevelBadge(style, self)
+        self._level_badge.setObjectName("studio-toast-badge")
+
+        self._title_label = QtWidgets.QLabel(self._display_title(), self)
+        self._title_label.setObjectName("studio-toast-title")
+        self._title_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+
+        self._message_label = _ToastContentLabel(self)
+        self._message_label.setObjectName("studio-toast-message")
+        self._message_label.setText(_rich_text_message(self._message_text))
+
+        self._close_button = QtWidgets.QToolButton(self)
+        self._close_button.setObjectName("studio-toast-close")
+        self._close_button.setAutoRaise(True)
+        self._close_button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self._close_button.setFixedSize(22, 22)
+        self._close_button.setIconSize(QtCore.QSize(14, 14))
+        self._close_button.setIcon(self._close_icon())
+        self._close_button.setToolTip("Acknowledge and close")
+        self._close_button.clicked.connect(self.close_animated)
+
+        actions_widget = QtWidgets.QWidget(self)
+        actions_widget.setObjectName("studio-toast-actions")
+        actions_layout = QtWidgets.QHBoxLayout(actions_widget)
+        actions_layout.setContentsMargins(0, 2, 0, 0)
+        actions_layout.setSpacing(6)
+        actions_layout.addStretch(1)
+        if self._copy_enabled:
+            self._copy_button = QtWidgets.QToolButton(actions_widget)
+            self._copy_button.setObjectName("studio-toast-copy")
+            self._copy_button.setAutoRaise(True)
+            self._copy_button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+            self._copy_button.setText("Copy")
+            self._copy_button.setToolTip("Copy notification details")
+            self._copy_button.clicked.connect(self._copy_to_clipboard)
+            actions_layout.addWidget(self._copy_button)
+        if self._severity is not _ToastSeverity.INFO:
+            self._logs_button = QtWidgets.QToolButton(actions_widget)
+            self._logs_button.setObjectName("studio-toast-logs")
+            self._logs_button.setAutoRaise(True)
+            self._logs_button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+            self._logs_button.setText("Logs")
+            self._logs_button.setToolTip("Open service logs")
+            self._logs_button.clicked.connect(self._open_service_logs)
+            actions_layout.addWidget(self._logs_button)
+        self._sync_logs_button_visibility()
+        actions_widget.setVisible(self._copy_button is not None or self._logs_button is not None)
+        self._actions_widget = actions_widget
+
+        body_layout = QtWidgets.QVBoxLayout()
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(4)
+        body_layout.addWidget(self._title_label)
+        body_layout.addWidget(self._message_label)
+        body_layout.addWidget(actions_widget)
+
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(10, 9, 10, 10)
+        layout.setSpacing(8)
+        layout.addWidget(self._level_badge, 0, QtCore.Qt.AlignmentFlag.AlignTop)
+        layout.addLayout(body_layout, 1)
+        layout.addWidget(self._close_button, 0, QtCore.Qt.AlignmentFlag.AlignTop)
+
+    def _apply_style_sheet(self) -> None:
         self.setStyleSheet(
             """
             QLabel#studio-toast-title {
@@ -239,6 +394,24 @@ class _StudioToast(QtWidgets.QFrame):
             QLabel#studio-toast-message {
                 color: %(text)s;
                 font-size: 12px;
+            }
+            QToolButton#studio-toast-copy {
+                background: rgba(255, 255, 255, 0.08);
+                border: 1px solid %(border)s;
+                color: %(title)s;
+                padding: 2px 7px;
+            }
+            QToolButton#studio-toast-copy:hover {
+                background: rgba(255, 255, 255, 0.14);
+            }
+            QToolButton#studio-toast-logs {
+                background: rgba(255, 255, 255, 0.08);
+                border: 1px solid %(border)s;
+                color: %(title)s;
+                padding: 2px 7px;
+            }
+            QToolButton#studio-toast-logs:hover {
+                background: rgba(255, 255, 255, 0.14);
             }
             QToolButton#studio-toast-close {
                 background: transparent;
@@ -252,51 +425,118 @@ class _StudioToast(QtWidgets.QFrame):
             }
             """
             % {
-                "title": style.title,
-                "text": style.text,
-                "close_icon": style.close_icon,
+                "title": self._style.title,
+                "text": self._style.text,
+                "border": self._style.border,
+                "close_icon": self._style.close_icon,
             }
         )
 
-        if not self._safe_window_mode:
-            shadow = QtWidgets.QGraphicsDropShadowEffect(self)
-            shadow.setBlurRadius(24)
-            shadow.setOffset(0, 10)
-            shadow.setColor(QtGui.QColor(0, 0, 0, 110))
-            self.setGraphicsEffect(shadow)
+    def _display_title(self) -> str:
+        if self._repeat_count <= 1:
+            return self._title_text
+        return f"{self._title_text} x{self._repeat_count}"
 
-        self._level_badge = _ToastLevelBadge(style, self)
-        self._level_badge.setObjectName("studio-toast-badge")
+    def _created_at_text(self) -> str:
+        return self._created_at.toString(QtCore.Qt.DateFormat.ISODate)
 
-        self._title_label = QtWidgets.QLabel(title, self)
-        self._title_label.setObjectName("studio-toast-title")
-        self._title_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+    def _notification_copy_text(self) -> str:
+        override = str(self._copy_text_override or "").strip()
+        if override:
+            return override
+        lines = [
+            f"Severity: {self._severity.value}",
+            f"Title: {self._title_text}",
+            f"Created: {self._created_at_text()}",
+        ]
+        if self._repeat_count > 1:
+            lines.append(f"Repeat count: {self._repeat_count}")
+        lines.extend(["Message:", self._message_text])
+        return "\n".join(lines).strip()
 
-        self._message_label = _ToastContentLabel(self)
-        self._message_label.setObjectName("studio-toast-message")
-        self._message_label.setText(_rich_text_message(message))
+    def _copy_to_clipboard(self) -> None:
+        clipboard = QtGui.QGuiApplication.clipboard()
+        if clipboard is None:
+            return
+        clipboard.setText(self._notification_copy_text())
 
-        self._close_button = QtWidgets.QToolButton(self)
-        self._close_button.setObjectName("studio-toast-close")
-        self._close_button.setAutoRaise(True)
-        self._close_button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
-        self._close_button.setFixedSize(22, 22)
-        self._close_button.setIconSize(QtCore.QSize(14, 14))
+    def _service_logs_dock(self) -> QtWidgets.QDockWidget | None:
+        anchor = self._live_anchor()
+        if anchor is None:
+            return None
+        dock = anchor.findChild(QtWidgets.QDockWidget, "ServiceLogsDock")
+        if dock is None:
+            return None
+        return dock
+
+    def _sync_logs_button_visibility(self) -> None:
+        button = self._logs_button
+        if button is None:
+            return
+        button.setVisible(self._service_logs_dock() is not None)
+
+    def _open_service_logs(self) -> None:
+        dock = self._service_logs_dock()
+        if dock is None:
+            return
+        dock.setVisible(True)
+        dock.raise_()
+        parent_window = dock.window()
+        if parent_window is not None:
+            parent_window.raise_()
+
+    def apply_rollup_policy(self, policy: _ToastPolicy) -> None:
+        if self._severity is policy.severity and self._style == policy.style:
+            return
+        self._severity = policy.severity
+        self._style = policy.style
+        self._duration_ms = max(0, policy.duration_ms)
+        self._sticky = bool(policy.sticky)
+        self._copy_enabled = bool(policy.copy_enabled)
+        self._level_badge.set_style(policy.style)
         self._close_button.setIcon(self._close_icon())
-        self._close_button.clicked.connect(self.close_animated)
+        self._apply_style_sheet()
+        self.update()
 
-        body_layout = QtWidgets.QVBoxLayout()
-        body_layout.setContentsMargins(0, 0, 0, 0)
-        body_layout.setSpacing(4)
-        body_layout.addWidget(self._title_label)
-        body_layout.addWidget(self._message_label)
+    def increment_repeat(self) -> None:
+        self._repeat_count += 1
+        self._title_label.setText(self._display_title())
+        self._apply_width_constraints()
+        self._reposition()
 
-        layout = QtWidgets.QHBoxLayout(self)
-        layout.setContentsMargins(10, 9, 10, 10)
-        layout.setSpacing(8)
-        layout.addWidget(self._level_badge, 0, QtCore.Qt.AlignmentFlag.AlignTop)
-        layout.addLayout(body_layout, 1)
-        layout.addWidget(self._close_button, 0, QtCore.Qt.AlignmentFlag.AlignTop)
+    def folded_summary(self) -> _FoldedToastSummary:
+        return _FoldedToastSummary(
+            severity=self._severity,
+            title=self._title_text,
+            message=self._message_text,
+            repeat_count=self._repeat_count,
+            created_at_text=self._created_at_text(),
+        )
+
+    def add_folded_summary(self, summary: _FoldedToastSummary) -> None:
+        self._folded_summaries.append(summary)
+        if len(self._folded_summaries) > _ROLLUP_MAX_ITEMS:
+            self._folded_summaries = self._folded_summaries[-_ROLLUP_MAX_ITEMS:]
+            self._folded_omitted_count += 1
+        self._refresh_rollup_text()
+
+    def _refresh_rollup_text(self) -> None:
+        visible_count = len(self._folded_summaries)
+        total_count = visible_count + self._folded_omitted_count
+        self._title_text = f"More notifications ({total_count})"
+        noun = "notification" if total_count == 1 else "notifications"
+        self._message_text = f"{total_count} warning/error {noun} folded. Copy for details."
+        details: list[str] = []
+        if self._folded_omitted_count > 0:
+            details.append(f"Earlier folded notifications omitted: {self._folded_omitted_count}")
+        for index, folded in enumerate(self._folded_summaries, start=1):
+            details.append(f"--- Folded notification {index} ---")
+            details.append(folded.copy_text())
+        self._copy_text_override = "\n".join(details).strip()
+        self._title_label.setText(self._display_title())
+        self._message_label.setText(_rich_text_message(self._message_text))
+        self._apply_width_constraints()
+        self._reposition()
 
     def _close_icon(self) -> QtGui.QIcon:
         style = QtWidgets.QApplication.style()
@@ -318,6 +558,7 @@ class _StudioToast(QtWidgets.QFrame):
     def show_with_animation(self) -> None:
         self._is_closing = False
         self._progress_fraction = 1.0
+        self._sync_logs_button_visibility()
         self._apply_width_constraints()
         self._reposition()
         self._install_anchor_filter()
@@ -522,12 +763,106 @@ class _StudioToast(QtWidgets.QFrame):
         super().paintEvent(event)
 
 
+def _anchor_stack_key(anchor: QtWidgets.QWidget | None) -> int | None:
+    anchor_window = anchor.window() if anchor is not None else None
+    if anchor_window is None:
+        return None
+    return id(anchor_window)
+
+
+def _visible_toasts_for_anchor(anchor_key: int | None) -> list[_StudioToast]:
+    return [
+        toast
+        for toast in _ACTIVE_TOASTS
+        if toast._anchor_key() == anchor_key and toast.isVisible()
+    ]
+
+
+def _visible_info_toasts_for_anchor(anchor_key: int | None) -> list[_StudioToast]:
+    return [
+        toast
+        for toast in _visible_toasts_for_anchor(anchor_key)
+        if toast._severity is _ToastSeverity.INFO
+    ]
+
+
+def _visible_sticky_detail_toasts_for_anchor(anchor_key: int | None) -> list[_StudioToast]:
+    return [
+        toast
+        for toast in _visible_toasts_for_anchor(anchor_key)
+        if toast._sticky and not toast._is_rollup and toast._severity is not _ToastSeverity.INFO
+    ]
+
+
+def _visible_rollup_toast_for_anchor(anchor_key: int | None) -> _StudioToast | None:
+    for toast in _visible_toasts_for_anchor(anchor_key):
+        if toast._is_rollup:
+            return toast
+    return None
+
+
+def _matching_sticky_detail_toast(
+    *,
+    anchor_key: int | None,
+    severity: _ToastSeverity,
+    title: str,
+    message: str,
+) -> _StudioToast | None:
+    for toast in _visible_sticky_detail_toasts_for_anchor(anchor_key):
+        if toast._severity is not severity:
+            continue
+        if toast._title_text != title:
+            continue
+        if toast._message_text != message:
+            continue
+        return toast
+    return None
+
+
+def _rollup_policy_for_summary(summary: _FoldedToastSummary) -> _ToastPolicy:
+    if summary.severity is _ToastSeverity.ERROR:
+        return _ERROR_POLICY
+    return _WARNING_POLICY
+
+
+def _append_to_rollup(
+    *,
+    anchor: QtWidgets.QWidget | None,
+    anchor_key: int | None,
+    summary: _FoldedToastSummary,
+) -> None:
+    policy = _rollup_policy_for_summary(summary)
+    rollup = _visible_rollup_toast_for_anchor(anchor_key)
+    if rollup is None:
+        rollup = _StudioToast(
+            anchor=anchor,
+            title="More notifications",
+            message="",
+            style=policy.style,
+            duration_ms=policy.duration_ms,
+            severity=policy.severity,
+            sticky=policy.sticky,
+            copy_enabled=policy.copy_enabled,
+            is_rollup=True,
+        )
+        _ACTIVE_TOASTS.append(rollup)
+        rollup.add_folded_summary(summary)
+        rollup.show_with_animation()
+        return
+    if summary.severity is _ToastSeverity.ERROR and rollup._severity is not _ToastSeverity.ERROR:
+        rollup.apply_rollup_policy(_ERROR_POLICY)
+    rollup.add_folded_summary(summary)
+    rollup.raise_()
+    for toast in _visible_toasts_for_anchor(anchor_key):
+        toast._reposition()
+
+
 def _show_toast(
     *,
     parent: QtWidgets.QWidget | None,
     title: str,
     message: str,
-    style: _ToastStyle,
+    policy: _ToastPolicy,
     fallback: Callable[[QtWidgets.QWidget | None, str, str], None],
 ) -> None:
     target_parent = _resolve_parent(parent)
@@ -537,14 +872,45 @@ def _show_toast(
         return
     try:
         anchor = target_parent if target_parent is not None else parent
-        toast = _StudioToast(anchor=anchor, title=title_text, message=message_text, style=style)
-        same_anchor_toasts = [
-            active_toast
-            for active_toast in _ACTIVE_TOASTS
-            if active_toast._anchor_key() == toast._anchor_key() and active_toast.isVisible()
-        ]
-        if len(same_anchor_toasts) >= _MAX_VISIBLE_TOASTS:
-            same_anchor_toasts[0].close_animated()
+        anchor_key = _anchor_stack_key(anchor)
+        if policy.sticky:
+            matching_toast = _matching_sticky_detail_toast(
+                anchor_key=anchor_key,
+                severity=policy.severity,
+                title=title_text,
+                message=message_text,
+            )
+            if matching_toast is not None:
+                matching_toast.increment_repeat()
+                matching_toast.raise_()
+                for toast in _visible_toasts_for_anchor(anchor_key):
+                    toast._reposition()
+                return
+
+            detail_toasts = _visible_sticky_detail_toasts_for_anchor(anchor_key)
+            if len(detail_toasts) >= _MAX_VISIBLE_STICKY_DETAIL_TOASTS:
+                folded_toast = detail_toasts[0]
+                _append_to_rollup(
+                    anchor=anchor,
+                    anchor_key=anchor_key,
+                    summary=folded_toast.folded_summary(),
+                )
+                folded_toast.close_animated()
+        else:
+            info_toasts = _visible_info_toasts_for_anchor(anchor_key)
+            if len(info_toasts) >= _MAX_VISIBLE_TOASTS:
+                info_toasts[0].close_animated()
+
+        toast = _StudioToast(
+            anchor=anchor,
+            title=title_text,
+            message=message_text,
+            style=policy.style,
+            duration_ms=policy.duration_ms,
+            severity=policy.severity,
+            sticky=policy.sticky,
+            copy_enabled=policy.copy_enabled,
+        )
         _ACTIVE_TOASTS.append(toast)
         toast.show_with_animation()
     except Exception:
@@ -557,7 +923,7 @@ def show_info(parent: QtWidgets.QWidget | None, title: str, message: str) -> Non
         parent=parent,
         title=title,
         message=message,
-        style=_INFO_STYLE,
+        policy=_INFO_POLICY,
         fallback=QtWidgets.QMessageBox.information,
     )
 
@@ -567,7 +933,7 @@ def show_warning(parent: QtWidgets.QWidget | None, title: str, message: str) -> 
         parent=parent,
         title=title,
         message=message,
-        style=_WARNING_STYLE,
+        policy=_WARNING_POLICY,
         fallback=QtWidgets.QMessageBox.warning,
     )
 
@@ -577,6 +943,6 @@ def show_error(parent: QtWidgets.QWidget | None, title: str, message: str) -> No
         parent=parent,
         title=title,
         message=message,
-        style=_ERROR_STYLE,
+        policy=_ERROR_POLICY,
         fallback=QtWidgets.QMessageBox.critical,
     )
