@@ -214,6 +214,18 @@ def _configure() -> None:
 def _build() -> None:
     conan_presets = _select_conan_release_presets()
     _run([_cpp_tool("cmake"), "--build", "--preset", conan_presets.build_preset_name, "--parallel"], use_pixi_cpp_paths=True)
+    _run(
+        [
+            _cpp_tool("cmake"),
+            "--build",
+            "--preset",
+            conan_presets.build_preset_name,
+            "--target",
+            "f8_deploy_all_runtime",
+            "--parallel",
+        ],
+        use_pixi_cpp_paths=True,
+    )
 
 
 def _lock_refresh() -> None:

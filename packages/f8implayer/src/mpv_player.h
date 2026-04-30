@@ -9,6 +9,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 extern "C" {
 #include <mpv/client.h>
@@ -83,6 +84,7 @@ using VideoSharedMemorySink = ::f8::cppsdk::VideoSharedMemorySink;
   ~MpvPlayer();
 
   bool openMedia(const std::string& source);
+  bool openMedia(const std::string& source, const std::string& audio_source, const std::vector<std::string>& http_headers);
   bool play();
   void pause();
   void stop();

@@ -54,6 +54,26 @@ std::string lowercase_ascii(std::string s) {
   return s;
 }
 
+std::string header_value(const std::vector<std::string>& headers, const std::string& wanted_name) {
+  const std::string wanted = lowercase_ascii(wanted_name);
+  for (const std::string& header : headers) {
+    const std::size_t colon = header.find(':');
+    if (colon == std::string::npos) {
+      continue;
+    }
+    const std::string name = lowercase_ascii(header.substr(0, colon));
+    if (name != wanted) {
+      continue;
+    }
+    std::string value = header.substr(colon + 1);
+    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())) != 0) {
+      value.erase(value.begin());
+    }
+    return value;
+  }
+  return {};
+}
+
 void LogMpvMessage(const mpv_event_log_message* log) {
   if (!log || !log->text)
     return;
@@ -123,11 +143,6 @@ void MpvPlayer::initializeMpv() {
   mpv_set_option_string(mpv_, "config", "no");
   // Keep the file open at EOF so seeking still works after playback finishes.
   mpv_set_option_string(mpv_, "keep-open", "yes");
-  // Enable ytdl_hook.lua (youtube-dl / yt-dlp) when available; mpv will auto-detect the binary.
-  mpv_set_option_string(mpv_, "ytdl", "yes");
-  // Prefer muxing best video+audio, but fall back to single-file best when the
-  // site/extractor does not expose a mergeable pair.
-  mpv_set_option_string(mpv_, "ytdl-format", "bestvideo+bestaudio/best");
 #if defined(_WIN32)
   // Prefer Windows native audio output. Some builds default to "null" ao when probing fails.
   mpv_set_option_string(mpv_, "ao", "wasapi");
@@ -184,6 +199,59 @@ bool MpvPlayer::openMedia(const std::string& source) {
   eofReached_.store(false, std::memory_order_release);
   eofNotified_.store(false, std::memory_order_release);
   return mpv_command(mpv_, cmd) >= 0;
+}
+
+bool MpvPlayer::openMedia(const std::string& source, const std::string& audio_source,
+                          const std::vector<std::string>& http_headers) {
+  if (!mpv_) {
+    return false;
+  }
+  std::vector<mpv_node> header_values(http_headers.size());
+  for (std::size_t i = 0; i < http_headers.size(); ++i) {
+    header_values[i].format = MPV_FORMAT_STRING;
+    header_values[i].u.string = const_cast<char*>(http_headers[i].c_str());
+  }
+  mpv_node_list header_list{};
+  header_list.num = static_cast<int>(header_values.size());
+  header_list.values = header_values.empty() ? nullptr : header_values.data();
+  mpv_node header_node{};
+  header_node.format = MPV_FORMAT_NODE_ARRAY;
+  header_node.u.list = &header_list;
+  const int header_status = mpv_set_property(mpv_, "http-header-fields", MPV_FORMAT_NODE, &header_node);
+  if (header_status < 0) {
+    spdlog::warn("mpv failed to set http headers: {}", mpv_error_string(header_status));
+    return false;
+  }
+  const std::string user_agent = header_value(http_headers, "user-agent");
+  if (!user_agent.empty()) {
+    const int status = mpv_set_property_string(mpv_, "user-agent", user_agent.c_str());
+    if (status < 0) {
+      spdlog::warn("mpv failed to set user-agent: {}", mpv_error_string(status));
+      return false;
+    }
+  }
+  const std::string referrer = header_value(http_headers, "referer");
+  if (!referrer.empty()) {
+    const int status = mpv_set_property_string(mpv_, "referrer", referrer.c_str());
+    if (status < 0) {
+      spdlog::warn("mpv failed to set referrer: {}", mpv_error_string(status));
+      return false;
+    }
+  }
+
+  if (!openMedia(source)) {
+    return false;
+  }
+  if (audio_source.empty()) {
+    return true;
+  }
+  const char* cmd[] = {"audio-add", audio_source.c_str(), "auto", nullptr};
+  const int status = mpv_command(mpv_, cmd);
+  if (status < 0) {
+    spdlog::warn("mpv audio-add failed: {}", mpv_error_string(status));
+    return false;
+  }
+  return true;
 }
 
 bool MpvPlayer::play() {

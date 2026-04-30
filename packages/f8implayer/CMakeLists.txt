@@ -7,8 +7,6 @@ endif()
 set(F8_IMPLAYER_LIBMPV_WIN_URL
     "https://downloads.sourceforge.net/mpv-player-windows/mpv-dev-x86_64-20250713-git-bd21180.7z")
 set(F8_IMPLAYER_LIBMPV_WIN_SHA256 "e75982d90a1fa3620b194204420386f590b4e96f03dc9daf46b996fccce3549f")
-set(F8_IMPLAYER_YTDLP_WIN_URL "https://github.com/yt-dlp/yt-dlp/releases/download/2025.11.12/yt-dlp.exe")
-set(F8_IMPLAYER_YTDLP_WIN_SHA256 "9f8b03a37125854895a7eebf50a605e34e7ec3bd2444931eff377f3ccec50e96")
 
 set(F8_IMPLAYER_SOURCES
   src/main.cpp
@@ -56,6 +54,21 @@ else()
   message(FATAL_ERROR "SDL3 package did not provide SDL3::SDL3 or sdl::sdl")
 endif()
 
+set(_implayer_ytdlp_hints "")
+if(DEFINED F8_PIXI_CPP_ENV_DIR)
+  list(APPEND _implayer_ytdlp_hints
+    "${F8_PIXI_CPP_ENV_DIR}/bin"
+    "${F8_PIXI_CPP_ENV_DIR}/Scripts"
+  )
+endif()
+find_program(
+  F8_IMPLAYER_YTDLP_EXE
+  NAMES yt-dlp.exe yt-dlp
+  HINTS ${_implayer_ytdlp_hints}
+  REQUIRED
+  DOC "yt-dlp executable from the pixi/conda cpp environment"
+)
+
 if(WIN32)
   set(_implayer_mpv_root "${CMAKE_CURRENT_BINARY_DIR}/third_party/mpv-dev")
   set(_implayer_mpv_include "${_implayer_mpv_root}/include")
@@ -80,21 +93,6 @@ if(WIN32)
   add_dependencies(f8_implayer_mpv f8_implayer_mpv_dev)
   target_include_directories(f8_implayer_mpv INTERFACE "${_implayer_mpv_include}")
   target_link_libraries(f8_implayer_mpv INTERFACE "${_implayer_mpv_implib}")
-
-  set(_implayer_ytdlp_root "${CMAKE_CURRENT_BINARY_DIR}/third_party/ytdlp")
-  set(_implayer_ytdlp_exe "${_implayer_ytdlp_root}/yt-dlp.exe")
-  ExternalProject_Add(f8_implayer_ytdlp
-    URL "${F8_IMPLAYER_YTDLP_WIN_URL}"
-    URL_HASH "SHA256=${F8_IMPLAYER_YTDLP_WIN_SHA256}"
-    DOWNLOAD_NO_PROGRESS ON
-    DOWNLOAD_NO_EXTRACT ON
-    UPDATE_COMMAND ""
-    CONFIGURE_COMMAND ""
-    BUILD_COMMAND ""
-    INSTALL_COMMAND
-      "${CMAKE_COMMAND}" -E make_directory "${_implayer_ytdlp_root}"
-      COMMAND "${CMAKE_COMMAND}" -E copy_if_different <DOWNLOADED_FILE> "${_implayer_ytdlp_exe}"
-  )
 else()
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(MPV REQUIRED IMPORTED_TARGET mpv)
@@ -149,14 +147,14 @@ add_custom_command(
 )
 
 if(WIN32)
-  add_dependencies(f8implayer_service f8_implayer_mpv_dev f8_implayer_ytdlp)
+  add_dependencies(f8implayer_service f8_implayer_mpv_dev)
   add_custom_command(
     TARGET f8implayer_service
     POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${_implayer_mpv_dll}" "$<TARGET_FILE_DIR:f8implayer_service>/libmpv-2.dll"
-    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${_implayer_ytdlp_exe}" "$<TARGET_FILE_DIR:f8implayer_service>/yt-dlp.exe"
+    COMMAND "${CMAKE_COMMAND}" -E rm -f "$<TARGET_FILE_DIR:f8implayer_service>/yt-dlp.exe"
     VERBATIM
-    COMMENT "Copy libmpv and yt-dlp runtime binaries to build output"
+    COMMENT "Copy libmpv runtime binary to build output"
   )
 endif()
 
@@ -180,20 +178,11 @@ if(WIN32)
     TARGET f8implayer_service
     POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${_implayer_mpv_dll}" "${F8_SERVICES_ROOT}/f8/implayer/${_implayer_platform_dir}/libmpv-2.dll"
-    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${_implayer_ytdlp_exe}" "${F8_SERVICES_ROOT}/f8/implayer/${_implayer_platform_dir}/yt-dlp.exe"
+    COMMAND "${CMAKE_COMMAND}" -E rm -f "${F8_SERVICES_ROOT}/f8/implayer/${_implayer_platform_dir}/yt-dlp.exe"
     VERBATIM
-    COMMENT "Copy libmpv and yt-dlp runtime binaries to services deploy dir"
+    COMMENT "Copy libmpv runtime binary to services deploy dir"
   )
 endif()
 
 # Deploy C++ service artifacts into `services/.../<platform>/` for packaging/runtime use.
-if(WIN32)
-  f8_deploy_service_runtime(
-    f8implayer_service
-    "f8/implayer"
-    EXTRA_FILES
-    "${_implayer_ytdlp_exe}"
-  )
-else()
-  f8_deploy_service_runtime(f8implayer_service "f8/implayer")
-endif()
+f8_deploy_service_runtime(f8implayer_service "f8/implayer")
