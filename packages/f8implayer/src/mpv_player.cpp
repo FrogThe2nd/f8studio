@@ -117,11 +117,10 @@ void MpvPlayer::initializeMpv() {
 
   mpv_set_option_string(mpv_, "terminal", "no");
   mpv_set_option_string(mpv_, "msg-level", "all=v");
-  // In an embedded player, user/global mpv.conf and Lua scripts can silently
-  // enable expensive GPU pipelines (e.g. gpu-hq, interpolation, deband, shaders),
-  // which makes performance/VRAM usage unpredictable. Keep this deterministic.
+  // In an embedded player, user/global mpv.conf can silently enable expensive
+  // GPU pipelines (e.g. gpu-hq, interpolation, deband, shaders), which makes
+  // performance/VRAM usage unpredictable. Keep this deterministic.
   mpv_set_option_string(mpv_, "config", "no");
-  mpv_set_option_string(mpv_, "load-scripts", "no");
   // Keep the file open at EOF so seeking still works after playback finishes.
   mpv_set_option_string(mpv_, "keep-open", "yes");
   // Enable ytdl_hook.lua (youtube-dl / yt-dlp) when available; mpv will auto-detect the binary.
@@ -267,6 +266,10 @@ bool MpvPlayer::setYtdlRawOptions(const std::string& raw_options) {
   if (!mpv_)
     return false;
   const int status = mpv_set_property_string(mpv_, "ytdl-raw-options", raw_options.c_str());
+  if (status == MPV_ERROR_PROPERTY_NOT_FOUND && raw_options.empty()) {
+    spdlog::debug("mpv does not expose ytdl-raw-options; treating clear as a no-op");
+    return true;
+  }
   if (status < 0) {
     spdlog::warn("failed to set ytdl-raw-options: {}", mpv_error_string(status));
     return false;
