@@ -437,6 +437,37 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(out_result, dict)
         self.assertEqual((out_result or {}).get("v"), 123)
 
+    async def test_on_data_ignored_while_inactive(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = create_pyscript_registry()
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        graph = F8RuntimeGraph(graphId="g11_inactive", revision="r1", nodes=[_service_node(code="")], edges=[])
+        await bus.set_rungraph(graph)
+        node = bus.get_node("svcA")
+        assert isinstance(node, PythonScriptServiceNode)
+
+        code = (
+            "def onData(ctx, port, value, ts_ms=None):\n"
+            "    ctx.locals['v'] = value\n"
+            "\n"
+            "def onCommand(ctx, name, args, meta=None):\n"
+            "    if name != 'get':\n"
+            "        return {'ok': False}\n"
+            "    return {'v': ctx.locals.get('v')}\n"
+        )
+        await node.on_state("code", code, ts_ms=1)
+        await asyncio.sleep(0.05)
+        await node.on_lifecycle(False, {})
+
+        await node.on_data("in", 123, ts_ms=2)
+        out = await node.on_command("get", {})
+        out_result = (out or {}).get("result") if isinstance(out, dict) else {}
+
+        self.assertIsInstance(out_result, dict)
+        self.assertIsNone((out_result or {}).get("v"))
+
     async def test_outputs_unwrap_state_object_view_to_dict(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")

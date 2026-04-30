@@ -486,6 +486,8 @@ class DataRouter:
         force_buffer: bool = False,
     ) -> None:
         bus = self._bus
+        if not bus._active:
+            return
         if force_buffer or self._buffers_data_locally():
             self.buffer_input(
                 to_node=to_node,
@@ -587,6 +589,9 @@ class DataRouter:
     async def _flush_on_data_push_queue(self) -> None:
         try:
             while self._on_data_push_queue:
+                if not self._bus._active:
+                    self._on_data_push_queue.clear()
+                    return
                 batch: list[tuple[str, str, Any, int]] = []
                 while self._on_data_push_queue:
                     batch.append(self._on_data_push_queue.popleft())
@@ -594,6 +599,8 @@ class DataRouter:
                 for node_id, port, value, ts_ms in batch:
                     coalesced[(node_id, port)] = (value, int(ts_ms))
                 for (node_id, port), (value, ts_ms) in coalesced.items():
+                    if not self._bus._active:
+                        return
                     node = self._bus._nodes.get(node_id)
                     if node is None or not isinstance(node, DataReceivableNode):
                         continue

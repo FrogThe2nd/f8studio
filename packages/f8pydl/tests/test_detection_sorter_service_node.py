@@ -387,6 +387,28 @@ class DetectionSorterServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         finally:
             writer.close(unlink=True)
 
+    async def test_service_node_inactive_does_not_emit(self) -> None:
+        shm_name, writer = _write_scalar_frame(np.ones((2, 2), dtype=np.float32))
+        try:
+            bus = _BusStub({"scoreShmName": shm_name})
+            node = DetectionSorterServiceNode(node_id="sorterInactive", node=SimpleNamespace(stateFields=[]), initial_state=None)
+            node.attach(bus)
+            await node.on_lifecycle(False, {})
+            payload = _make_detection_payload(
+                [{"cls": "x", "score": 0.8, "bbox": [0, 0, 2, 2]}],
+                frame_id=1,
+                width=2,
+                height=2,
+            )
+
+            await node.on_data("detections", payload)
+
+            self.assertEqual(bus.emitted, [])
+            self.assertEqual(bus.errors, [])
+            node._close_score_reader()
+        finally:
+            writer.close(unlink=True)
+
     async def test_service_node_supports_flow2f16_magnitude(self) -> None:
         flow = np.zeros((4, 4, 2), dtype=np.float32)
         flow[0:2, 0:2, 0] = 1.0

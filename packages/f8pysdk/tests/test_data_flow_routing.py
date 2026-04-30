@@ -142,6 +142,32 @@ class DataFlowRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(node.data_calls, [("in", 123, 5)])
         self.assertIsNone(pulled)
 
+    async def test_pending_push_callbacks_are_dropped_when_bus_deactivates(self) -> None:
+        cluster = InMemoryCluster()
+        transport = InMemoryTransport(cluster=cluster, kv_bucket="kv.svc")
+        bus = ServiceBus(ServiceBusConfig(service_id="svc", data_delivery="push"), transport=transport)
+        node = _DataReceiverNode("node1")
+        bus.register_node(node)
+
+        push_input(bus, "node1", "in", 123, ts_ms=5)
+        await bus.set_active(False)
+        await _sleep_ticks(2)
+
+        self.assertEqual(node.data_calls, [])
+
+    async def test_push_input_is_ignored_while_bus_inactive(self) -> None:
+        cluster = InMemoryCluster()
+        transport = InMemoryTransport(cluster=cluster, kv_bucket="kv.svc")
+        bus = ServiceBus(ServiceBusConfig(service_id="svc", data_delivery="push"), transport=transport)
+        node = _DataReceiverNode("node1")
+        bus.register_node(node)
+
+        await bus.set_active(False)
+        push_input(bus, "node1", "in", 123, ts_ms=5)
+        await _sleep_ticks(2)
+
+        self.assertEqual(node.data_calls, [])
+
     async def test_pull_triggered_compute_stays_local_even_when_cross_publish_is_all(self) -> None:
         cluster = InMemoryCluster()
         transport = _RecordingTransport(cluster=cluster, kv_bucket="kv.svcA")

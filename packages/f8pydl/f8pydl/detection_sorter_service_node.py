@@ -316,6 +316,7 @@ class DetectionSorterServiceNode(ServiceNode):
             state_fields=[state.name for state in list(node.stateFields or [])],
         )
         self._initial_state = dict(initial_state or {})
+        self._active = True
         self._config_loaded = False
         self._score_shm_name = ""
         self._sort_direction: SortDirection = "desc"
@@ -326,6 +327,10 @@ class DetectionSorterServiceNode(ServiceNode):
         self._latest_detections: dict[str, Any] | None = None
         self._score_reader: VideoShmReader | None = None
         self._score_reader_name = ""
+
+    async def on_lifecycle(self, active: bool, meta: dict[str, Any]) -> None:
+        del meta
+        self._active = bool(active)
 
     def _read_initial_or_cached_state(self, field: str, default: Any) -> Any:
         missing = object()
@@ -389,6 +394,8 @@ class DetectionSorterServiceNode(ServiceNode):
     async def on_data(self, port: str, value: Any, *, ts_ms: int | None = None) -> None:
         del ts_ms
         if port != "detections":
+            return
+        if not self._active:
             return
         await self._ensure_config_loaded()
         if not isinstance(value, dict):

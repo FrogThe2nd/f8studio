@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any, TYPE_CHECKING
 
 from ...generated import F8StateAccess
-from ...codec import unwrap_json_value
+from ...codec import parse_bool, unwrap_json_value
 from ...nats_naming import ensure_token, kv_key_node_state
 from ...state import StateWriteContext, StateWriteError, StateWriteOrigin, StateWriteSource
 from ..internal.logging import log_error_once
@@ -298,6 +298,16 @@ async def publish_state(
     """
     node_id = ensure_token(node_id, label="node_id")
     field = str(field)
+    if node_id == bus.service_id and field == "active" and origin != StateWriteOrigin.runtime:
+        active = parse_bool(value)
+        if active is None:
+            raise StateWriteError(
+                "INVALID_VALUE",
+                "active must be a boolean",
+                details={"nodeId": node_id, "field": field},
+            )
+        await bus.set_active(bool(active), source=source or StateWriteSource.endpoint, meta=dict(meta or {}))
+        return
     ts = int(ts_ms or now_ms())
     ctx = StateWriteContext(origin=origin, source=source)
     publish_options, payload_meta = _resolve_publish_options(meta=meta, options=options)

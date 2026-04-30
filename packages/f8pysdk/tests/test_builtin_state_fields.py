@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from typing import Any
 from unittest.mock import patch
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -19,6 +20,26 @@ from f8pysdk.nats_naming import kv_key_node_state  # noqa: E402
 from f8pysdk.codec import decode_obj  # noqa: E402
 from f8pysdk.specs import boolean_schema, string_schema  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
+
+
+class _LifecycleRecordingNode:
+    def __init__(self, node_id: str) -> None:
+        self.node_id = node_id
+        self.lifecycle_calls: list[bool] = []
+
+    def attach(self, bus: object) -> None:
+        self._bus = bus
+
+    async def validate_state(self, field: str, value: Any, *, ts_ms: int, meta: dict[str, Any]) -> Any:
+        del field, ts_ms, meta
+        return value
+
+    async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
+        del field, value, ts_ms
+
+    async def on_lifecycle(self, active: bool, meta: dict[str, Any]) -> None:
+        del meta
+        self.lifecycle_calls.append(bool(active))
 
 
 class BuiltinStateFieldTests(unittest.TestCase):
@@ -171,6 +192,28 @@ class LifecycleBootstrapTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(raw)
         payload = decode_obj(raw) if raw is not None else {}
         self.assertEqual(payload.get("origin"), "runtime")
+
+    async def test_external_active_state_write_applies_lifecycle(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        node = _LifecycleRecordingNode("svcA")
+        bus.register_node(node)
+
+        await bus.publish_state_external("svcA", "active", False)
+
+        self.assertFalse(bus.active)
+        self.assertEqual(node.lifecycle_calls, [False])
+        state = await bus.get_state("svcA", "active")
+        self.assertTrue(state.found)
+        self.assertFalse(bool(state.value))
+
+    async def test_external_active_state_rejects_invalid_value(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+
+        with self.assertRaisesRegex(ValueError, "active must be a boolean"):
+            await bus.publish_state_external("svcA", "active", "maybe")
+        self.assertTrue(bus.active)
 
 
 if __name__ == "__main__":

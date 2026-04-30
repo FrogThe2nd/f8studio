@@ -883,6 +883,9 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
                 if sub is None:
                     return
                 sub_ref = sub
+                if not self._active or self._paused:
+                    await asyncio.sleep(0.05)
+                    continue
 
                 if sub.reader is None:
                     try:
@@ -1125,6 +1128,8 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         await self._emit_outputs(result)
 
     async def on_data(self, port: str, value: Any, *, ts_ms: int | None = None) -> None:
+        if not self._active or self._paused:
+            return
         if self._hook_on_data is None:
             return
         in_port = str(port or "")
