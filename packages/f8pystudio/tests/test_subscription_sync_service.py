@@ -353,6 +353,24 @@ def test_subscription_sync_service_processes_installations_serially() -> None:
     assert component_client.install_completed == ["component-a"]
 
 
+def test_subscription_sync_service_deduplicates_duplicate_subscribed_page_items() -> None:
+    _ensure_app()
+    variant_entry = _variant_entry(variant_id="variant-duplicate", version_number=1, installed=False)
+    component_entry = _component_entry(component_id="component-duplicate", version_number=1, installed=False)
+    service, variant_client, component_client = _make_service(
+        variant_pages=[[variant_entry, variant_entry]],
+        component_pages=[[component_entry, component_entry]],
+    )
+    finished_spy = QtTest.QSignalSpy(service.sync_finished)
+
+    service.start_initial_sync()
+
+    _wait_until(lambda: _spy_count(finished_spy) == 1 and not service.is_running())
+    assert variant_client.install_completed == ["variant-duplicate"]
+    assert component_client.install_completed == ["component-duplicate"]
+    assert list(finished_spy.at(0)) == [2, 0, 0]
+
+
 def test_subscription_sync_service_continues_after_item_failure() -> None:
     _ensure_app()
     service, variant_client, component_client = _make_service(

@@ -17,6 +17,7 @@ from f8pystudio.assets.components.component_catalog import ComponentCatalogServi
 from f8pystudio.assets.components.component_models import (
     F8ComponentDraftOriginKind,
     F8ComponentEntry,
+    F8ComponentRemoteListPage,
     F8ComponentRemoteUser,
     F8ComponentRemoteAuthError,
     F8ComponentRemoteRequestError,
@@ -795,6 +796,76 @@ def test_component_catalog_service_skips_noop_remote_replace_and_supports_silent
     assert stored_entry.hasCachedContent is True
     assert stored_entry.installed is False
     assert change_events == ["changed"]
+
+
+def test_component_refresh_scope_page_deduplicates_duplicate_remote_component_ids(tmp_path: Path, monkeypatch) -> None:
+    settings = QtCore.QSettings(str(tmp_path / "component-sync-duplicate-refresh.ini"), QtCore.QSettings.IniFormat)
+    service = ComponentCatalogService(db_path=tmp_path / "assets.db")
+    client = ComponentSyncClient(settings=settings, catalog_service=service)
+
+    existing_entry = F8ComponentEntry(
+        record=F8ComponentRecord(
+            componentId="public-1",
+            name="Cached Component",
+            description="",
+            tags=[],
+            content={
+                "schemaVersion": "f8studio-session/1",
+                "layout": {"nodes": {}, "connections": []},
+            },
+            createdAt="2026-04-21T00:00:00+00:00",
+            updatedAt="2026-04-21T00:00:00+00:00",
+        ),
+        source=F8ComponentSourceKind.remote_public,
+        visibility=F8ComponentVisibility.public,
+        remoteVersionNumber=1,
+        downloadedAt="2026-04-21T00:01:00+00:00",
+        installed=True,
+        hasCachedContent=True,
+    )
+    service.replace_remote_entries([existing_entry])
+    first_duplicate = copy_model(
+        existing_entry,
+        update={
+            "record": copy_model(existing_entry.record, update={"name": "Remote First", "content": {}}),
+            "downloadedAt": None,
+            "installed": False,
+            "hasCachedContent": False,
+        },
+    )
+    second_duplicate = copy_model(
+        existing_entry,
+        update={
+            "record": copy_model(existing_entry.record, update={"name": "Remote Second", "content": {}}),
+            "downloadedAt": None,
+            "installed": False,
+            "hasCachedContent": False,
+        },
+    )
+
+    def _list_components(
+        *,
+        scope: str,
+        query: str = "",
+        cursor: str = "",
+    ) -> F8ComponentRemoteListPage:
+        del scope, query, cursor
+        return F8ComponentRemoteListPage(entries=[first_duplicate, second_duplicate], nextCursor=None)
+
+    monkeypatch.setattr(client, "list_components", _list_components)
+
+    page = client.refresh_scope_page(scope="community", append=False)
+
+    assert len(page.entries) == 2
+    remote_entries = service.load_remote_entries()
+    assert len(remote_entries) == 1
+    refreshed_entry = remote_entries[0]
+    assert refreshed_entry.record.componentId == "public-1"
+    assert refreshed_entry.record.name == "Remote Second"
+    assert refreshed_entry.installed is True
+    assert refreshed_entry.hasCachedContent is True
+    assert refreshed_entry.downloadedAt == "2026-04-21T00:01:00Z"
+    assert refreshed_entry.record.content["schemaVersion"] == "f8studio-session/1"
 
 
 def test_component_sync_client_uses_env_base_url_when_settings_are_empty(tmp_path: Path, monkeypatch) -> None:

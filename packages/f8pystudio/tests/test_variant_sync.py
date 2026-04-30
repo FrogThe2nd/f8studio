@@ -1241,6 +1241,73 @@ def test_variant_refresh_scope_page_preserves_cached_content_for_matching_versio
     assert refreshed_entry.remoteVersionNumber == 1
 
 
+def test_variant_refresh_scope_page_deduplicates_duplicate_remote_variant_ids(tmp_path: Path, monkeypatch) -> None:
+    settings = QtCore.QSettings(str(tmp_path / "variant-sync-duplicate-refresh.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=db_path),
+        remote_provider=RemoteCacheProvider(db_path=db_path),
+    )
+    client = VariantSyncClient(settings=settings, catalog_service=service)
+
+    existing_entry = copy_model(
+        _make_entry(
+            variant_id="public-1",
+            source=F8VariantSourceKind.remote_public,
+            installed=True,
+            remote_version_number=1,
+        ),
+        update={
+            "downloadedAt": "2026-04-07T00:00:00+00:00",
+            "hasCachedContent": True,
+        },
+    )
+    service.replace_remote_entries([existing_entry])
+    first_duplicate = copy_model(
+        existing_entry,
+        update={
+            "record": copy_model(existing_entry.record, update={"name": "Remote First", "spec": {}}),
+            "downloadedAt": None,
+            "installed": False,
+            "hasCachedContent": False,
+        },
+    )
+    second_duplicate = copy_model(
+        existing_entry,
+        update={
+            "record": copy_model(existing_entry.record, update={"name": "Remote Second", "spec": {}}),
+            "downloadedAt": None,
+            "installed": False,
+            "hasCachedContent": False,
+        },
+    )
+
+    def _list_variants(
+        *,
+        scope: str,
+        kind: str = "",
+        base_node_type: str = "",
+        query: str = "",
+        cursor: str = "",
+    ) -> F8VariantRemoteListPage:
+        del scope, kind, base_node_type, query, cursor
+        return F8VariantRemoteListPage(entries=[first_duplicate, second_duplicate], nextCursor=None)
+
+    monkeypatch.setattr(client, "list_variants", _list_variants)
+
+    page = client.refresh_scope_page(scope="community", base_node_type="svc.a.op", append=False)
+
+    assert len(page.entries) == 2
+    remote_entries = service.load_remote_entries()
+    assert len(remote_entries) == 1
+    refreshed_entry = remote_entries[0]
+    assert refreshed_entry.record.variantId == "public-1"
+    assert refreshed_entry.installed is True
+    assert refreshed_entry.hasCachedContent is True
+    assert refreshed_entry.downloadedAt == "2026-04-07T00:00:00+00:00"
+    assert refreshed_entry.record.spec == {"label": "public-1"}
+
+
 def test_variant_refresh_scope_page_preserves_cached_preview_without_marking_installed(tmp_path: Path, monkeypatch) -> None:
     settings = QtCore.QSettings(str(tmp_path / "variant-sync-refresh-cached.ini"), QtCore.QSettings.IniFormat)
     db_path = tmp_path / "assets.db"

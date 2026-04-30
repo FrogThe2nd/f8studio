@@ -133,9 +133,10 @@ class RemoteCacheProvider:
         return out
 
     def save_entries(self, entries: list[F8VariantEntry]) -> None:
+        unique_entries = _unique_remote_variant_entries_by_id(entries)
         with self._db.begin_sqla() as conn:
             conn.execute(delete(variant_remote_cache_table))
-            for entry in entries:
+            for entry in unique_entries:
                 if not str(entry.record.variantId or "").strip():
                     continue
                 if entry.source not in {
@@ -239,7 +240,9 @@ class VariantCatalogService:
         return None
 
     def replace_remote_entries(self, entries: list[F8VariantEntry], *, emit_changed: bool = True) -> None:
-        normalized_entries = [_normalize_remote_variant_entry_for_storage(entry) for entry in entries]
+        normalized_entries = _unique_remote_variant_entries_by_id(
+            [_normalize_remote_variant_entry_for_storage(entry) for entry in entries]
+        )
         current_entries = self._remote_provider.load_entries()
         if current_entries == normalized_entries:
             return
@@ -635,6 +638,19 @@ def _normalize_remote_variant_entry_for_storage(entry: F8VariantEntry) -> F8Vari
             "hasCachedContent": has_cached_content,
         },
     )
+
+
+def _unique_remote_variant_entries_by_id(entries: list[F8VariantEntry]) -> list[F8VariantEntry]:
+    entries_by_variant_id: dict[str, F8VariantEntry] = {}
+    variant_ids: list[str] = []
+    for entry in entries:
+        variant_id = str(entry.record.variantId or "").strip()
+        if not variant_id:
+            continue
+        if variant_id not in entries_by_variant_id:
+            variant_ids.append(variant_id)
+        entries_by_variant_id[variant_id] = entry
+    return [entries_by_variant_id[variant_id] for variant_id in variant_ids]
 
 
 def _compress_content(json_str: str) -> bytes:

@@ -261,6 +261,7 @@ class SubscriptionSyncService(QtCore.QObject):
 
     def _collect_variant_items(self, client: VariantSyncClientLike) -> tuple[list[_SyncItem], int]:
         items: list[_SyncItem] = []
+        queued_asset_ids: set[str] = set()
         skipped = 0
         cursor = ""
         append = False
@@ -270,9 +271,12 @@ class SubscriptionSyncService(QtCore.QObject):
             page = client.refresh_scope_page(scope="subscribed", cursor=cursor, append=append)
             for entry in page.entries:
                 asset_id = str(entry.record.variantId)
+                if asset_id in queued_asset_ids:
+                    continue
                 cached_entry = client.remote_entry(asset_id)
                 if cached_entry is None or not variant_entry_is_installed(cached_entry):
                     items.append(_SyncItem(asset_kind="variant", asset_id=asset_id))
+                    queued_asset_ids.add(asset_id)
                 else:
                     skipped += 1
             cursor = "" if page.nextCursor is None else str(page.nextCursor)
@@ -283,6 +287,7 @@ class SubscriptionSyncService(QtCore.QObject):
 
     def _collect_component_items(self, client: ComponentSyncClientLike) -> tuple[list[_SyncItem], int]:
         items: list[_SyncItem] = []
+        queued_asset_ids: set[str] = set()
         skipped = 0
         cursor = ""
         append = False
@@ -292,9 +297,12 @@ class SubscriptionSyncService(QtCore.QObject):
             page = client.refresh_scope_page(scope="subscribed", cursor=cursor, append=append)
             for entry in page.entries:
                 asset_id = str(entry.record.componentId)
+                if asset_id in queued_asset_ids:
+                    continue
                 cached_entry = client.remote_entry(asset_id)
                 if cached_entry is None or not component_entry_is_installed(cached_entry):
                     items.append(_SyncItem(asset_kind="component", asset_id=asset_id))
+                    queued_asset_ids.add(asset_id)
                 else:
                     skipped += 1
             cursor = "" if page.nextCursor is None else str(page.nextCursor)

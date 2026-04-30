@@ -1162,12 +1162,21 @@ def _merge_refreshed_variant_scope_entries(
     existing_scope_by_id: dict[str, F8VariantEntry] = {
         str(entry.record.variantId): entry for entry in existing_scope_entries if str(entry.record.variantId).strip()
     }
-    refreshed: list[F8VariantEntry] = []
+    refreshed_by_id: dict[str, F8VariantEntry] = {}
+    refreshed_ids: list[str] = []
     for entry in page.entries:
-        existing_entry = existing_scope_by_id.get(str(entry.record.variantId))
+        variant_id = str(entry.record.variantId or "").strip()
+        if not variant_id:
+            continue
+        existing_entry = refreshed_by_id.get(variant_id)
+        if existing_entry is None:
+            existing_entry = existing_scope_by_id.get(variant_id)
         if existing_entry is not None:
             entry = _merge_variant_entries(existing_entry, entry)
-        refreshed.append(entry)
+        if variant_id not in refreshed_by_id:
+            refreshed_ids.append(variant_id)
+        refreshed_by_id[variant_id] = entry
+    refreshed = [refreshed_by_id[variant_id] for variant_id in refreshed_ids]
     if append:
         merged_scope_entries: dict[str, F8VariantEntry] = {
             str(entry.record.variantId): entry for entry in existing_scope_entries
