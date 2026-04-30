@@ -129,9 +129,10 @@ class RemoteComponentCacheProvider:
         return out
 
     def save_entries(self, entries: list[F8ComponentEntry]) -> None:
+        unique_entries = _unique_remote_component_entries_by_id(entries)
         with self._db.begin_sqla() as conn:
             conn.execute(delete(component_remote_cache_table))
-            for entry in entries:
+            for entry in unique_entries:
                 component_id = str(entry.record.componentId or "").strip()
                 if not component_id:
                     continue
@@ -255,7 +256,9 @@ class ComponentCatalogService:
         return None
 
     def replace_remote_entries(self, entries: list[F8ComponentEntry], *, emit_changed: bool = True) -> None:
-        normalized_entries = [_normalize_remote_component_entry_for_storage(entry) for entry in entries]
+        normalized_entries = _unique_remote_component_entries_by_id(
+            [_normalize_remote_component_entry_for_storage(entry) for entry in entries]
+        )
         current_entries = self._remote_provider.load_entries()
         if current_entries == normalized_entries:
             return
@@ -480,3 +483,16 @@ def _normalize_remote_component_entry_for_storage(entry: F8ComponentEntry) -> F8
             "hasCachedContent": has_cached_content,
         },
     )
+
+
+def _unique_remote_component_entries_by_id(entries: list[F8ComponentEntry]) -> list[F8ComponentEntry]:
+    entries_by_component_id: dict[str, F8ComponentEntry] = {}
+    component_ids: list[str] = []
+    for entry in entries:
+        component_id = str(entry.record.componentId or "").strip()
+        if not component_id:
+            continue
+        if component_id not in entries_by_component_id:
+            component_ids.append(component_id)
+        entries_by_component_id[component_id] = entry
+    return [entries_by_component_id[component_id] for component_id in component_ids]

@@ -83,6 +83,10 @@ class _LayoutHarness(QtWidgets.QMainWindow):
     rebuild_asset_search_sources = F8StudioMainWin.rebuild_asset_search_sources
     _on_asset_cache_changed = F8StudioMainWin._on_asset_cache_changed
     _clear_asset_cache_changed_subscription = F8StudioMainWin._clear_asset_cache_changed_subscription
+    _build_main_window_toolbars = F8StudioMainWin._build_main_window_toolbars
+    _add_expanding_spacer = F8StudioMainWin._add_expanding_spacer
+    _set_action_text_beside_icon = F8StudioMainWin._set_action_text_beside_icon
+    _set_edge_visibility_action_icon = F8StudioMainWin._set_edge_visibility_action_icon
 
     class _FakeViewer(F8StudioNodeViewer):
         def __init__(self) -> None:
@@ -331,6 +335,53 @@ def test_file_menu_exposes_export_to_component(tmp_path: Path) -> None:
         "Export Published Session",
     ]
     assert window._save_component_action in file_menu.actions()
+
+
+def test_run_toolbar_places_global_hotkeys_after_variant_catalog(tmp_path: Path) -> None:
+    _ensure_app()
+    window = _LayoutHarness(_new_settings(tmp_path / "studio-toolbar.ini"))
+
+    window._build_main_window_toolbars(
+        graph_actions=[
+            window._open_project_action,
+            window._quicksave_project_action,
+            window._save_project_as_action,
+            window._clear_all_nodes_action,
+            window._project_history_action,
+            window._manage_components_action,
+            window._variant_catalog_action,
+            window._global_hotkeys_action,
+        ],
+        deploy_actions=[
+            window._deploy_action,
+            window._stop_all_services_action,
+            window._auto_deploy_action,
+        ],
+        dock_actions=[],
+        account_clicked=lambda: None,
+        exec_toggled=lambda _checked: None,
+        data_toggled=lambda _checked: None,
+        state_toggled=lambda _checked: None,
+    )
+
+    toolbar = window.findChild(QtWidgets.QToolBar, "RunToolBar")
+    assert toolbar is not None
+    action_texts_before_separator: list[str] = []
+    for action in toolbar.actions():
+        if action.isSeparator():
+            break
+        action_texts_before_separator.append(action.text())
+
+    assert action_texts_before_separator == [
+        "Open Project",
+        "Quick Save",
+        "Save Project As",
+        "Clear All Nodes",
+        "Project History",
+        "Manage Components",
+        "Variant Catalog",
+        "Global Hotkeys",
+    ]
 
 
 def test_performance_overlay_setting_is_applied_and_restored(tmp_path: Path) -> None:

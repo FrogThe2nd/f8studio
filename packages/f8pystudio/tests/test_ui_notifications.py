@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from qtpy import QtTest, QtWidgets
+from qtpy import QtCore, QtGui, QtTest, QtWidgets
 
 from f8pystudio.monitoring import alerts
 from f8pystudio.monitoring.alerts import MonitorAlertNotifier
@@ -8,9 +8,12 @@ from f8pystudio.ui.support.ui_notifications import (
     _ACTIVE_TOASTS,
     _INFO_STYLE,
     _StudioToast,
+    _TOAST_DURATION_MS,
     _TOAST_SPACING,
     _rich_text_message,
     _use_safe_toast_window_mode,
+    show_error,
+    show_warning,
 )
 
 
@@ -115,6 +118,12 @@ def test_monitor_alert_notifier_ignores_info_and_clear_snapshots(monkeypatch) ->
     assert len(shown) == 1
 
 
+def _close_active_toasts() -> None:
+    for toast in list(_ACTIVE_TOASTS):
+        toast.close()
+    QtWidgets.QApplication.processEvents()
+
+
 def test_rich_text_message_preserves_newlines_and_wrap_hints() -> None:
     html_message = _rich_text_message("Saved to:\n/tmp/very-long_name.json")
 
@@ -127,6 +136,7 @@ def test_rich_text_message_preserves_newlines_and_wrap_hints() -> None:
 
 def test_toast_uses_safe_window_mode_under_pytest() -> None:
     _ensure_app()
+    _close_active_toasts()
 
     toast = _StudioToast(
         anchor=None,
@@ -146,6 +156,7 @@ def test_toast_uses_safe_window_mode_under_pytest() -> None:
 
 def test_studio_toast_expands_for_multiline_path_message() -> None:
     _ensure_app()
+    _close_active_toasts()
     parent = QtWidgets.QWidget()
     parent.setGeometry(100, 120, 920, 720)
     parent.show()
@@ -177,6 +188,7 @@ def test_studio_toast_expands_for_multiline_path_message() -> None:
 
 def test_studio_toast_auto_closes_after_duration() -> None:
     _ensure_app()
+    _close_active_toasts()
     parent = QtWidgets.QWidget()
     parent.setGeometry(100, 120, 920, 720)
     parent.show()
@@ -209,6 +221,7 @@ def test_studio_toast_auto_closes_after_duration() -> None:
 
 def test_studio_toast_reflows_without_overlap_after_bottom_toast_closes() -> None:
     _ensure_app()
+    _close_active_toasts()
     parent = QtWidgets.QWidget()
     parent.setGeometry(100, 120, 920, 720)
     parent.show()
@@ -263,6 +276,7 @@ def test_studio_toast_reflows_without_overlap_after_bottom_toast_closes() -> Non
 
 def test_studio_toast_falls_back_to_screen_geometry_after_anchor_deletion() -> None:
     _ensure_app()
+    _close_active_toasts()
     parent = QtWidgets.QWidget()
     parent.setGeometry(100, 120, 920, 720)
     parent.show()
@@ -302,4 +316,171 @@ def test_studio_toast_falls_back_to_screen_geometry_after_anchor_deletion() -> N
     assert toast_top in _ACTIVE_TOASTS
 
     toast_top.close()
+    QtWidgets.QApplication.processEvents()
+
+
+def test_warning_toast_stays_visible_until_acknowledged() -> None:
+    _ensure_app()
+    _close_active_toasts()
+    parent = QtWidgets.QWidget()
+    parent.setGeometry(100, 120, 920, 720)
+    parent.show()
+
+    show_warning(parent, "Deploy failed", "RuntimeError: boom")
+    QtWidgets.QApplication.processEvents()
+
+    assert len(_ACTIVE_TOASTS) == 1
+    toast = _ACTIVE_TOASTS[0]
+    assert toast._duration_ms == 0
+
+    QtTest.QTest.qWait(_TOAST_DURATION_MS + 160)
+    QtWidgets.QApplication.processEvents()
+
+    assert toast in _ACTIVE_TOASTS
+    assert toast.isVisible()
+
+    toast.close_animated()
+    QtWidgets.QApplication.processEvents()
+
+    assert toast not in _ACTIVE_TOASTS
+
+    parent.close()
+    QtWidgets.QApplication.processEvents()
+
+
+def test_error_toast_copy_button_copies_debuggable_text() -> None:
+    _ensure_app()
+    _close_active_toasts()
+    parent = QtWidgets.QWidget()
+    parent.setGeometry(100, 120, 920, 720)
+    parent.show()
+
+    clipboard = QtGui.QGuiApplication.clipboard()
+    assert clipboard is not None
+    clipboard.setText("")
+
+    show_error(parent, "Publish failed", "ValueError: bad payload")
+    QtWidgets.QApplication.processEvents()
+
+    toast = _ACTIVE_TOASTS[0]
+    copy_button = toast.findChild(QtWidgets.QToolButton, "studio-toast-copy")
+    assert copy_button is not None
+
+    copy_button.click()
+
+    copied = clipboard.text()
+    assert "Severity: ERROR" in copied
+    assert "Title: Publish failed" in copied
+    assert "Created:" in copied
+    assert "Message:\nValueError: bad payload" in copied
+
+    toast.close()
+    parent.close()
+    QtWidgets.QApplication.processEvents()
+
+
+def test_repeated_warning_updates_existing_sticky_toast() -> None:
+    _ensure_app()
+    _close_active_toasts()
+    parent = QtWidgets.QWidget()
+    parent.setGeometry(100, 120, 920, 720)
+    parent.show()
+
+    show_warning(parent, "Refresh failed", "network timeout")
+    show_warning(parent, "Refresh failed", "network timeout")
+    QtWidgets.QApplication.processEvents()
+
+    assert len(_ACTIVE_TOASTS) == 1
+    toast = _ACTIVE_TOASTS[0]
+    title_label = toast.findChild(QtWidgets.QLabel, "studio-toast-title")
+    assert title_label is not None
+    assert "x2" in title_label.text()
+
+    clipboard = QtGui.QGuiApplication.clipboard()
+    assert clipboard is not None
+    clipboard.setText("")
+    copy_button = toast.findChild(QtWidgets.QToolButton, "studio-toast-copy")
+    assert copy_button is not None
+    copy_button.click()
+
+    copied = clipboard.text()
+    assert "Repeat count: 2" in copied
+    assert "network timeout" in copied
+
+    toast.close()
+    parent.close()
+    QtWidgets.QApplication.processEvents()
+
+
+def test_distinct_sticky_toasts_roll_up_after_three_details() -> None:
+    _ensure_app()
+    _close_active_toasts()
+    parent = QtWidgets.QWidget()
+    parent.setGeometry(100, 120, 920, 720)
+    parent.show()
+
+    for index in range(5):
+        show_warning(parent, f"Warning {index}", f"message {index}")
+    QtWidgets.QApplication.processEvents()
+
+    visible_toasts = [toast for toast in _ACTIVE_TOASTS if toast.isVisible()]
+    detail_toasts = [toast for toast in visible_toasts if not toast._is_rollup]
+    rollup_toasts = [toast for toast in visible_toasts if toast._is_rollup]
+
+    assert len(visible_toasts) == 4
+    assert len(detail_toasts) == 3
+    assert len(rollup_toasts) == 1
+
+    rollup = rollup_toasts[0]
+    rollup_title = rollup.findChild(QtWidgets.QLabel, "studio-toast-title")
+    assert rollup_title is not None
+    assert "More notifications (2)" in rollup_title.text()
+
+    clipboard = QtGui.QGuiApplication.clipboard()
+    assert clipboard is not None
+    clipboard.setText("")
+    copy_button = rollup.findChild(QtWidgets.QToolButton, "studio-toast-copy")
+    assert copy_button is not None
+    copy_button.click()
+
+    copied = clipboard.text()
+    assert "Title: Warning 0" in copied
+    assert "message 0" in copied
+    assert "Title: Warning 1" in copied
+    assert "message 1" in copied
+
+    _close_active_toasts()
+    parent.close()
+    QtWidgets.QApplication.processEvents()
+
+
+def test_warning_toast_logs_button_opens_service_logs_dock() -> None:
+    _ensure_app()
+    _close_active_toasts()
+    window = QtWidgets.QMainWindow()
+    window.setGeometry(100, 120, 920, 720)
+    dock = QtWidgets.QDockWidget("Service Logs", window)
+    dock.setObjectName("ServiceLogsDock")
+    dock.setWidget(QtWidgets.QPlainTextEdit())
+    window.addDockWidget(QtCore.Qt.DockWidgetArea.BottomDockWidgetArea, dock)
+    window.show()
+    dock.setVisible(False)
+    QtWidgets.QApplication.processEvents()
+
+    show_warning(window, "Deploy failed", "compile failed")
+    QtWidgets.QApplication.processEvents()
+
+    toast = _ACTIVE_TOASTS[0]
+    logs_button = toast.findChild(QtWidgets.QToolButton, "studio-toast-logs")
+    assert logs_button is not None
+    assert logs_button.isVisible()
+    assert not dock.isVisible()
+
+    logs_button.click()
+    QtWidgets.QApplication.processEvents()
+
+    assert dock.isVisible()
+
+    _close_active_toasts()
+    window.close()
     QtWidgets.QApplication.processEvents()

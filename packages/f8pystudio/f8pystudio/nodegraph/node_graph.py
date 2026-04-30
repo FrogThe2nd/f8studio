@@ -99,11 +99,15 @@ class F8StudioGraph(
         self._unsubscribe_asset_cache_changed = None
         if asset_cache_auto_refresh:
             self._unsubscribe_asset_cache_changed = subscribe_asset_cache_changed(self._on_asset_cache_changed)
+        self._global_hotkey_controller: Any | None = None
+        self._global_hotkey_node_id_snapshot: frozenset[str] = frozenset()
         self.property_changed.connect(self._on_property_changed)  # type: ignore[attr-defined]
+        self.node_created.connect(self._on_global_hotkey_node_created)  # type: ignore[attr-defined]
+        self.nodes_deleted.connect(self._on_global_hotkey_nodes_deleted)  # type: ignore[attr-defined]
+        self._undo_stack.indexChanged.connect(self._on_global_hotkey_undo_index_changed)  # type: ignore[attr-defined]
         self.destroyed.connect(self._on_destroyed)  # type: ignore[attr-defined]
 
         self._service_bridge: ServiceBridge | None = None
-        self._global_hotkey_controller: Any | None = None
         self._reclaim_timers: dict[str, QtCore.QTimer] = {}
         self._session_layer_defs = normalize_layer_defs(())
         self._active_layer_ids = tuple(layer.id for layer in self._session_layer_defs if layer.default_visible)
@@ -246,9 +250,51 @@ class F8StudioGraph(
     def global_hotkey_controller(self) -> Any | None:
         return self._global_hotkey_controller
 
+    def schedule_global_hotkey_refresh(self) -> None:
+        controller = self._global_hotkey_controller
+        if controller is None:
+            return
+        try:
+            controller.schedule_refresh()
+        except Exception:
+            logger.exception("Failed to schedule global hotkey refresh")
+
+    def _current_global_hotkey_node_id_snapshot(self) -> frozenset[str]:
+        node_ids: set[str] = set()
+        for node in list(self.all_nodes() or []):
+            try:
+                node_id = str(node.id or "").strip()
+            except (AttributeError, RuntimeError, TypeError):
+                continue
+            if node_id:
+                node_ids.add(node_id)
+        return frozenset(node_ids)
+
+    def _schedule_global_hotkey_refresh_after_node_set_changed(self) -> None:
+        self._global_hotkey_node_id_snapshot = self._current_global_hotkey_node_id_snapshot()
+        self.schedule_global_hotkey_refresh()
+
     def _on_property_changed(self, node: Any, name: str, value: Any) -> None:
-        _ = (node, name, value)
-        return
+        controller = self._global_hotkey_controller
+        if controller is None:
+            return
+        try:
+            controller.on_graph_property_changed(node, name, value)
+        except Exception:
+            logger.exception("Failed to handle global hotkey property change")
+
+    def _on_global_hotkey_node_created(self, _node: object) -> None:
+        self._schedule_global_hotkey_refresh_after_node_set_changed()
+
+    def _on_global_hotkey_nodes_deleted(self, _node_ids: list[str]) -> None:
+        self._schedule_global_hotkey_refresh_after_node_set_changed()
+
+    def _on_global_hotkey_undo_index_changed(self, _index: int) -> None:
+        current_snapshot = self._current_global_hotkey_node_id_snapshot()
+        if current_snapshot == self._global_hotkey_node_id_snapshot:
+            return
+        self._global_hotkey_node_id_snapshot = current_snapshot
+        self.schedule_global_hotkey_refresh()
 
     def _on_node_backdrop_updated(self, node_id: str, update_property: str, value: Any) -> None:
         node = self.get_node_by_id(str(node_id or ""))

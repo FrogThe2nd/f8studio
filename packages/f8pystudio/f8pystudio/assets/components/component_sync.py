@@ -1092,12 +1092,21 @@ def _merge_refreshed_component_scope_entries(
     existing_scope_by_id: dict[str, F8ComponentEntry] = {
         str(entry.record.componentId): entry for entry in existing_scope_entries if str(entry.record.componentId).strip()
     }
-    refreshed: list[F8ComponentEntry] = []
+    refreshed_by_id: dict[str, F8ComponentEntry] = {}
+    refreshed_ids: list[str] = []
     for entry in page.entries:
-        existing_entry = existing_scope_by_id.get(str(entry.record.componentId))
+        component_id = str(entry.record.componentId or "").strip()
+        if not component_id:
+            continue
+        existing_entry = refreshed_by_id.get(component_id)
+        if existing_entry is None:
+            existing_entry = existing_scope_by_id.get(component_id)
         if existing_entry is not None:
             entry = _merge_component_entries(existing_entry, entry)
-        refreshed.append(entry)
+        if component_id not in refreshed_by_id:
+            refreshed_ids.append(component_id)
+        refreshed_by_id[component_id] = entry
+    refreshed = [refreshed_by_id[component_id] for component_id in refreshed_ids]
     if append:
         merged_scope_entries: dict[str, F8ComponentEntry] = {
             str(entry.record.componentId): entry for entry in existing_scope_entries

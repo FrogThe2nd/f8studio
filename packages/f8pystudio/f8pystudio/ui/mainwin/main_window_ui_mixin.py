@@ -677,6 +677,7 @@ class MainWindowUiMixin:
                 self._project_history_action,
                 self._manage_components_action,
                 self._variant_catalog_action,
+                self._global_hotkeys_action,
             ],
             deploy_actions=[
                 self._deploy_action,

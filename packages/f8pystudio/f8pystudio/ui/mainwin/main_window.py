@@ -244,7 +244,6 @@ class F8StudioMainWin(
         )
         self.studio_graph.set_global_hotkey_controller(self._global_hotkey_controller)
         self.studio_graph.property_changed.connect(self._on_ui_property_changed)  # type: ignore[attr-defined]
-        self.studio_graph.nodes_deleted.connect(self._on_graph_nodes_deleted)  # type: ignore[attr-defined]
         self.studio_graph.set_node_docs_dialog_opener(self._open_node_docs_dialog_for_graph)
         self._unsubscribe_asset_cache_changed = subscribe_asset_cache_changed(self._on_asset_cache_changed)
 

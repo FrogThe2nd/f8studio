@@ -13,6 +13,7 @@ from ..components.component_models import (
     F8ComponentEntry,
     F8ComponentRemoteAuthError,
     F8ComponentRemoteListPage,
+    F8ComponentRemoteRequestError,
     F8ComponentRemoteUser,
 )
 from ..components.component_sync import ComponentSyncClient
@@ -21,6 +22,7 @@ from ..variants.variant_models import (
     F8VariantEntry,
     F8VariantRemoteAuthError,
     F8VariantRemoteListPage,
+    F8VariantRemoteRequestError,
     F8VariantRemoteUser,
 )
 from ..variants.variant_sync import VariantSyncClient
@@ -183,12 +185,18 @@ class SubscriptionSyncService(QtCore.QObject):
         except F8VariantRemoteAuthError as exc:
             self._complete_after_collection_auth_failure(request_kind=request_kind, exc=exc)
             return
+        except F8VariantRemoteRequestError as exc:
+            self._complete_after_collection_request_failure(request_kind=request_kind, asset_kind="variant", exc=exc)
+            return
         if self._cancelled():
             return
         try:
             component_items, component_skipped = self._collect_component_items(component_client)
         except F8ComponentRemoteAuthError as exc:
             self._complete_after_collection_auth_failure(request_kind=request_kind, exc=exc)
+            return
+        except F8ComponentRemoteRequestError as exc:
+            self._complete_after_collection_request_failure(request_kind=request_kind, asset_kind="component", exc=exc)
             return
         if self._cancelled():
             return
@@ -225,6 +233,20 @@ class SubscriptionSyncService(QtCore.QObject):
                 )
                 self.sync_progress.emit(done, total)
                 break
+            except (F8VariantRemoteRequestError, F8ComponentRemoteRequestError) as exc:
+                failed += 1
+                done += 1
+                skipped += total - done
+                self.sync_item_failed.emit(item.asset_id, str(exc))
+                logger.warning(
+                    "Subscription sync halted after remote request failure request_kind=%s asset_kind=%s asset_id=%s error=%s",
+                    request_kind,
+                    item.asset_kind,
+                    item.asset_id,
+                    str(exc),
+                )
+                self.sync_progress.emit(done, total)
+                break
             except Exception as exc:
                 failed += 1
                 done += 1
@@ -241,6 +263,23 @@ class SubscriptionSyncService(QtCore.QObject):
             self.sync_progress.emit(done, total)
 
         self.sync_finished.emit(installed, failed, skipped)
+        with self._state_lock:
+            self._last_completed_request_kind = request_kind
+
+    def _complete_after_collection_request_failure(
+        self,
+        *,
+        request_kind: RequestKind,
+        asset_kind: AssetKind,
+        exc: F8VariantRemoteRequestError | F8ComponentRemoteRequestError,
+    ) -> None:
+        logger.warning(
+            "Subscription sync skipped after remote request failure request_kind=%s asset_kind=%s error=%s",
+            request_kind,
+            asset_kind,
+            str(exc),
+        )
+        self.sync_finished.emit(0, 1, 0)
         with self._state_lock:
             self._last_completed_request_kind = request_kind
 
@@ -261,6 +300,7 @@ class SubscriptionSyncService(QtCore.QObject):
 
     def _collect_variant_items(self, client: VariantSyncClientLike) -> tuple[list[_SyncItem], int]:
         items: list[_SyncItem] = []
+        queued_asset_ids: set[str] = set()
         skipped = 0
         cursor = ""
         append = False
@@ -270,9 +310,12 @@ class SubscriptionSyncService(QtCore.QObject):
             page = client.refresh_scope_page(scope="subscribed", cursor=cursor, append=append)
             for entry in page.entries:
                 asset_id = str(entry.record.variantId)
+                if asset_id in queued_asset_ids:
+                    continue
                 cached_entry = client.remote_entry(asset_id)
                 if cached_entry is None or not variant_entry_is_installed(cached_entry):
                     items.append(_SyncItem(asset_kind="variant", asset_id=asset_id))
+                    queued_asset_ids.add(asset_id)
                 else:
                     skipped += 1
             cursor = "" if page.nextCursor is None else str(page.nextCursor)
@@ -283,6 +326,7 @@ class SubscriptionSyncService(QtCore.QObject):
 
     def _collect_component_items(self, client: ComponentSyncClientLike) -> tuple[list[_SyncItem], int]:
         items: list[_SyncItem] = []
+        queued_asset_ids: set[str] = set()
         skipped = 0
         cursor = ""
         append = False
@@ -292,9 +336,12 @@ class SubscriptionSyncService(QtCore.QObject):
             page = client.refresh_scope_page(scope="subscribed", cursor=cursor, append=append)
             for entry in page.entries:
                 asset_id = str(entry.record.componentId)
+                if asset_id in queued_asset_ids:
+                    continue
                 cached_entry = client.remote_entry(asset_id)
                 if cached_entry is None or not component_entry_is_installed(cached_entry):
                     items.append(_SyncItem(asset_kind="component", asset_id=asset_id))
+                    queued_asset_ids.add(asset_id)
                 else:
                     skipped += 1
             cursor = "" if page.nextCursor is None else str(page.nextCursor)

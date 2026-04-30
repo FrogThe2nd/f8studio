@@ -13,7 +13,6 @@ from f8pystudio.contracts.ui_commands import UiCommand, UiCommandApplier
 from f8pystudio.studio_specs.registry import SERVICE_CLASS as STUDIO_SERVICE_CLASS
 
 if TYPE_CHECKING:
-    from ...global_hotkeys.controller import ControlPanelGlobalHotkeyController
     from ...monitoring.alerts import MonitorAlertNotifier
     from ...nodegraph.node_graph import F8StudioGraph
     from ..support.runtime_state_sync import RuntimeStateSyncController
@@ -33,7 +32,6 @@ class MainWindowRuntimeMixin:
         _service_manager: ServiceManagerWidget | None
         _prop_editor: F8StudioSingleNodePropertiesWidget
         _runtime_state_sync: RuntimeStateSyncController
-        _global_hotkey_controller: ControlPanelGlobalHotkeyController
         _monitor_alert_notifier: MonitorAlertNotifier
 
         def _mark_auto_deploy_synced(self, *, compiled: CompiledRuntimeGraphs | None = None) -> None: ...
@@ -226,10 +224,6 @@ class MainWindowRuntimeMixin:
 
     def _on_ui_property_changed(self, node: object, name: str, value: object) -> None:
         self._runtime_state_sync.on_ui_property_changed(node, name, value)
-        self._global_hotkey_controller.on_graph_property_changed(node, name, value)
-
-    def _on_graph_nodes_deleted(self, node_ids: list[str]) -> None:
-        self._global_hotkey_controller.on_nodes_deleted(node_ids)
 
     def _append_studio_log_line(self, line: str) -> None:
         text = str(line or "")
