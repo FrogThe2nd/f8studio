@@ -9,6 +9,7 @@ from qtpy import QtCore, QtWidgets
 from f8pysdk.command import command_input_state_field
 from f8pysdk.specs import schema_default, schema_type
 
+from f8pystudio.command_invocation import command_state_payload
 from f8pystudio.contracts.command_ui import CommandUiHandler, CommandUiSource
 from ...ui.components.controls import F8OptionCombo, F8Switch, F8ValueBar, parse_select_pool
 from ...ui.support.ui_notifications import show_warning
@@ -404,7 +405,7 @@ def invoke_command(node_item: Any, cmd: Any) -> None:
                 sid,
                 node_id,
                 command_input_state_field(call),
-                {},
+                command_state_payload({}),
             )
         except Exception:
             logger.exception(
@@ -423,7 +424,7 @@ def invoke_command(node_item: Any, cmd: Any) -> None:
             sid,
             node_id,
             command_input_state_field(call),
-            args,
+            command_state_payload(args),
         )
     except Exception:
         logger.exception("set_remote_state failed serviceId=%s nodeId=%s call=%s", sid, node_id, call)

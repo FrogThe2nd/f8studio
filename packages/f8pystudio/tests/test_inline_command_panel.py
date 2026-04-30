@@ -7,6 +7,7 @@ from qtpy import QtCore, QtWidgets
 from f8pysdk.specs import F8Command, F8OperatorSpec, F8ServiceSpec
 from f8pysdk.command import command_input_state_field
 
+from f8pystudio.command_invocation import command_state_payload
 from f8pystudio.nodegraph.items.inline_command_panel import (
     COMMAND_INLINE_BUTTON_STYLE,
     _on_command_pressed,
@@ -333,9 +334,10 @@ def test_invoke_command_uses_hidden_input_state_for_operator_commands() -> None:
     invoke_command(node_item, _FakeCommand("Run", "Run command", True, []))
 
     assert node_item._bridge_obj.calls == []
-    assert node_item._bridge_obj.state_writes == [
-        ("svcA", "opA", command_input_state_field("Run"), {})
-    ]
+    assert len(node_item._bridge_obj.state_writes) == 1
+    service_id, node_id, field, value = node_item._bridge_obj.state_writes[0]
+    assert (service_id, node_id, field) == ("svcA", "opA", command_input_state_field("Run"))
+    assert isinstance(value, int)
 
 
 def test_invoke_command_uses_hidden_input_state_for_service_commands() -> None:
@@ -350,6 +352,35 @@ def test_invoke_command_uses_hidden_input_state_for_service_commands() -> None:
     invoke_command(node_item, _FakeCommand("Run", "Run command", True, []))
 
     assert node_item._bridge_obj.calls == []
-    assert node_item._bridge_obj.state_writes == [
-        ("svcA", "svcA", command_input_state_field("Run"), {})
-    ]
+    assert len(node_item._bridge_obj.state_writes) == 1
+    service_id, node_id, field, value = node_item._bridge_obj.state_writes[0]
+    assert (service_id, node_id, field) == ("svcA", "svcA", command_input_state_field("Run"))
+    assert isinstance(value, int)
+
+
+def test_invoke_command_uses_fresh_trigger_value_for_each_press() -> None:
+    service_spec = F8ServiceSpec(
+        serviceClass="f8.test.service",
+        label="Service",
+        commands=[F8Command(name="Run", description="Run command", showOnNode=True, params=[])],
+    )
+    backend = type("Backend", (), {"spec": service_spec})()
+    node_item = _InvokeNodeItem(service_running=True, backend_node=backend, node_id="svcA")
+
+    invoke_command(node_item, _FakeCommand("Run", "Run command", True, []))
+    invoke_command(node_item, _FakeCommand("Run", "Run command", True, []))
+
+    assert len(node_item._bridge_obj.state_writes) == 2
+    first_value = node_item._bridge_obj.state_writes[0][3]
+    second_value = node_item._bridge_obj.state_writes[1][3]
+    assert isinstance(first_value, int)
+    assert isinstance(second_value, int)
+    assert first_value != second_value
+
+
+def test_command_state_payload_preserves_args_and_adds_trigger_id() -> None:
+    payload = command_state_payload({"threshold": 0.8})
+
+    assert isinstance(payload, dict)
+    assert payload["threshold"] == 0.8
+    assert isinstance(payload["__f8CommandTriggerId"], int)

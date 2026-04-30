@@ -695,6 +695,32 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await bus.get_state("sink", "value")).value, {"echo": {"a": 1, "b": 2}})
         self.assertEqual(sink_node.state_calls, [("value", {"echo": {"a": 1, "b": 2}})])
 
+    async def test_hidden_command_input_repeated_same_value_dispatches_each_write(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svc")
+        service_node = _CommandServiceNode("svc")
+        bus.register_node(service_node)
+
+        graph = F8RuntimeGraph(
+            graphId="g1",
+            revision="r1",
+            nodes=[
+                F8RuntimeNode(
+                    nodeId="svc",
+                    serviceId="svc",
+                    serviceClass="svc.test.command",
+                    stateFields=hidden_command_state_specs(list(service_node.spec.commands or [])),
+                )
+            ],
+            edges=[],
+        )
+        await bus.set_rungraph(graph)
+
+        await bus.publish_state_external("svc", command_input_state_field("nop"), {}, ts_ms=10)
+        await bus.publish_state_external("svc", command_input_state_field("nop"), {}, ts_ms=11)
+
+        self.assertEqual(service_node.command_calls, [("nop", {}), ("nop", {})])
+
     async def test_hidden_command_busy_policy_keeps_latest_pending_value(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svc")

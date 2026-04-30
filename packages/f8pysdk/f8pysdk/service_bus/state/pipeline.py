@@ -335,12 +335,13 @@ async def publish_state(
     payload = _build_state_payload(update)
 
     key = kv_key_node_state(node_id=node_id, field=field)
+    is_hidden_command_state = bus.command_gateway.is_hidden_field(node_id=node_id, field=field)
     # Value-dedupe: avoid republishing identical values.
     #
     # This is important for intra-service state edges: a graph may contain
     # cycles, and without dedupe a value can loop until hop-limit cutoff.
     existing = bus.state_store.cache_entry(node_id=node_id, field=field)
-    if existing is not None:
+    if existing is not None and not is_hidden_command_state:
         try:
             if existing[0] == update.value:
                 if bus._debug_state:

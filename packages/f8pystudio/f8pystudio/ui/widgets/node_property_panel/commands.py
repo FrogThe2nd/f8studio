@@ -18,6 +18,7 @@ from f8pysdk.specs import schema_default
 
 from qtpy import QtCore, QtWidgets
 
+from f8pystudio.command_invocation import command_state_payload
 from f8pystudio.contracts.command_ui import CommandUiHandler, CommandUiSource
 from ...components.controls import F8OptionCombo, F8Switch, F8ValueBar
 from ....ui.support.ui_notifications import show_warning
@@ -785,7 +786,7 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
                 sid,
                 node_id,
                 command_input_state_field(str(cmd.name or "")),
-                args or {},
+                command_state_payload(args),
             )
         except Exception as e:
             show_warning(self, "Command failed", str(e))
