@@ -57,14 +57,23 @@ json monitor_port_schema() {
   };
   const json frame = json{
       {"type", "object"},
-      {"properties", json{{"observed", schema_integer(0)}, {"processed", schema_integer(0)}, {"dropped", schema_integer(0)}}},
+      {"properties", json{{"observed", schema_integer(0)},
+                           {"processed", schema_integer(0)},
+                           {"dropped", schema_integer(0)},
+                           {"localOnlyEmits", schema_integer(0)},
+                           {"routedCrossEmits", schema_integer(0)},
+                           {"suppressedCrossPublishes", schema_integer(0)},
+                           {"callbackDeliveries", schema_integer(0)},
+                           {"bufferPullDeliveries", schema_integer(0)}}},
   };
   const json timing = json{
       {"type", "object"},
       {"properties", json{{"processMsAvg", schema_number(0.0)},
                            {"processMsP95", schema_number(0.0)},
                            {"waitMsAvg", schema_number(0.0)},
-                           {"waitMsP95", schema_number(0.0)}}},
+                           {"waitMsP95", schema_number(0.0)},
+                           {"latencyMsAvg", schema_number(0.0)},
+                           {"latencyMsP95", schema_number(0.0)}}},
   };
   const json queue = json{
       {"type", "object"},
@@ -73,9 +82,24 @@ json monitor_port_schema() {
   const json error = json{
       {"type", "object"},
       {"properties", json{{"countWindow", schema_integer(0)},
+                           {"lastNodeId", json{{"type", "string"}, {"default", ""}}},
                            {"lastCode", json{{"type", "string"}, {"default", ""}}},
                            {"lastMessage", json{{"type", "string"}, {"default", ""}}},
-                           {"lastTsMs", schema_integer(0)}}},
+                           {"lastSeverity",
+                            json{{"type", "string"},
+                                 {"default", "error"},
+                                 {"enum", json::array({"critical", "error", "info", "warning"})}}},
+                           {"lastFingerprint", json{{"type", "string"}, {"default", ""}}},
+                           {"lastRepeatCount", schema_integer(0)},
+                           {"lastTsMs", schema_integer(0)},
+                           {"currentNodeId", json{{"type", "string"}, {"default", ""}}},
+                           {"currentCode", json{{"type", "string"}, {"default", ""}}},
+                           {"currentMessage", json{{"type", "string"}, {"default", ""}}},
+                           {"currentSeverity",
+                            json{{"type", "string"},
+                                 {"default", ""},
+                                 {"enum", json::array({"", "info", "warning", "error", "critical"})}}},
+                           {"currentTsMs", schema_integer(0)}}},
   };
 
   return json{

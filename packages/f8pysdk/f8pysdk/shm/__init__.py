@@ -11,7 +11,7 @@ from .audio import (
     read_audio_header,
     read_chunk_header,
 )
-from .core import open_shared_memory_create, open_shared_memory_readonly
+from .core import open_shared_memory_create, open_shared_memory_open_or_create, open_shared_memory_readonly, unlink_shared_memory
 from .naming import (
     DEFAULT_AUDIO_SHM_BYTES,
     DEFAULT_VIDEO_SHM_BYTES,
@@ -54,6 +54,8 @@ __all__ = [
     "read_chunk_header",
     "open_shared_memory_readonly",
     "open_shared_memory_create",
+    "open_shared_memory_open_or_create",
+    "unlink_shared_memory",
     "DEFAULT_VIDEO_SHM_BYTES",
     "DEFAULT_VIDEO_SHM_SLOTS",
     "DEFAULT_AUDIO_SHM_BYTES",

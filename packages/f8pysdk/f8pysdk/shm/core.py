@@ -50,3 +50,49 @@ def open_shared_memory_create(name: str, size: int) -> SharedMemory:
     Note: unlinking is a separate, explicit action (call shm.unlink()).
     """
     return _open_shared_memory(name=name, create=True, size=size)
+
+
+def unlink_shared_memory(name: str) -> None:
+    """
+    Unlink a shared memory name if it exists.
+
+    Existing mappings stay alive until their processes close them; this only removes the
+    name so a future creator can allocate a fresh block.
+    """
+    try:
+        shm = open_shared_memory_readonly(name)
+    except FileNotFoundError:
+        return
+    try:
+        shm.unlink()
+    finally:
+        shm.close()
+
+
+def open_shared_memory_open_or_create(name: str, size: int) -> SharedMemory:
+    """
+    Open an existing shared memory block, or create it when it does not exist.
+
+    POSIX SHM names can survive service restarts. Writers own the header layout, so
+    reusing a same-or-larger block is enough; smaller stale blocks are unlinked and
+    recreated to satisfy the requested capacity.
+    """
+    requested_size = int(size)
+    try:
+        return open_shared_memory_create(name, requested_size)
+    except FileExistsError:
+        pass
+
+    try:
+        existing = open_shared_memory_readonly(name)
+    except FileNotFoundError:
+        return open_shared_memory_create(name, requested_size)
+
+    if int(existing.size) >= requested_size:
+        return existing
+
+    try:
+        existing.unlink()
+    finally:
+        existing.close()
+    return open_shared_memory_create(name, requested_size)

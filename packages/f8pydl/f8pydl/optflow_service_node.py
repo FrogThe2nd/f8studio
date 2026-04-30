@@ -232,6 +232,7 @@ class OnnxOptflowServiceNode(ServiceNode):
         self._model_id = ""
         self._ort_provider: Literal["auto", "cuda", "cpu"] = "auto"
         self._input_shm_name = ""
+        self._input_shm_resync_next_monotonic = 0.0
         self._compute_every_n_frames = 2
         self._auto_download_weights = True
         self._download_retry_at_monotonic = 0.0
@@ -282,49 +283,40 @@ class OnnxOptflowServiceNode(ServiceNode):
         self._active = bool(active)
 
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
-        del value
         del ts_ms
         name = str(field or "").strip()
         await self._ensure_config_loaded()
 
         if name == "weightsDir":
-            raw = coerce_str(await self.get_state_value("weightsDir"), default=str(self._weights_dir))
+            raw = coerce_str(value, default=str(self._weights_dir))
             self._weights_dir = _resolve_path_from_cwd_or_repo(raw)
             await self._publish_model_index()
             await self._reset_runtime()
             return
 
         if name == "modelId":
-            self._model_id = coerce_str(await self.get_state_value("modelId"), default=self._model_id)
+            self._model_id = coerce_str(value, default=self._model_id)
             await self._reset_runtime()
             return
 
         if name == "modelYamlPath":
-            self._model_yaml_path = coerce_str(
-                await self.get_state_value("modelYamlPath"), default=self._model_yaml_path
-            )
+            self._model_yaml_path = coerce_str(value, default=self._model_yaml_path)
             await self._reset_runtime()
             return
 
         if name == "ortProvider":
-            v = coerce_str(await self.get_state_value("ortProvider"), default=str(self._ort_provider)).lower()
+            v = coerce_str(value, default=str(self._ort_provider)).lower()
             self._ort_provider = v if v in ("auto", "cuda", "cpu") else "auto"
             await self._reset_runtime()
             return
 
         if name == "inputShmName":
-            self._input_shm_name = coerce_str(await self.get_state_value("inputShmName"), default=self._input_shm_name)
-            self._frame_cache.reset()
-            self._new_frame_counter = 0
-            self._last_processed_frame_id = None
-            self._last_infer_frame_id = None
-            self._dup_skipped_since_last_processed = 0
-            await self._maybe_reopen_shm()
+            await self._apply_input_shm_name(coerce_str(value, default=self._input_shm_name))
             return
 
         if name == "computeEveryNFrames":
             self._compute_every_n_frames = coerce_int(
-                await self.get_state_value("computeEveryNFrames"),
+                value,
                 default=self._compute_every_n_frames,
                 minimum=1,
                 maximum=120,
@@ -333,7 +325,7 @@ class OnnxOptflowServiceNode(ServiceNode):
 
         if name == "autoDownloadWeights":
             self._auto_download_weights = coerce_bool(
-                await self.get_state_value("autoDownloadWeights"),
+                value,
                 default=self._auto_download_weights,
             )
             return
@@ -373,6 +365,8 @@ class OnnxOptflowServiceNode(ServiceNode):
             default=bool(self._initial_state.get("autoDownloadWeights", True)),
         )
         self._config_loaded = True
+        if self._input_shm_name:
+            await self._clear_missing_input_error()
         await self.set_state("flowShmName", self._flow_shm_name)
         await self.set_state("flowShmFormat", self._flow_shm_format)
         await self._publish_model_index()
@@ -425,7 +419,10 @@ class OnnxOptflowServiceNode(ServiceNode):
             await self.set_state("modelId", self._model_id)
 
     async def _set_last_error(self, message: str) -> None:
-        self._last_error = str(message or "")
+        normalized = str(message or "")
+        if normalized == self._last_error:
+            return
+        self._last_error = normalized
         if self._last_error:
             await self.report_error(
                 "DL_OPTFLOW_RUNTIME",
@@ -494,6 +491,44 @@ class OnnxOptflowServiceNode(ServiceNode):
         if want == self._shm_open_name:
             return
         self._close_shm()
+
+    async def _apply_input_shm_name(self, shm_name: str) -> None:
+        normalized = str(shm_name or "").strip()
+        if normalized == self._input_shm_name:
+            if normalized:
+                await self._clear_missing_input_error()
+            return
+        self._input_shm_name = normalized
+        self._frame_cache.reset()
+        self._new_frame_counter = 0
+        self._last_processed_frame_id = None
+        self._last_infer_frame_id = None
+        self._dup_skipped_since_last_processed = 0
+        await self._maybe_reopen_shm()
+        if normalized:
+            await self._clear_missing_input_error()
+
+    async def _clear_missing_input_error(self) -> None:
+        if self._last_error == "missing inputShmName":
+            await self._set_last_error("")
+            return
+        if not self._last_error:
+            await self.clear_error()
+
+    async def _sync_input_shm_name_from_state(self, *, force: bool = False) -> None:
+        now = time.monotonic()
+        if not force and now < float(self._input_shm_resync_next_monotonic):
+            return
+        self._input_shm_resync_next_monotonic = float(now) + 1.0
+        raw = await self.get_state_value("inputShmName")
+        await self._apply_input_shm_name(coerce_str(raw, default=self._input_shm_name))
+
+    async def _resolve_synced_input_shm_name(self) -> str:
+        input_shm_name = self._resolve_input_shm_name()
+        if input_shm_name:
+            return input_shm_name
+        await self._sync_input_shm_name_from_state()
+        return self._resolve_input_shm_name()
 
     def _resolve_input_shm_name(self) -> str:
         shm_name = str(self._input_shm_name or "").strip()
@@ -668,17 +703,16 @@ class OnnxOptflowServiceNode(ServiceNode):
 
                 await self._ensure_config_loaded()
 
+                input_shm_name = await self._resolve_synced_input_shm_name()
+                if not input_shm_name:
+                    await asyncio.sleep(0.05)
+                    continue
+
                 try:
                     await self._ensure_runtime()
                 except Exception as exc:
                     await self._record_exception(where="ensure_runtime", exc=exc)
                     await asyncio.sleep(0.1)
-                    continue
-
-                input_shm_name = self._resolve_input_shm_name()
-                if not input_shm_name:
-                    await self._set_last_error("missing inputShmName")
-                    await asyncio.sleep(0.05)
                     continue
 
                 if self._shm is None:
@@ -736,7 +770,8 @@ class OnnxOptflowServiceNode(ServiceNode):
                     )
                 )
                 if pair is None:
-                    await self._set_last_error("waiting for frame pair (need at least 2 valid BGRA frames)")
+                    if self._last_error and not self._runtime_warning:
+                        await self._set_last_error("")
                     continue
 
                 if (int(self._new_frame_counter) % int(self._compute_every_n_frames)) != 0:

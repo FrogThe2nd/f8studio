@@ -1,6 +1,8 @@
 import os
 import sys
 import unittest
+from types import SimpleNamespace
+from typing import Any
 
 
 PKG_PYDL = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -11,10 +13,44 @@ for p in (PKG_PYDL, PKG_SDK):
 
 
 from f8pydl.optflow_service_node import (  # noqa: E402
+    OnnxOptflowServiceNode,
     OptflowFramePairCache,
     PreparedFlowFrame,
     pack_flow2_f16_payload,
 )
+from f8pysdk.state import StateRead  # noqa: E402
+
+
+class _BusStub:
+    def __init__(self, initial_state: dict[str, Any] | None = None) -> None:
+        self.state: dict[str, Any] = dict(initial_state or {})
+        self.errors: list[tuple[str, str, str]] = []
+        self.clear_count = 0
+
+    def report_error(
+        self,
+        node_id: str,
+        code: str,
+        message: str,
+        severity: str = "error",
+        fingerprint: str | None = None,
+        ts_ms: int | None = None,
+    ) -> None:
+        del severity, fingerprint, ts_ms
+        self.errors.append((str(node_id), str(code), str(message)))
+
+    def clear_error(self, node_id: str, fingerprint: str | None = None, ts_ms: int | None = None) -> None:
+        del node_id, fingerprint, ts_ms
+        self.clear_count += 1
+
+    async def publish_state_runtime(self, node_id: str, field: str, value: Any, *, ts_ms: int | None = None) -> None:
+        del node_id, field, value, ts_ms
+
+    async def get_state(self, node_id: str, field: str) -> StateRead:
+        del node_id
+        if field in self.state:
+            return StateRead(found=True, value=self.state[field], ts_ms=None)
+        return StateRead(found=False, value=None, ts_ms=None)
 
 
 class OptflowPackAndCacheTests(unittest.TestCase):
@@ -66,6 +102,95 @@ class OptflowPackAndCacheTests(unittest.TestCase):
         self.assertIsNone(cache.push_and_get_pair(f1))
         self.assertIsNone(cache.push_and_get_pair(f2))
         self.assertIsNotNone(cache.push_and_get_pair(f3))
+
+
+class OptflowServiceNodeErrorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_set_last_error_dedupes_repeated_message(self) -> None:
+        bus = _BusStub()
+        node = OnnxOptflowServiceNode(
+            node_id="optflowA",
+            node=SimpleNamespace(stateFields=[]),
+            initial_state=None,
+            service_class="f8.dl.optflow",
+            allowed_tasks={"optflow_neuflowv2"},
+        )
+        node._bus = bus
+
+        await node._set_last_error("missing inputShmName")
+        await node._set_last_error("missing inputShmName")
+        await node._set_last_error("")
+        await node._set_last_error("")
+
+        self.assertEqual(bus.errors, [("optflowA", "DL_OPTFLOW_RUNTIME", "missing inputShmName")])
+        self.assertEqual(bus.clear_count, 1)
+
+    async def test_input_shm_state_callback_uses_callback_value(self) -> None:
+        bus = _BusStub({"inputShmName": ""})
+        node = OnnxOptflowServiceNode(
+            node_id="optflowB",
+            node=SimpleNamespace(stateFields=[]),
+            initial_state=None,
+            service_class="f8.dl.optflow",
+            allowed_tasks={"optflow_neuflowv2"},
+        )
+        node._bus = bus
+        node._config_loaded = True
+
+        await node.on_state("inputShmName", "shm.visible.video")
+
+        self.assertEqual(node._input_shm_name, "shm.visible.video")
+
+    async def test_missing_input_shm_resyncs_from_state_store(self) -> None:
+        bus = _BusStub({"inputShmName": "shm.visible.video"})
+        node = OnnxOptflowServiceNode(
+            node_id="optflowC",
+            node=SimpleNamespace(stateFields=[]),
+            initial_state=None,
+            service_class="f8.dl.optflow",
+            allowed_tasks={"optflow_neuflowv2"},
+        )
+        node._bus = bus
+        node._config_loaded = True
+
+        await node._sync_input_shm_name_from_state(force=True)
+
+        self.assertEqual(node._input_shm_name, "shm.visible.video")
+
+    async def test_missing_input_shm_waits_without_error(self) -> None:
+        bus = _BusStub({"inputShmName": ""})
+        node = OnnxOptflowServiceNode(
+            node_id="optflowD",
+            node=SimpleNamespace(stateFields=[]),
+            initial_state=None,
+            service_class="f8.dl.optflow",
+            allowed_tasks={"optflow_neuflowv2"},
+        )
+        node._bus = bus
+        node._config_loaded = True
+
+        resolved = await node._resolve_synced_input_shm_name()
+
+        self.assertEqual(resolved, "")
+        self.assertEqual(bus.errors, [])
+        self.assertEqual(bus.clear_count, 0)
+
+    async def test_valid_input_shm_clears_stale_missing_error(self) -> None:
+        bus = _BusStub()
+        node = OnnxOptflowServiceNode(
+            node_id="optflowE",
+            node=SimpleNamespace(stateFields=[]),
+            initial_state=None,
+            service_class="f8.dl.optflow",
+            allowed_tasks={"optflow_neuflowv2"},
+        )
+        node._bus = bus
+        node._config_loaded = True
+
+        await node._set_last_error("missing inputShmName")
+        await node._apply_input_shm_name("shm.visible.video")
+
+        self.assertEqual(node._last_error, "")
+        self.assertEqual(bus.clear_count, 1)
 
 
 if __name__ == "__main__":

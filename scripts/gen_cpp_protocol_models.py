@@ -244,7 +244,7 @@ def _gen_header(*, schemas: dict[str, Schema], namespace: str) -> str:
     lines.append("")
     lines.append("inline bool _get_str_req(const nlohmann::json& obj, const char* k, std::string& out, ParseError& err) {")
     lines.append("  auto v = _get_str_opt(obj, k);")
-    lines.append("  if (!v.has_value() || v->empty()) {")
+    lines.append("  if (!v.has_value()) {")
     lines.append("    err.code = \"INVALID_SCHEMA\";")
     lines.append("    err.message = std::string(\"missing/invalid required string: \") + (k ? k : \"\");")
     lines.append("    return false;")
@@ -465,12 +465,12 @@ def _gen_header(*, schemas: dict[str, Schema], namespace: str) -> str:
                         elif inner == "bool":
                             lines.append(f"  for (const auto& it : j[\"{_cpp_escape(key)}\"]) {{ if (!it.is_boolean()) {{ err.code=\"INVALID_SCHEMA\"; err.message=\"array item must be boolean\"; return false; }} out.{member}.push_back(it.get<bool>()); }}")
                         elif inner in struct_names:
-                            lines.append(f"  for (const auto& it : j[\"{_cpp_escape(key)}\"]) {{ {inner} tmp; ParseError e2; if (!parse_{inner}(it, tmp, e2)) return false; out.{member}.push_back(std::move(tmp)); }}")
+                            lines.append(f"  for (const auto& it : j[\"{_cpp_escape(key)}\"]) {{ {inner} tmp; ParseError e2; if (!parse_{inner}(it, tmp, e2)) {{ err = e2; if (!err.message.empty()) err.message = std::string(\"{_cpp_escape(key)}[]: \") + err.message; return false; }} out.{member}.push_back(std::move(tmp)); }}")
                         else:
                             lines.append(f"  for (const auto& it : j[\"{_cpp_escape(key)}\"]) out.{member}.push_back(it);")
                     elif t in struct_names:
                         lines.append(f"  if (!j.contains(\"{_cpp_escape(key)}\")) {{ err.code=\"INVALID_SCHEMA\"; err.message=\"missing required object\"; return false; }}")
-                        lines.append(f"  {{ ParseError e2; if (!parse_{t}(j[\"{_cpp_escape(key)}\"], out.{member}, e2)) return false; }}")
+                        lines.append(f"  {{ ParseError e2; if (!parse_{t}(j[\"{_cpp_escape(key)}\"], out.{member}, e2)) {{ err = e2; if (!err.message.empty()) err.message = std::string(\"{_cpp_escape(key)}: \") + err.message; return false; }} }}")
                     else:
                         lines.append(f"  if (!j.contains(\"{_cpp_escape(key)}\")) {{ err.code=\"INVALID_SCHEMA\"; err.message=\"missing required\"; return false; }}")
                         lines.append(f"  out.{member} = j[\"{_cpp_escape(key)}\"];")

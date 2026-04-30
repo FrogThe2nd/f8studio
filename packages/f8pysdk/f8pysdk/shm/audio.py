@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from multiprocessing.shared_memory import SharedMemory
 from typing import Optional, Tuple, cast
 
-from .core import open_shared_memory_create, open_shared_memory_readonly
+from .core import open_shared_memory_open_or_create, open_shared_memory_readonly
 from .naming import audio_shm_name, frame_event_name
 from .win_event import Win32Event
 
@@ -180,7 +180,7 @@ class AudioShmWriter:
         self._write_frame_index = 0
 
     def open(self) -> None:
-        self._shm = open_shared_memory_create(self.shm_name, self.size)
+        self._shm = open_shared_memory_open_or_create(self.shm_name, self.size)
         if os.name == "nt":
             self._event = Win32Event.create(self.shm_name + "_evt", manual_reset=True, initial_state=False)
         self._init_header()

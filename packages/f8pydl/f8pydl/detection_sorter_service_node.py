@@ -12,10 +12,18 @@ import numpy as np
 from f8pysdk.codec import coerce_int, coerce_str
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
-from f8pysdk.shm.video import VIDEO_FORMAT_FLOW2_F16, VIDEO_FORMAT_SCALAR1_F32, VideoShmHeader, VideoShmReader
+from f8pysdk.shm.video import (
+    VIDEO_FORMAT_FLOW2_F16,
+    VIDEO_FORMAT_SCALAR1_F32,
+    VIDEO_SHM_MAGIC,
+    VIDEO_SHM_VERSION,
+    VideoShmHeader,
+    VideoShmReader,
+)
 
 SortDirection = Literal["asc", "desc"]
 ScoreAggregation = Literal["mean", "max", "sum", "median"]
+ScoreShmUnavailableReason = Literal["not_ready", "invalid"]
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +32,12 @@ _CLS_WEIGHTS_REGEX_PREFIX = "re:"
 
 class ScoreShmUnavailableError(RuntimeError):
     """Raised when score SHM is missing/unreadable/unsupported for sorting."""
+
+    def __init__(self, message: str, *, reason: ScoreShmUnavailableReason) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
 def _coerce_sort_direction(value: Any, *, default: SortDirection = "desc") -> SortDirection:
     text = coerce_str(value, default=default).lower()
     if text == "asc":
@@ -385,7 +399,10 @@ class DetectionSorterServiceNode(ServiceNode):
         try:
             output_payload = self._sort_latest_detections()
         except ScoreShmUnavailableError as exc:
-            await self._set_last_error(self._format_shm_unavailable_error(exc))
+            if exc.reason == "not_ready":
+                await self._set_last_error("")
+            else:
+                await self._set_last_error(self._format_shm_unavailable_error(exc))
             await self.emit("detections", incoming_payload, ts_ms=_payload_int(incoming_payload, "tsMs"))
             return
         except Exception as exc:
@@ -409,15 +426,17 @@ class DetectionSorterServiceNode(ServiceNode):
     def _ensure_score_reader(self) -> VideoShmReader:
         score_shm_name = str(self._score_shm_name).strip()
         if not score_shm_name:
-            raise ScoreShmUnavailableError("scoreShmName is empty")
+            raise ScoreShmUnavailableError("scoreShmName is empty", reason="not_ready")
         if self._score_reader is not None and self._score_reader_name == score_shm_name:
             return self._score_reader
         self._close_score_reader()
         reader = VideoShmReader(score_shm_name)
         try:
             reader.open(use_event=False)
-        except Exception as exc:
-            raise ScoreShmUnavailableError(f"open failed: {type(exc).__name__}: {exc}") from exc
+        except FileNotFoundError as exc:
+            raise ScoreShmUnavailableError(f"open pending: {type(exc).__name__}: {exc}", reason="not_ready") from exc
+        except OSError as exc:
+            raise ScoreShmUnavailableError(f"open failed: {type(exc).__name__}: {exc}", reason="invalid") from exc
         self._score_reader = reader
         self._score_reader_name = score_shm_name
         return reader
@@ -431,12 +450,17 @@ class DetectionSorterServiceNode(ServiceNode):
         reader = self._ensure_score_reader()
         header, payload = reader.read_latest_frame()
         if header is None or payload is None:
-            raise ScoreShmUnavailableError("score shm has no readable frame")
+            current_header = reader.read_header()
+            if current_header is not None and (
+                int(current_header.magic) != VIDEO_SHM_MAGIC or int(current_header.version) != VIDEO_SHM_VERSION
+            ):
+                raise ScoreShmUnavailableError("score shm header is invalid", reason="invalid")
+            raise ScoreShmUnavailableError("score shm has no readable frame", reason="not_ready")
         try:
             try:
                 score_map = decode_score_map_from_frame(header=header, payload=payload)
             except ValueError as exc:
-                raise ScoreShmUnavailableError(str(exc)) from exc
+                raise ScoreShmUnavailableError(str(exc), reason="invalid") from exc
             return sort_detection_payload(
                 self._latest_detections,
                 score_map=score_map,

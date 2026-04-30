@@ -5,7 +5,7 @@ import uuid
 from f8pysdk.shm.audio import AudioShmReader, AudioShmWriter
 from f8pysdk.shm import core
 from f8pysdk.shm.sizing import audio_required_bytes, video_min_bytes, video_required_bytes
-from f8pysdk.shm.video import _VIDEO_HEADER_STRUCT
+from f8pysdk.shm.video import _VIDEO_HEADER_STRUCT, VideoShmWriter
 
 
 def test_open_shared_memory_readonly_uses_track_false_when_supported(monkeypatch) -> None:
@@ -61,3 +61,15 @@ def test_audio_shm_roundtrip_accepts_memoryview_payload() -> None:
     finally:
         reader.close()
         writer.close(unlink=True)
+
+
+def test_video_writer_open_reuses_existing_shm_name() -> None:
+    shm_name = f"test.shm.video.reuse.{uuid.uuid4().hex}"
+    writer_a = VideoShmWriter(shm_name=shm_name, size=1024 * 1024, slot_count=2)
+    writer_b = VideoShmWriter(shm_name=shm_name, size=1024 * 1024, slot_count=2)
+    try:
+        writer_a.open()
+        writer_b.open()
+    finally:
+        writer_b.close()
+        writer_a.close(unlink=True)

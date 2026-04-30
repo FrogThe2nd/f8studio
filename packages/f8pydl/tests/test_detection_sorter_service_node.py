@@ -1,12 +1,21 @@
 from __future__ import annotations
 
+import os
 import re
+import sys
 import unittest
 import uuid
 from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
+
+
+PKG_PYDL = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+PKG_SDK = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "f8pysdk"))
+for p in (PKG_PYDL, PKG_SDK):
+    if p not in sys.path:
+        sys.path.insert(0, p)
 
 from f8pysdk.state import StateRead
 from f8pysdk.shm.video import VIDEO_FORMAT_BGRA32, VIDEO_FORMAT_FLOW2_F16, VIDEO_FORMAT_SCALAR1_F32, VideoShmHeader, VideoShmWriter
@@ -491,7 +500,57 @@ class DetectionSorterServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(bus.emitted), 1)
         emitted_payload = bus.emitted[0][2]
         self.assertEqual([item["cls"] for item in emitted_payload["detections"]], ["a", "b"])
-        self.assertIn("score SHM unavailable", bus.errors[-1][2])
+        self.assertEqual(bus.errors, [])
+
+    async def test_service_node_score_shm_without_frame_passes_through(self) -> None:
+        writer = VideoShmWriter(_unique_shm_name("test.pending"), size=1 << 20)
+        writer.open()
+        try:
+            bus = _BusStub({"scoreShmName": writer.shm_name})
+            node = DetectionSorterServiceNode(node_id="sorterG", node=SimpleNamespace(stateFields=[]), initial_state=None)
+            node.attach(bus)
+            payload = _make_detection_payload(
+                [
+                    {"cls": "a", "score": 0.1, "bbox": [0, 0, 2, 2]},
+                    {"cls": "b", "score": 0.9, "bbox": [0, 0, 2, 2]},
+                ],
+                frame_id=1,
+                width=2,
+                height=2,
+            )
+
+            await node.on_data("detections", payload)
+
+            self.assertEqual(len(bus.emitted), 1)
+            emitted_payload = bus.emitted[0][2]
+            self.assertEqual([item["cls"] for item in emitted_payload["detections"]], ["a", "b"])
+            self.assertEqual(bus.errors, [])
+            node._close_score_reader()
+        finally:
+            writer.close(unlink=True)
+
+    async def test_service_node_invalid_score_shm_header_sets_last_error(self) -> None:
+        writer = VideoShmWriter(_unique_shm_name("test.invalid_header"), size=1 << 20)
+        writer.open()
+        try:
+            writer.buf[0:4] = b"\x00\x00\x00\x00"
+            bus = _BusStub({"scoreShmName": writer.shm_name})
+            node = DetectionSorterServiceNode(node_id="sorterH", node=SimpleNamespace(stateFields=[]), initial_state=None)
+            node.attach(bus)
+            payload = _make_detection_payload(
+                [{"cls": "x", "score": 0.8, "bbox": [0, 0, 2, 2]}],
+                frame_id=1,
+                width=2,
+                height=2,
+            )
+
+            await node.on_data("detections", payload)
+
+            self.assertEqual(len(bus.emitted), 1)
+            self.assertIn("score SHM unavailable", bus.errors[-1][2])
+            node._close_score_reader()
+        finally:
+            writer.close(unlink=True)
 
     def test_decode_score_map_from_frame_scalar(self) -> None:
         values = np.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
