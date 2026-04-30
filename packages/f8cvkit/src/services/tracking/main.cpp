@@ -34,6 +34,8 @@ int main(int argc, char** argv) {
       cxxopts::value<std::string>()->default_value("models"))(
       "auto-download-models", "Auto-download missing tracker model files when needed",
       cxxopts::value<bool>()->default_value("true")->implicit_value("true"))(
+      "max-tracking-fps", "Maximum tracker update rate (0 = unlimited)",
+      cxxopts::value<double>()->default_value("30"))(
       "stop-cooldown-ms", "Cooldown after stopTracking (ignore initBox for N ms)",
       cxxopts::value<int>()->default_value("1000"))(
       "help", "Show help");
@@ -76,6 +78,7 @@ int main(int argc, char** argv) {
   cfg.tracker_kind = result["tracker-kind"].as<std::string>();
   cfg.model_dir = result["model-dir"].as<std::string>();
   cfg.auto_download_models = result["auto-download-models"].as<bool>();
+  cfg.max_tracking_fps = result["max-tracking-fps"].as<double>();
   cfg.stop_tracking_cooldown_ms = result["stop-cooldown-ms"].as<int>();
 
   f8::cvkit::tracking::TrackingService svc(cfg);

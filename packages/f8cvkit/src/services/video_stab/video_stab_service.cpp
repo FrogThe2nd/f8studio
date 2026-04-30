@@ -189,7 +189,6 @@ bool VideoStabService::start() {
   publish_state_if_changed("sceneCutFrameDiffThreshold", scene_cut_frame_diff_threshold_, "init", json::object());
   publish_state_if_changed("sceneCutTrackRatioThreshold", scene_cut_track_ratio_threshold_, "init", json::object());
   publish_state_if_changed("sceneCutCooldownFrames", scene_cut_cooldown_frames_, "init", json::object());
-  publish_state_if_changed("sceneChangeCount", scene_change_count_, "init", json::object());
   publish_error_if_changed("", "init", json::object());
 
   running_.store(true, std::memory_order_release);
@@ -707,7 +706,6 @@ void VideoStabService::process_frame_once() {
     if (scene_cut_triggered) {
       scene_changed = true;
       ++scene_change_count_;
-      publish_state_if_changed("sceneChangeCount", scene_change_count_, "runtime", json::object());
       reset_stabilizer_internal(json::object(), "scene_cut");
       scene_cut_cooldown_remaining_ = scene_cut_cooldown_frames_;
       prev_gray_ = gray;
@@ -935,8 +933,6 @@ json VideoStabService::describe() {
                   "Scene cut threshold for trackedPoints/max(prevPoints,1).", false),
       state_field("sceneCutCooldownFrames", schema_integer(5, 0, 120), "rw", "Cut Cooldown Frames",
                   "Suppress repeated scene cut triggers for N frames after a cut.", false),
-      state_field("sceneChangeCount", schema_integer(), "ro", "Scene Change Count",
-                  "Monotonic counter incremented when a scene cut is detected.", false),
   });
 
   service["commands"] = json::array({

@@ -448,16 +448,8 @@ void AudioCapService::publish_static_state() {
 }
 
 void AudioCapService::publish_dynamic_state() {
-  std::lock_guard<std::mutex> lock(state_mu_);
-  auto set_if_changed = [&](const char* field, const nlohmann::json& v) {
-    auto it = published_state_.find(field);
-    if (it != published_state_.end() && it->second == v) return;
-    published_state_[field] = v;
-    if (bus_) {
-      f8::cppsdk::kv_set_node_state(bus_->kv(), cfg_.service_id, cfg_.service_id, field, v, "tick", json::object());
-    }
-  };
-  if (shm_) set_if_changed("writeSeq", static_cast<std::uint64_t>(shm_->write_seq()));
+  // SHM write sequence is intentionally not published as node state. It is a
+  // high-frequency transport counter; consumers should read it from SHM.
 }
 
 nlohmann::json AudioCapService::describe() {
@@ -478,7 +470,6 @@ nlohmann::json AudioCapService::describe() {
            state_field("audioFormat", schema_string(), "ro", "Audio Format", "Format of the audio data", false),
            state_field("audioFramesPerChunk", schema_integer(), "ro", "Audio Frames Per Chunk", "Number of audio frames per chunk", false),
            state_field("audioChunkCount", schema_integer(), "ro", "Audio Chunk Count", "Number of audio chunks", false),
-           state_field("writeSeq", schema_integer(), "ro", "Write Sequence", "Sequence number of the last written audio chunk", false),
            state_field("mode", schema_string(), "rw", "Mode", "Current mode of the audio capture service", false),
            state_field("toneHz", schema_number(), "rw", "Tone Frequency", "Frequency of the generated tone", false),
            state_field("gain", schema_number(), "rw", "Gain", "Gain applied to the audio signal", false),

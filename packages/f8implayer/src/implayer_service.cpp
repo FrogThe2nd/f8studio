@@ -2232,7 +2232,6 @@ void ImPlayerService::publish_dynamic_state() {
   const double dur = duration_seconds_.load(std::memory_order_relaxed);
   const unsigned decoded_w = player_ ? player_->videoWidth() : 0;
   const unsigned decoded_h = player_ ? player_->videoHeight() : 0;
-  const auto player_stats = player_ ? player_->statsSnapshot() : MpvPlayer::Stats{};
 
   std::vector<std::pair<std::string, json>> updates;
   bool error_changed = false;
@@ -2271,16 +2270,6 @@ void ImPlayerService::publish_dynamic_state() {
       want("videoHeight", shm_->outputHeight());
       want("videoPitch", shm_->outputPitch());
     }
-    want("videoShmWritten", static_cast<std::int64_t>(player_stats.shmWritten));
-    want("videoShmSkipInterval", static_cast<std::int64_t>(player_stats.shmSkipInterval));
-    want("videoShmSkipTarget", static_cast<std::int64_t>(player_stats.shmSkipTarget));
-    want("videoShmSkipReadbackBusy", static_cast<std::int64_t>(player_stats.shmSkipReadbackBusy));
-    want("videoShmReadbacksIssued", static_cast<std::int64_t>(player_stats.shmReadbacksIssued));
-    want("videoShmReadbacksMapped", static_cast<std::int64_t>(player_stats.shmReadbacksMapped));
-    want("videoShmLastIssueMs", player_stats.lastShmIssueMs);
-    want("videoShmLastMapWriteMs", player_stats.lastShmMapWriteMs);
-    want("videoShmEmaMapWriteMs", player_stats.emaShmMapWriteMs);
-    want("videoShmPboBytes", static_cast<std::int64_t>(player_stats.estReadbackPboBytes));
   }
 
   if (bus_ && error_changed) {
@@ -2323,17 +2312,6 @@ json ImPlayerService::describe() {
       state_field("videoShmMaxWidth", schema_integer(), "rw", "SHM Max Width", "Downsample limit (0 = auto).", false),
       state_field("videoShmMaxHeight", schema_integer(), "rw", "SHM Max Height", "Downsample limit (0 = auto).", false),
       state_field("videoShmMaxFps", schema_number(), "rw", "SHM Max FPS", "Copy rate limit (0 = unlimited).", false),
-      state_field("videoShmWritten", schema_integer(), "ro", "SHM Written", "Frames written to SHM.", false),
-      state_field("videoShmSkipInterval", schema_integer(), "ro", "SHM Skip Interval", "Copies skipped by FPS limiter.", false),
-      state_field("videoShmSkipTarget", schema_integer(), "ro", "SHM Skip Target", "Copies skipped because target size is zero.", false),
-      state_field("videoShmSkipReadbackBusy", schema_integer(), "ro", "SHM Skip Readback Busy",
-                  "Readbacks skipped because all PBO slots were busy.", false),
-      state_field("videoShmReadbacksIssued", schema_integer(), "ro", "SHM Readbacks Issued", "GPU readbacks issued.", false),
-      state_field("videoShmReadbacksMapped", schema_integer(), "ro", "SHM Readbacks Mapped", "PBO readbacks mapped/written.", false),
-      state_field("videoShmLastIssueMs", schema_number(), "ro", "SHM Last Issue ms", "Last glReadPixels issue time.", false),
-      state_field("videoShmLastMapWriteMs", schema_number(), "ro", "SHM Last Map/Write ms", "Last PBO map + SHM write time.", false),
-      state_field("videoShmEmaMapWriteMs", schema_number(), "ro", "SHM EMA Map/Write ms", "EMA PBO map + SHM write time.", false),
-      state_field("videoShmPboBytes", schema_integer(), "ro", "SHM PBO Bytes", "Estimated readback PBO memory.", false),
       state_field("authMode", schema_string_enum({"none", "browser", "cookiesFile"}), "rw", "Auth Mode",
                   "Cookie auth mode: none|browser|cookiesFile (default: none).", false),
       state_field("authBrowser", schema_string_enum({"chrome", "chromium", "edge", "firefox", "safari"}), "rw",

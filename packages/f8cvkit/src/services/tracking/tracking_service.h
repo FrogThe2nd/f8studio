@@ -57,6 +57,7 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
     std::string tracker_kind = "csrt";
     std::string model_dir = "models";
     bool auto_download_models = true;
+    double max_tracking_fps = 30.0;
     int stop_tracking_cooldown_ms = 1000;
   };
 
@@ -92,6 +93,7 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
   void set_init_select(const std::string& mode, const json& meta);
   void set_tracker_kind(const std::string& kind, const json& meta);
   void set_model_dir(const std::string& model_dir, const json& meta);
+  void set_max_tracking_fps(double fps, const json& meta);
   bool ensure_video_open();
   void apply_init_box_if_any();
   void process_frame_once();
@@ -104,6 +106,7 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
   std::atomic<bool> running_{false};
   std::atomic<bool> stop_requested_{false};
   std::atomic<bool> active_{true};
+  std::atomic<double> max_tracking_fps_{30.0};
   std::unique_ptr<f8::cppsdk::ServiceBus> bus_;
 
   std::mutex state_mu_;
@@ -116,6 +119,9 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
   cv::Mat frame_bgr_;
   std::optional<f8::cppsdk::VideoSharedMemoryHeader> last_header_;
   std::uint64_t last_frame_id_ = 0;
+  std::uint32_t last_notify_seq_ = 0;
+  std::int64_t last_processed_frame_ts_ms_ = 0;
+  double next_tracking_due_ts_ms_ = 0.0;
   std::int64_t last_video_open_attempt_ms_ = 0;
   TrackingInitSelectMode init_select_mode_ = TrackingInitSelectMode::ClosestCenter;
   std::string init_select_state_ = "closest_center";

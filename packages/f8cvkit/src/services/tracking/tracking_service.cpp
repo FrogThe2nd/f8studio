@@ -675,6 +675,8 @@ bool TrackingService::start() {
   model_dir_state_ = normalize_model_dir_state(cfg_.model_dir);
   model_dir_path_ = resolve_model_dir_path(model_dir_state_);
   auto_download_models_ = cfg_.auto_download_models;
+  const double configured_max_tracking_fps = std::isfinite(cfg_.max_tracking_fps) ? cfg_.max_tracking_fps : 30.0;
+  max_tracking_fps_.store(std::max(0.0, std::min(240.0, configured_max_tracking_fps)), std::memory_order_release);
   model_download_retry_after_ms_ = 0;
 
   if (!cfg_.tracker_kind.empty()) {
@@ -695,9 +697,10 @@ bool TrackingService::start() {
   publish_state_if_changed("trackerKind", tracker_kind_state_, "init", json::object());
   publish_state_if_changed("modelDir", model_dir_state_, "init", json::object());
   publish_state_if_changed("autoDownloadModels", auto_download_models_, "init", json::object());
+  publish_state_if_changed("maxTrackingFps", max_tracking_fps_.load(std::memory_order_acquire), "init",
+                           json::object());
   publish_state_if_changed("stopTrackingCooldownMs", stop_tracking_cooldown_ms_.load(std::memory_order_acquire), "init",
                            json::object());
-  publish_state_if_changed("stopTrackingCooldownUntilTsMs", 0, "init", json::object());
   publish_state_if_changed("isTracking", false, "init", json::object());
   publish_state_if_changed("isNotTracking", true, "init", json::object());
   publish_error_if_changed("", "init", json::object());
@@ -707,6 +710,9 @@ bool TrackingService::start() {
   frame_bgr_.release();
   last_header_.reset();
   last_frame_id_ = 0;
+  last_notify_seq_ = 0;
+  last_processed_frame_ts_ms_ = 0;
+  next_tracking_due_ts_ms_ = 0.0;
   last_video_open_attempt_ms_ = 0;
 
   tracker_.release();
@@ -760,7 +766,6 @@ void TrackingService::tick() {
   const std::int64_t until = stop_tracking_cooldown_until_ms_.load(std::memory_order_acquire);
   if (until > 0 && now >= until) {
     stop_tracking_cooldown_until_ms_.store(0, std::memory_order_release);
-    publish_state_if_changed("stopTrackingCooldownUntilTsMs", 0, "runtime", json::object({{"reason", "expired"}}));
   }
 
   apply_init_box_if_any();
@@ -843,6 +848,15 @@ void TrackingService::on_state(const std::string& node_id, const std::string& fi
     publish_error_if_changed("", "state", meta);
     return;
   }
+  if (field == "maxTrackingFps") {
+    double fps = 0.0;
+    if (!json_number_to_double(value, fps) || !std::isfinite(fps) || fps < 0.0) {
+      publish_error_if_changed("invalid maxTrackingFps", "state", meta);
+      return;
+    }
+    set_max_tracking_fps(fps, meta);
+    return;
+  }
   if (field == "stopTrackingCooldownMs") {
     int v = 0;
     if (!json_number_to_int(value, v)) {
@@ -853,7 +867,6 @@ void TrackingService::on_state(const std::string& node_id, const std::string& fi
     stop_tracking_cooldown_ms_.store(v, std::memory_order_release);
     if (v == 0) {
       stop_tracking_cooldown_until_ms_.store(0, std::memory_order_release);
-      publish_state_if_changed("stopTrackingCooldownUntilTsMs", 0, "state", meta);
     }
     publish_state_if_changed("stopTrackingCooldownMs", v, "state", meta);
     return;
@@ -914,8 +927,6 @@ bool TrackingService::on_command(const std::string& call, const json& args, cons
     }
 
     stop_tracking_cooldown_until_ms_.store(until, std::memory_order_release);
-    publish_state_if_changed("stopTrackingCooldownUntilTsMs", until, "runtime",
-                             json::object({{"source", "command"}, {"call", call}}));
 
     result["stopped"] = true;
     result["wasTracking"] = was_tracking;
@@ -934,6 +945,8 @@ void TrackingService::stop_tracking_internal(const json& meta) {
   bbox_ = cv::Rect();
   active_tracker_kind_state_.clear();
   pending_init_boxes_.clear();
+  last_processed_frame_ts_ms_ = 0;
+  next_tracking_due_ts_ms_ = 0.0;
   set_tracking(false, meta);
 }
 
@@ -949,6 +962,9 @@ void TrackingService::set_shm_name(const std::string& shm_name, const json& meta
   video_.close();
   last_video_open_attempt_ms_ = 0;
   last_frame_id_ = 0;
+  last_notify_seq_ = 0;
+  last_processed_frame_ts_ms_ = 0;
+  next_tracking_due_ts_ms_ = 0.0;
   frame_bgra_.clear();
   frame_bgr_.release();
 }
@@ -992,6 +1008,19 @@ void TrackingService::set_model_dir(const std::string& model_dir, const json& me
   publish_error_if_changed("", "state", meta);
 }
 
+void TrackingService::set_max_tracking_fps(double fps, const json& meta) {
+  if (!std::isfinite(fps)) {
+    publish_error_if_changed("invalid maxTrackingFps", "state", meta);
+    return;
+  }
+  fps = std::max(0.0, std::min(240.0, fps));
+  max_tracking_fps_.store(fps, std::memory_order_release);
+  last_processed_frame_ts_ms_ = 0;
+  next_tracking_due_ts_ms_ = 0.0;
+  publish_state_if_changed("maxTrackingFps", fps, "state", meta);
+  publish_error_if_changed("", "state", meta);
+}
+
 bool TrackingService::ensure_video_open() {
   f8::cppsdk::VideoSharedMemoryHeader hdr{};
   if (video_.readHeader(hdr)) {
@@ -1014,6 +1043,9 @@ bool TrackingService::ensure_video_open() {
     publish_error_if_changed("video shm open failed: " + shm_name, "runtime", json::object());
     return false;
   }
+  last_notify_seq_ = 0;
+  last_processed_frame_ts_ms_ = 0;
+  next_tracking_due_ts_ms_ = 0.0;
   publish_error_if_changed("", "runtime", json::object());
   return true;
 }
@@ -1114,6 +1146,8 @@ void TrackingService::apply_init_box_if_any() {
                    bb.width, bb.height);
       active_tracker_kind_state_ = tracker_kind_state_;
       bbox_ = bb;
+      last_processed_frame_ts_ms_ = 0;
+      next_tracking_due_ts_ms_ = 0.0;
       publish_error_if_changed("", "runtime", json::object({{"source", "initBox"}}));
       set_tracking(true, json::object({{"source", "initBox"}, {"candidates", static_cast<int>(candidates.size())}}));
     } catch (const cv::Exception& ex) {
@@ -1151,16 +1185,56 @@ void TrackingService::process_frame_once() {
     return;
   }
 
+  std::uint32_t observed_notify_seq = last_notify_seq_;
+  if (!video_.waitNewFrame(last_notify_seq_, 20, &observed_notify_seq)) {
+    return;
+  }
+  last_notify_seq_ = observed_notify_seq;
+
   f8::cppsdk::VideoSharedMemoryHeader hdr{};
-  if (!video_.copyLatestFrameIfChanged(frame_bgra_, hdr, last_frame_id_)) {
+  if (!video_.peekLatestHeader(hdr)) {
     return;
   }
   if (hdr.frame_id == 0 || hdr.frame_id == last_frame_id_) {
     return;
   }
   ++monitor_observed_frames_;
+
+  const double max_tracking_fps = max_tracking_fps_.load(std::memory_order_acquire);
+  if (max_tracking_fps > 0.0 && next_tracking_due_ts_ms_ > 0.0) {
+    const std::int64_t frame_ts_ms = hdr.ts_ms > 0 ? hdr.ts_ms : f8::cppsdk::now_ms();
+    const double min_interval_ms = 1000.0 / max_tracking_fps;
+    constexpr double kEarlyToleranceMs = 3.0;
+    if (static_cast<double>(frame_ts_ms) + kEarlyToleranceMs < next_tracking_due_ts_ms_) {
+      last_frame_id_ = hdr.frame_id;
+      last_header_ = hdr;
+      return;
+    }
+  }
+
+  if (!video_.copyLatestFrameIfChanged(frame_bgra_, hdr, last_frame_id_)) {
+    return;
+  }
+  if (hdr.frame_id == 0 || hdr.frame_id == last_frame_id_) {
+    return;
+  }
   last_frame_id_ = hdr.frame_id;
   last_header_ = hdr;
+  last_processed_frame_ts_ms_ = hdr.ts_ms > 0 ? hdr.ts_ms : f8::cppsdk::now_ms();
+  if (max_tracking_fps > 0.0) {
+    const double min_interval_ms = 1000.0 / max_tracking_fps;
+    const double processed_ts_ms = static_cast<double>(last_processed_frame_ts_ms_);
+    if (next_tracking_due_ts_ms_ <= 0.0) {
+      next_tracking_due_ts_ms_ = processed_ts_ms + min_interval_ms;
+    } else {
+      next_tracking_due_ts_ms_ += min_interval_ms;
+      if (next_tracking_due_ts_ms_ + min_interval_ms < processed_ts_ms) {
+        next_tracking_due_ts_ms_ = processed_ts_ms + min_interval_ms;
+      }
+    }
+  } else {
+    next_tracking_due_ts_ms_ = 0.0;
+  }
 
   if (hdr.format != 1 || hdr.width == 0 || hdr.height == 0 || hdr.pitch == 0) {
     publish_error_if_changed("unsupported video shm format", "runtime", json::object());
@@ -1312,13 +1386,13 @@ json TrackingService::describe() {
                   "OpenCV tracker backend: csrt | kcf | mil | boosting | median_flow | mosse | tld | nano | vit.",
                   true),
       state_field("modelDir", json{{"type", "string"}, {"default", default_model_dir_state()}}, "rw", "Model Dir",
-                  "Directory containing downloaded tracker model files for nano | vit.", true),
+                  "Directory containing downloaded tracker model files for nano | vit.", false),
       state_field("autoDownloadModels", json{{"type", "boolean"}, {"default", true}}, "rw", "Auto Download Models",
-                  "Auto-download missing tracker model files when a model-based tracker is selected.", true),
+                  "Auto-download missing tracker model files when a model-based tracker is selected.", false),
+      state_field("maxTrackingFps", schema_number(30.0, 0.0, 240.0), "rw", "Max Tracking FPS",
+                  "Maximum tracker update rate. Set to 0 to process every incoming SHM frame.", false),
       state_field("stopTrackingCooldownMs", schema_integer(1000, 0, 60000), "rw", "Stop Cooldown (ms)",
                   "After stopTracking, ignore initBox for this many ms. Set to 0 to disable.", true),
-      state_field("stopTrackingCooldownUntilTsMs", schema_integer(), "ro", "Stop Cooldown Until (tsMs)",
-                  "When > 0, initBox is ignored until this timestamp (ms).", true),
       state_field("isTracking", schema_boolean(), "ro", "Is Tracking", "True when tracker is running.", true),
       state_field("isNotTracking", schema_boolean(), "ro", "Is Not Tracking", "Negation of isTracking.", true),
   });
