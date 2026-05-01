@@ -90,6 +90,7 @@ class NodePropertyPanelSelectionMixin:
         except (AttributeError, RuntimeError, TypeError, ValueError):
             previous_outer_scroll = 0
         host._node_id = node_id
+        host._last_ui_overrides_reload_fingerprint = host._ui_overrides_reload_fingerprint_from_node(node)
         editor = host._build_property_editor(node=node)
         host._set_editor(editor)
         restored_same_tab = editor.restore_view_state(previous_view_state)

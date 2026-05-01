@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import logging
 import uuid
 
 from qtpy import QtCore, QtGui, QtWidgets
 
+from ...support.studio_theme import reorder_drop_indicator_qss
 from ....ui.support.ui_icons import StudioIcon, icon_for
 from .common import _TAB_PANEL_MARGIN, _TAB_PANEL_SPACING
+
+
+logger = logging.getLogger(__name__)
 
 
 class _F8StateContainer(QtWidgets.QWidget):
@@ -391,8 +396,8 @@ class _F8ReorderCard(QtWidgets.QFrame):
         drag.setMimeData(mime)
         try:
             drag.setPixmap(self.grab())
-        except Exception:
-            pass
+        except RuntimeError:
+            logger.exception("Failed to create property panel reorder drag pixmap")
         host.set_active_drag_token(self._token)
         try:
             self._drag_handle.setCursor(QtCore.Qt.ClosedHandCursor)
@@ -413,6 +418,13 @@ class _F8ReorderList(QtWidgets.QWidget):
         self._cards_by_token: dict[str, _F8ReorderCard] = {}
         self.setAcceptDrops(True)
 
+        self._drop_indicator = QtWidgets.QFrame(self)
+        self._drop_indicator.setObjectName("f8ReorderDropIndicator")
+        self._drop_indicator.setFixedHeight(5)
+        self._drop_indicator.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        self._drop_indicator.setStyleSheet(reorder_drop_indicator_qss())
+        self._drop_indicator.hide()
+
         self._layout = QtWidgets.QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(2)
@@ -426,6 +438,8 @@ class _F8ReorderList(QtWidgets.QWidget):
 
     def set_active_drag_token(self, token: str) -> None:
         self._active_drag_token = str(token or "").strip()
+        if not self._active_drag_token:
+            self._hide_drop_indicator()
 
     def add_row(self, row: QtWidgets.QWidget) -> None:
         card = _F8ReorderCard(self, row=row)
@@ -442,12 +456,13 @@ class _F8ReorderList(QtWidgets.QWidget):
         self._layout.removeWidget(card)
         try:
             card.setVisible(False)
-        except (AttributeError, RuntimeError, TypeError):
-            pass
+        except RuntimeError:
+            logger.exception("Failed to hide property panel reorder row before deletion")
         card.deleteLater()
         self._refresh_drag_handles()
 
     def clear(self) -> None:
+        self._hide_drop_indicator()
         while self._layout.count():
             item = self._layout.takeAt(0)
             widget = item.widget()
@@ -474,6 +489,37 @@ class _F8ReorderList(QtWidgets.QWidget):
         for card in cards:
             card.set_drag_enabled(show_handles)
 
+    def _cards_in_order(self) -> list[_F8ReorderCard]:
+        return [
+            widget
+            for widget in [self._layout.itemAt(index).widget() for index in range(self._layout.count())]
+            if isinstance(widget, _F8ReorderCard)
+        ]
+
+    def _layout_index_for_card_insert(self, card_index: int) -> int:
+        target_card_index = max(0, min(int(card_index), len(self._cards_in_order())))
+        seen_cards = 0
+        for layout_index in range(self._layout.count()):
+            widget = self._layout.itemAt(layout_index).widget()
+            if widget is self._drop_indicator:
+                continue
+            if isinstance(widget, _F8ReorderCard):
+                if seen_cards == target_card_index:
+                    return layout_index
+                seen_cards += 1
+        return self._layout.count()
+
+    def _show_drop_indicator(self, card_index: int) -> None:
+        target_index = max(0, min(int(card_index), len(self._cards_in_order())))
+        self._layout.removeWidget(self._drop_indicator)
+        layout_index = self._layout_index_for_card_insert(target_index)
+        self._layout.insertWidget(layout_index, self._drop_indicator)
+        self._drop_indicator.show()
+
+    def _hide_drop_indicator(self) -> None:
+        self._layout.removeWidget(self._drop_indicator)
+        self._drop_indicator.hide()
+
     @staticmethod
     def _event_y(event: QtGui.QDropEvent | QtGui.QDragMoveEvent) -> float:
         try:
@@ -482,26 +528,26 @@ class _F8ReorderList(QtWidgets.QWidget):
             return float(event.pos().y())  # type: ignore[attr-defined]
 
     def _drop_index_for_y(self, y_pos: float) -> int:
-        cards = self.rows()
+        cards = self._cards_in_order()
         if not cards:
             return 0
-        for index in range(self._layout.count()):
-            widget = self._layout.itemAt(index).widget()
-            if not isinstance(widget, _F8ReorderCard):
-                continue
+        for index, widget in enumerate(cards):
             midpoint = float(widget.geometry().top() + (widget.geometry().height() / 2.0))
             if y_pos < midpoint:
                 return index
-        return self._layout.count()
+        return len(cards)
 
     def _card_for_event(self, event: QtGui.QDropEvent | QtGui.QDragMoveEvent | QtGui.QDragEnterEvent) -> _F8ReorderCard | None:
         mime = event.mimeData()
         if mime is None or not mime.hasFormat(_F8ReorderCard.MIME_TYPE):
             return None
         try:
-            token = bytes(mime.data(_F8ReorderCard.MIME_TYPE)).decode("utf-8").strip()
-        except Exception:
+            token_bytes = bytes(mime.data(_F8ReorderCard.MIME_TYPE))
+        except (RuntimeError, TypeError, ValueError):
+            logger.exception("Failed to read property panel reorder drag token")
             token = ""
+        else:
+            token = token_bytes.decode("utf-8", errors="ignore").strip()
         if not token:
             token = self._active_drag_token
         return self._cards_by_token.get(token)
@@ -513,25 +559,35 @@ class _F8ReorderList(QtWidgets.QWidget):
         event.acceptProposedAction()
 
     def dragMoveEvent(self, event: QtGui.QDragMoveEvent) -> None:  # type: ignore[override]
-        if not self._drag_enabled or self._card_for_event(event) is None:
+        card = self._card_for_event(event)
+        if not self._drag_enabled or card is None:
             event.ignore()
             return
+        self._show_drop_indicator(self._drop_index_for_y(self._event_y(event)))
         event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event: QtGui.QDragLeaveEvent) -> None:  # type: ignore[override]
+        self._hide_drop_indicator()
+        super().dragLeaveEvent(event)
 
     def dropEvent(self, event: QtGui.QDropEvent) -> None:  # type: ignore[override]
         if not self._drag_enabled:
+            self._hide_drop_indicator()
             event.ignore()
             return
         card = self._card_for_event(event)
         if card is None:
+            self._hide_drop_indicator()
             event.ignore()
             return
-        cards_in_order = [widget for widget in [self._layout.itemAt(i).widget() for i in range(self._layout.count())] if isinstance(widget, _F8ReorderCard)]
+        cards_in_order = self._cards_in_order()
         if card not in cards_in_order:
+            self._hide_drop_indicator()
             event.ignore()
             return
         old_index = cards_in_order.index(card)
         new_index = self._drop_index_for_y(self._event_y(event))
+        self._hide_drop_indicator()
         if new_index > old_index:
             new_index -= 1
         if new_index < 0:

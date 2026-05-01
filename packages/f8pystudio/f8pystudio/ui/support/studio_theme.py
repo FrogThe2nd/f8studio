@@ -571,6 +571,17 @@ def performance_overlay_qss() -> str:
     """
 
 
+def reorder_drop_indicator_qss() -> str:
+    p = studio_dark_theme().palette
+    return (
+        "QFrame {"
+        f" background: {p.accent};"
+        f" border: 1px solid {qss_rgba(p.selection_text, 170)};"
+        " border-radius: 2px;"
+        "}"
+    )
+
+
 def ai_context_button_qss(*, text_color: str, include_background: bool) -> str:
     p = studio_dark_theme().palette
     background = "background: transparent;" if include_background else ""

@@ -1,16 +1,97 @@
 from __future__ import annotations
 
+import json
 from typing import Any, cast
 
 from f8pysdk.specs import F8StateAccess
 
+from ....nodegraph.node_base import F8StudioBaseNode
 from ....nodegraph.state_schema import effective_state_fields as _effective_state_fields
 from ....nodegraph.state_schema import state_field_access as _state_field_access
 from ...support.node_property_support import get_node_spec, state_input_is_connected
 from .common import _set_read_only_widget
 
 
+_UI_OVERRIDE_LIST_ORDER_KEY = "listOrder"
+_UI_OVERRIDE_STATE_FIELDS_KEY = "stateFields"
+_UI_OVERRIDE_COMMANDS_KEY = "commands"
+_UI_OVERRIDE_DATA_PORTS_KEY = "dataPorts"
+_UI_OVERRIDE_SHOW_ON_NODE_KEY = "showOnNode"
+
+
 class NodePropertyPanelGraphSyncMixin:
+    @staticmethod
+    def _named_override_patch_relevant_to_panel_reload(value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        patch: dict[str, Any] = {}
+        for raw_name, raw_item_patch in value.items():
+            name = str(raw_name)
+            if not isinstance(raw_item_patch, dict):
+                patch[name] = raw_item_patch
+                continue
+            item_patch = {
+                str(item_key): item_value
+                for item_key, item_value in raw_item_patch.items()
+                if str(item_key) != _UI_OVERRIDE_SHOW_ON_NODE_KEY
+            }
+            if item_patch:
+                patch[name] = item_patch
+        return patch
+
+    @staticmethod
+    def _data_port_override_patch_relevant_to_panel_reload(value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        patch: dict[str, Any] = {}
+        for raw_direction, raw_ports_patch in value.items():
+            direction = str(raw_direction)
+            if not isinstance(raw_ports_patch, dict):
+                patch[direction] = raw_ports_patch
+                continue
+            ports_patch = NodePropertyPanelGraphSyncMixin._named_override_patch_relevant_to_panel_reload(
+                raw_ports_patch
+            )
+            if ports_patch:
+                patch[direction] = ports_patch
+        return patch
+
+    @staticmethod
+    def _ui_overrides_relevant_to_panel_reload(value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        patch: dict[str, Any] = {}
+        for raw_key, item in value.items():
+            key = str(raw_key)
+            if key == _UI_OVERRIDE_LIST_ORDER_KEY:
+                continue
+            if key == _UI_OVERRIDE_STATE_FIELDS_KEY:
+                state_fields = NodePropertyPanelGraphSyncMixin._named_override_patch_relevant_to_panel_reload(item)
+                if state_fields:
+                    patch[key] = state_fields
+                continue
+            if key == _UI_OVERRIDE_COMMANDS_KEY:
+                commands = NodePropertyPanelGraphSyncMixin._named_override_patch_relevant_to_panel_reload(item)
+                if commands:
+                    patch[key] = commands
+                continue
+            if key == _UI_OVERRIDE_DATA_PORTS_KEY:
+                data_ports = NodePropertyPanelGraphSyncMixin._data_port_override_patch_relevant_to_panel_reload(item)
+                if data_ports:
+                    patch[key] = data_ports
+                continue
+            patch[key] = item
+        return patch
+
+    @staticmethod
+    def _ui_overrides_reload_fingerprint(value: Any) -> str:
+        reload_relevant = NodePropertyPanelGraphSyncMixin._ui_overrides_relevant_to_panel_reload(value)
+        return json.dumps(reload_relevant, ensure_ascii=False, sort_keys=True, default=str)
+
+    @staticmethod
+    def _ui_overrides_reload_fingerprint_from_node(node: F8StudioBaseNode) -> str:
+        return NodePropertyPanelGraphSyncMixin._ui_overrides_reload_fingerprint(node.ui_overrides())
+
     def _on_graph_ports_changed(self, _in_port: Any, _out_port: Any) -> None:
         host = cast(Any, self)
         if host._inspect_mode:
@@ -96,7 +177,16 @@ class NodePropertyPanelGraphSyncMixin:
         if not prop_key:
             return
 
-        if prop_key in {"f8_spec", "f8_ui_overrides", "f8_ui_state"}:
+        if prop_key == "f8_ui_overrides":
+            current_fingerprint = NodePropertyPanelGraphSyncMixin._ui_overrides_reload_fingerprint(prop_value)
+            previous_fingerprint = str(host._last_ui_overrides_reload_fingerprint or "")
+            host._last_ui_overrides_reload_fingerprint = current_fingerprint
+            if current_fingerprint == previous_fingerprint:
+                return
+            host._editor.reload()
+            return
+
+        if prop_key in {"f8_spec", "f8_ui_state"}:
             host._editor.reload()
             return
 

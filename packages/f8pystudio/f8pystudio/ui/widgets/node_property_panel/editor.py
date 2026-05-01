@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from NodeGraphQt import PropertiesBinWidget
 from NodeGraphQt.constants import NodeEnum
@@ -53,10 +53,20 @@ class F8StudioNodePropEditorWidget(
     _STATE_FIELD_DIALOG_CLS = _F8EditStateFieldDialog
     _VIEW_STATE_CLS = _NodePropEditorViewState
 
-    def __init__(self, parent=None, node=None, *, inspect_mode: bool = False):
+    def __init__(
+        self,
+        parent=None,
+        node=None,
+        *,
+        inspect_mode: bool = False,
+        outer_scroll_getter: Callable[[], int] | None = None,
+        outer_scroll_restorer: Callable[[int], None] | None = None,
+    ):
         super(F8StudioNodePropEditorWidget, self).__init__(parent)
         self._node = node
         self._inspect_mode = bool(inspect_mode)
+        self._outer_scroll_getter = outer_scroll_getter
+        self._outer_scroll_restorer = outer_scroll_restorer
         self.__node_id = node.id
         self.__tab_windows = {}
         self.__tab = QtWidgets.QTabWidget(self)
@@ -183,6 +193,32 @@ class F8StudioNodePropEditorWidget(
         """
         self.property_closed.emit(self.__node_id)
 
+    def snapshot_outer_scroll_position(self) -> int | None:
+        if self._outer_scroll_getter is None:
+            return None
+        try:
+            return int(self._outer_scroll_getter())
+        except (RuntimeError, TypeError, ValueError):
+            logger.exception("Failed to snapshot property panel outer scroll position")
+            return None
+
+    def restore_outer_scroll_position_later(self, value: int | None) -> None:
+        if value is None or self._outer_scroll_restorer is None:
+            return
+        target_value = int(value)
+
+        def _restore() -> None:
+            if self._outer_scroll_restorer is None:
+                return
+            try:
+                self._outer_scroll_restorer(target_value)
+            except (RuntimeError, TypeError, ValueError):
+                logger.exception("Failed to restore property panel outer scroll position")
+
+        QtCore.QTimer.singleShot(0, _restore)
+        QtCore.QTimer.singleShot(0, lambda: QtCore.QTimer.singleShot(0, _restore))
+        QtCore.QTimer.singleShot(50, _restore)
+
     def _on_property_changed(self, name, value):
         """
         slot function called when a property widget has changed.
@@ -273,6 +309,7 @@ class F8StudioSingleNodePropertiesWidget(
         self._node_id: str | None = None
         self._editor: F8StudioNodePropEditorWidget | None = None
         self._block_signal = False
+        self._last_ui_overrides_reload_fingerprint = ""
         self._last_node_click_ts: float = 0.0
         self._selection_timer = QtCore.QTimer(self)
         self._selection_timer.setSingleShot(True)
@@ -333,8 +370,21 @@ class F8StudioSingleNodePropertiesWidget(
     def _log_exception(message: str, *args: Any) -> None:
         logger.exception(message, *args)
 
+    def _outer_scroll_position(self) -> int:
+        try:
+            return int(self._scroll.verticalScrollBar().value())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            self._log_exception("Failed to read property panel scroll position")
+            return 0
+
     def _build_property_editor(self, *, node: F8StudioBaseNode) -> F8StudioNodePropEditorWidget:
-        return F8StudioNodePropEditorWidget(self._container, node=node, inspect_mode=self._inspect_mode)
+        return F8StudioNodePropEditorWidget(
+            self._container,
+            node=node,
+            inspect_mode=self._inspect_mode,
+            outer_scroll_getter=self._outer_scroll_position,
+            outer_scroll_restorer=self._restore_outer_scroll_position,
+        )
 
     def get_property_editor_widget(self, node: F8StudioBaseNode) -> F8StudioNodePropEditorWidget | None:
         """

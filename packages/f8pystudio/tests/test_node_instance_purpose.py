@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from types import SimpleNamespace
 
-from qtpy import QtCore, QtWidgets
+from qtpy import QtCore, QtTest, QtWidgets
 
 from f8pystudio.nodegraph.node_model import F8StudioNodeModel
 import f8pystudio.ui.widgets.node_property_panel.editor as editor_module
@@ -16,6 +17,7 @@ from f8pystudio.ui.widgets.node_property_panel.editor_view_state_mixin import No
 from f8pystudio.ui.widgets.node_property_panel.graph_sync_mixin import NodePropertyPanelGraphSyncMixin
 from f8pystudio.ui.widgets.node_property_panel.selection_mixin import NodePropertyPanelSelectionMixin
 from f8pystudio.ui.widgets.node_property_panel.state_fields_mixin import NodePropertyStateFieldsMixin
+from f8pystudio.ui.widgets.node_property_panel.containers import _F8ReorderList
 from f8pystudio.ui.widgets.node_property_panel import F8StudioNodePropEditorWidget
 
 
@@ -49,19 +51,43 @@ class _FakeGraph:
         return None
 
 
+@dataclass
+class _FakeNode:
+    id: str
+    current_tab: str | None = None
+    scroll_positions: dict[str, int] = field(default_factory=dict)
+    available_tabs: list[str] = field(default_factory=list)
+    ui: dict[str, object] = field(default_factory=dict)
+
+    def ui_overrides(self) -> dict[str, object]:
+        return self.ui
+
+
 class _FakeEditor(QtWidgets.QWidget):
     property_changed = QtCore.Signal(str, str, object)
     property_changing = QtCore.Signal(str, str, object)
     property_closed = QtCore.Signal(str)
 
-    def __init__(self, parent=None, *, node=None, inspect_mode: bool = False):
+    def __init__(
+        self,
+        parent=None,
+        *,
+        node=None,
+        inspect_mode: bool = False,
+        outer_scroll_getter=None,
+        outer_scroll_restorer=None,
+    ):
         super().__init__(parent)
         self.node = node
         self.inspect_mode = bool(inspect_mode)
+        self.outer_scroll_getter = outer_scroll_getter
+        self.outer_scroll_restorer = outer_scroll_restorer
         self.restored_state: _NodePropEditorViewState | None = None
+        current_tab = None if node is None else node.current_tab
+        scroll_positions = {} if node is None else node.scroll_positions
         self.snapshot_state = _NodePropEditorViewState(
-            current_tab=getattr(node, "current_tab", None),
-            tab_scroll_positions=dict(getattr(node, "scroll_positions", {})),
+            current_tab=current_tab,
+            tab_scroll_positions=dict(scroll_positions),
         )
 
     def snapshot_view_state(self) -> _NodePropEditorViewState:
@@ -71,7 +97,7 @@ class _FakeEditor(QtWidgets.QWidget):
         self.restored_state = state
         if state is None:
             return False
-        available_tabs = set(getattr(self.node, "available_tabs", []))
+        available_tabs = set([] if self.node is None else self.node.available_tabs)
         return bool(state.current_tab) and state.current_tab in available_tabs
 
 
@@ -126,6 +152,49 @@ def test_property_panel_reloads_when_system_spec_changes() -> None:
     assert seen == ["reload"]
 
 
+def test_property_panel_skips_reload_for_order_and_visibility_ui_override_change() -> None:
+    seen: list[str] = []
+    fake_self = SimpleNamespace(
+        _editor=SimpleNamespace(reload=lambda: seen.append("reload")),
+        _node_id="nodeA",
+        _last_ui_overrides_reload_fingerprint=NodePropertyPanelGraphSyncMixin._ui_overrides_reload_fingerprint({}),
+    )
+    node = SimpleNamespace(id="nodeA")
+
+    F8StudioSingleNodePropertiesWidget._on_graph_property_changed(
+        fake_self,
+        node,
+        "f8_ui_overrides",
+        {
+            "listOrder": {"stateFields": ["gain", "mode"]},
+            "stateFields": {"mode": {"showOnNode": True}},
+            "dataPorts": {"in": {"image": {"showOnNode": False}}},
+            "commands": {"run": {"showOnNode": True}},
+        },
+    )
+
+    assert seen == []
+
+
+def test_property_panel_reloads_for_structural_ui_override_change() -> None:
+    seen: list[str] = []
+    fake_self = SimpleNamespace(
+        _editor=SimpleNamespace(reload=lambda: seen.append("reload")),
+        _node_id="nodeA",
+        _last_ui_overrides_reload_fingerprint=NodePropertyPanelGraphSyncMixin._ui_overrides_reload_fingerprint({}),
+    )
+    node = SimpleNamespace(id="nodeA")
+
+    F8StudioSingleNodePropertiesWidget._on_graph_property_changed(
+        fake_self,
+        node,
+        "f8_ui_overrides",
+        {"stateFields": {"mode": {"showOnNode": True, "uiControl": "select[allModes]"}}},
+    )
+
+    assert seen == ["reload"]
+
+
 def test_property_panel_reloads_when_graph_layers_change() -> None:
     seen: list[str] = []
     fake_self = SimpleNamespace(_editor=SimpleNamespace(reload=lambda: seen.append("reload")))
@@ -141,13 +210,13 @@ def test_property_panel_keeps_same_tab_and_scroll_when_switching_nodes(monkeypat
 
     widget = F8StudioSingleNodePropertiesWidget(node_graph=_FakeGraph())
 
-    node_a = SimpleNamespace(
+    node_a = _FakeNode(
         id="nodeA",
         current_tab="Node",
         scroll_positions={"Node": 128},
         available_tabs=["State", "Node"],
     )
-    node_b = SimpleNamespace(
+    node_b = _FakeNode(
         id="nodeB",
         current_tab="State",
         scroll_positions={},
@@ -169,6 +238,122 @@ def test_property_panel_keeps_same_tab_and_scroll_when_switching_nodes(monkeypat
         tab_scroll_positions={"Node": 128},
     )
     assert widget._scroll.verticalScrollBar().value() == previous_scroll_value
+
+
+def test_property_editor_reload_preserves_outer_scroll_callback() -> None:
+    events: list[object] = []
+
+    class _FakeReloadNode:
+        def sync_from_spec(self) -> None:
+            events.append("sync")
+
+    class _FakeMissingBanner:
+        def setVisible(self, value: bool) -> None:
+            events.append(("missing_visible", bool(value)))
+
+        def setText(self, value: str) -> None:
+            events.append(("missing_text", value))
+
+    class _FakeReloadHost:
+        _reload_pending = True
+        _node = _FakeReloadNode()
+        _F8StudioNodePropEditorWidget__tab_windows: dict[str, object] = {"State": object()}
+        _option_pool_dependents: dict[str, list[object]] = {"mode": []}
+        _missing_banner = _FakeMissingBanner()
+
+        def snapshot_view_state(self) -> str:
+            events.append("snapshot_view")
+            return "view-state"
+
+        def snapshot_outer_scroll_position(self) -> int:
+            events.append("snapshot_outer")
+            return 73
+
+        def _clear_tabs(self) -> None:
+            events.append("clear_tabs")
+
+        def _read_node(self, node: object) -> str:
+            events.append(("read_node", node))
+            return "ports"
+
+        def _apply_missing_lock_read_only(self) -> None:
+            events.append("missing_lock")
+
+        def restore_view_state(self, state: object) -> bool:
+            events.append(("restore_view", state))
+            return True
+
+        def restore_outer_scroll_position_later(self, value: int | None) -> None:
+            events.append(("restore_outer", value))
+
+    host = _FakeReloadHost()
+
+    NodePropertyEditorViewStateMixin._reload_now(host)  # type: ignore[arg-type]
+
+    assert host._reload_pending is False
+    assert host._F8StudioNodePropEditorWidget__tab_windows == {}
+    assert host._option_pool_dependents == {}
+    assert "snapshot_outer" in events
+    assert ("restore_outer", 73) in events
+
+
+def test_restore_view_state_retries_tab_scroll_after_layout_updates() -> None:
+    _ensure_app()
+    tab_widget = QtWidgets.QTabWidget()
+    page = QtWidgets.QWidget(tab_widget)
+    page_layout = QtWidgets.QVBoxLayout(page)
+    page_layout.setContentsMargins(0, 0, 0, 0)
+    scroll = QtWidgets.QScrollArea(page)
+    scroll.setWidgetResizable(True)
+    content = QtWidgets.QWidget(scroll)
+    content.setMinimumHeight(10)
+    scroll.setWidget(content)
+    page_layout.addWidget(scroll)
+    tab_widget.addTab(page, "State")
+    tab_widget.resize(260, 140)
+    tab_widget.show()
+    QtWidgets.QApplication.processEvents()
+
+    class _RestoreHost(NodePropertyEditorViewStateMixin):
+        def __init__(self) -> None:
+            self._F8StudioNodePropEditorWidget__tab = tab_widget
+
+    host = _RestoreHost()
+    state = _NodePropEditorViewState(current_tab="State", tab_scroll_positions={"State": 180})
+
+    NodePropertyEditorViewStateMixin.restore_view_state(host, state)  # type: ignore[arg-type]
+    content.setMinimumHeight(900)
+    content.updateGeometry()
+    QtWidgets.QApplication.processEvents()
+    QtTest.QTest.qWait(80)
+    QtWidgets.QApplication.processEvents()
+
+    assert scroll.verticalScrollBar().value() == min(180, scroll.verticalScrollBar().maximum())
+
+    tab_widget.close()
+    tab_widget.deleteLater()
+
+
+def test_reorder_list_drop_indicator_does_not_affect_rows_or_order() -> None:
+    _ensure_app()
+    reorder_list = _F8ReorderList()
+    rows = []
+    for name in ("alpha", "beta", "gamma"):
+        row = QtWidgets.QLabel(name)
+        row.setProperty("_order_key", name)
+        reorder_list.add_row(row)
+        rows.append(row)
+
+    reorder_list._show_drop_indicator(1)
+
+    assert reorder_list._drop_indicator.isHidden() is False
+    assert reorder_list.rows() == rows
+    assert reorder_list.order_keys() == ["alpha", "beta", "gamma"]
+
+    reorder_list._hide_drop_indicator()
+
+    assert reorder_list._drop_indicator.isHidden() is True
+    assert reorder_list.rows() == rows
 
 
 def test_property_panel_uses_selection_and_sync_mixins_directly() -> None:
