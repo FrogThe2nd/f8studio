@@ -22,6 +22,7 @@ from .graph_layering import GraphLayeringMixin
 from .graph_search_actions import GraphSearchActionsMixin
 from .graph_service_reclaim import GraphServiceReclaimMixin
 from .graph_node_state_actions import GraphNodeStateActionsMixin
+from .graph_monitor_actions import GraphMonitorActionsMixin
 from .graph_variant_actions import GraphVariantActionsMixin
 from .insert_layout_utils import GraphBounds
 from .layers import normalize_layer_defs
@@ -47,6 +48,7 @@ class F8StudioGraph(
     GraphDuplicateActionsMixin,
     GraphNodeDocsActionsMixin,
     GraphNodeStateActionsMixin,
+    GraphMonitorActionsMixin,
     GraphLayeringMixin,
     GraphConnectionRulesMixin,
     GraphInsertFlowMixin,
@@ -94,6 +96,7 @@ class F8StudioGraph(
         self._duplicate_menu_node_types: set[str] = set()
         self._node_docs_menu_node_types: set[str] = set()
         self._node_state_menu_node_types: set[str] = set()
+        self._monitor_menu_node_types: set[str] = set()
         self._graph_context_menu_commands_installed = False
         self._node_docs_dialog_opener: Callable[[SpecTemplate, str, str], None] | None = None
         self._unsubscribe_asset_cache_changed = None

@@ -12,6 +12,7 @@ if ROOT not in sys.path:
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS as STUDIO_SERVICE_CLASS  # noqa: E402
 from f8pystudio.studio_specs.identifiers import STUDIO_SERVICE_ID  # noqa: E402
 from f8pystudio.bridge.studio_bridge import ServiceMonitorRow  # noqa: E402
+from f8pystudio.ui.mainwin import service_manager_widget as service_manager_widget_module  # noqa: E402
 from f8pystudio.ui.mainwin.service_manager_widget import ServiceManagerWidget  # noqa: E402
 
 
@@ -22,6 +23,7 @@ class _FakeBridge:
         self.start_calls: list[tuple[str, str]] = []
         self.active_calls: list[tuple[str, bool]] = []
         self.deploy_calls: list[str] = []
+        self.stream_requests: list[tuple[str, int]] = []
 
     def list_service_monitor_rows(self) -> list[ServiceMonitorRow]:
         return list(self._rows)
@@ -57,6 +59,10 @@ class _FakeBridge:
 
     def deploy_service_rungraph(self, service_id: str) -> None:
         self.deploy_calls.append(str(service_id))
+
+    def get_monitor_snapshot_stream(self, service_id: str, *, limit: int = 500) -> list[dict[str, object]]:
+        self.stream_requests.append((str(service_id), int(limit)))
+        return []
 
 
 def _ensure_app() -> QtWidgets.QApplication:
@@ -218,6 +224,43 @@ def test_deploy_button_deploys_current_rungraph_for_running_service() -> None:
 
     widget._on_deploy_clicked()
     assert bridge.deploy_calls == ["svcA"]
+
+
+def test_service_monitor_context_menu_includes_monitor_stream_action() -> None:
+    _ensure_app()
+    bridge = _FakeBridge([_row(running=True, active=True, service_class="f8.tests.a")])
+    widget = ServiceManagerWidget(
+        bridge=bridge,  # type: ignore[arg-type]
+        get_declared_services=lambda: {"svcA": "f8.tests.a"},
+    )
+    widget.refresh()
+
+    menu = widget._build_table_context_menu(widget._selected_row())
+
+    actions = [action for action in menu.actions() if not action.isSeparator()]
+    assert [action.text() for action in actions] == ["View Monitor Stream..."]
+    assert actions[0].isEnabled() is True
+
+
+def test_service_monitor_context_menu_action_opens_selected_monitor_stream(monkeypatch) -> None:
+    _ensure_app()
+    opened: list[tuple[str, object]] = []
+    bridge = _FakeBridge([_row(running=True, active=True, service_class="f8.tests.a")])
+    widget = ServiceManagerWidget(
+        bridge=bridge,  # type: ignore[arg-type]
+        get_declared_services=lambda: {"svcA": "f8.tests.a"},
+    )
+    widget.refresh()
+
+    def _open_dialog(*, parent: QtWidgets.QWidget | None, bridge: object, service_id: str) -> None:
+        _ = parent
+        opened.append((str(service_id), bridge))
+
+    monkeypatch.setattr(service_manager_widget_module, "open_monitor_stream_dialog", _open_dialog)
+
+    widget._open_selected_monitor_stream()
+
+    assert opened == [("svcA", bridge)]
 
 
 def test_bridge_only_rows_are_preserved_without_declared_graph_service() -> None:

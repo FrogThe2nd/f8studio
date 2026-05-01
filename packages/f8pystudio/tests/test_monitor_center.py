@@ -67,3 +67,16 @@ def test_monitor_center_prunes_old_samples() -> None:
     assert services
     latest = services[0]["latest"]
     assert latest["tsMs"] >= base_ts - 20
+
+
+def test_monitor_center_exports_limited_snapshot_stream() -> None:
+    base_ts = int(now_ms())
+    center = MonitorCenter(window_ms=60_000)
+    center.ingest_snapshot(_snapshot(service_id="svcA", ts_ms=base_ts - 300, cpu=1.0, wait_p95=1.0, error_count=0))
+    center.ingest_snapshot(_snapshot(service_id="svcA", ts_ms=base_ts - 200, cpu=2.0, wait_p95=2.0, error_count=0))
+    center.ingest_snapshot(_snapshot(service_id="svcA", ts_ms=base_ts - 100, cpu=3.0, wait_p95=3.0, error_count=0))
+
+    stream = center.export_snapshot_stream_json(service_id="svcA", limit=2)
+
+    assert [item["tsMs"] for item in stream] == [base_ts - 200, base_ts - 100]
+    assert [item["cpu"]["processPercent"] for item in stream] == [2.0, 3.0]

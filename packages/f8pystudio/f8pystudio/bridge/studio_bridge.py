@@ -322,6 +322,9 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
             return None
         return dump_json(snapshot, mode="json", by_alias=True)
 
+    def get_monitor_snapshot_stream(self, service_id: str, *, limit: int = 500) -> list[dict[str, Any]]:
+        return self._monitor_center.export_snapshot_stream_json(service_id=str(service_id), limit=int(limit))
+
     def _collect_known_service_ids(self) -> list[str]:
         known_service_ids = collect_known_service_ids(
             managed_service_ids=self._managed_service_ids,
@@ -375,7 +378,6 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
                 self._process_gateway.stop(StopServiceRequest(service_id=sid))
             except Exception as exc:
                 self._report_exception(f"stop service process failed serviceId={sid}", exc)
-
 
 
 

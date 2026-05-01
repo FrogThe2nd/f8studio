@@ -149,6 +149,28 @@ class MonitorCenter:
             out[str(service_id)] = series[-1]
         return out
 
+    def snapshot_stream(self, *, service_id: str, limit: int = 500) -> list[F8MonitorSnapshot]:
+        sid = str(service_id or "").strip()
+        if not sid:
+            return []
+        self._prune_service(service_id=sid, now_ts_ms=int(now_ms()))
+        series = self._by_service.get(sid)
+        if series is None or not series:
+            return []
+        capped_limit = max(1, min(int(limit), 5000))
+        snapshots = list(series)
+        if len(snapshots) <= capped_limit:
+            return snapshots
+        return snapshots[-capped_limit:]
+
+    def export_snapshot_stream_json(self, *, service_id: str, limit: int = 500) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for snapshot in self.snapshot_stream(service_id=service_id, limit=limit):
+            payload = dump_json(snapshot, mode="json", by_alias=True)
+            if isinstance(payload, dict):
+                out.append(payload)
+        return out
+
     def drop_service(self, *, service_id: str) -> None:
         sid = str(service_id or "").strip()
         if not sid:

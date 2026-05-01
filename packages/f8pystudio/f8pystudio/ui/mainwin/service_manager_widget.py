@@ -8,6 +8,7 @@ from qtpy import QtCore, QtGui, QtWidgets
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS as STUDIO_SERVICE_CLASS
 from f8pystudio.studio_specs.identifiers import STUDIO_SERVICE_ID
 from f8pystudio.bridge.studio_bridge import PyStudioServiceBridge, ServiceMonitorRow
+from ...ui.dialogs.monitor_stream_dialog import open_monitor_stream_dialog
 from ...ui.support.ui_icons import StudioIcon, icon_for
 
 
@@ -334,6 +335,7 @@ class ServiceManagerWidget(QtWidgets.QWidget):
         self._table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self._table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self._table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self._table.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.verticalHeader().setVisible(False)
         header = self._table.horizontalHeader()
         header.setStretchLastSection(False)
@@ -364,6 +366,7 @@ class ServiceManagerWidget(QtWidgets.QWidget):
         self._deploy_btn.clicked.connect(self._on_deploy_clicked)  # type: ignore[attr-defined]
         self._restart_btn.clicked.connect(self._on_restart_clicked)  # type: ignore[attr-defined]
         self._table.selectionModel().selectionChanged.connect(self._on_selection_changed)  # type: ignore[attr-defined]
+        self._table.customContextMenuRequested.connect(self._on_table_context_menu_requested)  # type: ignore[attr-defined]
 
         self._poll_timer = QtCore.QTimer(self)
         self._poll_timer.setInterval(1000)
@@ -459,6 +462,44 @@ class ServiceManagerWidget(QtWidgets.QWidget):
         if not service_id:
             return None
         return self._rows_by_service_id.get(service_id)
+
+    def _select_table_row_at_pos(self, pos: QtCore.QPoint) -> ServiceMonitorRow | None:
+        index = self._table.indexAt(pos)
+        if not index.isValid():
+            return self._selected_row()
+        self._table.setCurrentIndex(index)
+        self._table.selectionModel().select(
+            index,
+            QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect | QtCore.QItemSelectionModel.SelectionFlag.Rows,
+        )
+        return self._selected_row()
+
+    def _build_table_context_menu(self, row: ServiceMonitorRow | None) -> QtWidgets.QMenu:
+        menu = QtWidgets.QMenu(self._table)
+        view_stream_action = menu.addAction(icon_for(self, StudioIcon.SERVICE_MONITOR), "View Monitor Stream...")
+        view_stream_action.setEnabled(row is not None and bool(str(row.service_id or "").strip()))
+        view_stream_action.triggered.connect(self._open_selected_monitor_stream)  # type: ignore[attr-defined]
+        return menu
+
+    @QtCore.Slot(QtCore.QPoint)
+    def _on_table_context_menu_requested(self, pos: QtCore.QPoint) -> None:
+        row = self._select_table_row_at_pos(pos)
+        menu = self._build_table_context_menu(row)
+        menu.exec(self._table.viewport().mapToGlobal(pos))
+
+    @QtCore.Slot()
+    def _open_selected_monitor_stream(self) -> None:
+        row = self._selected_row()
+        if row is None:
+            return
+        service_id = str(row.service_id or "").strip()
+        if not service_id:
+            return
+        open_monitor_stream_dialog(
+            parent=self.window() if isinstance(self.window(), QtWidgets.QWidget) else self,
+            bridge=self._bridge,
+            service_id=service_id,
+        )
 
     @staticmethod
     def _restore_scrollbar_value(scrollbar: QtWidgets.QScrollBar, value: int) -> None:

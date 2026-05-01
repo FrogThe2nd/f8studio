@@ -82,6 +82,19 @@ def test_list_service_monitor_rows_includes_snapshot_and_managed_services() -> N
     assert svc_b.active is False
 
 
+def test_bridge_exports_monitor_snapshot_stream() -> None:
+    bridge = PyStudioServiceBridge(PyStudioServiceBridgeConfig())
+    ts_ms = int(now_ms())
+    bridge._monitor_center.ingest_snapshot(_snapshot(service_id="svcA", service_class="f8.tests.a", ts_ms=ts_ms - 2))
+    bridge._monitor_center.ingest_snapshot(_snapshot(service_id="svcA", service_class="f8.tests.a", ts_ms=ts_ms - 1))
+
+    stream = bridge.get_monitor_snapshot_stream("svcA", limit=1)
+
+    assert len(stream) == 1
+    assert stream[0]["serviceId"] == "svcA"
+    assert stream[0]["tsMs"] == ts_ms - 1
+
+
 def test_list_service_monitor_rows_always_includes_built_in_studio_service() -> None:
     bridge = PyStudioServiceBridge(PyStudioServiceBridgeConfig())
 

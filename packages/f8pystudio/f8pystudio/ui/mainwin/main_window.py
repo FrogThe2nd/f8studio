@@ -175,6 +175,7 @@ class F8StudioMainWin(
         self.studio_graph.install_identity_context_menu_for_nodes(node_class_list)
         self.studio_graph.install_duplicate_context_menu_for_nodes(node_class_list)
         self.studio_graph.install_node_state_context_menu_for_nodes(node_class_list)
+        self.studio_graph.install_monitor_context_menu_for_nodes(node_class_list)
         self.studio_graph._undo_stack.indexChanged.connect(self._on_graph_undo_index_changed)  # type: ignore[attr-defined]
         self._last_saved_undo_index = self._current_undo_index()
         self._last_auto_deploy_observed_undo_index = self._current_undo_index()
