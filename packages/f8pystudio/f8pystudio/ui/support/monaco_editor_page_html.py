@@ -56,6 +56,7 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
       #f8-root {{
         display: flex;
         flex-direction: row;
+        position: relative;
       }}
       #f8-editor-area {{
         flex: 1;
@@ -804,9 +805,12 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
         width: 32px; height: 32px;
         cursor: pointer;
         display: flex; align-items: center; justify-content: center;
-        transition: background 0.15s;
+        transition: background 0.15s, right 0.2s ease;
       }}
       #f8-ai-toggle:hover {{ background: #45475a; }}
+      body.f8-ai-open #f8-ai-toggle {{
+        right: calc(var(--f8-ai-panel-width, 320px) + 8px);
+      }}
       #f8-ai-mode-bar {{
         display: flex;
         gap: 6px;
@@ -1116,10 +1120,48 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
       window._f8_attachments = [];
       window._f8_currentRid = null;
       window._f8_aiSignalsConnected = false;
+      const F8_AI_PANEL_MIN_WIDTH = 240;
+      const F8_AI_PANEL_DEFAULT_WIDTH = 320;
+      const F8_AI_PANEL_MAX_WIDTH = 800;
 
       function _f8_editorLanguage() {{
         const init = window.__F8_INITIAL__ || {{}};
         return String(init.language || 'plaintext');
+      }}
+
+      function _f8_normalizeAiPanelWidth(value) {{
+        const width = Number.parseInt(String(value || ''), 10);
+        if (!Number.isFinite(width)) return F8_AI_PANEL_DEFAULT_WIDTH;
+        return Math.min(F8_AI_PANEL_MAX_WIDTH, Math.max(F8_AI_PANEL_MIN_WIDTH, width));
+      }}
+
+      function _f8_setAiPanelWidth(value) {{
+        const width = _f8_normalizeAiPanelWidth(value);
+        document.documentElement.style.setProperty('--f8-ai-panel-width', width + 'px');
+        return width;
+      }}
+
+      function _f8_currentAiPanelWidth() {{
+        const cssWidth = document.documentElement.style.getPropertyValue('--f8-ai-panel-width');
+        return _f8_normalizeAiPanelWidth(cssWidth);
+      }}
+
+      function _f8_normalizeAiPanelOpen(value) {{
+        if (value === true) return true;
+        if (value === false || value === null || value === undefined) return false;
+        const text = String(value).trim().toLowerCase();
+        return text === '1' || text === 'true' || text === 'yes' || text === 'open';
+      }}
+
+      function _f8_setAiPanelOpen(panel, toggle, open) {{
+        const isOpen = _f8_normalizeAiPanelOpen(open);
+        const width = _f8_currentAiPanelWidth();
+        panel.classList.toggle('open', isOpen);
+        document.body.classList.toggle('f8-ai-open', isOpen);
+        toggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+        toggle.setAttribute('title', isOpen ? 'Hide AI Assist' : 'Show AI Assist');
+        panel.style.width = isOpen ? width + 'px' : '0px';
+        return isOpen;
       }}
 
       // ---- simple markdown → HTML (no deps) ----
@@ -1214,16 +1256,14 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
         if (!panel || !toggle) return;
 
         // Restore saved states
+        let savedOpen = false;
+        let savedWidth = F8_AI_PANEL_DEFAULT_WIDTH;
         if (window._f8_aiAssist && window._f8_aiAssist.get_ui_state) {{
-          const savedOpen = window._f8_aiAssist.get_ui_state('ai_panel_open', false);
-          const savedWidth = window._f8_aiAssist.get_ui_state('ai_panel_width', 320);
-          if (savedOpen) {{
-            panel.classList.add('open');
-            document.body.classList.add('f8-ai-open');
-          }}
-          panel.style.width = savedOpen ? (savedWidth + 'px') : '0';
-          document.documentElement.style.setProperty('--f8-ai-panel-width', savedWidth + 'px');
+          savedOpen = _f8_normalizeAiPanelOpen(window._f8_aiAssist.get_ui_state('ai_panel_open', false));
+          savedWidth = _f8_normalizeAiPanelWidth(window._f8_aiAssist.get_ui_state('ai_panel_width', F8_AI_PANEL_DEFAULT_WIDTH));
         }}
+        _f8_setAiPanelWidth(savedWidth);
+        _f8_setAiPanelOpen(panel, toggle, savedOpen);
 
         // Drag and Drop support
         panel.addEventListener('dragover', (e) => {{
@@ -1248,12 +1288,13 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
         }});
 
         toggle.addEventListener('click', function() {{
-          const isOpen = panel.classList.toggle('open');
-          // Update width directly to avoid transform conflicts
-          panel.style.width = isOpen ? (document.documentElement.style.getPropertyValue('--f8-ai-panel-width') || '320px') : '0';
+          const isOpen = _f8_setAiPanelOpen(panel, toggle, !panel.classList.contains('open'));
           
           if (window._f8_aiAssist && window._f8_aiAssist.set_ui_state) {{
             window._f8_aiAssist.set_ui_state('ai_panel_open', isOpen);
+            if (isOpen) {{
+              window._f8_aiAssist.set_ui_state('ai_panel_width', _f8_currentAiPanelWidth());
+            }}
           }}
           
           // Force layout refresh periodically during transition for smoothness
@@ -1330,9 +1371,10 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
         let startWidth = 0;
 
         resizer.addEventListener('mousedown', function(e) {{
+          if (!panel.classList.contains('open')) return;
           isResizing = true;
           startX = e.clientX;
-          startWidth = panel.offsetWidth;
+          startWidth = _f8_currentAiPanelWidth();
           panel.style.transition = 'none';
           document.body.style.cursor = 'ew-resize';
           document.addEventListener('mousemove', _onMouseMove);
@@ -1343,8 +1385,7 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
         function _onMouseMove(e) {{
           if (!isResizing) return;
           const delta = startX - e.clientX;
-          const newWidth = Math.min(800, Math.max(200, startWidth + delta));
-          document.documentElement.style.setProperty('--f8-ai-panel-width', newWidth + 'px');
+          const newWidth = _f8_setAiPanelWidth(startWidth + delta);
           if (panel.classList.contains('open')) {{
              panel.style.width = newWidth + 'px';
           }}
@@ -1353,14 +1394,14 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
 
         function _onMouseUp() {{
           isResizing = false;
-          panel.style.transition = 'transform 0.3s ease';
+          panel.style.transition = 'width 0.2s ease';
           document.body.style.cursor = 'default';
           document.removeEventListener('mousemove', _onMouseMove);
           document.removeEventListener('mouseup', _onMouseUp);
 
           // Save width
           if (window._f8_aiAssist && window._f8_aiAssist.set_ui_state) {{
-            window._f8_aiAssist.set_ui_state('ai_panel_width', panel.offsetWidth);
+            window._f8_aiAssist.set_ui_state('ai_panel_width', _f8_currentAiPanelWidth());
           }}
         }}
       }}
@@ -1946,8 +1987,8 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
       <div id="f8-editor-area">
         <div id="container"></div>
         <div id="f8-diff-container"></div>
-        <button id="f8-ai-toggle" title="AI Assist">✨</button>
       </div>
+      <button id="f8-ai-toggle" title="Show AI Assist" aria-expanded="false">✨</button>
 
       <div id="f8-ai-panel">
         <div id="f8-ai-resizer"></div>

@@ -23,7 +23,7 @@ from ..support.ai_context_controls import (
     usage_pie_icon,
 )
 from ..widgets.ai_quick_panel import AiQuickPanel
-from ..support.ai_assist_page_v2 import build_ai_assist_html_v2  # Use enhanced version
+from ..support.ai_assist_page import build_ai_assist_html
 from .ai_assist_sidebar_graph_context_mixin import (
     AiAssistSidebarGraphContextMixin,
     GraphSelectionSource,
@@ -178,7 +178,7 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
         # Load HTML
         set_webengine_html(
             self._view,
-            build_ai_assist_html_v2(
+            build_ai_assist_html(
                 prism_asset_html=render_prism_asset_html(languages=("python",)),
             ),
             base_url=resolve_web_asset_page_base_url(),

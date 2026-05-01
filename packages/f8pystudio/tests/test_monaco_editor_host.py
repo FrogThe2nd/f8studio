@@ -305,3 +305,24 @@ def test_monaco_editor_page_routes_ai_requests_through_request_maps() -> None:
     assert ".edit_result_ready.connect" not in send_message_block
     assert ".plan_step_ready.connect" not in send_message_block
     assert ".plan_done.connect" not in send_message_block
+
+
+def test_monaco_editor_ai_panel_toggle_keeps_reopen_control_visible() -> None:
+    html = build_monaco_editor_html(
+        MonacoEditorPageConfig(
+            code="print('hello')\n",
+            language="python",
+            monaco_base_url="https://cdn.jsdelivr.net/npm/monaco-editor/min",
+            python_assist_enabled=True,
+        )
+    )
+
+    assert "function _f8_normalizeAiPanelWidth(value)" in html
+    assert "function _f8_normalizeAiPanelOpen(value)" in html
+    assert "const F8_AI_PANEL_MIN_WIDTH = 240;" in html
+    assert "function _f8_setAiPanelOpen(panel, toggle, open)" in html
+    assert "document.body.classList.toggle('f8-ai-open', isOpen);" in html
+    assert "panel.style.width = isOpen ? width + 'px' : '0px';" in html
+    assert "body.f8-ai-open #f8-ai-toggle" in html
+    assert 'id="f8-ai-toggle" title="Show AI Assist" aria-expanded="false"' in html
+    assert "panel.style.width = isOpen ? (document.documentElement.style.getPropertyValue" not in html
