@@ -4,6 +4,7 @@ from qtpy import QtCore, QtWidgets
 
 from ....nodegraph.node_graph import F8StudioGraph
 from ....nodegraph.layers import extract_node_layer_ids_from_ui_state
+from ...support.studio_theme import qss_rgba, studio_dark_theme
 
 
 class F8LayerMembershipEditor(QtWidgets.QWidget):
@@ -16,7 +17,7 @@ class F8LayerMembershipEditor(QtWidgets.QWidget):
         self._ui_state: dict[str, object] = {}
         self._checkboxes: dict[str, QtWidgets.QCheckBox] = {}
         self._empty_label = QtWidgets.QLabel("No layers defined.", self)
-        self._empty_label.setStyleSheet("color: rgba(235,235,235,120);")
+        self._empty_label.setStyleSheet(f"color: {qss_rgba(studio_dark_theme().palette.text_primary, 130)};")
         self._content = QtWidgets.QWidget(self)
         self._content_layout = QtWidgets.QVBoxLayout(self._content)
         self._content_layout.setContentsMargins(0, 0, 0, 0)

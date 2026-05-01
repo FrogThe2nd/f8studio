@@ -20,6 +20,7 @@ from .edge_rules import (
     validate_runtime_connection,
 )
 from .pipe_item import F8StudioPipeItem
+from ..ui.support.studio_theme import performance_overlay_qss
 
 logger = logging.getLogger(__name__)
 _TEXT_INPUT_TYPES: tuple[type[QtWidgets.QWidget], ...] = (
@@ -71,18 +72,7 @@ class F8StudioNodeViewer(NodeViewer):
         self._perf_overlay_label.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
         self._perf_overlay_label.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
         self._perf_overlay_label.setMargin(8)
-        self._perf_overlay_label.setStyleSheet(
-            """
-            QLabel#f8PerfOverlay {
-                color: rgb(238, 244, 248);
-                background: rgba(12, 18, 24, 190);
-                border: 1px solid rgba(120, 200, 255, 90);
-                border-radius: 8px;
-                font-family: monospace;
-                font-size: 11px;
-            }
-            """
-        )
+        self._perf_overlay_label.setStyleSheet(performance_overlay_qss())
         self._perf_overlay_label.hide()
         self._perf_overlay_timer = QtCore.QTimer(self)
         self._perf_overlay_timer.setInterval(500)

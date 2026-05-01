@@ -10,6 +10,7 @@ from ...ai_assist.store import AiProviderStore
 from ...ui.support.ai_assist_state import QtAiPanelStateStore
 from ...ui.support.web_asset_utils import render_prism_asset_html, resolve_web_asset_page_base_url
 from ...ui.support.ui_icons import StudioIcon, icon_for
+from ...ui.support.studio_theme import ai_context_button_qss, ai_status_label_qss, studio_dark_theme
 from ...ui.support.webengine_utils import (
     configure_default_webengine_profile,
     configure_webengine_local_content_access,
@@ -48,6 +49,7 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
         self._current_selection_label = ""
         self._current_selected_snapshot_preview: GraphContextSnapshot | None = None
         self._pinned_graph_context_snapshot: GraphContextSnapshot | None = None
+        theme_palette = studio_dark_theme().palette
         
         # 1. Setup AI components
         self._ai_store = AiProviderStore()
@@ -73,31 +75,24 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
         self._ctx_btn = QtWidgets.QToolButton()
         self._ctx_btn.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self._ctx_btn.setIconSize(QtCore.QSize(14, 14))
-        self._ctx_btn.setIcon(usage_pie_icon(used_ratio=0.0, color=QtGui.QColor("#4fc3f7")))
+        self._ctx_btn.setIcon(usage_pie_icon(used_ratio=0.0, color=QtGui.QColor(theme_palette.info)))
         self._ctx_btn.setText("100% free")
         self._ctx_btn.setToolTip("AI context usage\nUsed: 0 / 0 tok")
         set_tool_button_point_size(self._ctx_btn, 10)
-        self._ctx_btn.setStyleSheet(
-            "QToolButton { color: #9aa4b2; border: none; padding: 0 4px; background: transparent; font-size: 10pt; }"
-            "QToolButton:hover { color: #d7deea; }"
-        )
+        self._ctx_btn.setStyleSheet(ai_context_button_qss(text_color=theme_palette.text_muted, include_background=True))
         self._ctx_btn.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self._ctx_btn.customContextMenuRequested.connect(self._on_ctx_menu_requested)
         self._ai_bridge.context_usage_updated.connect(self._on_context_usage_updated)
         self._ai_bridge.chat_context_snapshot_changed.connect(self._on_bridge_chat_context_changed)
 
         self._selected_node_label = QtWidgets.QLabel("Sel: none")
-        self._selected_node_label.setStyleSheet(
-            "QLabel { color: #7f849c; font-size: 9pt; background: #181825; border: 1px solid #313244; border-radius: 5px; padding: 1px 6px; }"
-        )
+        self._selected_node_label.setStyleSheet(ai_status_label_qss(text_color=theme_palette.text_muted))
         self._selected_node_label.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Fixed)
         self._selected_node_label.setMaximumWidth(150)
         self._selected_node_label.setToolTip("Current graph selection subgraph preview.")
 
         self._pinned_node_label = QtWidgets.QLabel("Pin: none")
-        self._pinned_node_label.setStyleSheet(
-            "QLabel { color: #89b4fa; font-size: 9pt; background: #181825; border: 1px solid #313244; border-radius: 5px; padding: 1px 6px; }"
-        )
+        self._pinned_node_label.setStyleSheet(ai_status_label_qss(text_color=theme_palette.accent_hover))
         self._pinned_node_label.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Fixed)
         self._pinned_node_label.setMaximumWidth(150)
         self._pinned_node_label.setToolTip("Pinned graph context injected into AI chat.")
@@ -109,7 +104,7 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
             self._pin_context_btn,
             icon=icon_for(self._pin_context_btn, StudioIcon.PLUS),
             tooltip="Use selected subgraph context",
-            accent_color="#cdd6f4",
+            accent_color=theme_palette.text_primary,
         )
 
         self._clear_context_btn = QtWidgets.QToolButton()
@@ -119,7 +114,7 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
             self._clear_context_btn,
             icon=icon_for(self._clear_context_btn, StudioIcon.X),
             tooltip="Clear pinned graph context",
-            accent_color="#f2cdcd",
+            accent_color=theme_palette.error,
         )
 
         self._inspect_graph_context_btn = QtWidgets.QToolButton()
@@ -128,7 +123,7 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
             self._inspect_graph_context_btn,
             icon=icon_for(self._inspect_graph_context_btn, StudioIcon.ARTICLE),
             tooltip="Inspect pinned graph context payload",
-            accent_color="#a6e3a1",
+            accent_color=theme_palette.success,
         )
         
         # AI settings toggle button
@@ -138,7 +133,7 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
             self._ai_settings_btn,
             icon=icon_for(self._ai_settings_btn, StudioIcon.ROBOT_FACE),
             tooltip="Toggle AI settings",
-            accent_color="#cba6f7",
+            accent_color=theme_palette.purple,
         )
         self._ai_settings_btn.toggled.connect(self._on_ai_settings_toggle)
         

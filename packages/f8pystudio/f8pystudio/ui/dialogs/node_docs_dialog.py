@@ -8,6 +8,7 @@ from f8pysdk.codec import dump_json
 from qtpy import QtCore, QtWidgets
 
 from ..support.json_text_editor import attach_json_enhancements
+from ..support.studio_theme import studio_dark_theme
 
 SpecTemplate = F8OperatorSpec | F8ServiceSpec
 
@@ -126,11 +127,12 @@ def show_node_docs_dialog(*, parent: QtWidgets.QWidget | None, spec: SpecTemplat
     overview = QtWidgets.QTextBrowser(dialog)
     overview.setOpenExternalLinks(False)
     overview.setOpenLinks(False)
+    p = studio_dark_theme().palette
     overview.setStyleSheet(
         "QTextBrowser {"
-        "  background: #1f2329;"
-        "  border: 1px solid #2d333b;"
-        "  color: #e6edf3;"
+        f"  background: {p.panel_bg};"
+        f"  border: 1px solid {p.border_subtle};"
+        f"  color: {p.text_primary};"
         "  font-size: 12px;"
         "}"
     )

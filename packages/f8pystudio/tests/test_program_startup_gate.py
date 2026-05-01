@@ -14,6 +14,9 @@ class _FakeApp:
         self.organization_name = ""
         self.application_name = ""
         self.window_icon: object | None = None
+        self.style_name = ""
+        self.palette: object | None = None
+        self.style_sheet = ""
         self.process_events_called = False
         _FakeApp.last_instance = self
 
@@ -25,6 +28,15 @@ class _FakeApp:
 
     def setWindowIcon(self, icon: object) -> None:
         self.window_icon = icon
+
+    def setStyle(self, value: str) -> None:
+        self.style_name = str(value)
+
+    def setPalette(self, palette: object) -> None:
+        self.palette = palette
+
+    def setStyleSheet(self, style_sheet: str) -> None:
+        self.style_sheet = str(style_sheet)
 
     def processEvents(self) -> None:
         self.process_events_called = True

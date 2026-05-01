@@ -17,6 +17,7 @@ from qtpy import QtCore, QtGui, QtWidgets  # type: ignore[import-not-found]
 from ...ai_assist.llm_bridge import AiLlmBridge
 from ...ai_assist.registry import ProviderConfig
 from ...ai_assist.store import AiProviderStore
+from ..support.studio_theme import ai_quick_panel_qss, flat_link_button_qss, label_qss, studio_dark_theme
 
 logger = logging.getLogger(__name__)
 
@@ -47,13 +48,7 @@ class AiQuickPanel(QtWidgets.QWidget):
         self._store.model_tested.connect(self._on_model_tested)  # type: ignore[attr-defined]
 
         self.setObjectName("aiQuickPanel")
-        self.setStyleSheet(
-            "#aiQuickPanel { "
-            "  background: #252526; "
-            "  border: 1px solid #45475a; "
-            "  border-radius: 6px; "
-            "}"
-        )
+        self.setStyleSheet(ai_quick_panel_qss())
         # Add drop shadow effect
         shadow = QtWidgets.QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(15)
@@ -79,12 +74,12 @@ class AiQuickPanel(QtWidgets.QWidget):
 
         # Title
         title = QtWidgets.QLabel("<b>AI Settings</b>")
-        title.setStyleSheet("color: #cccccc; font-size: 12px;")
+        title.setStyleSheet(label_qss(color=studio_dark_theme().palette.text_primary, font_size_px=12))
         layout.addWidget(title)
 
         sep = QtWidgets.QFrame()
         sep.setFrameShape(QtWidgets.QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #3c3c3c;")
+        sep.setStyleSheet(label_qss(color=studio_dark_theme().palette.border_subtle))
         layout.addWidget(sep)
 
         # --- Inline task ---
@@ -124,7 +119,7 @@ class AiQuickPanel(QtWidgets.QWidget):
         layout.addWidget(self._labeled("Model:", chat_model_row))
 
         self._reasoning_label = QtWidgets.QLabel("Reasoning:")
-        self._reasoning_label.setStyleSheet("color: #888; font-size: 11px;")
+        self._reasoning_label.setStyleSheet(label_qss(color=studio_dark_theme().palette.text_muted, font_size_px=11))
         self._reasoning_combo = QtWidgets.QComboBox()
         self._reasoning_combo.addItems(_REASONING_LEVELS)
         self._reasoning_combo.currentTextChanged.connect(self._on_reasoning_changed)  # type: ignore[attr-defined]
@@ -139,7 +134,7 @@ class AiQuickPanel(QtWidgets.QWidget):
 
         self._full_config_btn = QtWidgets.QPushButton("Open Full Config")
         self._full_config_btn.setFlat(True)
-        self._full_config_btn.setStyleSheet("color: #569cd6; text-decoration: underline; text-align: left;")
+        self._full_config_btn.setStyleSheet(flat_link_button_qss())
         self._full_config_btn.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self._full_config_btn.clicked.connect(self.open_full_config_requested)  # type: ignore[attr-defined]
         layout.addWidget(self._full_config_btn)
@@ -376,7 +371,7 @@ class AiQuickPanel(QtWidgets.QWidget):
     @staticmethod
     def _section_label(text: str) -> QtWidgets.QLabel:
         lbl = QtWidgets.QLabel(text)
-        lbl.setStyleSheet("color: #9cdcfe; font-size: 11px; font-weight: bold; margin-top: 4px;")
+        lbl.setStyleSheet(label_qss(color=studio_dark_theme().palette.info, font_size_px=11, bold=True, margin_top_px=4))
         return lbl
 
     @staticmethod
@@ -385,7 +380,7 @@ class AiQuickPanel(QtWidgets.QWidget):
         h = QtWidgets.QHBoxLayout(row)
         h.setContentsMargins(0, 0, 0, 0)
         lbl = QtWidgets.QLabel(label)
-        lbl.setStyleSheet("color: #888; font-size: 11px;")
+        lbl.setStyleSheet(label_qss(color=studio_dark_theme().palette.text_muted, font_size_px=11))
         lbl.setFixedWidth(60)
         h.addWidget(lbl)
         if isinstance(widget_or_layout, QtWidgets.QWidget):

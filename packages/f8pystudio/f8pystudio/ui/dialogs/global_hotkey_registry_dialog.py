@@ -5,6 +5,7 @@ from typing import Callable
 from qtpy import QtCore, QtWidgets
 
 from ...global_hotkeys.models import GlobalHotkeyRegistryEntry
+from ..support.studio_theme import qss_rgba, studio_dark_theme
 
 
 class GlobalHotkeyRegistryDialog(QtWidgets.QDialog):
@@ -22,7 +23,7 @@ class GlobalHotkeyRegistryDialog(QtWidgets.QDialog):
         self._entries_provider = entries_provider
 
         self._summary = QtWidgets.QLabel(self)
-        self._summary.setStyleSheet("color: rgba(235, 235, 235, 150);")
+        self._summary.setStyleSheet(f"color: {qss_rgba(studio_dark_theme().palette.text_primary, 160)};")
 
         self._table = QtWidgets.QTableWidget(0, 3, self)
         self._table.setHorizontalHeaderLabels(["Key", "Binding", "Status"])

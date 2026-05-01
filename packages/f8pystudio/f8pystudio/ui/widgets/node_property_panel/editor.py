@@ -14,6 +14,7 @@ from ....nodegraph.node_graph import F8StudioGraph
 from ....nodegraph.node_base import F8StudioBaseNode
 from ...dialogs.node_spec_edit_dialogs import _F8EditStateFieldDialog
 from ...support.node_property_support import node_missing_lock_info
+from ...support.studio_theme import label_qss, qss_rgba, studio_dark_theme, transparent_header_qss
 from .common import _PROPERTY_PANEL_MIN_WIDTH, _TAB_HEADER_STYLE, _set_read_only_widget
 from .editor_build_mixin import NodePropertyEditorBuildMixin
 from .editor_view_state_mixin import NodePropertyEditorViewStateMixin
@@ -80,9 +81,10 @@ class F8StudioNodePropEditorWidget(
         close_btn.setFixedSize(24, 24)
         close_btn.setToolTip("close property")
         close_btn.clicked.connect(self._on_close)
+        theme_palette = studio_dark_theme().palette
         close_btn.setStyleSheet(
-            "QPushButton { border: 0; border-radius: 4px; padding: 0; background: rgba(255,255,255,0.04); }"
-            "QPushButton:hover { background: rgba(255,255,255,0.08); }"
+            f"QPushButton {{ border: 0; border-radius: 4px; padding: 0; background: {qss_rgba(theme_palette.text_primary, 10)}; }}"
+            f"QPushButton:hover {{ background: {qss_rgba(theme_palette.text_primary, 22)}; }}"
         )
         close_btn.setVisible(not self._inspect_mode)
 
@@ -103,10 +105,10 @@ class F8StudioNodePropEditorWidget(
 
         self.icon_label = QtWidgets.QLabel(self)
         self.icon_label.setPixmap(pixmap)
-        self.icon_label.setStyleSheet("background: transparent;")
+        self.icon_label.setStyleSheet(transparent_header_qss())
 
         self._name_label = QtWidgets.QLabel("name", self)
-        self._name_label.setStyleSheet("color: rgba(235,235,235,140); font-size: 11px;")
+        self._name_label.setStyleSheet(label_qss(color=qss_rgba(theme_palette.text_primary, 150), font_size_px=11))
 
         self.name_wgt = PropLineEdit(self)
         self.name_wgt.set_name("name")
@@ -123,7 +125,9 @@ class F8StudioNodePropEditorWidget(
         font = self.type_wgt.font()
         font.setPointSize(9)
         self.type_wgt.setFont(font)
-        self.type_wgt.setStyleSheet("color: rgba(235,235,235,120); padding: 0 2px;")
+        self.type_wgt.setStyleSheet(
+            f"{label_qss(color=qss_rgba(theme_palette.text_primary, 130))}; padding: 0 2px;"
+        )
 
         name_layout = QtWidgets.QHBoxLayout()
         name_layout.setContentsMargins(0, 0, 0, 0)
@@ -135,7 +139,8 @@ class F8StudioNodePropEditorWidget(
         missing_locked, missing_type = node_missing_lock_info(node)
         self._missing_banner = QtWidgets.QLabel(self)
         self._missing_banner.setStyleSheet(
-            "color: rgb(255, 224, 138); background: rgba(80, 60, 0, 58); border-radius: 4px; padding: 2px 6px;"
+            f"color: {theme_palette.warning}; background: {qss_rgba(theme_palette.warning, 48)}; "
+            "border-radius: 4px; padding: 2px 6px;"
         )
         self._missing_banner.setVisible(bool(missing_locked))
         if missing_locked:
@@ -290,7 +295,7 @@ class F8StudioSingleNodePropertiesWidget(
 
         self._empty = QtWidgets.QLabel(str(empty_message or "Select a node to view properties."), self._container)
         self._empty.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        self._empty.setStyleSheet("color: rgba(235,235,235,140); padding: 14px;")
+        self._empty.setStyleSheet(f"{label_qss(color=qss_rgba(studio_dark_theme().palette.text_primary, 150))}; padding: 14px;")
         self._container_layout.addWidget(self._empty, 1)
 
         self._scroll.setWidget(self._container)

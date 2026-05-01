@@ -26,6 +26,7 @@ from ..components.wave import (
     make_wave_pattern_editor_control,
     make_wave_preview_control,
 )
+from .studio_theme import inline_action_button_qss, studio_dark_theme
 
 
 @dataclass(frozen=True)
@@ -329,32 +330,7 @@ def build_inline_control_binding(
             widget.setToolTip(spec.field_tooltip)
             if tooltip_filter_installer is not None:
                 tooltip_filter_installer(widget)
-        widget.setStyleSheet(
-            """
-            QPushButton {
-                color: rgb(235, 235, 235);
-                background: rgba(0, 0, 0, 35);
-                border: 1px solid rgba(120, 200, 255, 85);
-                border-radius: 6px;
-                padding: 6px 10px;
-                text-align: center;
-                font-weight: 600;
-            }
-            QPushButton:hover {
-                background: rgba(120, 200, 255, 22);
-                border-color: rgba(120, 200, 255, 140);
-            }
-            QPushButton:pressed {
-                background: rgba(120, 200, 255, 35);
-                border-color: rgba(120, 200, 255, 160);
-            }
-            QPushButton:disabled {
-                color: rgba(235, 235, 235, 110);
-                background: rgba(0, 0, 0, 20);
-                border-color: rgba(255, 255, 255, 18);
-            }
-            """
-        )
+        widget.setStyleSheet(inline_action_button_qss(accent_color=studio_dark_theme().palette.accent))
 
         def _apply_code_value(value: Any) -> None:
             text = "" if value is None else str(value)
@@ -374,32 +350,7 @@ def build_inline_control_binding(
         widget = F8IncrementButtonEditor(widget_parent, title=spec.label, data_type=button_data_type)
         widget.set_name(spec.name)
         widget.set_button_text(spec.label)
-        widget.setStyleSheet(
-            """
-            QPushButton {
-                color: rgb(235, 235, 235);
-                background: rgba(0, 0, 0, 35);
-                border: 1px solid rgba(140, 220, 180, 90);
-                border-radius: 6px;
-                padding: 6px 10px;
-                text-align: center;
-                font-weight: 600;
-            }
-            QPushButton:hover {
-                background: rgba(140, 220, 180, 22);
-                border-color: rgba(140, 220, 180, 150);
-            }
-            QPushButton:pressed {
-                background: rgba(140, 220, 180, 36);
-                border-color: rgba(140, 220, 180, 180);
-            }
-            QPushButton:disabled {
-                color: rgba(235, 235, 235, 110);
-                background: rgba(0, 0, 0, 20);
-                border-color: rgba(255, 255, 255, 18);
-            }
-            """
-        )
+        widget.setStyleSheet(inline_action_button_qss(accent_color=studio_dark_theme().palette.success))
         if spec.field_tooltip:
             widget.set_context_tooltip(spec.field_tooltip)
             if tooltip_filter_installer is not None:

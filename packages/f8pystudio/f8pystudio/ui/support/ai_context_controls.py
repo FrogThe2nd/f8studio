@@ -3,6 +3,7 @@ from __future__ import annotations
 from qtpy import QtCore, QtGui, QtWidgets
 
 from ...ui.support.qt_font_utils import normalize_font_point_size
+from ...ui.support.studio_theme import icon_tool_button_qss, studio_dark_theme
 
 
 def set_tool_button_point_size(button: QtWidgets.QToolButton, point_size: int) -> None:
@@ -23,7 +24,8 @@ def usage_pie_icon(*, used_ratio: float, color: QtGui.QColor, size: int = 14) ->
     center = QtCore.QPointF(outer.center())
 
     painter.setPen(QtCore.Qt.PenStyle.NoPen)
-    painter.setBrush(QtGui.QColor("#4a4f57"))
+    p = studio_dark_theme().palette
+    painter.setBrush(QtGui.QColor(p.panel_raised_bg))
     painter.drawEllipse(outer)
 
     if ratio > 0.0:
@@ -39,10 +41,10 @@ def usage_pie_icon(*, used_ratio: float, color: QtGui.QColor, size: int = 14) ->
         inner_diameter,
         inner_diameter,
     )
-    painter.setBrush(QtGui.QColor("#1f2328"))
+    painter.setBrush(QtGui.QColor(p.field_bg))
     painter.drawEllipse(inner)
 
-    painter.setPen(QtGui.QPen(QtGui.QColor("#6c7380"), 1.0))
+    painter.setPen(QtGui.QPen(QtGui.QColor(p.border), 1.0))
     painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
     painter.drawEllipse(outer)
     painter.end()
@@ -62,19 +64,7 @@ def configure_icon_tool_button(
     button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly)
     button.setFixedSize(24, 24)
     button.setToolTip(tooltip)
-    button.setStyleSheet(
-        "QToolButton {"
-        f" color: {accent_color};"
-        " border: none;"
-        " border-radius: 6px;"
-        " padding: 0;"
-        " background: transparent;"
-        "}"
-        "QToolButton:hover:enabled { background: #313244; }"
-        "QToolButton:pressed:enabled { background: #45475a; }"
-        "QToolButton:checked { background: #313244; }"
-        "QToolButton:disabled { color: #6c7086; }"
-    )
+    button.setStyleSheet(icon_tool_button_qss(accent_color=accent_color))
 
 
 def set_status_label_text(label: QtWidgets.QLabel, text: str, *, max_width: int) -> None:

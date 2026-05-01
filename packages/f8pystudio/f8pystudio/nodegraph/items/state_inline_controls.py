@@ -33,6 +33,13 @@ from ...ui.support.state_builders import (
     build_inline_control_binding,
     set_control_read_only,
 )
+from ...ui.support.studio_theme import (
+    inline_control_qss,
+    inline_header_button_qss,
+    studio_dark_theme,
+    transparent_header_qss,
+    transparent_widget_qss,
+)
 from ...ui.components.wave import (
     WAVE_PATTERN_EDITOR_DEPENDENCY_FIELDS,
     WAVE_PREVIEW_DEPENDENCY_FIELDS,
@@ -48,18 +55,7 @@ from .service_toolbar_host import F8ElideToolButton, F8ForceGlobalToolTipFilter
 
 logger = logging.getLogger(__name__)
 
-INLINE_HEADER_BUTTON_STYLE = """
-    QToolButton {
-        color: rgb(235, 235, 235);
-        background: transparent;
-        border: 1px solid rgba(255, 255, 255, 18);
-        border-radius: 4px;
-        padding: 2px 8px;
-        text-align: left;
-    }
-    QToolButton:hover { background: transparent; }
-    QToolButton:checked { background: transparent; }
-"""
+INLINE_HEADER_BUTTON_STYLE = inline_header_button_qss()
 
 
 def _json_safe_schema_value(value: Any) -> Any:
@@ -112,8 +108,10 @@ def state_inline_control_serial(node_item: Any, info: StateFieldInfo) -> str:
 
 def _refresh_embedded_text_palette(widget: QtWidgets.QWidget) -> None:
     palette = widget.palette()
-    text_color = QtGui.QColor(235, 235, 235)
-    placeholder_color = QtGui.QColor(200, 200, 200, 140)
+    theme_palette = studio_dark_theme().palette
+    text_color = QtGui.QColor(theme_palette.text_primary)
+    placeholder_color = QtGui.QColor(theme_palette.text_muted)
+    placeholder_color.setAlpha(150)
 
     for group in (
         QtGui.QPalette.ColorGroup.Active,
@@ -162,7 +160,7 @@ def build_inline_header_button(
     header_lay.setContentsMargins(0, 0, 0, 0)
     header_lay.setSpacing(6)
     header.setAttribute(QtCore.Qt.WA_StyledBackground, True)
-    header.setStyleSheet("background: transparent;")
+    header.setStyleSheet(transparent_header_qss())
 
     btn = F8ElideToolButton(header)
     btn.setCheckable(bool(expandable))
@@ -490,36 +488,7 @@ def build_state_inline_control(
     field_tooltip = state_field.tooltip if state_field.tooltip != name else ""
 
     def _common_style(widget: QtWidgets.QWidget) -> None:
-        # Make controls readable on dark node themes.
-        widget.setStyleSheet(
-            """
-            QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QPlainTextEdit, QTextEdit {
-                color: rgb(235, 235, 235);
-                background: rgba(0, 0, 0, 45);
-                border: 1px solid rgba(255, 255, 255, 55);
-                border-radius: 3px;
-                padding: 1px 4px;
-            }
-            QPlainTextEdit, QTextEdit {
-                selection-background-color: rgb(80, 130, 180);
-            }
-            QComboBox::drop-down { border: 0px; }
-            QComboBox QAbstractItemView {
-                color: rgb(235, 235, 235);
-                background: rgb(35, 35, 35);
-                selection-background-color: rgb(80, 130, 180);
-            }
-            QCheckBox { color: rgb(235, 235, 235); }
-            QCheckBox::indicator {
-                width: 13px;
-                height: 13px;
-                border: 1px solid rgba(255, 255, 255, 90);
-                background: rgba(0, 0, 0, 35);
-                border-radius: 2px;
-            }
-            QCheckBox::indicator:checked { background: rgba(120, 200, 255, 90); }
-            """
-        )
+        widget.setStyleSheet(inline_control_qss())
 
     def _install_global_tooltip_filter(widget: QtWidgets.QWidget) -> None:
         tooltip_filter = F8ForceGlobalToolTipFilter(widget)
@@ -783,14 +752,7 @@ def ensure_state_inline_controls(node_item: Any) -> None:
         body_lay.setSpacing(0)
         body_lay.addWidget(control)
         body.setVisible(expanded)
-        body.setStyleSheet(
-            """
-            QWidget {
-                background: transparent;
-                border: 0px;
-            }
-            """
-        )
+        body.setStyleSheet(transparent_widget_qss())
 
         panel_lay = QtWidgets.QVBoxLayout(panel)
         panel_lay.setContentsMargins(0, 0, 0, 0)
@@ -800,7 +762,7 @@ def ensure_state_inline_controls(node_item: Any) -> None:
         panel.setProperty("_f8_state_panel", True)
         panel.setAttribute(QtCore.Qt.WA_StyledBackground, True)
         # panel.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
-        panel.setStyleSheet("background: transparent;")
+        panel.setStyleSheet(transparent_header_qss())
 
         # Connect toggle.
         btn.toggled.connect(lambda v, _n=name: node_item._toggle_state_inline_section(_n, bool(v)))  # type: ignore[attr-defined]

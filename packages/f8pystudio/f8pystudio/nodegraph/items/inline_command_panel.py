@@ -12,6 +12,7 @@ from f8pysdk.specs import schema_default, schema_type
 from f8pystudio.command_invocation import command_state_payload
 from f8pystudio.contracts.command_ui import CommandUiHandler, CommandUiSource
 from ...ui.components.controls import F8OptionCombo, F8Switch, F8ValueBar, parse_select_pool
+from ...ui.support.studio_theme import inline_command_button_qss, transparent_header_qss
 from ...ui.support.ui_notifications import show_warning
 from .proxy_widget_utils import dispose_detached_proxy_widget
 from .state_inline_controls import build_inline_header_button
@@ -21,29 +22,7 @@ logger = logging.getLogger(__name__)
 # Command rows are now first-class inline panels.
 # They share the same layout model as state inline rows, and `showOnNode`
 # controls both row visibility and command-port visibility.
-COMMAND_INLINE_BUTTON_STYLE = """
-    QToolButton {
-        color: rgb(235, 235, 235);
-        background: rgba(0, 0, 0, 28);
-        border: 1px solid rgba(120, 200, 255, 75);
-        border-radius: 4px;
-        padding: 2px 8px;
-        text-align: left;
-    }
-    QToolButton:hover {
-        background: rgba(120, 200, 255, 18);
-        border-color: rgba(120, 200, 255, 130);
-    }
-    QToolButton:pressed {
-        background: rgba(120, 200, 255, 42);
-        border-color: rgba(120, 200, 255, 170);
-    }
-    QToolButton:disabled {
-        color: rgba(235, 235, 235, 110);
-        background: rgba(0, 0, 0, 20);
-        border-color: rgba(255, 255, 255, 18);
-    }
-"""
+COMMAND_INLINE_BUTTON_STYLE = inline_command_button_qss()
 
 
 def _node_item_id(node_item: Any) -> str:
@@ -202,7 +181,7 @@ def _build_command_row_widget(
     panel_lay.addWidget(header)
     panel.setProperty("_f8_command_panel", True)
     panel.setAttribute(QtCore.Qt.WA_StyledBackground, True)
-    panel.setStyleSheet("background: transparent;")
+    panel.setStyleSheet(transparent_header_qss())
 
     proxy = node_item._command_inline_proxies.get(command_name)
     if proxy is None:

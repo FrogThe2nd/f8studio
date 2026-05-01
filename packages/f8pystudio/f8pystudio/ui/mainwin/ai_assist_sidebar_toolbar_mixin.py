@@ -8,6 +8,7 @@ from qtpy import QtCore, QtGui, QtWidgets
 from ...ai_assist.graph_context import GraphContextSnapshot
 from ..dialogs.ai_context_inspector import AiContextInspectorDialog
 from ..support.ai_context_controls import set_status_label_text, usage_pie_icon
+from ..support.studio_theme import ai_context_button_qss, studio_dark_theme
 
 logger = logging.getLogger(__name__)
 
@@ -40,12 +41,13 @@ class AiAssistSidebarToolbarMixin:
             return
         used_ratio = max(0.0, min(1.0, used / total))
         free_ratio = max(0.0, 1.0 - used_ratio)
+        p = studio_dark_theme().palette
         if used_ratio < 0.5:
-            color = "#4fc3f7"
+            color = p.info
         elif used_ratio < 0.8:
-            color = "#ffd54f"
+            color = p.warning
         else:
-            color = "#ef9a9a"
+            color = p.error
 
         def _fmt(value: int) -> str:
             return f"{value / 1000:.0f}k" if value >= 1000 else str(value)
@@ -53,10 +55,7 @@ class AiAssistSidebarToolbarMixin:
         free_pct = int(round(free_ratio * 100.0))
         host._ctx_btn.setIcon(usage_pie_icon(used_ratio=used_ratio, color=QtGui.QColor(color)))
         host._ctx_btn.setText(f"{free_pct}% free")
-        host._ctx_btn.setStyleSheet(
-            f"QToolButton {{ color: {color}; border: none; padding: 0 4px; background: transparent; font-size: 10pt; }}"
-            "QToolButton:hover { color: white; }"
-        )
+        host._ctx_btn.setStyleSheet(ai_context_button_qss(text_color=color, include_background=True))
         try:
             breakdown = host._ai_bridge.get_context_breakdown()
             host._ctx_btn.setToolTip(

@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 from qtpy import QtCore, QtGui, QtWidgets
 
+from ...ui.support.studio_theme import qss_rgba, studio_dark_theme
 from ...ui.support.ui_control import parse_ui_control
 from ...ui.support.ui_notifications import show_warning
 from ...ui.support.qt_lifecycle import qt_object_is_valid as _qt_object_is_valid
@@ -118,18 +119,19 @@ class _F8ComboPopup(QtWidgets.QFrame):
         self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
         self.setAutoFillBackground(False)
         self.setFrameShape(QtWidgets.QFrame.NoFrame)
-        self._bg_color = QtGui.QColor(35, 35, 35)
-        self._border_color = QtGui.QColor(255, 255, 255, 55)
+        theme_palette = studio_dark_theme().palette
+        self._bg_color = QtGui.QColor(theme_palette.panel_bg)
+        self._border_color = QtGui.QColor(theme_palette.border)
         self._radius = 6.0
         self.setStyleSheet(
-            """
-            QListView {
+            f"""
+            QListView {{
                 background: transparent;
-                color: rgb(235, 235, 235);
-                selection-background-color: rgb(80, 130, 180);
+                color: {theme_palette.text_primary};
+                selection-background-color: {theme_palette.selection_bg};
                 outline: 0;
                 border: 0px;
-            }
+            }}
             """
         )
 
@@ -977,7 +979,9 @@ class _F8ImageB64Dialog(QtWidgets.QDialog):
         self._label = QtWidgets.QLabel()
         self._label.setAlignment(QtCore.Qt.AlignCenter)
         self._label.setMinimumSize(480, 270)
-        self._label.setStyleSheet("border: 1px solid rgba(255,255,255,35); border-radius: 4px;")
+        self._label.setStyleSheet(
+            f"border: 1px solid {qss_rgba(studio_dark_theme().palette.text_primary, 45)}; border-radius: 4px;"
+        )
 
         self._btn_load = QtWidgets.QPushButton("Load File")
         self._btn_load.clicked.connect(self._load_file)  # type: ignore[attr-defined]

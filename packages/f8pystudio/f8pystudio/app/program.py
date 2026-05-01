@@ -212,6 +212,7 @@ class PyStudioProgram:
         from qtpy import QtCore, QtGui, QtWidgets
 
         from f8pystudio.ui.support.qt_font_utils import normalize_application_font
+        from f8pystudio.ui.support.studio_theme import apply_studio_theme, studio_dark_theme
         from f8pystudio.ui.support.webengine_utils import prewarm_webengine_view
         from f8pystudio.ui.mainwin.main_window import F8StudioMainWin
 
@@ -239,6 +240,7 @@ class PyStudioProgram:
         app.setOrganizationName("Feel8")
         app.setApplicationName("F8PyStudio")
         normalize_application_font(app)
+        apply_studio_theme(app, studio_dark_theme())
         if icon_path is not None:
             app_icon = QtGui.QIcon(str(icon_path))
             if not app_icon.isNull():

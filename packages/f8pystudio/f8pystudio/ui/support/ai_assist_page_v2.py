@@ -4,11 +4,15 @@ Enhanced AI Assist page with better thinking process display and markdown render
 
 from __future__ import annotations
 
+from .studio_theme import qss_rgba, studio_dark_theme
+
+
 def build_ai_assist_html_v2(*, prism_asset_html: str = "") -> str:
     """Builds an enhanced HTML page for the AI assist sidebar with better UI."""
     prism_asset_html_block = str(prism_asset_html or "").strip()
     if prism_asset_html_block:
         prism_asset_html_block += "\n"
+    p = studio_dark_theme().palette
 
     html = f"""
 <!doctype html>
@@ -17,21 +21,24 @@ def build_ai_assist_html_v2(*, prism_asset_html: str = "") -> str:
     <meta charset="utf-8" />
     <style>
       :root {{
-        --bg-primary: #1e1e2e;
-        --bg-secondary: #181825;
-        --bg-tertiary: #313244;
-        --bg-hover: #45475a;
-        --border-color: #45475a;
-        --text-primary: #cdd6f4;
-        --text-secondary: #9399b2;
-        --text-muted: #6c7086;
-        --accent-purple: #cba6f7;
-        --accent-blue: #89b4fa;
-        --accent-red: #f38ba8;
-        --accent-green: #a6e3a1;
-        --accent-yellow: #f9e2af;
-        --thinking-bg: #11111b;
-        --thinking-border: #585b70;
+        --bg-primary: {p.window_bg};
+        --bg-secondary: {p.panel_bg};
+        --bg-tertiary: {p.panel_alt_bg};
+        --bg-hover: {p.button_hover_bg};
+        --border-color: {p.border};
+        --text-primary: {p.text_primary};
+        --text-secondary: {p.text_secondary};
+        --text-muted: {p.text_muted};
+        --accent-purple: {p.purple};
+        --accent-blue: {p.accent};
+        --accent-red: {p.error};
+        --accent-green: {p.success};
+        --accent-yellow: {p.warning};
+        --accent-purple-hover: {p.accent_hover};
+        --accent-red-hover: {p.error};
+        --focus-ring: {qss_rgba(p.purple, 40)};
+        --thinking-bg: {p.field_bg};
+        --thinking-border: {p.border};
       }}
 
       html, body, #f8-ai-panel {{
@@ -290,7 +297,7 @@ def build_ai_assist_html_v2(*, prism_asset_html: str = "") -> str:
 
       .f8-input-wrapper:focus-within {{
         border-color: var(--accent-purple);
-        box-shadow: 0 0 0 3px rgba(203, 166, 247, 0.1);
+        box-shadow: 0 0 0 3px var(--focus-ring);
       }}
 
       #f8-ai-input {{
@@ -364,7 +371,7 @@ def build_ai_assist_html_v2(*, prism_asset_html: str = "") -> str:
       }}
 
       #f8-ai-send:hover {{
-        background: #b4befe;
+        background: var(--accent-purple-hover);
         transform: scale(1.05);
       }}
 
@@ -385,7 +392,7 @@ def build_ai_assist_html_v2(*, prism_asset_html: str = "") -> str:
       }}
 
       #f8-ai-stop:hover {{
-        background: #eba0ac;
+        background: var(--accent-red-hover);
         transform: scale(1.05);
       }}
 
@@ -468,7 +475,7 @@ def build_ai_assist_html_v2(*, prism_asset_html: str = "") -> str:
       }}
 
       .f8-att-remove:hover {{
-        background: #eba0ac;
+        background: var(--accent-red-hover);
         transform: scale(1.1);
       }}
     </style>

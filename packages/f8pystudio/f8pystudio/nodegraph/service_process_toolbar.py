@@ -5,6 +5,7 @@ from typing import Any, Callable
 from qtpy import QtCore, QtWidgets
 
 from f8pystudio.studio_specs.identifiers import STUDIO_SERVICE_ID
+from ..ui.support.studio_theme import service_process_toolbar_qss
 from ..ui.support.ui_icons import StudioIcon, icon_for
 
 from .service_bridge_protocol import ServiceBridge
@@ -94,25 +95,7 @@ class ServiceProcessToolbar(QtWidgets.QWidget):
 
         # Match NodeGraphQt's dark UI: a subtle "badge" container with hover feedback.
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
-        self.setStyleSheet(
-            """
-            ServiceProcessToolbar {
-              background: rgba(30, 30, 30, 190);
-              border: 1px solid rgba(255, 255, 255, 28);
-              border-radius: 6px;
-              padding: 1px;
-            }
-            ServiceProcessToolbar QToolButton {
-              background: transparent;
-              border: 0px;
-              padding: 2px;
-            }
-            ServiceProcessToolbar QToolButton:hover {
-              background: rgba(255, 255, 255, 22);
-              border-radius: 4px;
-            }
-            """
-        )
+        self.setStyleSheet(service_process_toolbar_qss())
 
         # Poll state so crashes/external stops are reflected.
         self._timer = QtCore.QTimer(self)

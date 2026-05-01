@@ -12,6 +12,7 @@ from ...assets.variants.variant_sync import VariantSyncClient
 from ...ui.support.ui_notifications import show_info, show_warning
 from ...nodegraph.edge_rules import EDGE_KIND_DATA, EDGE_KIND_EXEC, EDGE_KIND_STATE
 from ...ui.support.qt_lifecycle import qt_runtime_error_is_object_deleted
+from ...ui.support.studio_theme import label_qss, studio_dark_theme
 from ...ui.support.ui_icons import StudioIcon, icon_for
 from ..support.service_inventory import collect_declared_services
 from ..widgets.layers_panel import LayersPanelWidget
@@ -226,7 +227,7 @@ class MainWindowUiMixin:
 
         body_label = QtWidgets.QLabel(str(body), container)
         body_label.setWordWrap(True)
-        body_label.setStyleSheet("color: #808080;")
+        body_label.setStyleSheet(label_qss(color=studio_dark_theme().palette.text_muted))
 
         layout.addWidget(title_label)
         layout.addWidget(body_label)

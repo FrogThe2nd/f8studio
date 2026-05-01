@@ -6,6 +6,7 @@ from qtpy import QtCore, QtGui, QtWidgets
 
 from ...nodegraph.node_graph import F8StudioGraph
 from ...nodegraph.layers import BASE_LAYER_ID, F8LayerDef
+from ...ui.support.studio_theme import qss_rgba, studio_dark_theme
 from ...ui.support.ui_icons import StudioIcon, icon_for
 
 
@@ -66,12 +67,22 @@ class _LayerEditDialog(QtWidgets.QDialog):
         layout.addLayout(form)
         layout.addWidget(buttons)
 
+    @staticmethod
+    def _swatch_text_color(color: str) -> str:
+        qcolor = QtGui.QColor(str(color or ""))
+        p = studio_dark_theme().palette
+        if not qcolor.isValid():
+            return p.text_primary
+        return p.field_bg if qcolor.lightness() >= 145 else p.text_primary
+
     def _refresh_color_button(self) -> None:
+        p = studio_dark_theme().palette
         self._color_button.setText(str(self._color))
         self._color_button.setStyleSheet(
             "QPushButton {"
             f"background: {self._color};"
-            "color: black;"
+            f"color: {self._swatch_text_color(self._color)};"
+            f"border: 1px solid {qss_rgba(p.text_primary, 80)};"
             "padding: 6px 10px;"
             "border-radius: 6px;"
             "}"
@@ -101,7 +112,7 @@ class LayersPanelWidget(QtWidgets.QWidget):
         self._row_by_layer_id: dict[str, int] = {}
 
         self._active_summary = QtWidgets.QLabel(self)
-        self._active_summary.setStyleSheet("color: rgba(235,235,235,160);")
+        self._active_summary.setStyleSheet(f"color: {qss_rgba(studio_dark_theme().palette.text_primary, 170)};")
 
         self._show_all_btn = QtWidgets.QPushButton("Show All", self)
         self._show_all_btn.clicked.connect(self._on_show_all_clicked)  # type: ignore[attr-defined]

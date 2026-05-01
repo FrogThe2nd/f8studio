@@ -8,50 +8,12 @@ from qtpy import QtCore, QtWidgets
 from ...support.json_text_editor import attach_json_enhancements
 from ...support.node_property_support import to_jsonable
 from ...support.state_panel_controls import set_widget_read_only as _set_widget_read_only
+from ...support.studio_theme import node_property_tabs_qss, transparent_background_qss
 
 _PROPERTY_PANEL_MIN_WIDTH = 250
 _TAB_PANEL_MARGIN = 4
 _TAB_PANEL_SPACING = 5
-_TAB_HEADER_STYLE = """
-QTabWidget#f8NodePropTabs::pane {
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 6px;
-    background: rgba(18, 18, 18, 0.92);
-    top: -1px;
-}
-QTabWidget#f8NodePropTabs QTabBar {
-    qproperty-drawBase: 0;
-}
-QTabWidget#f8NodePropTabs QTabBar::tab {
-    color: rgba(220, 220, 220, 0.88);
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.07);
-    border-bottom-color: rgba(255, 255, 255, 0.03);
-    border-top-left-radius: 5px;
-    border-top-right-radius: 5px;
-    padding: 4px 7px;
-    margin-right: 1px;
-    margin-top: 1px;
-    min-width: 0px;
-}
-QTabWidget#f8NodePropTabs QTabBar::tab:hover {
-    color: rgba(245, 245, 245, 0.96);
-    background: rgba(255, 255, 255, 0.09);
-    border-color: rgba(255, 255, 255, 0.12);
-}
-QTabWidget#f8NodePropTabs QTabBar::tab:selected {
-    color: rgb(255, 255, 255);
-    background: rgba(42, 42, 42, 0.96);
-    border-color: rgba(255, 255, 255, 0.14);
-    border-bottom-color: rgba(42, 42, 42, 0.96);
-    margin-top: 0px;
-    padding-top: 5px;
-    padding-bottom: 5px;
-}
-QTabWidget#f8NodePropTabs QTabBar::tab:!selected {
-    margin-top: 1px;
-}
-"""
+_TAB_HEADER_STYLE = node_property_tabs_qss()
 
 
 def _apply_read_only_widget(widget: QtWidgets.QWidget) -> None:
@@ -78,7 +40,7 @@ def _wrap_tab_page(content: QtWidgets.QWidget) -> QtWidgets.QWidget:
     except (AttributeError, RuntimeError, TypeError):
         pass
     content.setObjectName("f8TabPageContent")
-    content.setStyleSheet("#f8TabPageContent { background: transparent; }")
+    content.setStyleSheet(transparent_background_qss())
     scroll.setWidget(content)
     layout.addWidget(scroll)
     return page

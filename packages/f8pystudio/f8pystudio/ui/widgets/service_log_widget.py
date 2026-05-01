@@ -8,6 +8,7 @@ from pathlib import Path
 from qtpy import QtCore, QtGui, QtWidgets
 
 from f8pystudio.diagnostics.error_reporting import ExceptionLogOnce, report_exception
+from ...ui.support.studio_theme import studio_dark_theme
 from ...ui.support.ui_notifications import show_warning
 
 
@@ -96,16 +97,16 @@ class _LogHighlighter(QtGui.QSyntaxHighlighter):
                 fmt.setFontWeight(QtGui.QFont.Weight.Bold)
             return fmt
 
-        # Rough VSCode-like colors.
+        p = studio_dark_theme().palette
         self._rules.extend(
             [
-                _Rule(re.compile(r"\b(ERROR|FATAL)\b"), f("#f44747", bold=True)),
-                _Rule(re.compile(r"\b(WARN|WARNING)\b"), f("#cca700", bold=True)),
-                _Rule(re.compile(r"\b(INFO)\b"), f("#4fc1ff")),
-                _Rule(re.compile(r"\b(DEBUG|TRACE)\b"), f("#b5cea8")),
-                _Rule(re.compile(r"\b(Traceback \(most recent call last\):)\b"), f("#dcdcaa", bold=True)),
-                _Rule(re.compile(r"\b(Exception|Error|AssertionError|ValueError|TypeError|KeyError)\b"), f("#ff7b72")),
-                _Rule(re.compile(r"File \"[^\"]+\", line \d+"), f("#9cdcfe")),
+                _Rule(re.compile(r"\b(ERROR|FATAL)\b"), f(p.error, bold=True)),
+                _Rule(re.compile(r"\b(WARN|WARNING)\b"), f(p.warning, bold=True)),
+                _Rule(re.compile(r"\b(INFO)\b"), f(p.info)),
+                _Rule(re.compile(r"\b(DEBUG|TRACE)\b"), f(p.success)),
+                _Rule(re.compile(r"\b(Traceback \(most recent call last\):)\b"), f(p.warning, bold=True)),
+                _Rule(re.compile(r"\b(Exception|Error|AssertionError|ValueError|TypeError|KeyError)\b"), f(p.error)),
+                _Rule(re.compile(r"File \"[^\"]+\", line \d+"), f(p.accent_hover)),
             ]
         )
 
@@ -139,10 +140,10 @@ class ServiceLogView(QtWidgets.QPlainTextEdit):
         font.setPointSize(10)
         self.setFont(font)
 
-        # Dark terminal-ish palette.
+        p = studio_dark_theme().palette
         pal = self.palette()
-        pal.setColor(QtGui.QPalette.Base, QtGui.QColor("#1e1e1e"))
-        pal.setColor(QtGui.QPalette.Text, QtGui.QColor("#d4d4d4"))
+        pal.setColor(QtGui.QPalette.Base, QtGui.QColor(p.log_bg))
+        pal.setColor(QtGui.QPalette.Text, QtGui.QColor(p.text_primary))
         self.setPalette(pal)
 
         self._highlighter = _LogHighlighter(self.document())

@@ -21,6 +21,7 @@ from qtpy import QtCore, QtWidgets
 from f8pystudio.command_invocation import command_state_payload
 from f8pystudio.contracts.command_ui import CommandUiHandler, CommandUiSource
 from ...components.controls import F8OptionCombo, F8Switch, F8ValueBar
+from ...support.studio_theme import label_qss, studio_dark_theme
 from ....ui.support.ui_notifications import show_warning
 from ....ui.support.ui_icons import StudioIcon
 from ...dialogs.schema_builder_dialog import SchemaBuilderDialog
@@ -82,7 +83,7 @@ class _F8EditCommandParamDialog(QtWidgets.QDialog):
         self._ui_control.setClearButtonEnabled(True)
 
         self._schema_summary = QtWidgets.QLabel("", self)
-        self._schema_summary.setStyleSheet("color: #888;")
+        self._schema_summary.setStyleSheet(label_qss(color=studio_dark_theme().palette.text_muted))
         self._refresh_schema_summary()
 
         self._schema_btn = QtWidgets.QPushButton("View Schema..." if self._read_only else "Edit Schema...", self)

@@ -15,6 +15,7 @@ from qtpy import QtCore, QtGui, QtWidgets  # type: ignore[import-not-found]
 
 from ...ai_assist.registry import ProviderApiMode, ProviderConfig, ProviderProtocol
 from ...ai_assist.store import AiProviderStore
+from ..support.studio_theme import label_qss, studio_dark_theme
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +138,7 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
         fetch_row.addWidget(self._test_btn)
 
         self._fetch_status = QtWidgets.QLabel("")
-        self._fetch_status.setStyleSheet("color: gray; font-size: 11px;")
+        self._fetch_status.setStyleSheet(label_qss(color=studio_dark_theme().palette.text_muted, font_size_px=11))
         # Fix layout jumping: Use Ignored policy so long text doesn't push the layout.
         # We also enable text elision or simply let it overflow while staying compact.
         self._fetch_status.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Preferred)
@@ -288,7 +289,7 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
                 
                 # ID
                 id_item = QtWidgets.QTableWidgetItem(m.model_id)
-                id_item.setForeground(QtGui.QColor("#888888"))
+                id_item.setForeground(QtGui.QColor(studio_dark_theme().palette.text_muted))
                 self._model_table.setItem(row, 2, id_item)
                 
                 if m.health_status != "error":

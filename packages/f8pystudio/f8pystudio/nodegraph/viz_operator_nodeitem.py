@@ -183,18 +183,10 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
 
         from qtpy import QtCore, QtWidgets
 
+        from ..ui.support.studio_theme import inline_control_qss
+
         def _common_style(w: QtWidgets.QWidget) -> None:
-            w.setStyleSheet(
-                """
-                QLineEdit {
-                    color: rgb(235, 235, 235);
-                    background: rgba(0, 0, 0, 45);
-                    border: 1px solid rgba(255, 255, 255, 55);
-                    border-radius: 3px;
-                    padding: 1px 4px;
-                }
-                """
-            )
+            w.setStyleSheet(inline_control_qss())
 
         def _set_node_value(value: Any, *, push_undo: bool) -> None:
             node = self._backend_node()

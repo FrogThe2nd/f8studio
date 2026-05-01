@@ -8,6 +8,7 @@ from qtpy import QtWidgets
 from f8pysdk.specs import F8DataTypeSchema
 
 from .schema_builder_common import schema_from_json_obj, schema_to_json_obj, validate_schema_json_unknown_keys
+from ..support.studio_theme import label_qss, studio_dark_theme
 
 
 class SchemaBuilderSyncMixin:
@@ -66,7 +67,7 @@ class SchemaBuilderSyncMixin:
         host = cast(Any, self)
         host._is_schema_valid = True
         host._status.setText(str(message))
-        host._status.setStyleSheet("color: #3c9f40;")
+        host._status.setStyleSheet(label_qss(color=studio_dark_theme().palette.success))
         ok = host._buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Ok)
         if ok is not None:
             ok.setEnabled(not host._read_only)
@@ -75,7 +76,7 @@ class SchemaBuilderSyncMixin:
         host = cast(Any, self)
         host._is_schema_valid = False
         host._status.setText(str(message))
-        host._status.setStyleSheet("color: #c54141;")
+        host._status.setStyleSheet(label_qss(color=studio_dark_theme().palette.error))
         ok = host._buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Ok)
         if ok is not None:
             ok.setEnabled(False)

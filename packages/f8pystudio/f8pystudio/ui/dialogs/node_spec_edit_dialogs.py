@@ -13,6 +13,7 @@ from .schema_builder_dialog import SchemaBuilderDialog, schema_from_json_obj
 from ...ui.support.ui_control import parse_ui_control
 from ...ui.support.ui_icons import StudioIcon, icon_for
 from ...ui.support.ui_notifications import show_warning
+from ...ui.support.studio_theme import label_qss, studio_dark_theme
 
 
 class _F8HotkeySequenceEdit(QtWidgets.QKeySequenceEdit):
@@ -68,7 +69,7 @@ class _F8GlobalHotkeyEdit(QtWidgets.QWidget):
         self._clear_btn.setToolTip("Clear the current global hotkey")
         self._commit_btn.setToolTip("Accept the currently captured shortcut")
         self._status.setWordWrap(True)
-        self._status.setStyleSheet("color: rgb(170, 170, 170);")
+        self._status.setStyleSheet(label_qss(color=studio_dark_theme().palette.text_muted))
 
         try:
             self._editor.editingFinished.connect(self._normalize_sequence)  # type: ignore[attr-defined]
@@ -196,50 +197,50 @@ class _F8GlobalHotkeyEdit(QtWidgets.QWidget):
         text = self.value()
         if self._capture_active:
             if not text:
-                self._status.setStyleSheet("color: rgb(224, 196, 120);")
+                self._status.setStyleSheet(label_qss(color=studio_dark_theme().palette.warning))
                 self._status.setText("Capturing shortcut.")
                 self.status_changed.emit()
                 return
             if not self.is_valid_value():
-                self._status.setStyleSheet("color: rgb(235, 140, 140);")
+                self._status.setStyleSheet(label_qss(color=studio_dark_theme().palette.error))
                 self._status.setText("Invalid shortcut. Keep editing or clear it.")
                 self.status_changed.emit()
                 return
             conflicts = self.conflicts()
             if conflicts:
                 entry = conflicts[0]
-                self._status.setStyleSheet("color: rgb(235, 140, 140);")
+                self._status.setStyleSheet(label_qss(color=studio_dark_theme().palette.error))
                 self._status.setText(
                     f"Shortcut already used by {entry.node_id}: {entry.node_label or entry.node_id} - "
                     f"{entry.control_label or entry.field_name}. Change it or clear it."
                 )
                 self.status_changed.emit()
                 return
-            self._status.setStyleSheet("color: rgb(132, 196, 132);")
+            self._status.setStyleSheet(label_qss(color=studio_dark_theme().palette.success))
             self._status.setText("Shortcut is available.")
             self.status_changed.emit()
             return
         if not text:
-            self._status.setStyleSheet("color: rgb(170, 170, 170);")
+            self._status.setStyleSheet(label_qss(color=studio_dark_theme().palette.text_muted))
             self._status.setText("No global hotkey assigned.")
             self.status_changed.emit()
             return
         if not self.is_valid_value():
-            self._status.setStyleSheet("color: rgb(235, 140, 140);")
+            self._status.setStyleSheet(label_qss(color=studio_dark_theme().palette.error))
             self._status.setText("Invalid shortcut.")
             self.status_changed.emit()
             return
         conflicts = self.conflicts()
         if conflicts:
             entry = conflicts[0]
-            self._status.setStyleSheet("color: rgb(235, 140, 140);")
+            self._status.setStyleSheet(label_qss(color=studio_dark_theme().palette.error))
             self._status.setText(
                 f"Already used by {entry.node_id}: {entry.node_label or entry.node_id} - "
                 f"{entry.control_label or entry.field_name}"
             )
             self.status_changed.emit()
             return
-        self._status.setStyleSheet("color: rgb(132, 196, 132);")
+        self._status.setStyleSheet(label_qss(color=studio_dark_theme().palette.success))
         self._status.setText("Shortcut is available.")
         self.status_changed.emit()
 
@@ -294,7 +295,7 @@ class _F8EditDataPortDialog(QtWidgets.QDialog):
         self._desc = QtWidgets.QPlainTextEdit(str(port.description or ""))
 
         self._schema_summary = QtWidgets.QLabel("")
-        self._schema_summary.setStyleSheet("color: #888;")
+        self._schema_summary.setStyleSheet(label_qss(color=studio_dark_theme().palette.text_muted))
         self._refresh_schema_summary()
 
         self._schema_btn = QtWidgets.QPushButton("View Schema..." if self._read_only else "Edit Schema...")
@@ -420,7 +421,7 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
         self._global_hotkey.status_changed.connect(self._refresh_accept_enabled)  # type: ignore[attr-defined]
 
         self._schema_summary = QtWidgets.QLabel("", self)
-        self._schema_summary.setStyleSheet("color: #888;")
+        self._schema_summary.setStyleSheet(label_qss(color=studio_dark_theme().palette.text_muted))
         self._refresh_schema_summary()
 
         self._schema_btn = QtWidgets.QPushButton("View Schema..." if self._read_only else "Edit Schema...", self)

@@ -16,6 +16,7 @@ from .ai_context_inspector import AiContextInspectorDialog
 from ..support.ai_context_controls import set_tool_button_point_size, usage_pie_icon
 from ..support.monaco_editor_host import _ask_save_before_close, open_code_editor_dialog, open_code_editor_window
 from ..support.monaco_editor_page import MonacoEditorPageConfig, build_monaco_editor_html
+from ..support.studio_theme import ai_context_button_qss, studio_dark_theme
 from ..widgets.ai_quick_panel import AiQuickPanel
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,7 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
     ) -> None:
         super().__init__(parent)
         self._controller = controller
+        theme_palette = studio_dark_theme().palette
 
         from PySide6 import QtWebChannel, QtWebEngineWidgets  # type: ignore[import-not-found]
 
@@ -83,14 +85,11 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
         self._ctx_btn = QtWidgets.QToolButton()
         self._ctx_btn.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self._ctx_btn.setIconSize(QtCore.QSize(14, 14))
-        self._ctx_btn.setIcon(usage_pie_icon(used_ratio=0.0, color=QtGui.QColor("#4fc3f7")))
+        self._ctx_btn.setIcon(usage_pie_icon(used_ratio=0.0, color=QtGui.QColor(theme_palette.info)))
         self._ctx_btn.setText("100% free")
         self._ctx_btn.setToolTip("AI context usage\nUsed: 0 / 0 tok")
         set_tool_button_point_size(self._ctx_btn, 10)
-        self._ctx_btn.setStyleSheet(
-            "QToolButton { color: #9aa4b2; border: none; padding: 0 4px; }"
-            "QToolButton:hover { color: #d7deea; }"
-        )
+        self._ctx_btn.setStyleSheet(ai_context_button_qss(text_color=theme_palette.text_muted, include_background=False))
         self._ctx_btn.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self._ctx_btn.customContextMenuRequested.connect(self._on_ctx_menu_requested)
         self._controller.ai_bridge().context_usage_updated.connect(self._on_context_usage_updated)  # type: ignore[attr-defined]
@@ -102,7 +101,7 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
         set_tool_button_point_size(self._ai_panel_btn, 16)
         self._ai_panel_btn.setStyleSheet(
             "QToolButton { border: none; padding: 0 4px; }"
-            "QToolButton:checked { background: #2d2d2d; border-radius: 3px; }"
+            f"QToolButton:checked {{ background: {theme_palette.button_hover_bg}; border-radius: 3px; }}"
         )
         self._ai_panel_btn.toggled.connect(self._on_ai_panel_toggle)  # type: ignore[attr-defined]
 
@@ -265,12 +264,13 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
             return
         used_ratio = max(0.0, min(1.0, used / total))
         free_ratio = max(0.0, 1.0 - used_ratio)
+        theme_palette = studio_dark_theme().palette
         if used_ratio < 0.5:
-            color = "#4fc3f7"
+            color = theme_palette.info
         elif used_ratio < 0.8:
-            color = "#ffd54f"
+            color = theme_palette.warning
         else:
-            color = "#ef9a9a"
+            color = theme_palette.error
 
         def _fmt(value: int) -> str:
             return f"{value / 1000:.0f}k" if value >= 1000 else str(value)
@@ -279,10 +279,7 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
         self._ctx_btn.setIcon(usage_pie_icon(used_ratio=used_ratio, color=QtGui.QColor(color)))
         self._ctx_btn.setText(f"{free_pct}% free")
         set_tool_button_point_size(self._ctx_btn, 10)
-        self._ctx_btn.setStyleSheet(
-            f"QToolButton {{ color: {color}; border: none; padding: 0 4px; }}"
-            "QToolButton:hover { color: white; }"
-        )
+        self._ctx_btn.setStyleSheet(ai_context_button_qss(text_color=color, include_background=False))
         try:
             breakdown = self._controller.ai_bridge().get_context_breakdown()
             tip = (
