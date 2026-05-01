@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from qtpy import QtCore, QtTest, QtWidgets
 
 from f8pystudio.nodegraph.node_model import F8StudioNodeModel
+from f8pystudio.ui.support.qt_lifecycle import qt_object_is_valid
 import f8pystudio.ui.widgets.node_property_panel.editor as editor_module
 from f8pystudio.ui.widgets.node_property_panel.editor import (
     F8StudioSingleNodePropertiesWidget,
@@ -332,6 +333,18 @@ def test_restore_view_state_retries_tab_scroll_after_layout_updates() -> None:
 
     tab_widget.close()
     tab_widget.deleteLater()
+
+
+def test_restore_tab_scroll_positions_ignores_deleted_tab_widget() -> None:
+    _ensure_app()
+    tab_widget = QtWidgets.QTabWidget()
+    tab_widget.show()
+    tab_widget.deleteLater()
+    QtCore.QCoreApplication.sendPostedEvents(None, int(QtCore.QEvent.Type.DeferredDelete))
+    QtWidgets.QApplication.processEvents()
+
+    assert qt_object_is_valid(tab_widget) is False
+    NodePropertyEditorViewStateMixin._restore_tab_scroll_positions(tab_widget, {"State": 180})
 
 
 def test_reorder_list_drop_indicator_does_not_affect_rows_or_order() -> None:

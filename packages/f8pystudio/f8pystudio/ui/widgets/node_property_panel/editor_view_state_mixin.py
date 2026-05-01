@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import logging
+import weakref
 from typing import Any, cast
 
 from qtpy import QtCore, QtWidgets
 
 from ...support.node_property_support import node_missing_lock_info
+from ...support.qt_lifecycle import qt_object_is_valid, qt_runtime_error_is_object_deleted
 from .editor_tabs_mixin import NodePropertyEditorTabsMixin
 
 logger = logging.getLogger(__name__)
@@ -17,18 +19,45 @@ class NodePropertyEditorViewStateMixin(NodePropertyEditorTabsMixin):
         tab_widget: QtWidgets.QTabWidget,
         tab_scroll_positions: dict[str, int],
     ) -> None:
-        for index in range(tab_widget.count()):
-            tab_name = tab_widget.tabText(index)
+        if not qt_object_is_valid(tab_widget):
+            return
+        try:
+            tab_count = tab_widget.count()
+        except RuntimeError as exc:
+            if qt_runtime_error_is_object_deleted(exc):
+                return
+            logger.exception("Failed to inspect property editor tab count")
+            return
+        for index in range(tab_count):
+            try:
+                tab_name = tab_widget.tabText(index)
+                widget = tab_widget.widget(index)
+            except RuntimeError as exc:
+                if qt_runtime_error_is_object_deleted(exc):
+                    return
+                logger.exception("Failed to inspect property editor tab index=%s", index)
+                continue
             if tab_name not in tab_scroll_positions:
                 continue
-            widget = tab_widget.widget(index)
-            if widget is None:
-                continue
-            areas = widget.findChildren(QtWidgets.QScrollArea)
-            if not areas:
+            if widget is None or not qt_object_is_valid(widget):
                 continue
             try:
-                areas[0].verticalScrollBar().setValue(int(tab_scroll_positions[tab_name]))
+                areas = widget.findChildren(QtWidgets.QScrollArea)
+            except RuntimeError as exc:
+                if qt_runtime_error_is_object_deleted(exc):
+                    continue
+                logger.exception("Failed to inspect property editor tab scroll areas tab=%s", tab_name)
+                continue
+            if not areas:
+                continue
+            area = areas[0]
+            if not qt_object_is_valid(area):
+                continue
+            try:
+                scrollbar = area.verticalScrollBar()
+                if not qt_object_is_valid(scrollbar):
+                    continue
+                scrollbar.setValue(int(tab_scroll_positions[tab_name]))
             except (AttributeError, RuntimeError, TypeError, ValueError):
                 logger.exception("Failed to restore property editor tab scroll position tab=%s", tab_name)
                 continue
@@ -98,9 +127,14 @@ class NodePropertyEditorViewStateMixin(NodePropertyEditorTabsMixin):
         except AttributeError:
             tab_scroll_positions = None
         if tab_scroll_positions:
+            tab_widget_ref = weakref.ref(tab_widget)
+            positions = dict(tab_scroll_positions)
 
             def _restore() -> None:
-                self._restore_tab_scroll_positions(tab_widget, tab_scroll_positions)
+                restored_tab_widget = tab_widget_ref()
+                if restored_tab_widget is None:
+                    return
+                NodePropertyEditorViewStateMixin._restore_tab_scroll_positions(restored_tab_widget, positions)
 
             QtCore.QTimer.singleShot(0, _restore)
             QtCore.QTimer.singleShot(0, lambda: QtCore.QTimer.singleShot(0, _restore))
