@@ -51,7 +51,7 @@ No description.
 | `computeEveryNFrames` | `rw` | `true` | `false` | `integer / default=2` | Compute flow once per N new frames. |
 | `flowShmName` | `ro` | `true` | `true` | `string` | Output SHM name for UV flow field. |
 | `flowShmFormat` | `ro` | `true` | `false` | `string` | Flow payload format. Fixed to flow2_f16. |
-| `computeScale` | `rw` | `true` | `false` | `number / default=0.5` | Farneback compute scale, flow is upscaled back to full size. |
+| `computeScale` | `rw` | `true` | `false` | `number / default=0.5` | Farneback compute scale; output flow stays at compute scale. |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
@@ -61,7 +61,7 @@ No description.
 - `computeEveryNFrames` (Compute Every N Frames, `rw`): Compute flow once per N new frames. Schema: `integer / default=2`.
 - `flowShmName` (Flow SHM Name, `ro`): Output SHM name for UV flow field. Schema: `string`.
 - `flowShmFormat` (Flow SHM Format, `ro`): Flow payload format. Fixed to flow2_f16. Schema: `string`.
-- `computeScale` (Compute Scale, `rw`): Farneback compute scale, flow is upscaled back to full size. Schema: `number / default=0.5`.
+- `computeScale` (Compute Scale, `rw`): Farneback compute scale; output flow stays at compute scale. Schema: `number / default=0.5`.
 - `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 

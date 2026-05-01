@@ -54,12 +54,8 @@ json size_schema() {
 
 bool coerce_rect_csv(const json& value, std::string& out_csv, std::string& err) {
   err.clear();
-  if (value.is_string()) {
-    out_csv = value.get<std::string>();
-    return true;
-  }
   if (!value.is_object()) {
-    err = "expected rect object or csv string";
+    err = "expected rect object";
     return false;
   }
   const int x = value.value("x", 0);
@@ -76,16 +72,8 @@ bool coerce_rect_csv(const json& value, std::string& out_csv, std::string& err) 
 
 bool coerce_size_csv(const json& value, std::string& out_csv, std::string& err) {
   err.clear();
-  if (value.is_null()) {
-    out_csv.clear();
-    return true;
-  }
-  if (value.is_string()) {
-    out_csv = value.get<std::string>();
-    return true;
-  }
   if (!value.is_object()) {
-    err = "expected size object or csv string";
+    err = "expected size object";
     return false;
   }
   const int w = value.value("w", 0);
@@ -407,13 +395,10 @@ bool ScreenCapService::on_set_state(const std::string& node_id, const std::strin
     if (f == "windowId")
       write_value = cfg_.window_id;
 
-    // For region/scale, keep both the structured and the original csv (for CLI compatibility).
     if (f == "region") {
-      write_value = value.is_object() ? value : rect_object_from_csv_best_effort(cfg_.region_csv);
+      write_value = rect_object_from_csv_best_effort(cfg_.region_csv);
     } else if (f == "scale") {
-      if (value.is_object()) {
-        write_value = value;
-      } else if (!cfg_.scale_csv.empty()) {
+      if (!cfg_.scale_csv.empty()) {
         write_value = size_object_from_csv_best_effort(cfg_.scale_csv);
       } else {
         write_value = json{{"w", 0}, {"h", 0}};

@@ -9,7 +9,7 @@ from qtpy import QtCore, QtWidgets
 from f8pysdk.command import command_input_state_field
 from f8pysdk.specs import schema_default, schema_type
 
-from f8pystudio.command_invocation import command_state_payload
+from f8pystudio.ui.support.command_invocation import command_state_payload
 from f8pystudio.contracts.command_ui import CommandUiHandler, CommandUiSource
 from ...ui.components.controls import F8OptionCombo, F8Switch, F8ValueBar, parse_select_pool
 from ...ui.support.studio_theme import inline_command_button_qss, transparent_header_qss

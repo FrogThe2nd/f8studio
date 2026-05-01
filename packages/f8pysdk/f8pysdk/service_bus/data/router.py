@@ -449,10 +449,10 @@ class DataRouter:
         return buf
 
     def _buffers_data_locally(self) -> bool:
-        return self._data_delivery in ("buffered", "both")
+        return True
 
     def _callbacks_data_locally(self) -> bool:
-        return self._data_delivery in ("callback", "both")
+        return self._data_delivery == "callback"
 
     def _enqueue_on_data_callback(self, *, to_node: str, to_port: str, value: Any, ts_ms: int) -> None:
         bus = self._bus
@@ -497,8 +497,6 @@ class DataRouter:
                 edge=edge,
                 ctx_id=ctx_id,
             )
-        elif self._callbacks_data_locally():
-            bus._monitor_record_input(str(to_node), str(to_port), int(ts_ms))
         if self._callbacks_data_locally():
             self._enqueue_on_data_callback(to_node=to_node, to_port=to_port, value=value, ts_ms=int(ts_ms))
 

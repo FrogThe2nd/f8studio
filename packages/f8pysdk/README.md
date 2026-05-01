@@ -111,18 +111,18 @@ Command contract:
 - `ServiceBus.invoke_command(node_id, call, args, ...)` is the explicit local command API.
 - `ServiceBus.invoke_command(...)` is reply-first by default and does not write hidden output state unless asked.
 - Declared commands normalize scalar/list/dict args from their `F8Command.params` definition.
-- Hidden command state fields remain supported as the graph-compatibility command adapter.
+- Hidden command state fields remain supported as the graph command adapter.
 - Use `output_policy=CommandOutputPolicy.hidden_state` when a caller explicitly wants hidden output state writeback.
 
 Data contract:
 - `ServiceBus.emit_data(node_id, port, value, ...)` is the canonical public data-output API.
 - `cross_publish_policy` controls network fan-out explicitly: `routed`, `all`, or `none`.
-- `data_delivery` controls local consumer shape explicitly: `callback`, `buffered`, or explicit compatibility mode `both`.
+- `data_delivery` controls local consumer shape explicitly: `callback` or `buffered`.
 - Default runtime behavior is `cross_publish_policy="routed"` and `data_delivery="callback"`.
 - `ServiceBus.pull_data(node_id, port, ...)` reads local buffered inputs and may trigger same-service upstream compute when needed.
 - Pull-triggered local compute satisfies local consumers only; internal typed emit options keep it from turning into hidden cross-service traffic.
 - Monitor snapshots now expose routing counters in `frame`, including local-only emits, routed cross emits, suppressed cross publishes, callback deliveries, and buffered pull deliveries.
-- Compatibility aliases remain limited to local delivery naming: `data_delivery="push"|"pull"|"both"`.
+- Invalid delivery modes fail fast; legacy `push` / `pull` / `both` aliases are not accepted.
 
 Stable helper modules:
 - `f8pysdk.codec`: msgpack request/reply helpers plus shared primitive coercion helpers (`encode_obj`, `decode_obj`, `decode_as`, `coerce_*`, `parse_*`)

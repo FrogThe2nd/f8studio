@@ -58,7 +58,7 @@ def _new_graph() -> F8StudioGraph:
 
 def test_on_operator_drop_rebinds_operator_to_new_same_class_container(monkeypatch) -> None:
     warnings: list[str] = []
-    monkeypatch.setattr("f8pystudio.nodegraph.node_graph.show_warning", lambda *args, **kwargs: warnings.append("w"))
+    monkeypatch.setattr("f8pystudio.nodegraph.graph_container_binding.show_warning", lambda *args, **kwargs: warnings.append("w"))
 
     old_container = _FakeContainer("svc_old", "f8.pyengine")
     new_container = _FakeContainer("svc_new", "f8.pyengine")
@@ -83,7 +83,7 @@ def test_on_operator_drop_rebinds_operator_to_new_same_class_container(monkeypat
 
 def test_on_operator_drop_reverts_when_target_container_service_class_mismatch(monkeypatch) -> None:
     warnings: list[str] = []
-    monkeypatch.setattr("f8pystudio.nodegraph.node_graph.show_warning", lambda *args, **kwargs: warnings.append("w"))
+    monkeypatch.setattr("f8pystudio.nodegraph.graph_container_binding.show_warning", lambda *args, **kwargs: warnings.append("w"))
 
     old_container = _FakeContainer("svc_old", "f8.pyengine")
     wrong_container = _FakeContainer("svc_other", "f8.audio")
@@ -109,7 +109,7 @@ def test_on_operator_drop_reverts_when_target_container_service_class_mismatch(m
 
 def test_on_operator_drop_reverts_when_not_dropped_inside_container(monkeypatch) -> None:
     warnings: list[str] = []
-    monkeypatch.setattr("f8pystudio.nodegraph.node_graph.show_warning", lambda *args, **kwargs: warnings.append("w"))
+    monkeypatch.setattr("f8pystudio.nodegraph.graph_container_binding.show_warning", lambda *args, **kwargs: warnings.append("w"))
 
     old_container = _FakeContainer("svc_old", "f8.pyengine")
     operator = _FakeOperator("op1", "f8.pyengine", "svc_old", x=5.0, y=8.0)

@@ -36,7 +36,7 @@ class PyEngineService(ServiceHookBase):
         self._auto_sampler: AutoSamplerManager | None = None
 
     async def setup(self, runtime: ServiceRuntime) -> None:
-        runtime.bus.set_data_delivery("pull", source="service")
+        runtime.bus.set_data_delivery("buffered", source="service")
         executor = ExecFlowExecutor(runtime.bus)
         auto_sampler = AutoSamplerManager(runtime.bus)
         self._executor = executor

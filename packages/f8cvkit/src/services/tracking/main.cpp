@@ -28,7 +28,7 @@ int main(int argc, char** argv) {
       "service-id", "Service instance id (required unless --describe)", cxxopts::value<std::string>()->default_value(""))(
       "nats-url", "NATS server URL", cxxopts::value<std::string>()->default_value("nats://127.0.0.1:4222"))(
       "shm-name", "Override SHM name (e.g. shm.xxx.video)", cxxopts::value<std::string>()->default_value(""))(
-      "tracker-kind", "Tracker backend (csrt|kcf|mil|boosting|median_flow|mosse|tld|nano|vit)",
+      "tracker-kind", "Tracker backend (csrt|kcf|mil|nano|vit)",
       cxxopts::value<std::string>()->default_value("csrt"))(
       "model-dir", "Directory for tracker model files used by nano/vit",
       cxxopts::value<std::string>()->default_value("models"))(

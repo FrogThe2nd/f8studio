@@ -71,7 +71,7 @@ def build_app() -> ServiceApp:
     return ServiceApp(
         service_class=SERVICE_CLASS,
         registry=registry,
-        defaults=ServiceAppDefaults(data_delivery="both"),
+        defaults=ServiceAppDefaults(data_delivery="callback"),
         setup=hooks.setup,
         teardown=hooks.teardown,
     )

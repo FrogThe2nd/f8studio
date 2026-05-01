@@ -4,6 +4,6 @@ from typing import Literal, TypeAlias
 
 
 CrossPublishPolicy: TypeAlias = Literal["routed", "all", "none"]
-DataDeliveryMode: TypeAlias = Literal["buffered", "callback", "both"]
+DataDeliveryMode: TypeAlias = Literal["buffered", "callback"]
 
 __all__ = ["CrossPublishPolicy", "DataDeliveryMode"]

@@ -16,14 +16,14 @@ class _DataDeliveryBus(Protocol):
 
 def _coerce_data_delivery(value: Any) -> str | None:
     v = str(value or "").strip().lower()
-    if v in ("pull", "push", "both"):
+    if v in ("buffered", "callback"):
         return v
     return None
 
 
 class PyEngineServiceNode(ServiceNode):
     def __init__(self, *, node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any] | None = None) -> None:
-        state = {"dataDelivery": "pull"}
+        state = {"dataDelivery": "buffered"}
         state.update(dict(initial_state or {}))
         super().__init__(
             node_id=ensure_token(node_id, label="node_id"),
@@ -50,7 +50,7 @@ class PyEngineServiceNode(ServiceNode):
             return value
         mode = _coerce_data_delivery(value)
         if mode is None:
-            raise ValueError("invalid dataDelivery (expected pull, push, or both)")
+            raise ValueError("invalid dataDelivery (expected callback or buffered)")
         return mode
 
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:

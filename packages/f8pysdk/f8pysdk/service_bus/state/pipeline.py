@@ -85,12 +85,12 @@ def _build_state_payload(update: _StateUpdate) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "value": update.value,
         "actor": update.actor,
-        "ts": int(update.ts_ms),
+        "tsMs": int(update.ts_ms),
         "source": update.source,
         "origin": update.origin.value,
     }
     for k, v in dict(update.meta or {}).items():
-        if k in ("value", "actor", "ts", "source", "origin"):
+        if k in ("value", "actor", "tsMs", "source", "origin"):
             continue
         payload[k] = v
     return payload
@@ -327,7 +327,7 @@ async def publish_state(
         node_id=node_id,
         field=field,
         value=payload.get("value"),
-        ts_ms=int(payload.get("ts") or now_ms()),
+        ts_ms=int(payload.get("tsMs") or now_ms()),
         meta=dict(payload),
         ctx=ctx,
     )
@@ -355,10 +355,10 @@ async def publish_state(
     if bus._debug_state:
         print(
             "state_debug[%s] publish_state node=%s field=%s ts=%s origin=%s source=%s"
-            % (bus.service_id, node_id, field, str(payload.get("ts")), ctx.origin.value, update.source)
+            % (bus.service_id, node_id, field, str(payload.get("tsMs")), ctx.origin.value, update.source)
         )
     await bus._transport.kv_put(key, encode_obj(payload))
-    bus.state_store.cache_value(node_id=node_id, field=field, value=update.value, ts_ms=int(payload["ts"]))
+    bus.state_store.cache_value(node_id=node_id, field=field, value=update.value, ts_ms=int(payload["tsMs"]))
     if deliver_local:
         # Local writes (actor == self.service_id) do not round-trip through the KV watcher.
         # Apply to listeners and the node callback immediately.
@@ -368,7 +368,7 @@ async def publish_state(
                 node_id,
                 field,
                 update.value,
-                int(payload["ts"]),
+                int(payload["tsMs"]),
                 dict(payload),
                 publish_options,
             )

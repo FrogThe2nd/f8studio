@@ -91,10 +91,9 @@ def _provider_from_dict(d: dict) -> ProviderConfig:
     protocol = cast(ProviderProtocol, protocol_raw)
 
     api_mode_raw = str(d.get("api_mode", "")).strip()
-    if api_mode_raw in ("chat_completions", "responses"):
-        api_mode = cast(ProviderApiMode, api_mode_raw)
-    else:
-        api_mode = _migrated_api_mode(d, protocol)
+    if api_mode_raw not in ("chat_completions", "responses"):
+        raise ValueError("AI provider config is missing valid api_mode.")
+    api_mode = cast(ProviderApiMode, api_mode_raw)
 
     return ProviderConfig(
         provider_id=str(d["provider_id"]),
@@ -110,19 +109,6 @@ def _provider_from_dict(d: dict) -> ProviderConfig:
         chat_model_id=str(d.get("chat_model_id", "")),
         reasoning_level=str(d.get("reasoning_level", "")),
     )
-
-
-def _migrated_api_mode(d: dict, protocol: ProviderProtocol) -> ProviderApiMode:
-    provider_id = str(d.get("provider_id", "")).strip()
-    endpoint = _normalize_endpoint(str(d.get("endpoint", "")))
-    chat_path = str(d.get("chat_path", "")).strip().lower()
-
-    if "chat/completions" in chat_path:
-        return "chat_completions"
-    if protocol == "openai" and provider_id == "openai" and endpoint in ("", "https://api.openai.com/v1"):
-        return "responses"
-    return "chat_completions"
-
 
 # ---------------------------------------------------------------------------
 # Endpoint helpers

@@ -49,7 +49,7 @@ No description.
 | --- | --- | --- | --- | --- | --- |
 | `shmName` | `rw` | `true` | `true` | `string` | Optional SHM name override (e.g. shm.xxx.video). |
 | `initSelect` | `rw` | `true` | `true` | `string / enum[first_box, closest_center, largest_area, highest_score] / default=closest_center` | Init bbox selection strategy: first_box \| closest_center \| largest_area \| highest_score. |
-| `trackerKind` | `rw` | `true` | `true` | `string / enum[csrt, kcf, mil, boosting, median_flow, ...] / default=csrt` | OpenCV tracker backend: csrt \| kcf \| mil \| boosting \| median_flow \| mosse \| tld \| nano \| vit. |
+| `trackerKind` | `rw` | `true` | `true` | `string / enum[csrt, kcf, mil, nano, vit] / default=csrt` | Tracker backend: csrt \| kcf \| mil \| nano \| vit. |
 | `modelDir` | `rw` | `true` | `true` | `string / default=models` | Directory containing downloaded tracker model files for nano \| vit. |
 | `autoDownloadModels` | `rw` | `true` | `true` | `boolean / default=True` | Auto-download missing tracker model files when a model-based tracker is selected. |
 | `stopTrackingCooldownMs` | `rw` | `true` | `true` | `integer / default=1000` | After stopTracking, ignore initBox for this many ms. Set to 0 to disable. |
@@ -63,7 +63,7 @@ No description.
 
 - `shmName` (Video SHM, `rw`): Optional SHM name override (e.g. shm.xxx.video). Schema: `string`.
 - `initSelect` (Init Select, `rw`): Init bbox selection strategy: first_box | closest_center | largest_area | highest_score. Schema: `string / enum[first_box, closest_center, largest_area, highest_score] / default=closest_center`.
-- `trackerKind` (Tracker Kind, `rw`): OpenCV tracker backend: csrt | kcf | mil | boosting | median_flow | mosse | tld | nano | vit. Schema: `string / enum[csrt, kcf, mil, boosting, median_flow, ...] / default=csrt`.
+- `trackerKind` (Tracker Kind, `rw`): Tracker backend: csrt | kcf | mil | nano | vit. Schema: `string / enum[csrt, kcf, mil, nano, vit] / default=csrt`.
 - `modelDir` (Model Dir, `rw`): Directory containing downloaded tracker model files for nano | vit. Schema: `string / default=models`.
 - `autoDownloadModels` (Auto Download Models, `rw`): Auto-download missing tracker model files when a model-based tracker is selected. Schema: `boolean / default=True`.
 - `stopTrackingCooldownMs` (Stop Cooldown (ms), `rw`): After stopTracking, ignore initBox for this many ms. Set to 0 to disable. Schema: `integer / default=1000`.
@@ -88,7 +88,7 @@ Stop current tracking and return to waiting for initBox.
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `tracking` | `true` | `true` | `object{bbox, frameId, height, status, ...}` | Tracking output stream. |
+| `tracking` | `true` | `true` | `object{frameId, height, status, tracks, ...}` | Tracking output stream with `tracks[]` entries containing `id`, `bbox`, and `kind`. |
 | `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators

@@ -7,7 +7,7 @@ from qtpy import QtCore, QtWidgets
 from f8pysdk.specs import F8Command, F8OperatorSpec, F8ServiceSpec
 from f8pysdk.command import command_input_state_field
 
-from f8pystudio.command_invocation import command_state_payload
+from f8pystudio.ui.support.command_invocation import command_state_payload
 from f8pystudio.nodegraph.items.inline_command_panel import (
     COMMAND_INLINE_BUTTON_STYLE,
     _on_command_pressed,

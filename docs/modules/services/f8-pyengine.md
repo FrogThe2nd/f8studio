@@ -47,13 +47,13 @@ pixi run -e default f8pyengine
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `dataDelivery` | `rw` | `true` | `true` | `string / enum[pull, push, both] / default=pull` | How data inputs are delivered to nodes: pull (default), push, or both. |
+| `dataDelivery` | `rw` | `true` | `true` | `string / enum[buffered, callback] / default=buffered` | How data inputs are delivered to nodes: buffered inputs only, or callback plus buffered inputs. |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
 ### Key Fields That Matter
 
-- `dataDelivery` (Data Delivery, `rw`): How data inputs are delivered to nodes: pull (default), push, or both. Schema: `string / enum[pull, push, both] / default=pull`.
+- `dataDelivery` (Data Delivery, `rw`): How data inputs are delivered to nodes: buffered inputs only, or callback plus buffered inputs. Schema: `string / enum[buffered, callback] / default=buffered`.
 - `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 

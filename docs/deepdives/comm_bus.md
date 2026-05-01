@@ -149,13 +149,13 @@ Implementation references:
   (`emit_data`, `on_cross_data_msg`, `pull_data`, buffering + strategies)
 - C++: `packages/f8cppsdk/src/data_bus.cpp`, `packages/f8cppsdk/src/rungraph_routes.cpp`
 
-### Why pull is the default
+### Why callback is the default
 
-`f8pysdk` defaults `ServiceBusConfig.data_delivery = "pull"` (see `packages/f8pysdk/f8pysdk/service_bus/api/config.py`) because:
+`f8pysdk` defaults `ServiceBusConfig.data_delivery = "callback"` because:
 
-- Pull makes the consumer control the pace → natural backpressure.
-- It prevents high-frequency producers from overwhelming UI/script/expr nodes.
-- When needed, `"push"` / `"both"` are available, and push-mode uses micro-batching + per-port coalescing to reduce pressure.
+- Callback delivery invokes `on_data(...)` for active consumers while still maintaining the current local input buffer.
+- Components that only need pull semantics use `"buffered"` to skip callbacks and read current values through `pull_data(...)`.
+- Legacy `"push"` / `"pull"` / `"both"` aliases are rejected so services do not silently run with the wrong delivery semantics.
 
 ### Cross-service data fan-out (sequence)
 
@@ -490,7 +490,7 @@ We make synchronization a **contract**, not an emergent behavior:
 
 By splitting into two planes:
 
-- Data Plane (Core Pub/Sub): fast fan-out streams, buffered, pull by default.
+- Data Plane (Core Pub/Sub): fast fan-out streams, locally buffered by default.
 - State Plane (JetStream KV): durable, watchable “current values”, editable and inspectable.
 
 ### How does fan-out work?

@@ -13,7 +13,7 @@ def build_app() -> ServiceApp:
     return ServiceApp(
         service_class=DETECTION_SORTER_SERVICE_CLASS,
         registry=registry,
-        defaults=ServiceAppDefaults(data_delivery="push"),
+        defaults=ServiceAppDefaults(data_delivery="callback"),
     )
 
 

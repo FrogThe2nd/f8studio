@@ -196,11 +196,6 @@ class ExecFlowExecutor:
     def current_entrypoint_node_ids(self) -> tuple[str, ...]:
         return tuple(sorted(self._entrypoint_ctx_by_node_id.keys()))
 
-    def current_entrypoint_node_id(self) -> str | None:
-        # Compatibility helper kept for callers not yet migrated to multi-entrypoint APIs.
-        ids = self.current_entrypoint_node_ids()
-        return ids[0] if ids else None
-
     # ---- rungraph -------------------------------------------------------
     async def apply_rungraph(self, graph: F8RuntimeGraph) -> None:
         self._graph = graph
@@ -324,13 +319,6 @@ class ExecFlowExecutor:
             await ctx.cancel()
             self._entrypoint_ctx_by_node_id.pop(node_id, None)
             raise
-
-    async def stop_entrypoint(self) -> None:
-        # Compatibility helper: stop the first active entrypoint, if any.
-        ids = self.current_entrypoint_node_ids()
-        if not ids:
-            return
-        await self._stop_entrypoint(ids[0])
 
     async def stop_all_entrypoints(self) -> None:
         for node_id in self.current_entrypoint_node_ids():

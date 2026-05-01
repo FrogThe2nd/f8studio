@@ -171,10 +171,10 @@ class RuntimeRegressionTests(unittest.IsolatedAsyncioTestCase):
             [data_subject("svc", from_node_id="node1", port_id="out")],
         )
 
-    async def test_data_delivery_both_delivers_by_callback_and_pull(self) -> None:
+    async def test_callback_data_delivery_delivers_by_callback_and_pull(self) -> None:
         cluster = InMemoryCluster()
         transport = InMemoryTransport(cluster=cluster, kv_bucket="kv.svc")
-        bus = ServiceBus(ServiceBusConfig(service_id="svc", data_delivery="both"), transport=transport)
+        bus = ServiceBus(ServiceBusConfig(service_id="svc", data_delivery="callback"), transport=transport)
         node = _DataReceiverNode("node1")
         bus.register_node(node)
 

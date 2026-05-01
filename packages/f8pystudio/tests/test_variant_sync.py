@@ -999,7 +999,7 @@ def test_variant_sync_client_does_not_fallback_from_content_endpoint(tmp_path: P
     assert calls == ["/v1/variants/public-1/content"]
 
 
-def test_variant_sync_client_accepts_flat_content_payloads(tmp_path: Path, monkeypatch) -> None:
+def test_variant_sync_client_rejects_flat_content_payloads(tmp_path: Path, monkeypatch) -> None:
     settings = QtCore.QSettings(str(tmp_path / "variant-sync-flat-content.ini"), QtCore.QSettings.IniFormat)
     db_path = tmp_path / "assets.db"
     service = VariantCatalogService(
@@ -1028,11 +1028,8 @@ def test_variant_sync_client_accepts_flat_content_payloads(tmp_path: Path, monke
 
     monkeypatch.setattr(client, "_request_json", _request_json)
 
-    record = client.get_variant_content("public-1")
-
-    assert record.variantId == "public-1"
-    assert record.kind == F8VariantKind.operator
-    assert record.spec == {"label": "Flat Variant"}
+    with pytest.raises(F8VariantRemoteRequestError, match="missing record"):
+        client.get_variant_content("public-1")
 
 
 def test_variant_sync_client_preview_load_uses_content_endpoint_only(tmp_path: Path, monkeypatch) -> None:
@@ -1064,17 +1061,19 @@ def test_variant_sync_client_preview_load_uses_content_endpoint_only(tmp_path: P
         now = variant_now_iso()
         assert path == "/v1/variants/public-1/content"
         return {
-            "variantId": "public-1",
-            "kind": "operator",
-            "baseNodeType": "svc.a.op",
-            "serviceClass": "svc.test",
-            "operatorClass": "op.test",
-            "name": "Preview Variant",
-            "description": "",
-            "tags": ["preview"],
-            "spec": {"label": "Preview Variant"},
-            "createdAt": now,
-            "updatedAt": now,
+            "record": {
+                "variantId": "public-1",
+                "kind": "operator",
+                "baseNodeType": "svc.a.op",
+                "serviceClass": "svc.test",
+                "operatorClass": "op.test",
+                "name": "Preview Variant",
+                "description": "",
+                "tags": ["preview"],
+                "spec": {"label": "Preview Variant"},
+                "createdAt": now,
+                "updatedAt": now,
+            },
         }
 
     monkeypatch.setattr(client, "_request_json", _request_json)
@@ -1087,7 +1086,7 @@ def test_variant_sync_client_preview_load_uses_content_endpoint_only(tmp_path: P
     assert hydrated.record.spec == {"label": "Preview Variant"}
 
 
-def test_variant_sync_client_accepts_summary_variant_payloads_without_record(tmp_path: Path, monkeypatch) -> None:
+def test_variant_sync_client_accepts_canonical_summary_variant_payloads(tmp_path: Path, monkeypatch) -> None:
     settings = QtCore.QSettings(str(tmp_path / "variant-sync-summary.ini"), QtCore.QSettings.IniFormat)
     db_path = tmp_path / "assets.db"
     service = VariantCatalogService(
@@ -1109,20 +1108,23 @@ def test_variant_sync_client_accepts_summary_variant_payloads_without_record(tmp
         return {
             "entries": [
                 {
-                    "variantId": "summary-1",
-                    "variantKind": "service",
-                    "baseNodeType": "svc.summary.node",
-                    "serviceClass": "svc.summary.Service",
-                    "operatorClass": None,
-                    "name": "Summary Variant",
-                    "description": "summary payload from remote",
-                    "tags": ["summary", "remote"],
+                    "record": {
+                        "variantId": "summary-1",
+                        "kind": "service",
+                        "baseNodeType": "svc.summary.node",
+                        "serviceClass": "svc.summary.Service",
+                        "operatorClass": None,
+                        "name": "Summary Variant",
+                        "description": "summary payload from remote",
+                        "tags": ["summary", "remote"],
+                        "spec": {},
+                        "createdAt": now,
+                        "updatedAt": now,
+                    },
                     "visibility": "public",
                     "ownerUserId": "u2",
                     "ownerDisplayName": "Remote User",
                     "versionNumber": 1,
-                    "createdAt": now,
-                    "updatedAt": now,
                     "subscribed": True,
                 }
             ],

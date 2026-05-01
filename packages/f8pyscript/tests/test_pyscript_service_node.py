@@ -93,10 +93,10 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(states_binding, dict)
         self.assertTrue(bool((states_binding or {}).get("enabled")))
 
-    def test_program_defaults_data_delivery_to_both(self) -> None:
+    def test_program_defaults_data_delivery_to_callback(self) -> None:
         app = build_app()
         cfg = app.build_runtime_config(service_id="svcA", nats_url="mem://")
-        self.assertEqual(str(cfg.bus.data_delivery), "both")
+        self.assertEqual(str(cfg.bus.data_delivery), "callback")
 
     async def _build_runtime(self) -> tuple[object, object, PythonScriptServiceNode]:
         harness = ServiceBusHarness()
@@ -388,7 +388,7 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue("my_wo" in view)
         self.assertIsNone(view.get("my_wo"))
 
-    async def test_legacy_ctx_dict_access_sets_last_error(self) -> None:
+    async def test_ctx_dict_access_reports_monitor_error(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_pyscript_registry()
@@ -401,7 +401,7 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
 
         code = (
             "def onStart(ctx):\n"
-            "    ctx['log']('legacy syntax')\n"
+            "    ctx['log']('dict syntax')\n"
         )
         await node.on_state("code", code, ts_ms=1)
         await asyncio.sleep(0.05)

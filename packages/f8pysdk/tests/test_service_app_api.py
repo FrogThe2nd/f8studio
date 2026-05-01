@@ -79,7 +79,7 @@ def test_service_app_describe_and_build_runtime_use_explicit_registry_owner() ->
     app = ServiceApp(
         service_class="svc.demo",
         registry=registry,
-        defaults=ServiceAppDefaults(data_delivery="both"),
+        defaults=ServiceAppDefaults(data_delivery="callback"),
     )
 
     payload = app.describe_json()
@@ -88,7 +88,7 @@ def test_service_app_describe_and_build_runtime_use_explicit_registry_owner() ->
     runtime_config = app.build_runtime_config(service_id="svc-a")
     assert runtime_config.service_id == "svc-a"
     assert runtime_config.service_class == "svc.demo"
-    assert runtime_config.bus.data_delivery == "both"
+    assert runtime_config.bus.data_delivery == "callback"
 
     runtime = app.build_runtime(service_id="svc-a")
     assert runtime._registry is registry.runtime_registry

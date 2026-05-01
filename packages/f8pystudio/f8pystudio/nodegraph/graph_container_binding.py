@@ -21,24 +21,6 @@ _BASE_CONTAINER_CLS_ = F8StudioContainerBaseNode
 logger = logging.getLogger(__name__)
 
 
-def _emit_show_warning(*args, **kwargs) -> None:
-    # Compatibility path for tests that monkeypatch
-    # `f8pystudio.nodegraph.node_graph.show_warning`.
-    warning_fn = show_warning
-    try:
-        from . import node_graph as node_graph_module
-
-        try:
-            patched = node_graph_module.show_warning
-        except AttributeError:
-            patched = None
-        if callable(patched):
-            warning_fn = patched
-    except Exception:
-        warning_fn = show_warning
-    warning_fn(*args, **kwargs)
-
-
 def _scene_rect(node: BaseNode) -> QtCore.QRectF | None:
     return node.view.sceneBoundingRect()
 
@@ -303,7 +285,7 @@ class GraphContainerBindingMixin:
         if target_container is None:
             self._set_node_scene_pos(operator, x=sx, y=sy)
             msg = "Operator nodes must be dropped inside a compatible service container."
-            _emit_show_warning(self._notification_parent(), "Move Operator Failed", msg)
+            show_warning(self._notification_parent(), "Move Operator Failed", msg)
             return False, msg
 
         target_service_class = str(target_container.spec.serviceClass or "")
@@ -313,7 +295,7 @@ class GraphContainerBindingMixin:
                 "Operator serviceClass does not match target container serviceClass. "
                 f"operator={service_class}, container={target_service_class}"
             )
-            _emit_show_warning(self._notification_parent(), "Move Operator Failed", msg)
+            show_warning(self._notification_parent(), "Move Operator Failed", msg)
             return False, msg
 
         self._unbind_operator_from_container(operator=operator, container=old_container)
@@ -322,12 +304,12 @@ class GraphContainerBindingMixin:
             if old_container is not None:
                 self._bind_operator_to_container(operator, old_container)
             msg = "Failed to bind operator to target service container."
-            _emit_show_warning(self._notification_parent(), "Move Operator Failed", msg)
+            show_warning(self._notification_parent(), "Move Operator Failed", msg)
             return False, msg
 
         dropped_count = self._disconnect_invalid_connections_for_operator(operator)
         if dropped_count > 0:
-            _emit_show_warning(
+            show_warning(
                 self._notification_parent(),
                 "Operator Moved",
                 f"Moved operator to service `{target_container_id}` and dropped {dropped_count} invalid connection(s).",

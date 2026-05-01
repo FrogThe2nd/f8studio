@@ -37,8 +37,7 @@ def build_lifecycle_event_meta(
     """
     Metadata delivered to lifecycle callbacks and service hooks.
 
-    This preserves the current compatibility behavior where caller-provided
-    metadata may override the default `source` field.
+    Caller-provided metadata may override the default `source` field.
     """
     return {
         "source": _resolved_source_text(source, default=StateWriteSource.runtime.value),

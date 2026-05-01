@@ -77,8 +77,8 @@ def register_pyengine_specs(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistr
                 F8StateSpec(
                     name="dataDelivery",
                     label="Data Delivery",
-                    description="How data inputs are delivered to nodes: pull (default), push, or both.",
-                    valueSchema=string_schema(default="pull", enum=["pull", "push", "both"]),
+                    description="How data inputs are delivered to nodes: buffered inputs only, or callback plus buffered inputs.",
+                    valueSchema=string_schema(default="buffered", enum=["buffered", "callback"]),
                     access=F8StateAccess.rw,
                     required=True,
                     showOnNode=True,

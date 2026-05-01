@@ -19,7 +19,7 @@ from f8pysdk.specs import (
     F8StringTypeSchema,
 )
 
-from .state_binding import PyEngineInputsView, ValueAdapter
+from .state_binding import ValueAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -36,33 +36,13 @@ VALID_INPUT_MODES: tuple[InputMode, ...] = (
 _DICT_STYLE_INPUT_METHODS: frozenset[str] = frozenset({"get", "keys", "items", "values", "to_dict"})
 
 
-class _MsgspecStructCompat:
-    __slots__ = ()
-
-    def __getitem__(self, key: str) -> Any:
-        name = str(key or "")
-        try:
-            return getattr(self, name)
-        except AttributeError as exc:
-            raise KeyError(name) from exc
-
-    def get(self, key: str, default: Any = None) -> Any:
-        name = str(key or "")
-        try:
-            return getattr(self, name)
-        except AttributeError:
-            return default
-
-
-class _MappedInputsView(PyEngineInputsView):
-    __slots__ = ("_source", "_attr_to_raw", "_raw_to_attr")
+class _MappedInputsView:
+    __slots__ = ("_source", "_attr_to_raw")
 
     def __init__(self, source: dict[str, Any], *, attr_to_raw: dict[str, str], raw_to_attr: dict[str, str]) -> None:
-        # Keep parent storage available for compatibility (repr/to_dict rely on _data).
-        super().__init__({}, copy_data=False, build_attr_index=False)
+        del raw_to_attr
         self._source = source
         self._attr_to_raw = attr_to_raw
-        self._raw_to_attr = raw_to_attr
 
     def _resolve_key(self, key: object) -> str | None:
         key_s = str(key or "")
@@ -125,6 +105,12 @@ class _MappedInputsView(PyEngineInputsView):
 
     def to_dict(self) -> dict[str, Any]:
         return {k: ValueAdapter.unwrap(self.get(k)) for k in self._iter_keys()}
+
+    def __repr__(self) -> str:
+        return repr(self.to_dict())
+
+    def __str__(self) -> str:
+        return str(self.to_dict())
 
 
 def coerce_input_mode(raw: Any, *, default: InputMode = INPUT_MODE_INPUT_VIEW) -> InputMode:
@@ -264,7 +250,6 @@ class _InputsModelBuilder:
         return msgspec.defstruct(
             struct_name,
             fields,
-            bases=(_MsgspecStructCompat,),
             kw_only=True,
             module=__name__,
         )

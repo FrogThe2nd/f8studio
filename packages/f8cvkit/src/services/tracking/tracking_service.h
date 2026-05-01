@@ -36,10 +36,6 @@ enum class TrackerKind {
   Csrt,
   Kcf,
   Mil,
-  Boosting,
-  MedianFlow,
-  Mosse,
-  Tld,
   Nano,
   Vit,
 };

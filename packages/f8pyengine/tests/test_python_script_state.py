@@ -30,9 +30,9 @@ from f8pysdk.time_utils import now_ms  # noqa: E402
 from f8pyengine.constants import SERVICE_CLASS  # noqa: E402
 from f8pyengine.operators.python_script import (  # noqa: E402
     PythonScriptRuntimeNode,
-    _script_uses_inputs_object_access,
     register_operator,
 )
+from f8pyengine.operators.script_utils.input_binding import script_uses_inputs_object_access  # noqa: E402
 
 
 def _runtime_python_script_node(
@@ -82,17 +82,12 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
             "    payload = inputs\n"
             "    return payload.msg\n"
         )
-        dynamic_attr_access = (
-            "def onMsg(ctx, inputs):\n"
-            "    return getattr(inputs, 'msg', None)\n"
-        )
         syntax_error = "def onMsg(ctx, inputs)\n    return 1\n"
-        self.assertFalse(_script_uses_inputs_object_access(mapping_only))
-        self.assertTrue(_script_uses_inputs_object_access(dot_access))
-        self.assertTrue(_script_uses_inputs_object_access(alias_dot_access))
-        self.assertTrue(_script_uses_inputs_object_access(dynamic_attr_access))
+        self.assertFalse(script_uses_inputs_object_access(mapping_only))
+        self.assertTrue(script_uses_inputs_object_access(dot_access))
+        self.assertTrue(script_uses_inputs_object_access(alias_dot_access))
         # Conservative fallback when parser cannot decide.
-        self.assertTrue(_script_uses_inputs_object_access(syntax_error))
+        self.assertTrue(script_uses_inputs_object_access(syntax_error))
 
     def test_spec_contains_editor_assist_protocol(self) -> None:
         spec = PythonScriptRuntimeNode.SPEC
@@ -102,8 +97,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(input_mode_field)
         assert code_field is not None
         assert input_mode_field is not None
-        access_value = getattr(getattr(input_mode_field, "access", None), "value", getattr(input_mode_field, "access", None))
-        self.assertEqual(str(access_value), str(F8StateAccess.rw.value))
+        self.assertEqual(input_mode_field.access, F8StateAccess.rw)
         editor_assist = code_field.editorAssist
         self.assertIsNotNone(editor_assist)
         python_payload = dump_json(editor_assist.python, mode="json") if editor_assist is not None else None
@@ -795,7 +789,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.05)
         self.assertEqual(_monitor_current_error_message(bus), "")
 
-    async def test_legacy_ctx_dict_access_reports_monitor_error(self) -> None:
+    async def test_ctx_dict_access_reports_monitor_error(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
@@ -804,7 +798,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
 
         code = (
             "def onStart(ctx):\n"
-            "    ctx['log']('legacy syntax')\n"
+            "    ctx['log']('dict syntax')\n"
         )
         op = _runtime_python_script_node(node_id="ps8", code=code)
         graph = F8RuntimeGraph(graphId="g8", revision="r1", nodes=[op], edges=[])

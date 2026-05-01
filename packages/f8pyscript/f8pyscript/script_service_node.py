@@ -813,17 +813,19 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
                     for key, value in raw_outputs.items():
                         return {str(key): normalize_script_output_value_fast(value)}
                 return {str(k): normalize_script_output_value_fast(v) for k, v in raw_outputs.items()}
-            return {
-                str(k): normalize_script_output_value_fast(v)
-                for k, v in result.items()
-                if str(k) not in ("ok", "result", "exec", "error", "outputs")
-            }
+            if "outputs" in result:
+                raise ValueError("script return field 'outputs' must be a dict")
+            raise ValueError("script dict return must include an 'outputs' dict")
         if not self._has_out_port:
             return {}
         return {"out": normalize_script_output_value_fast(result)}
 
     async def _emit_outputs(self, result: Any) -> None:
-        outputs = self._extract_outputs(result)
+        try:
+            outputs = self._extract_outputs(result)
+        except ValueError as exc:
+            self._set_error("result", exc)
+            return
         for out_port, out_value in outputs.items():
             try:
                 await self.emit(str(out_port), out_value)

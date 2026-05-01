@@ -687,6 +687,7 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
             [
                 {
                     "source": "endpoint",
+                    "tsMs": 10,
                     "commandInputField": command_input_state_field("run"),
                 }
             ],

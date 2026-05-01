@@ -124,7 +124,7 @@ class AutoSamplerTests(unittest.IsolatedAsyncioTestCase):
             transport=InMemoryTransport(cluster=cluster, kv_bucket=kv_bucket_for_service("svcA")),
         )
         self.studio_bus = ServiceBus(
-            ServiceBusConfig(service_id="studio", data_delivery="both"),
+            ServiceBusConfig(service_id="studio", data_delivery="callback"),
             transport=InMemoryTransport(cluster=cluster, kv_bucket=kv_bucket_for_service("studio")),
         )
         self.service = PyEngineService()

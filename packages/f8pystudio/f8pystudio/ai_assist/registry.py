@@ -12,8 +12,8 @@ from typing import Literal
 # Protocol identifiers recognised by the HTTP client.
 ProviderProtocol = Literal["openai", "anthropic", "ollama", "custom"]
 
-# OpenAI-compatible providers can speak either the legacy Chat Completions
-# wire shape or the newer Responses API wire shape.
+# OpenAI-compatible providers can speak either the Chat Completions wire shape
+# or the Responses API wire shape.
 ProviderApiMode = Literal["chat_completions", "responses"]
 
 # All reasoning-level values that a model may advertise.

@@ -6,7 +6,7 @@ This repo includes a lightweight Lovense Local API mock server:
 It is used to **capture** `/command` traffic and to return **spec-shaped** JSON responses for common commands so that
 clients can proceed while you log/analyze requests.
 
-## JSON formatting compatibility (important)
+## JSON formatting
 
 Some Lovense clients/SDKs are strict about JSON formatting. The mock server intentionally uses **compact JSON**:
 no extra spaces after separators (`,`, `:`).
@@ -47,10 +47,10 @@ curl -sS -X POST http://127.0.0.1:30010/command \
 
 ## Responses (high level)
 
-- `GetToys` returns `{code:200,type:"OK",data:{toys:"{...}",platform:"pc",appType:"remote"}}` (+ compatibility fields).
+- `GetToys` returns `{code:200,type:"OK",data:{toys:"{...}",platform:"pc",appType:"remote"}}`.
 - Common control commands (`Function`, `Position`, `Pattern`, `PatternV2`, `Preset`) return `{code:200,type:"ok"}` when parameters look valid.
-- Unknown commands return `{code:400,type:"error",...}`.
-- If a `toy` id is provided and not recognized, returns `{code:401,type:"error",...}`.
+- Unknown commands return `{code:400,type:"Invalid Command: ..."}`.
+- If a `toy` id is provided and not recognized, returns `{code:401,type:"Toy Not Found: ..."}`.
 
 ## Event state shape
 

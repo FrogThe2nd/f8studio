@@ -18,7 +18,7 @@ from f8pysdk.specs import schema_default
 
 from qtpy import QtCore, QtWidgets
 
-from f8pystudio.command_invocation import command_state_payload
+from f8pystudio.ui.support.command_invocation import command_state_payload
 from f8pystudio.contracts.command_ui import CommandUiHandler, CommandUiSource
 from ...components.controls import F8OptionCombo, F8Switch, F8ValueBar
 from ...support.studio_theme import label_qss, studio_dark_theme

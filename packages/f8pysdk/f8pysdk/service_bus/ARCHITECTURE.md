@@ -4,7 +4,7 @@
 
 This document describes the current `f8pysdk.service_bus` runtime shape after Slice A through Slice D.
 
-The implementation is still compatibility-heavy, but the runtime is now split more explicitly:
+The runtime is split into explicit owners:
 
 - `ServiceBus` is the public façade.
 - command dispatch lives behind `CommandGateway`
@@ -88,7 +88,7 @@ There are still two command entry adapters, but they now share one `CommandGatew
    - `execute_command(...)`
 2. micro request/reply adapter
    - NATS micro `cmd` endpoint
-   - request decode / compatibility parsing
+   - request decode / argument validation
    - `execute_command(...)` / `CommandGateway.invoke(...)`
    - direct reply payload
 
@@ -105,11 +105,11 @@ SDK-facing local façade:
 
 - `ServiceBus.invoke_command(node_id, call, args, ...)` now provides one explicit local command entrypoint for SDK users
 - `ServiceBus.invoke_command(...)` is reply-first by default; hidden output writeback is explicit opt-in
-- adapters still exist for compatibility, but they no longer define their own execution semantics
+- both adapters remain because they are distinct current entry protocols, but they no longer define their own execution semantics
 
-Current compatibility note:
+Current command note:
 
-- hidden command-state input remains the graph-compatibility adapter
+- hidden command-state input remains the graph command adapter
 - declared commands accept scalar/list/dict on both hidden-state and request/reply command paths
 - undeclared commands on request/reply paths require object-shaped args because there is no param schema to map positional values
 - micro `_cmd` is reply-first and no longer performs hidden output writeback
@@ -121,9 +121,8 @@ Current compatibility note:
 2. local samples are delivered to intra-service targets first
    internal propagation controls are carried by typed `DataEmitOptions`, not ad hoc branching
 3. local delivery mode is explicit:
-   - `callback`: `on_data(...)` only
+   - `callback`: `on_data(...)` plus the current local input buffer
    - `buffered`: `pull_data(...)` only
-   - `both`: explicit dual local delivery for compatibility
 4. cross-service publication is controlled separately by `cross_publish_policy`:
    - `routed`: publish only when the rungraph has a cross-service outgoing edge
    - `all`: publish every emitted output subject
@@ -142,7 +141,7 @@ Current compatibility note:
 8. cross-state watches sync remote values through `StateRouter`
 9. intra-service initial state-edge propagation runs
 
-## Compatibility Surface
+## Public And Internal Surface
 
 The old deep `service_bus.*` compatibility shims have now been removed from the
 repo. New code should use stable SDK modules and owner packages directly:

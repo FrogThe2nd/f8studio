@@ -13,7 +13,7 @@ def build_app() -> ServiceApp:
     return ServiceApp(
         service_class=RHYTHM_SERVICE_CLASS,
         registry=registry,
-        defaults=ServiceAppDefaults(data_delivery="both"),
+        defaults=ServiceAppDefaults(data_delivery="callback"),
     )
 
 

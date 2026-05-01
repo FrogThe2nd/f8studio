@@ -90,7 +90,8 @@ class RuntimeStateSyncController:
 
     def _sync_property_widget(self, *, node: Any, field: str, value: Any) -> None:
         try:
-            editor = self._property_editor.get_property_editor_widget(node)
+            node_id = str(node.id or "")
+            editor = self._property_editor.property_editor_for_node_id(node_id)
             widget = editor.get_widget(field) if editor is not None else None
             if widget is None:
                 return

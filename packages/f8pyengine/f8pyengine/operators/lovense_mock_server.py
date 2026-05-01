@@ -165,7 +165,6 @@ def _build_ws_toy_map(*, port: int) -> dict[str, dict[str, Any]]:
 def _build_get_toys_response(*, api_toys: dict[str, dict[str, Any]]) -> dict[str, Any]:
     toys_string = json.dumps(api_toys, ensure_ascii=False, separators=(",", ":"))
     return {
-        # Spec-aligned
         "code": 200,
         "type": "OK",
         "data": {
@@ -173,25 +172,20 @@ def _build_get_toys_response(*, api_toys: dict[str, dict[str, Any]]) -> dict[str
             "platform": "pc",
             "appType": "remote",
         },
-        # Compatibility extras (some client scripts expect these)
-        "ok": True,
-        "message": "OK",
-        "data2": {"toys": toys_string, "toysMap": api_toys},
-        "toys": api_toys,
     }
 
 
 def _build_get_toy_name_response(*, names: list[str]) -> dict[str, Any]:
-    return {"code": 200, "type": "OK", "data": list(names), "ok": True}
+    return {"code": 200, "type": "OK", "data": list(names)}
 
 
 def _build_ok_response() -> dict[str, Any]:
-    return {"code": 200, "type": "ok", "ok": True}
+    return {"code": 200, "type": "ok"}
 
 
 def _build_error_response(*, code: int, message: str) -> dict[str, Any]:
     # The docs define error `code` meanings; real Lovense Connect sometimes uses type="error".
-    return {"code": int(code), "type": "error", "message": str(message), "ok": False}
+    return {"code": int(code), "type": str(message)}
 
 
 def _json_dumps_compact(obj: Any) -> bytes:
@@ -693,39 +687,69 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
                 keep = await self._handle_one_request(reader, writer)
                 if not keep:
                     break
-        except Exception:
+        except Exception as exc:
+            logger.exception("[%s:lovense_mock_server] client request handling failed", self.node_id, exc_info=exc)
             try:
-                await self._write_json(writer, status=500, obj={"ok": False, "error": "server_error"}, keep_alive=False)
-            except Exception:
-                pass
+                await self._write_json(
+                    writer,
+                    status=500,
+                    obj=_build_error_response(code=500, message="server_error"),
+                    keep_alive=False,
+                )
+            except Exception as write_exc:
+                logger.exception(
+                    "[%s:lovense_mock_server] failed to write server_error response",
+                    self.node_id,
+                    exc_info=write_exc,
+                )
         finally:
             try:
                 writer.close()
                 await writer.wait_closed()
-            except Exception:
-                pass
+            except Exception as close_exc:
+                logger.exception("[%s:lovense_mock_server] failed to close client writer", self.node_id, exc_info=close_exc)
 
     async def _handle_one_request(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> bool:
         header_bytes = await self._read_until(reader, b"\r\n\r\n", limit=_MAX_HEADER_BYTES)
         if header_bytes == b"__header_overrun__":
             self._set_error("headers too large")
-            await self._write_json(writer, status=413, obj={"ok": False, "error": "headers_too_large"}, keep_alive=False)
+            await self._write_json(
+                writer,
+                status=413,
+                obj=_build_error_response(code=413, message="headers_too_large"),
+                keep_alive=False,
+            )
             return False
         if not header_bytes:
             return False
         if not header_bytes.endswith(b"\r\n\r\n"):
             self._set_error("headers too large")
-            await self._write_json(writer, status=413, obj={"ok": False, "error": "headers_too_large"}, keep_alive=False)
+            await self._write_json(
+                writer,
+                status=413,
+                obj=_build_error_response(code=413, message="headers_too_large"),
+                keep_alive=False,
+            )
             return False
         header_text = header_bytes.decode("utf-8", errors="replace")
         lines = header_text.split("\r\n")
         if not lines or not lines[0]:
-            await self._write_json(writer, status=400, obj={"ok": False, "error": "bad_request"}, keep_alive=False)
+            await self._write_json(
+                writer,
+                status=400,
+                obj=_build_error_response(code=400, message="bad_request"),
+                keep_alive=False,
+            )
             return False
         request_line = lines[0].strip()
         parts = request_line.split(" ")
         if len(parts) < 2:
-            await self._write_json(writer, status=400, obj={"ok": False, "error": "bad_request"}, keep_alive=False)
+            await self._write_json(
+                writer,
+                status=400,
+                obj=_build_error_response(code=400, message="bad_request"),
+                keep_alive=False,
+            )
             return False
         method = parts[0].upper()
         path = parts[1]
@@ -770,7 +794,12 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
         body_text = await self._read_body_text(reader, headers)
         if body_text == "__body_too_large__":
             self._set_error("payload too large")
-            await self._write_json(writer, status=413, obj={"ok": False, "error": "payload_too_large"}, keep_alive=False)
+            await self._write_json(
+                writer,
+                status=413,
+                obj=_build_error_response(code=413, message="payload_too_large"),
+                keep_alive=False,
+            )
             return False
         self._raw_log(
             "in",
@@ -787,12 +816,17 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
                 "remote": self._peer(writer),
                 "path": str(path_s),
                 "error": "parse_failed",
-                "message": str(exc),
+                "detail": str(exc),
                 "contentType": str(content_type),
                 "bodyText": str(body_text),
             }
             await self._safe_write_event(entry)
-            await self._write_json(writer, status=400, obj={"ok": False, "error": "parse_failed"}, keep_alive=keep_alive)
+            await self._write_json(
+                writer,
+                status=400,
+                obj=_build_error_response(code=400, message="parse_failed"),
+                keep_alive=keep_alive,
+            )
             return keep_alive
 
         normalized = _normalize_payload(raw_payload)
@@ -819,7 +853,7 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
                 self._raw_log("out", f"status=200 body={_json_dumps_compact(resp_obj).decode('utf-8', errors='replace')}")
                 await self._write_json(writer, status=200, obj=resp_obj, keep_alive=keep_alive)
             else:
-                resp_obj = {"ok": True}
+                resp_obj = _build_ok_response()
                 self._raw_log("out", f"status=200 body={_json_dumps_compact(resp_obj).decode('utf-8', errors='replace')}")
                 await self._write_json(writer, status=200, obj=resp_obj, keep_alive=keep_alive)
             return keep_alive
@@ -993,8 +1027,8 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
         Resolve target toys from `toy` parameter.
 
         - None / missing: apply to all toys
-        - string: accept both toy id (preferred) and toy name (legacy clients)
-        - list: array of ids/names
+        - string: toy id
+        - list: array of toy ids
         """
         if toy_value is None:
             return {
@@ -1036,9 +1070,6 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
             toy_id = toy.toy_id
             display_by_id[toy_id] = toy.display_name
             id_by_token[toy_id.lower()] = toy_id
-            id_by_token[toy.name.lower()] = toy_id
-            id_by_token[toy.display_name.lower()] = toy_id
-            id_by_token[toy.display_name.lower().replace(" ", "")] = toy_id
 
         out_ids: list[str] = []
         out_names: list[str] = []

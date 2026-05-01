@@ -50,7 +50,7 @@ def _payload_small() -> dict[str, Any]:
             "ok": True,
             "tags": ["pose", "realtime", "cam"],
         },
-        "ts": 1730000000123,
+        "tsMs": 1730000000123,
         "meta": {"source": "bench", "serviceId": "svcA", "nodeId": "op1"},
     }
 
@@ -71,7 +71,7 @@ def _payload_medium() -> dict[str, Any]:
                 }
             )
         people.append({"personId": person_i, "nodes": nodes})
-    return {"value": {"frameId": 1203, "people": people}, "ts": 1730000000456}
+    return {"value": {"frameId": 1203, "people": people}, "tsMs": 1730000000456}
 
 
 def _payload_large() -> dict[str, Any]:
@@ -89,7 +89,7 @@ def _payload_large() -> dict[str, Any]:
                 }
             )
         frames.append({"frameId": frame_i, "points": points})
-    return {"value": {"sessionId": "bench-large", "frames": frames}, "ts": 1730000000999}
+    return {"value": {"sessionId": "bench-large", "frames": frames}, "tsMs": 1730000000999}
 
 
 def _state_spec(name: str) -> F8StateSpec:

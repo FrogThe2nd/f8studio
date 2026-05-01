@@ -64,11 +64,8 @@ def _viz_track_input_schema():
             "width": integer_schema(),
             "height": integer_schema(),
             "skeletonProtocol": string_schema(),
-            "bbox": array_schema(items=number_schema()),
-            "keypoints": array_schema(items=_track_keypoint_schema()),
             "tracks": array_schema(items=_track_item_schema()),
             "detections": array_schema(items=_track_item_schema()),
-            "match": complex_object_schema(properties={"bbox": array_schema(items=number_schema())}),
             "vectors": array_schema(
                 items=complex_object_schema(
                     properties={
@@ -103,9 +100,6 @@ class VizTrackRuntimeNode(StudioVizRuntimeNodeBase):
       { "tsMs": int, "width": int, "height": int, "tracks": [ {id, bbox, keypoints?}, ... ] }
     - Multi-target (from f8.dl.detector / f8.dl.humandetector / f8.cvkit.templatematch):
       { "schemaVersion": "f8visionDetections/1", "tsMs": int, "width": int, "height": int, "detections": [ {bbox, keypoints?}, ... ] }
-    - Single-target (from f8.cvkit.tracking `tracking`):
-      { "tsMs": int, "width": int, "height": int, "bbox": [x1,y1,x2,y2] | null }
-
     The runtime node maintains a short history per track id, and emits a UI command
     that the render node draws (boxes, pose, and fading motion trails).
     """
@@ -286,7 +280,6 @@ class VizTrackRuntimeNode(StudioVizRuntimeNodeBase):
         tracks_any = payload.get("tracks")
         tracks: list[dict[str, Any]] = [t for t in tracks_any if isinstance(t, dict)] if isinstance(tracks_any, list) else []
 
-        # New schema support: f8visionDetections/1
         if not tracks:
             dets_any = payload.get("detections")
             if isinstance(dets_any, list):
@@ -325,45 +318,6 @@ class VizTrackRuntimeNode(StudioVizRuntimeNodeBase):
                         }
                     )
                 tracks = det_tracks
-
-        # Single-target compatibility: accept a top-level bbox and treat it as track id 1.
-        if not tracks:
-            bb0 = payload.get("bbox")
-            bbox0 = None
-            kind0 = "track"
-            try:
-                if isinstance(bb0, (list, tuple)) and len(bb0) == 4:
-                    x1, y1, x2, y2 = (float(bb0[0]), float(bb0[1]), float(bb0[2]), float(bb0[3]))
-                    bbox0 = (x1, y1, x2, y2)
-            except Exception:
-                bbox0 = None
-            if bbox0 is None:
-                # Fallback for template tracker when status="lost": visualize best match bbox (debug-friendly).
-                try:
-                    m = payload.get("match") if isinstance(payload.get("match"), dict) else {}
-                    mb = (m or {}).get("bbox")
-                    if isinstance(mb, (list, tuple)) and len(mb) == 4 and all(v is not None for v in mb):
-                        x1, y1, x2, y2 = (float(mb[0]), float(mb[1]), float(mb[2]), float(mb[3]))
-                        bbox0 = (x1, y1, x2, y2)
-                        kind0 = "match"
-                except Exception:
-                    bbox0 = None
-            kps0 = None
-            try:
-                kp0 = payload.get("keypoints")
-                if isinstance(kp0, list):
-                    kps0 = [x for x in kp0 if isinstance(x, dict)]
-            except Exception:
-                kps0 = None
-            tracks = [
-                {
-                    "id": 1,
-                    "bbox": list(bbox0) if bbox0 is not None else None,
-                    "keypoints": kps0,
-                    "kind": kind0,
-                    "skeletonProtocol": payload_skeleton_protocol,
-                }
-            ]
 
         for t in tracks:
             if not isinstance(t, dict):

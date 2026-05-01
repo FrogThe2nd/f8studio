@@ -386,18 +386,8 @@ class F8StudioSingleNodePropertiesWidget(
             outer_scroll_restorer=self._restore_outer_scroll_position,
         )
 
-    def get_property_editor_widget(self, node: F8StudioBaseNode) -> F8StudioNodePropEditorWidget | None:
-        """
-        Compatibility hook used by runtime state sync.
-
-        NodeGraphQt's original PropertiesBinWidget exposes this method; Studio's
-        single-node property panel keeps only one active editor, so resolve it
-        explicitly by node id.
-        """
-        try:
-            node_id = str(node.id or "")
-        except (AttributeError, RuntimeError, TypeError):
-            return None
+    def property_editor_for_node_id(self, node_id: str) -> F8StudioNodePropEditorWidget | None:
+        node_id = str(node_id or "")
         if not node_id or node_id != self._node_id:
             return None
         return self._editor

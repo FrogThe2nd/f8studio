@@ -61,16 +61,15 @@
               "name": "dataDelivery",
               "valueSchema": {
                 "type": "string",
-                "default": "pull",
+                "default": "buffered",
                 "enum": [
-                  "pull",
-                  "push",
-                  "both"
+                  "buffered",
+                  "callback"
                 ]
               },
               "access": "rw",
               "label": "Data Delivery",
-              "description": "How data inputs are delivered to nodes: pull (default), push, or both.",
+              "description": "How data inputs are delivered to nodes: buffered inputs only, or callback plus buffered inputs.",
               "required": true,
               "showOnNode": true
             },
@@ -344,7 +343,7 @@
         "f8_sys": {},
         "f8_ui_overrides": {},
         "custom": {
-          "dataDelivery": "pull",
+          "dataDelivery": "buffered",
           "active": true,
           "svcId": "NXSA"
         }

@@ -1910,18 +1910,17 @@
             {
               "name": "dataDelivery",
               "label": "Data Delivery",
-              "description": "How data inputs are delivered to nodes: pull (default), push, or both.",
+              "description": "How data inputs are delivered to nodes: buffered inputs only, or callback plus buffered inputs.",
               "valueSchema": {
                 "title": null,
                 "description": null,
-                "default": "pull",
+                "default": "buffered",
                 "examples": null,
                 "field_comment": null,
                 "type": "string",
                 "enum": [
-                  "pull",
-                  "push",
-                  "both"
+                  "buffered",
+                  "callback"
                 ],
                 "minimum": null,
                 "maximum": null,
@@ -1999,7 +1998,7 @@
         "f8_sys": {},
         "f8_ui_overrides": {},
         "custom": {
-          "dataDelivery": "pull",
+          "dataDelivery": "buffered",
           "active": true,
           "svcId": "ASAY"
         }

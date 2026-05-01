@@ -7,7 +7,7 @@ from typing import Any
 import msgspec
 
 
-class _LegacyView:
+class _InputView:
     __slots__ = ("_data", "_attr_to_key")
 
     def __init__(self, data: dict[str, Any]) -> None:
@@ -27,7 +27,7 @@ class _LegacyView:
     def _wrap_value(cls, value: Any) -> Any:
         if type(value) in (str, int, float, bool, type(None)):
             return value
-        if isinstance(value, _LegacyView):
+        if isinstance(value, _InputView):
             return value
         if type(value) is dict:
             return cls(value)
@@ -74,11 +74,11 @@ PAYLOAD = {
 }
 
 
-def _run_legacy(iterations: int) -> tuple[float, float]:
+def _run_input_view(iterations: int) -> tuple[float, float]:
     t0 = perf_counter()
     acc = 0.0
     for _ in range(iterations):
-        inputs = _LegacyView(PAYLOAD)
+        inputs = _InputView(PAYLOAD)
         for bone in inputs.msg.bones:
             if bone.name == "Hips":
                 acc += float(bone.position[0])
@@ -101,22 +101,22 @@ def _run_msgspec(iterations: int) -> tuple[float, float]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Benchmark legacy input view vs msgspec Struct inputs")
+    parser = argparse.ArgumentParser(description="Benchmark input_view vs msgspec Struct inputs")
     parser.add_argument("--iterations", type=int, default=300_000)
     args = parser.parse_args()
 
     iterations = max(1, int(args.iterations))
-    legacy_elapsed, legacy_acc = _run_legacy(iterations)
+    input_view_elapsed, input_view_acc = _run_input_view(iterations)
     msgspec_elapsed, msgspec_acc = _run_msgspec(iterations)
 
-    if abs(legacy_acc - msgspec_acc) > 1e-9:
+    if abs(input_view_acc - msgspec_acc) > 1e-9:
         raise AssertionError("benchmark validation failed: accumulators differ")
 
-    legacy_ops = iterations / legacy_elapsed if legacy_elapsed > 0 else 0.0
+    input_view_ops = iterations / input_view_elapsed if input_view_elapsed > 0 else 0.0
     msgspec_ops = iterations / msgspec_elapsed if msgspec_elapsed > 0 else 0.0
-    speedup = (msgspec_ops / legacy_ops) if legacy_ops > 0 else 0.0
+    speedup = (msgspec_ops / input_view_ops) if input_view_ops > 0 else 0.0
 
-    print(f"legacy_view : {legacy_ops:,.0f} ops/s ({legacy_elapsed:.4f}s)")
+    print(f"input_view  : {input_view_ops:,.0f} ops/s ({input_view_elapsed:.4f}s)")
     print(f"msgspec     : {msgspec_ops:,.0f} ops/s ({msgspec_elapsed:.4f}s)")
     print(f"speedup     : {speedup:.2f}x")
 

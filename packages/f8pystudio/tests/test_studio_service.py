@@ -33,7 +33,7 @@ class _FakeServiceRuntime:
 
 
 class PyStudioServiceTests(unittest.IsolatedAsyncioTestCase):
-    async def test_start_uses_both_data_delivery_for_pull_based_viz_nodes(self) -> None:
+    async def test_start_uses_callback_data_delivery_for_viz_nodes(self) -> None:
         _FakeServiceRuntime.instances.clear()
         service = PyStudioService(PyStudioServiceConfig(nats_url="nats://127.0.0.1:4222"))
 
@@ -47,7 +47,7 @@ class PyStudioServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(_FakeServiceRuntime.instances), 1)
         runtime = _FakeServiceRuntime.instances[0]
         self.assertTrue(runtime.started)
-        self.assertEqual(runtime.config.bus.data_delivery, "both")
+        self.assertEqual(runtime.config.bus.data_delivery, "callback")
         self.assertEqual(runtime.config.bus.cross_publish_policy, "routed")
 
 

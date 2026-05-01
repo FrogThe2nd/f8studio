@@ -48,11 +48,7 @@ def _coerce_cross_publish_policy(value: Any) -> CrossPublishPolicy | None:
 
 def _coerce_data_delivery_mode(value: Any) -> DataDeliveryMode | None:
     text = str(value or "").strip().lower()
-    if text == "pull":
-        return "buffered"
-    if text == "push":
-        return "callback"
-    if text in ("buffered", "callback", "both"):
+    if text in ("buffered", "callback"):
         return text
     return None
 
@@ -170,7 +166,7 @@ class ServiceBus:
     - Rungraph updates are applied via micro endpoints.
     - Builds intra/cross routing tables for data edges.
     - Provides a shared state KV API for nodes.
-    - Local data delivery is configured explicitly as buffered, callback, or both.
+    - Local data delivery is configured explicitly as buffered or callback.
     - Pull-based consumers may trigger intra-service computation via `compute_output(...)`.
     """
 
@@ -189,14 +185,12 @@ class ServiceBus:
         self._ready = False
         cross_publish_policy = _coerce_cross_publish_policy(config.cross_publish_policy)
         if cross_publish_policy is None:
-            if self._debug_state or log.isEnabledFor(logging.WARNING):
-                log.warning("Invalid cross_publish_policy=%r; defaulting to 'routed'", config.cross_publish_policy)
-            cross_publish_policy = "routed"
+            raise ValueError(
+                f"Invalid cross_publish_policy={config.cross_publish_policy!r}; expected 'routed', 'all', or 'none'."
+            )
         mode = _coerce_data_delivery_mode(config.data_delivery)
         if mode is None:
-            if self._debug_state or log.isEnabledFor(logging.WARNING):
-                log.warning("Invalid data_delivery=%r; defaulting to 'callback'", config.data_delivery)
-            mode = "callback"
+            raise ValueError(f"Invalid data_delivery={config.data_delivery!r}; expected 'callback' or 'buffered'.")
         self._state_sync_concurrency = max(1, int(config.state_sync_concurrency))
         self._state_cache_max_entries = max(0, int(config.state_cache_max_entries))
         self._data_input_max_buffers = max(0, int(config.data_input_max_buffers))
@@ -388,7 +382,7 @@ class ServiceBus:
         """
         mode = _coerce_data_delivery_mode(value)
         if mode is None:
-            return
+            raise ValueError(f"Invalid data_delivery={value!r}; expected 'callback' or 'buffered'.")
         if mode == self.data_delivery:
             return
         self._data_router.set_data_delivery(mode)

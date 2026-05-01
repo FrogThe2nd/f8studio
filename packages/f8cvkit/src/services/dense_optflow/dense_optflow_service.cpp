@@ -108,7 +108,6 @@ bool DenseOptflowService::start() {
   flow_shm_name_ = "shm." + cfg_.service_id + ".flow";
   flow_shm_format_ = "flow2_f16";
   compute_scale_ = 0.5;
-  output_scale_mode_ = "full";
 
   video_.close();
   frame_bgra_.clear();
@@ -123,7 +122,6 @@ bool DenseOptflowService::start() {
   prev_compute_.release();
   gray_compute_.release();
   flow_compute_.release();
-  flow_full_.release();
   has_prev_gray_ = false;
   prev_width_ = 0;
   prev_height_ = 0;
@@ -144,7 +142,6 @@ bool DenseOptflowService::start() {
   publish_state_if_changed("flowShmName", flow_shm_name_, "init", json::object());
   publish_state_if_changed("flowShmFormat", flow_shm_format_, "init", json::object());
   publish_state_if_changed("computeScale", compute_scale_, "init", json::object());
-  publish_state_if_changed("outputScaleMode", output_scale_mode_, "init", json::object());
   publish_state_if_changed("flowOutputScaleX", 1.0, "init", json::object());
   publish_state_if_changed("flowOutputScaleY", 1.0, "init", json::object());
   publish_error_if_changed("", "init", json::object());
@@ -253,7 +250,6 @@ void DenseOptflowService::on_state(const std::string& node_id, const std::string
       prev_compute_.release();
       gray_compute_.release();
       flow_compute_.release();
-      flow_full_.release();
       has_prev_gray_ = false;
       prev_width_ = 0;
       prev_height_ = 0;
@@ -283,18 +279,6 @@ void DenseOptflowService::on_state(const std::string& node_id, const std::string
     }
     compute_scale_ = std::max(0.25, std::min(1.0, v));
     publish_state_if_changed("computeScale", compute_scale_, "state", meta);
-    publish_error_if_changed("", "state", meta);
-    return;
-  }
-
-  if (field == "outputScaleMode" && value.is_string()) {
-    const std::string mode = service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(value.get<std::string>()));
-    if (mode != "full" && mode != "compute") {
-      publish_error_if_changed("invalid outputScaleMode", "state", meta);
-      return;
-    }
-    output_scale_mode_ = mode;
-    publish_state_if_changed("outputScaleMode", output_scale_mode_, "state", meta);
     publish_error_if_changed("", "state", meta);
     return;
   }
@@ -447,19 +431,6 @@ void DenseOptflowService::process_frame_once() {
   }
 
   cv::Mat flow = flow_compute_;
-  const bool keep_compute_scale = output_scale_mode_ == "compute";
-  if (!keep_compute_scale && (flow_compute_.cols != gray_.cols || flow_compute_.rows != gray_.rows)) {
-    try {
-      cv::resize(flow_compute_, flow_full_, gray_.size(), 0.0, 0.0, cv::INTER_LINEAR);
-      flow = flow_full_;
-      flow *= static_cast<float>(1.0 / scale);
-    } catch (const cv::Exception& ex) {
-      ++monitor_fail_frames_;
-      publish_error_if_changed(std::string("opencv flow upscale failed: ") + ex.what(), "runtime", json::object());
-      gray_.copyTo(prev_gray_);
-      return;
-    }
-  }
 
   std::string shm_name = service_runtime::trim_copy(flow_shm_name_);
   if (shm_name.empty()) {
@@ -511,7 +482,6 @@ void DenseOptflowService::process_frame_once() {
 
   publish_state_if_changed("flowShmFormat", flow_shm_format_, "runtime", json::object());
   publish_state_if_changed("computeScale", compute_scale_, "runtime", json::object());
-  publish_state_if_changed("outputScaleMode", output_scale_mode_, "runtime", json::object());
   publish_state_if_changed("flowOutputScaleX", static_cast<double>(flow.cols) / static_cast<double>(std::max(1, gray_.cols)),
                            "runtime", json::object());
   publish_state_if_changed("flowOutputScaleY", static_cast<double>(flow.rows) / static_cast<double>(std::max(1, gray_.rows)),
@@ -541,9 +511,7 @@ json DenseOptflowService::describe() {
       state_field("flowShmName", schema_string(), "ro", "Flow SHM Name", "Output SHM name for UV flow field.", true),
       state_field("flowShmFormat", schema_string(), "ro", "Flow SHM Format", "Flow payload format. Fixed to flow2_f16.", false),
       state_field("computeScale", schema_number(0.5, 0.25, 1.0), "rw", "Compute Scale",
-                  "Farneback compute scale, flow is upscaled back to full size.", false),
-      state_field("outputScaleMode", schema_string(), "rw", "Output Scale Mode",
-                  "full keeps legacy full-resolution flow; compute emits flow at computeScale resolution.", false),
+                  "Farneback compute scale; output flow stays at compute scale.", false),
       state_field("flowOutputScaleX", schema_number(), "ro", "Flow Output Scale X", "Output flow width / source width.", false),
       state_field("flowOutputScaleY", schema_number(), "ro", "Flow Output Scale Y", "Output flow height / source height.", false),
   });

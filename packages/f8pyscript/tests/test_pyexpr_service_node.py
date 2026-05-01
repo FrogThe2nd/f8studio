@@ -59,12 +59,12 @@ class PyExprServiceNodeTests(unittest.IsolatedAsyncioTestCase):
     def _register_runtime(self, bus: object) -> None:
         reg = create_pyexpr_registry()
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=EXPR_SERVICE_CLASS), registry=reg)
-        bus.set_data_delivery("both", source="test")
+        bus.set_data_delivery("callback", source="test")
 
-    def test_program_defaults_data_delivery_to_both(self) -> None:
+    def test_program_defaults_data_delivery_to_callback(self) -> None:
         app = build_app()
         cfg = app.build_runtime_config(service_id="svcExpr", nats_url="mem://")
-        self.assertEqual(str(cfg.bus.data_delivery), "both")
+        self.assertEqual(str(cfg.bus.data_delivery), "callback")
 
     def test_expr_spec_placeholder_ports_not_required(self) -> None:
         reg = create_pyexpr_registry()
@@ -329,7 +329,7 @@ class PyExprServiceNodeTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
         await bus_dst.set_rungraph(graph_dst)
-        bus_dst.set_data_delivery("both", source="test")
+        bus_dst.set_data_delivery("callback", source="test")
         node = bus_dst.get_node("dstSvc")
         assert isinstance(node, PythonExprServiceNode)
         await node.on_state("code", "inputs['in'] + 100", ts_ms=1)

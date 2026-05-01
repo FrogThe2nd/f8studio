@@ -197,7 +197,7 @@ class LovenseMockServerNodeTests(unittest.IsolatedAsyncioTestCase):
             host="127.0.0.1",
             port=port,
             path="/command",
-            payload={"command": "Pattern", "toy": "lush", "timeSec": 1, "strength": 20, "apiVer": 1},
+            payload={"command": "Pattern", "toy": "f082c00246fa", "timeSec": 1, "strength": 20, "apiVer": 1},
         )
         self.assertEqual(code, 200)
 
@@ -229,7 +229,7 @@ class LovenseMockServerNodeTests(unittest.IsolatedAsyncioTestCase):
             host="127.0.0.1",
             port=port,
             path="/command",
-            payload={"command": "Function", "toy": "solace", "timeSec": 2, "action": "Stop", "apiVer": 1},
+            payload={"command": "Function", "toy": "ff922f7fd345", "timeSec": 2, "action": "Stop", "apiVer": 1},
         )
         self.assertEqual(code, 200)
 

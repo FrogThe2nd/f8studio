@@ -13,7 +13,6 @@
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <opencv2/imgproc.hpp>
-#include <opencv2/tracking/tracking_legacy.hpp>
 
 #include "f8cppsdk/describe_schema.h"
 #include "f8cppsdk/f8_naming.h"
@@ -215,26 +214,6 @@ TrackerKind parse_tracker_kind(const std::string& raw, std::string& normalized, 
     ok = true;
     return TrackerKind::Mil;
   }
-  if (s == "boosting") {
-    normalized = "boosting";
-    ok = true;
-    return TrackerKind::Boosting;
-  }
-  if (s == "median_flow" || s == "medianflow") {
-    normalized = "median_flow";
-    ok = true;
-    return TrackerKind::MedianFlow;
-  }
-  if (s == "mosse") {
-    normalized = "mosse";
-    ok = true;
-    return TrackerKind::Mosse;
-  }
-  if (s == "tld") {
-    normalized = "tld";
-    ok = true;
-    return TrackerKind::Tld;
-  }
   if (s == "nano" || s == "nanotrack") {
     normalized = "nano";
     ok = true;
@@ -259,18 +238,6 @@ std::string tracker_kind_to_string(TrackerKind kind) {
   }
   if (kind == TrackerKind::Mil) {
     return "mil";
-  }
-  if (kind == TrackerKind::Boosting) {
-    return "boosting";
-  }
-  if (kind == TrackerKind::MedianFlow) {
-    return "median_flow";
-  }
-  if (kind == TrackerKind::Mosse) {
-    return "mosse";
-  }
-  if (kind == TrackerKind::Tld) {
-    return "tld";
   }
   if (kind == TrackerKind::Nano) {
     return "nano";
@@ -525,13 +492,6 @@ bool ensure_tracker_models_available(TrackerKind kind, const fs::path& model_dir
   return true;
 }
 
-cv::Ptr<cv::Tracker> upgrade_legacy_tracker(const cv::Ptr<cv::legacy::Tracker>& legacy_tracker) {
-  if (legacy_tracker.empty()) {
-    return {};
-  }
-  return cv::legacy::upgradeTrackingAPI(legacy_tracker);
-}
-
 cv::Ptr<cv::Tracker> create_tracker_for_kind(TrackerKind kind, const fs::path& model_dir) {
   if (kind == TrackerKind::Csrt) {
     return cv::TrackerCSRT::create();
@@ -541,18 +501,6 @@ cv::Ptr<cv::Tracker> create_tracker_for_kind(TrackerKind kind, const fs::path& m
   }
   if (kind == TrackerKind::Mil) {
     return cv::TrackerMIL::create();
-  }
-  if (kind == TrackerKind::Boosting) {
-    return upgrade_legacy_tracker(cv::legacy::TrackerBoosting::create());
-  }
-  if (kind == TrackerKind::MedianFlow) {
-    return upgrade_legacy_tracker(cv::legacy::TrackerMedianFlow::create());
-  }
-  if (kind == TrackerKind::Mosse) {
-    return upgrade_legacy_tracker(cv::legacy::TrackerMOSSE::create());
-  }
-  if (kind == TrackerKind::Tld) {
-    return upgrade_legacy_tracker(cv::legacy::TrackerTLD::create());
   }
   if (kind == TrackerKind::Nano) {
     cv::TrackerNano::Params params;
@@ -1296,7 +1244,11 @@ void TrackingService::process_frame_once() {
   out["width"] = hdr.width;
   out["height"] = hdr.height;
   out["status"] = "tracking";
-  out["bbox"] = json::array({emit_bbox.x, emit_bbox.y, emit_bbox.x + emit_bbox.width, emit_bbox.y + emit_bbox.height});
+  out["tracks"] = json::array(
+      {json::object({{"id", 1},
+                     {"bbox",
+                      json::array({emit_bbox.x, emit_bbox.y, emit_bbox.x + emit_bbox.width, emit_bbox.y + emit_bbox.height})},
+                     {"kind", "track"}})});
   out["tracker"] = json::object({{"kind", active_tracker_kind}, {"ok", true}});
 
   publish_error_if_changed("", "runtime", json::object());
@@ -1362,7 +1314,10 @@ json TrackingService::describe() {
                          {"width", schema_integer()},
                          {"height", schema_integer()},
                          {"status", schema_string()},
-                         {"bbox", schema_array(schema_integer())},
+                         {"tracks",
+                          schema_array(schema_object(json{{"id", schema_integer()},
+                                                          {"bbox", schema_array(schema_integer())},
+                                                          {"kind", schema_string()}}))},
                          {"tracker", schema_object(json{{"kind", schema_string()}, {"ok", schema_boolean()}})}});
   json service;
   service["schemaVersion"] = "f8service/1";
@@ -1378,12 +1333,10 @@ json TrackingService::describe() {
                   schema_string_enum({"first_box", "closest_center", "largest_area", "highest_score"}, "closest_center"), "rw",
                   "Init Select", "Init bbox selection strategy: first_box | closest_center | largest_area | highest_score.", true),
       state_field("trackerKind",
-                  schema_string_enum({"csrt", "kcf", "mil", "boosting", "median_flow", "mosse", "tld", "nano",
-                                      "vit"},
-                                     "csrt"),
+                  schema_string_enum({"csrt", "kcf", "mil", "nano", "vit"}, "csrt"),
                   "rw",
                   "Tracker Kind",
-                  "OpenCV tracker backend: csrt | kcf | mil | boosting | median_flow | mosse | tld | nano | vit.",
+                  "OpenCV tracker backend: csrt | kcf | mil | nano | vit.",
                   true),
       state_field("modelDir", json{{"type", "string"}, {"default", default_model_dir_state()}}, "rw", "Model Dir",
                   "Directory containing downloaded tracker model files for nano | vit.", false),

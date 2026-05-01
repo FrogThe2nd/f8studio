@@ -61,8 +61,8 @@ class _PropertyPanelStub:
     def __init__(self, editor: _EditorStub) -> None:
         self._editor = editor
 
-    def get_property_editor_widget(self, node: _NodeStub) -> _EditorStub:
-        assert node.id == "ftdW"
+    def property_editor_for_node_id(self, node_id: str) -> _EditorStub:
+        assert node_id == "ftdW"
         return self._editor
 
 
@@ -90,8 +90,6 @@ def test_runtime_state_update_refreshes_active_property_widget() -> None:
 
 def test_single_node_property_panel_exposes_current_editor_for_runtime_sync() -> None:
     panel = SimpleNamespace(_node_id="ftdW", _editor=object())
-    node = SimpleNamespace(id="ftdW")
-    other = SimpleNamespace(id="other")
 
-    assert F8StudioSingleNodePropertiesWidget.get_property_editor_widget(panel, node) is panel._editor
-    assert F8StudioSingleNodePropertiesWidget.get_property_editor_widget(panel, other) is None
+    assert F8StudioSingleNodePropertiesWidget.property_editor_for_node_id(panel, "ftdW") is panel._editor
+    assert F8StudioSingleNodePropertiesWidget.property_editor_for_node_id(panel, "other") is None

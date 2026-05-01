@@ -113,35 +113,25 @@ class TestProviderCodec:
         restored = _provider_from_dict(d)
         assert restored.protocol == "openai"
 
-    def test_legacy_official_openai_migrates_to_responses(self) -> None:
-        restored = _provider_from_dict({
-            "provider_id": "openai",
-            "display_name": "OpenAI",
-            "protocol": "openai",
-            "endpoint": "https://api.openai.com/v1",
-            "chat_path": "",
-        })
-        assert restored.api_mode == "responses"
+    def test_provider_config_without_api_mode_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="api_mode"):
+            _provider_from_dict({
+                "provider_id": "openai",
+                "display_name": "OpenAI",
+                "protocol": "openai",
+                "endpoint": "https://api.openai.com/v1",
+                "chat_path": "/chat/completions",
+            })
 
-    def test_legacy_openai_chat_path_stays_chat_completions(self) -> None:
-        restored = _provider_from_dict({
-            "provider_id": "openai",
-            "display_name": "OpenAI",
-            "protocol": "openai",
-            "endpoint": "https://api.openai.com/v1",
-            "chat_path": "/chat/completions",
-        })
-        assert restored.api_mode == "chat_completions"
-
-    def test_legacy_non_official_openai_endpoint_stays_chat_completions(self) -> None:
-        restored = _provider_from_dict({
-            "provider_id": "google_gemini",
-            "display_name": "Google Gemini",
-            "protocol": "openai",
-            "endpoint": "https://generativelanguage.googleapis.com/v1beta/openai",
-            "chat_path": "",
-        })
-        assert restored.api_mode == "chat_completions"
+    def test_provider_config_with_invalid_api_mode_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="api_mode"):
+            _provider_from_dict({
+                "provider_id": "openai",
+                "display_name": "OpenAI",
+                "protocol": "openai",
+                "api_mode": "legacy_chat_path_guess",
+                "endpoint": "https://api.openai.com/v1",
+            })
 
 
 # ---------------------------------------------------------------------------

@@ -81,11 +81,7 @@ def test_assets_database_serializes_concurrent_initialization_for_same_path(tmp_
             with state_lock:
                 active_create_all_calls -= 1
 
-    def _apply_additive_migrations(self: AssetsDatabase, engine: object) -> None:
-        del self, engine
-
     monkeypatch.setattr(asset_db_module._METADATA, "create_all", _create_all)
-    monkeypatch.setattr(AssetsDatabase, "_apply_additive_migrations", _apply_additive_migrations)
 
     def _worker() -> None:
         try:
@@ -120,7 +116,7 @@ def test_assets_database_uses_simplified_remote_cache_schema(tmp_path: Path) -> 
     assert "sync_state" not in variant_columns
 
 
-def test_assets_database_rebuilds_legacy_remote_cache_tables(tmp_path: Path) -> None:
+def test_assets_database_rejects_mismatched_remote_cache_schema(tmp_path: Path) -> None:
     db_path = tmp_path / "assets.db"
     with closing(sqlite3.connect(db_path)) as conn:
         conn.execute(
@@ -202,10 +198,10 @@ def test_assets_database_rebuilds_legacy_remote_cache_tables(tmp_path: Path) -> 
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                "legacy-project",
-                "Legacy Project",
-                "Legacy assets db backup smoke test",
-                json.dumps(["legacy"]),
+                "mismatch-project",
+                "Mismatched Project",
+                "Mismatched assets db schema smoke test",
+                json.dumps(["mismatch"]),
                 1,
                 "2026-04-20T00:00:00Z",
                 "2026-04-20T00:00:00Z",
@@ -214,37 +210,18 @@ def test_assets_database_rebuilds_legacy_remote_cache_tables(tmp_path: Path) -> 
         conn.commit()
 
     db = AssetsDatabase(path=db_path)
-    backup_path = db_path.with_name("assets.db.20260420T120000Z")
-    monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(AssetsDatabase, "_schema_backup_timestamp", lambda self: "20260420T120000Z")
-    db = AssetsDatabase(path=db_path)
-    try:
+    with pytest.raises(RuntimeError, match="schema does not match"):
         db.ensure_initialized()
-    finally:
-        monkeypatch.undo()
 
     with closing(sqlite3.connect(db.path)) as conn:
         component_columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(component_remote_cache)").fetchall()}
         variant_columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(variant_remote_cache)").fetchall()}
-        active_project_rows = conn.execute("SELECT COUNT(*) FROM project_heads").fetchone()
 
-    assert backup_path.exists()
-    with closing(sqlite3.connect(backup_path)) as conn:
-        backup_component_columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(component_remote_cache)").fetchall()}
-        backup_variant_columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(variant_remote_cache)").fetchall()}
-        backup_project_names = [str(row[0]) for row in conn.execute("SELECT name FROM project_heads").fetchall()]
-
-    assert "library_slug" not in component_columns
-    assert "library_slug" not in variant_columns
-    assert "sync_state" not in component_columns
-    assert "sync_state" not in variant_columns
-    assert active_project_rows is not None
-    assert int(active_project_rows[0]) == 0
-    assert "library_slug" in backup_component_columns
-    assert "library_slug" in backup_variant_columns
-    assert "sync_state" in backup_component_columns
-    assert "sync_state" in backup_variant_columns
-    assert backup_project_names == ["Legacy Project"]
+    assert "library_slug" in component_columns
+    assert "library_slug" in variant_columns
+    assert "sync_state" in component_columns
+    assert "sync_state" in variant_columns
+    assert list(tmp_path.glob("assets.db.*")) == []
 
 
 def test_component_catalog_uses_draft_only_local_component_schema(tmp_path: Path) -> None:
@@ -281,12 +258,12 @@ def _session_payload(node_id: str) -> dict[str, Any]:
     }
 
 
-def _insert_legacy_project_history(
+def _insert_existing_project_history(
     *,
     db_path: Path,
     project_id: str,
     version_count: int,
-    name: str = "Legacy Project",
+    name: str = "Existing Project",
 ) -> None:
     created_at = "2026-01-01T00:00:00Z"
     updated_at = "2026-01-31T00:00:00Z"
@@ -306,15 +283,15 @@ def _insert_legacy_project_history(
             (
                 project_id,
                 name,
-                "Legacy history fixture",
-                json.dumps(["legacy"]),
+                "Oversized history fixture",
+                json.dumps(["history"]),
                 int(version_count),
                 created_at,
                 updated_at,
             ),
         )
         for version_number in range(1, int(version_count) + 1):
-            payload = _session_payload(f"legacy-{version_number}")
+            payload = _session_payload(f"history-{version_number}")
             content = zlib.compress(stable_json_dumps(payload).encode("utf-8"), level=6, wbits=31)
             conn.execute(
                 """
@@ -559,30 +536,30 @@ def test_project_storage_list_versions_prunes_existing_oversized_history(tmp_pat
     settings = QtCore.QSettings(str(tmp_path / "project-list-prune.ini"), QtCore.QSettings.IniFormat)
     db_path = tmp_path / "assets.db"
     service = ProjectStorageService(db_path=db_path, settings=settings)
-    _insert_legacy_project_history(db_path=db_path, project_id="legacy-list", version_count=55)
+    _insert_existing_project_history(db_path=db_path, project_id="history-list", version_count=55)
 
-    versions = service.list_project_versions("legacy-list")
+    versions = service.list_project_versions("history-list")
 
     assert len(versions) == 50
     assert versions[0].versionNumber == 55
     assert versions[-1].versionNumber == 6
-    assert service.project_version("legacy-list", 5) is None
+    assert service.project_version("history-list", 5) is None
 
 
 def test_project_storage_load_last_project_prunes_existing_oversized_history(tmp_path: Path) -> None:
     settings = QtCore.QSettings(str(tmp_path / "project-load-prune.ini"), QtCore.QSettings.IniFormat)
     db_path = tmp_path / "assets.db"
     service = ProjectStorageService(db_path=db_path, settings=settings)
-    _insert_legacy_project_history(db_path=db_path, project_id="legacy-load", version_count=55)
-    service.set_current_project_id("legacy-load")
+    _insert_existing_project_history(db_path=db_path, project_id="history-load", version_count=55)
+    service.set_current_project_id("history-load")
 
     loaded = service.load_last_project()
 
     assert loaded is not None
-    assert loaded.projectId == "legacy-load"
-    assert "legacy-55" in loaded.content["layout"]["nodes"]
-    assert len(service.list_project_versions("legacy-load")) == 50
-    assert service.project_version("legacy-load", 5) is None
+    assert loaded.projectId == "history-load"
+    assert "history-55" in loaded.content["layout"]["nodes"]
+    assert len(service.list_project_versions("history-load")) == 50
+    assert service.project_version("history-load", 5) is None
 
 
 def test_project_storage_delete_project_version_removes_historical_snapshot(tmp_path: Path) -> None:

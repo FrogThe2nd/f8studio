@@ -127,10 +127,10 @@ class DataFlowRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bus.cross_publish_policy, "routed")
         self.assertEqual(transport.published_subjects, [])
 
-    async def test_push_alias_maps_to_callback_delivery_without_pull_buffer(self) -> None:
+    async def test_callback_delivery_invokes_callback_and_keeps_pull_buffer(self) -> None:
         cluster = InMemoryCluster()
         transport = InMemoryTransport(cluster=cluster, kv_bucket="kv.svc")
-        bus = ServiceBus(ServiceBusConfig(service_id="svc", data_delivery="push"), transport=transport)
+        bus = ServiceBus(ServiceBusConfig(service_id="svc", data_delivery="callback"), transport=transport)
         node = _DataReceiverNode("node1")
         bus.register_node(node)
 
@@ -138,14 +138,36 @@ class DataFlowRoutingTests(unittest.IsolatedAsyncioTestCase):
         await _sleep_ticks(2)
         pulled = await bus.pull_data("node1", "in")
 
-        self.assertEqual(bus.data_delivery, "callback")
         self.assertEqual(node.data_calls, [("in", 123, 5)])
-        self.assertIsNone(pulled)
+        self.assertEqual(pulled, 123)
+
+    async def test_buffered_delivery_keeps_pull_buffer_without_callback(self) -> None:
+        cluster = InMemoryCluster()
+        transport = InMemoryTransport(cluster=cluster, kv_bucket="kv.svc")
+        bus = ServiceBus(ServiceBusConfig(service_id="svc", data_delivery="buffered"), transport=transport)
+        node = _DataReceiverNode("node1")
+        bus.register_node(node)
+
+        push_input(bus, "node1", "in", 123, ts_ms=5)
+        await _sleep_ticks(2)
+        pulled = await bus.pull_data("node1", "in")
+
+        self.assertEqual(node.data_calls, [])
+        self.assertEqual(pulled, 123)
+
+    async def test_legacy_data_delivery_aliases_fail_fast(self) -> None:
+        cluster = InMemoryCluster()
+        transport = InMemoryTransport(cluster=cluster, kv_bucket="kv.svc")
+
+        for mode in ("push", "pull", "both"):
+            with self.subTest(mode=mode):
+                with self.assertRaises(ValueError):
+                    ServiceBus(ServiceBusConfig(service_id="svc", data_delivery=mode), transport=transport)
 
     async def test_pending_push_callbacks_are_dropped_when_bus_deactivates(self) -> None:
         cluster = InMemoryCluster()
         transport = InMemoryTransport(cluster=cluster, kv_bucket="kv.svc")
-        bus = ServiceBus(ServiceBusConfig(service_id="svc", data_delivery="push"), transport=transport)
+        bus = ServiceBus(ServiceBusConfig(service_id="svc", data_delivery="callback"), transport=transport)
         node = _DataReceiverNode("node1")
         bus.register_node(node)
 
@@ -158,7 +180,7 @@ class DataFlowRoutingTests(unittest.IsolatedAsyncioTestCase):
     async def test_push_input_is_ignored_while_bus_inactive(self) -> None:
         cluster = InMemoryCluster()
         transport = InMemoryTransport(cluster=cluster, kv_bucket="kv.svc")
-        bus = ServiceBus(ServiceBusConfig(service_id="svc", data_delivery="push"), transport=transport)
+        bus = ServiceBus(ServiceBusConfig(service_id="svc", data_delivery="callback"), transport=transport)
         node = _DataReceiverNode("node1")
         bus.register_node(node)
 

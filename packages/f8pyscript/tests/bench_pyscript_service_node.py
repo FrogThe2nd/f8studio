@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import inspect
 import os
 import sys
 from dataclasses import dataclass
 from time import perf_counter
-from typing import Any, Callable
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SDK_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "f8pysdk"))
@@ -43,83 +41,6 @@ class BenchResult:
         if self.iterations <= 0:
             return 0.0
         return (self.elapsed_s * 1_000_000.0) / float(self.iterations)
-
-
-class _LegacyInvokePatch:
-    def __init__(self) -> None:
-        self._orig_build_invoke_ctx: Callable[..., Any] | None = None
-        self._orig_invoke_sync: Callable[..., Any] | None = None
-        self._orig_invoke_async: Callable[..., Any] | None = None
-
-    def __enter__(self) -> "_LegacyInvokePatch":
-        cls = PythonScriptServiceNode
-        self._orig_build_invoke_ctx = cls._build_invoke_ctx
-        self._orig_invoke_sync = cls._invoke_sync
-        self._orig_invoke_async = cls._invoke_async
-
-        def _legacy_build_invoke_ctx(self: PythonScriptServiceNode):
-            return self._ctx.with_permission(self._permission_context())
-
-        def _legacy_invoke_sync(
-            self: PythonScriptServiceNode,
-            hook: Callable[..., Any] | None,
-            hook_is_async: bool,
-            stage: str,
-            *args: Any,
-        ) -> Any:
-            del hook_is_async
-            if hook is None:
-                return None
-            try:
-                invoke_ctx = self._build_invoke_ctx()
-                result = hook(invoke_ctx, *args)
-                if inspect.isawaitable(result):
-                    try:
-                        loop = asyncio.get_running_loop()
-                    except RuntimeError as exc:
-                        self._set_error(stage, exc)
-                        return None
-                    loop.create_task(result, name=f"pyscript:{stage}:{self.node_id}")
-                    return None
-                return result
-            except Exception as exc:
-                self._set_error(stage, exc)
-                return None
-
-        async def _legacy_invoke_async(
-            self: PythonScriptServiceNode,
-            hook: Callable[..., Any] | None,
-            hook_is_async: bool,
-            stage: str,
-            *args: Any,
-        ) -> Any:
-            del hook_is_async
-            if hook is None:
-                return None
-            try:
-                invoke_ctx = self._build_invoke_ctx()
-                result = hook(invoke_ctx, *args)
-                if inspect.isawaitable(result):
-                    return await result
-                return result
-            except Exception as exc:
-                self._set_error(stage, exc)
-                raise
-
-        cls._build_invoke_ctx = _legacy_build_invoke_ctx  # type: ignore[assignment]
-        cls._invoke_sync = _legacy_invoke_sync  # type: ignore[assignment]
-        cls._invoke_async = _legacy_invoke_async  # type: ignore[assignment]
-        return self
-
-    def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
-        cls = PythonScriptServiceNode
-        if self._orig_build_invoke_ctx is not None:
-            cls._build_invoke_ctx = self._orig_build_invoke_ctx  # type: ignore[assignment]
-        if self._orig_invoke_sync is not None:
-            cls._invoke_sync = self._orig_invoke_sync  # type: ignore[assignment]
-        if self._orig_invoke_async is not None:
-            cls._invoke_async = self._orig_invoke_async  # type: ignore[assignment]
-        return False
 
 
 def _service_node(code: str) -> F8RuntimeNode:
@@ -209,14 +130,6 @@ def _print_result(result: BenchResult) -> None:
     )
 
 
-def _print_speedup(legacy: BenchResult, optimized: BenchResult) -> None:
-    if legacy.elapsed_s <= 0:
-        return
-    ratio = optimized.elapsed_s / legacy.elapsed_s
-    speedup = legacy.elapsed_s / optimized.elapsed_s if optimized.elapsed_s > 0 else 0.0
-    print(f"{optimized.name}: optimized_vs_legacy={ratio:.3f}x, speedup={speedup:.3f}x")
-
-
 async def _run_mode(mode: str, iterations: int, warmup: int) -> list[BenchResult]:
     on_data_res = await _bench_on_data(mode, iterations=iterations, warmup=warmup)
     on_cmd_res = await _bench_on_command(mode, iterations=iterations, warmup=warmup)
@@ -226,21 +139,9 @@ async def _run_mode(mode: str, iterations: int, warmup: int) -> list[BenchResult
 async def main_async(args: argparse.Namespace) -> None:
     print(f"iterations={args.iterations} warmup={args.warmup}")
 
-    with _LegacyInvokePatch():
-        legacy_results = await _run_mode("legacy", iterations=args.iterations, warmup=args.warmup)
-
-    optimized_results = await _run_mode("optimized", iterations=args.iterations, warmup=args.warmup)
-
-    for item in legacy_results:
+    current_results = await _run_mode("current", iterations=args.iterations, warmup=args.warmup)
+    for item in current_results:
         _print_result(item)
-    for item in optimized_results:
-        _print_result(item)
-
-    by_name_legacy = {item.name: item for item in legacy_results}
-    for item in optimized_results:
-        base = by_name_legacy.get(item.name)
-        if base is not None:
-            _print_speedup(base, item)
 
 
 def main() -> None:

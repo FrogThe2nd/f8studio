@@ -35,7 +35,6 @@ from .script_utils.input_binding import (
     InputBinding,
     coerce_input_mode,
     infer_script_input_style,
-    script_uses_inputs_object_access,
 )
 from .script_utils.python_editor_assist import python_script_field_editor_assist_payload
 from .script_utils.result_binding import normalize_script_output_value, normalize_script_output_value_fast
@@ -59,12 +58,6 @@ class _VideoShmSubscription:
     last_error_sig: str | None = None
     last_error_ts_ms: int = 0
     error_count: int = 0
-
-
-def _script_uses_inputs_object_access(code: str) -> bool:
-    # Backward compatible helper for tests and call-sites.
-    return script_uses_inputs_object_access(code)
-
 
 @dataclass(slots=True)
 class PyEngineContext:
@@ -954,7 +947,11 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             except Exception as exc:
                 self._set_error("onMsg", exc)
                 return {}
-            return self._extract_outputs(result)
+            try:
+                return self._extract_outputs(result)
+            except ValueError as exc:
+                self._set_error("onMsg", exc)
+                return {}
 
         if callable(fn_exec):
             try:
@@ -966,7 +963,11 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             except Exception as exc:
                 self._set_error("onExec", exc)
                 return {}
-            return self._extract_outputs(result)
+            try:
+                return self._extract_outputs(result)
+            except ValueError as exc:
+                self._set_error("onExec", exc)
+                return {}
 
         if not callable(fn_msg):
             return {}
@@ -979,7 +980,11 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         except Exception as exc:
             self._set_error("onMsg", exc)
             return {}
-        return self._extract_outputs(result)
+        try:
+            return self._extract_outputs(result)
+        except ValueError as exc:
+            self._set_error("onMsg", exc)
+            return {}
 
     def _extract_outputs(self, result: Any) -> dict[str, Any]:
         if result is None:
@@ -1023,15 +1028,9 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                         self._metrics_add_output_norm_time(t0)
                 return outputs
 
-            for k, v in result.items():
-                k_s = str(k)
-                if k_s in ("exec", "outputs"):
-                    continue
-                if k_s in data_out_ports:
-                    t0 = self._metrics_start()
-                    outputs[k_s] = normalize_script_output_value_fast(v)
-                    self._metrics_add_output_norm_time(t0)
-            return outputs
+            if "outputs" in result:
+                raise ValueError("script return field 'outputs' must be a dict")
+            raise ValueError("script dict return must include an 'outputs' dict")
 
         if "out" in data_out_ports:
             t0 = self._metrics_start()
@@ -1063,7 +1062,6 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         - dict:
           - exec routing: r.get("exec") -> str | list[str]
           - outputs: r.get("outputs") -> dict[dataOutPort,value]
-          - backward compat: if "outputs" missing, treat remaining keys (excluding "exec") as outputs
         - non-dict: emit to 'out' if present
         Returns selected exec out ports if provided, else None.
         """
@@ -1072,7 +1070,11 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
 
         if isinstance(r, dict):
             exec_sel = r.get("exec") if "exec" in r else None
-            outputs = self._extract_outputs(r)
+            try:
+                outputs = self._extract_outputs(r)
+            except ValueError as exc:
+                self._set_error("result", exc)
+                return None
             try:
                 for k, v in outputs.items():
                     await self.emit(str(k), v)

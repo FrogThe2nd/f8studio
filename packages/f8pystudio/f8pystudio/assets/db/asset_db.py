@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timezone
-import logging
 from pathlib import Path
 import sqlite3
 import threading
@@ -17,7 +15,6 @@ from sqlalchemy.pool import NullPool
 _METADATA = MetaData()
 _INITIALIZATION_LOCKS: dict[Path, threading.Lock] = {}
 _INITIALIZATION_LOCKS_GUARD = threading.Lock()
-logger = logging.getLogger(__name__)
 
 project_heads_table = Table(
     "project_heads",
@@ -152,11 +149,10 @@ class AssetsDatabase:
     def ensure_initialized(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with _initialization_lock_for(self.path):
-            self._backup_database_if_remote_cache_schema_mismatch()
+            self._validate_current_schema()
             engine = self._engine()
             try:
                 _METADATA.create_all(bind=engine)
-                self._apply_additive_migrations(engine)
             finally:
                 engine.dispose()
 
@@ -207,10 +203,7 @@ class AssetsDatabase:
 
         return engine
 
-    def _apply_additive_migrations(self, engine: Engine) -> None:
-        del engine
-
-    def _backup_database_if_remote_cache_schema_mismatch(self) -> None:
+    def _validate_current_schema(self) -> None:
         if not self.path.exists():
             return
         engine = self._engine()
@@ -219,12 +212,9 @@ class AssetsDatabase:
                 return
         finally:
             engine.dispose()
-        backup_path = self._next_schema_backup_path()
-        self.path.replace(backup_path)
-        logger.warning(
-            "Backed up assets database with legacy remote cache schema before rebuild: %s -> %s",
-            self.path,
-            backup_path,
+        raise RuntimeError(
+            "Assets database schema does not match the current Studio schema. "
+            f"Delete or recreate the database at {self.path}."
         )
 
     def _remote_cache_schema_mismatch(self, engine: Engine) -> bool:
@@ -248,21 +238,6 @@ class AssetsDatabase:
         existing_columns = {str(column["name"]) for column in inspector.get_columns(table_name)}
         expected_columns = {str(column.name) for column in table.columns}
         return existing_columns != expected_columns
-
-    def _next_schema_backup_path(self) -> Path:
-        timestamp = self._schema_backup_timestamp()
-        candidate = self.path.with_name(f"{self.path.name}.{timestamp}")
-        if not candidate.exists():
-            return candidate
-        suffix = 1
-        while True:
-            numbered_candidate = self.path.with_name(f"{self.path.name}.{timestamp}.{suffix}")
-            if not numbered_candidate.exists():
-                return numbered_candidate
-            suffix += 1
-
-    def _schema_backup_timestamp(self) -> str:
-        return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
     def _ensure_nullable_text_column(self, engine: Engine, *, inspector: Inspector, table_name: str, column_name: str) -> None:
         if table_name not in set(inspector.get_table_names()):

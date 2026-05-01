@@ -79,7 +79,7 @@ class PyStudioService:
             cross_publish_policy="routed",
             # Studio hosts both callback-driven viz nodes and pull-driven previews
             # like Text Viz, so cross-service inputs must stay buffered too.
-            data_delivery="both",
+            data_delivery="callback",
         )
         self.runtime = ServiceRuntime(cfg, registry=self._registry)
 

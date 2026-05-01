@@ -55,7 +55,7 @@ from .variant_models import (
     F8VariantSourceKind,
     F8VariantVisibility,
 )
-from f8pysdk.specs import F8VariantKind, F8VariantRecord
+from f8pysdk.specs import F8VariantRecord
 
 logger = logging.getLogger(__name__)
 
@@ -1007,10 +1007,9 @@ def _page_from_asset_payload(payload: JsonObject) -> F8VariantRemoteListPage:
 
 def _entry_from_asset_payload(payload: JsonObject) -> F8VariantEntry:
     record_payload = payload.get("record")
-    if isinstance(record_payload, dict):
-        record = validate_as(F8VariantRecord, json_object_from_value(cast(object, record_payload)))
-    else:
-        record = _summary_variant_record_from_payload(payload)
+    if not isinstance(record_payload, dict):
+        raise F8VariantRemoteRequestError("Variant remote entry is missing canonical record payload.")
+    record = validate_as(F8VariantRecord, json_object_from_value(cast(object, record_payload)))
     source = _source_from_asset_payload(payload)
     visibility = _visibility_from_payload(payload)
     return F8VariantEntry(
@@ -1036,16 +1035,10 @@ def _variant_record_from_content_payload(
     record_payload = payload.get("record")
     if isinstance(record_payload, dict):
         return validate_as(F8VariantRecord, json_object_from_value(cast(object, record_payload)))
-    if _looks_like_variant_record_payload(payload):
-        return validate_as(F8VariantRecord, payload)
     version_suffix = "" if version_number is None else f" v{int(version_number)}"
     raise F8VariantRemoteRequestError(
         f"Variant content payload is missing record for {variant_id}{version_suffix}."
     )
-
-
-def _looks_like_variant_record_payload(payload: JsonObject) -> bool:
-    return "variantId" in payload and "spec" in payload
 
 
 def _variant_record_has_full_content(record: F8VariantRecord) -> bool:
@@ -1083,23 +1076,6 @@ def _source_from_asset_payload(payload: JsonObject) -> F8VariantSourceKind:
 def _installed_from_asset_payload(payload: JsonObject) -> bool:
     del payload
     return False
-
-
-def _summary_variant_record_from_payload(payload: JsonObject) -> F8VariantRecord:
-    variant_id = _payload_str(payload, "variantId")
-    return F8VariantRecord(
-        variantId=variant_id,
-        kind=F8VariantKind(_payload_str(payload, "variantKind")),
-        baseNodeType=_payload_str(payload, "baseNodeType"),
-        serviceClass=_payload_str(payload, "serviceClass"),
-        operatorClass=_payload_optional_str(payload, "operatorClass"),
-        name=_payload_str(payload, "name"),
-        spec={},
-        createdAt=_payload_str(payload, "createdAt"),
-        updatedAt=_payload_str(payload, "updatedAt"),
-        description=_payload_optional_str(payload, "description") or "",
-        tags=_payload_string_list(payload, "tags"),
-    )
 
 
 def _user_id_for_scope(scope: str, user: F8VariantRemoteUser | None) -> str:
@@ -1332,18 +1308,6 @@ def _payload_optional_int(payload: JsonObject, key: str) -> int | None:
     if value is None:
         return None
     return int(str(value))
-
-
-def _payload_string_list(payload: JsonObject, key: str) -> list[str]:
-    value = payload.get(key)
-    if not isinstance(value, list):
-        return []
-    out: list[str] = []
-    for item in cast(list[object], value):
-        text = str(item or "").strip()
-        if text:
-            out.append(text)
-    return out
 
 
 def _payload_int(payload: JsonObject, key: str) -> int:
