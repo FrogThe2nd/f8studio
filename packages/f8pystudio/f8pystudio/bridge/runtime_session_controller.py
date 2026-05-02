@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from f8pysdk.codec import dump_json
-from f8pysdk.codec import decode_obj
+import asyncio
+import time
+from dataclasses import dataclass
 from typing import Any
+
+from f8pysdk.codec import decode_obj, dump_json
 
 from .nats_lifecycle import (
     SINGLETON_GUARD_DIALOG_MESSAGE,
@@ -15,6 +18,14 @@ from f8pystudio.bridge.studio_service import PyStudioService, PyStudioServiceCon
 from f8pystudio.bridge.remote_state_watcher import RemoteStateWatcher
 from f8pystudio.contracts.ui_commands import UiCommand
 from f8pystudio.studio_specs.registry import shared_pystudio_registry
+
+_MONITOR_UI_EMIT_INTERVAL_S = 1.0
+
+
+@dataclass(frozen=True)
+class PendingMonitorUpdate:
+    payload: dict[str, Any]
+    ts_ms: int
 
 
 class RuntimeSessionControllerMixin:
@@ -34,6 +45,72 @@ class RuntimeSessionControllerMixin:
         if svc is None:
             return None
         return svc.bus
+
+    def _emit_monitor_ui_update_now(self, *, service_id: str, update: PendingMonitorUpdate) -> None:
+        try:
+            self.ui_command.emit(
+                UiCommand(
+                    node_id=str(service_id),
+                    command="monitor.update",
+                    payload=update.payload,
+                    ts_ms=int(update.ts_ms),
+                )
+            )
+        except RuntimeError as exc:
+            self._report_exception("emit ui monitor.update failed", exc)
+
+    def _queue_monitor_ui_update(self, *, service_id: str, payload: dict[str, Any], ts_ms: int) -> None:
+        sid = str(service_id or "").strip()
+        if not sid:
+            return
+        update = PendingMonitorUpdate(payload=dict(payload), ts_ms=int(ts_ms))
+        now_s = time.monotonic()
+        last_emit_s = float(self._monitor_ui_last_emit_s_by_service.get(sid, 0.0))
+        if last_emit_s <= 0.0 or (now_s - last_emit_s) >= _MONITOR_UI_EMIT_INTERVAL_S:
+            self._monitor_ui_last_emit_s_by_service[sid] = now_s
+            self._emit_monitor_ui_update_now(service_id=sid, update=update)
+            return
+
+        self._monitor_ui_pending_by_service[sid] = update
+        task = self._monitor_ui_flush_task
+        if task is not None and not task.done():
+            return
+        self._monitor_ui_flush_task = asyncio.create_task(
+            self._flush_monitor_ui_updates(),
+            name="pystudio:monitor_ui_flush",
+        )
+
+    async def _flush_monitor_ui_updates(self) -> None:
+        try:
+            while self._monitor_ui_pending_by_service:
+                now_s = time.monotonic()
+                ready_service_ids: list[str] = []
+                next_delay_s: float | None = None
+                for service_id in list(self._monitor_ui_pending_by_service.keys()):
+                    last_emit_s = float(self._monitor_ui_last_emit_s_by_service.get(service_id, 0.0))
+                    if last_emit_s <= 0.0:
+                        ready_service_ids.append(service_id)
+                        continue
+                    remaining_s = _MONITOR_UI_EMIT_INTERVAL_S - (now_s - last_emit_s)
+                    if remaining_s <= 0.0:
+                        ready_service_ids.append(service_id)
+                        continue
+                    if next_delay_s is None or remaining_s < next_delay_s:
+                        next_delay_s = remaining_s
+
+                if ready_service_ids:
+                    emit_s = time.monotonic()
+                    for service_id in ready_service_ids:
+                        update = self._monitor_ui_pending_by_service.pop(service_id, None)
+                        if update is None:
+                            continue
+                        self._monitor_ui_last_emit_s_by_service[service_id] = emit_s
+                        self._emit_monitor_ui_update_now(service_id=service_id, update=update)
+                    continue
+
+                await asyncio.sleep(max(0.001, float(next_delay_s or _MONITOR_UI_EMIT_INTERVAL_S)))
+        finally:
+            self._monitor_ui_flush_task = None
 
     async def _run_startup_preflight_async(self) -> str | None:
         nats_url = str(self._nats_connection_manager.nats_url).strip() or "nats://127.0.0.1:4222"
@@ -151,17 +228,13 @@ class RuntimeSessionControllerMixin:
                     ready=bool(snapshot.ready),
                     active=bool(snapshot.active),
                 )
-                try:
-                    self.ui_command.emit(
-                        UiCommand(
-                            node_id=str(snapshot.serviceId),
-                            command="monitor.update",
-                            payload=dump_json(snapshot, mode="json", by_alias=True),
-                            ts_ms=int(snapshot.tsMs),
-                        )
+                payload = dump_json(snapshot, mode="json", by_alias=True)
+                if isinstance(payload, dict):
+                    self._queue_monitor_ui_update(
+                        service_id=str(snapshot.serviceId),
+                        payload=payload,
+                        ts_ms=int(snapshot.tsMs),
                     )
-                except RuntimeError as exc:
-                    self._report_exception("emit ui monitor.update failed", exc)
 
             try:
                 self._monitor_sub = await self._nc.subscribe("svc.*.nodes.*.data.monitor", cb=_on_monitor_msg)
@@ -182,6 +255,13 @@ class RuntimeSessionControllerMixin:
         return await self._start_after_preflight_async()
 
     async def _stop_async(self) -> None:
+        monitor_ui_flush_task = self._monitor_ui_flush_task
+        self._monitor_ui_flush_task = None
+        self._monitor_ui_pending_by_service.clear()
+        if monitor_ui_flush_task is not None:
+            monitor_ui_flush_task.cancel()
+            await asyncio.gather(monitor_ui_flush_task, return_exceptions=True)
+
         if self._monitor_sub is not None:
             try:
                 await self._monitor_sub.unsubscribe()

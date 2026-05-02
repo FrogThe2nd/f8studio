@@ -1,17 +1,18 @@
 from __future__ import annotations
 
-from f8pysdk.codec import dump_json
+import asyncio
 import os
 import sys
 import unittest
-import asyncio
 from typing import Any
+from unittest.mock import patch
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from f8pysdk.codec import decode_obj  # noqa: E402
+from f8pysdk import monitoring as monitoring_module  # noqa: E402
+from f8pysdk.codec import decode_obj, dump_json  # noqa: E402
 from f8pysdk.monitoring import MonitorCollector, MonitorCollectorConfig  # noqa: E402
 from f8pysdk.time_utils import now_ms  # noqa: E402
 
@@ -148,6 +149,64 @@ class MonitorCollectorTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await collector.stop()
         self.assertGreaterEqual(len(bus._transport.published), 1)
+
+    async def test_repeated_error_publish_is_throttled_to_summary(self) -> None:
+        bus = _FakeBus()
+        collector = MonitorCollector(
+            bus, MonitorCollectorConfig(enabled=True, interval_ms=200, window_ms=2000, gpu_enabled=False)
+        )
+        ts = int(now_ms())
+
+        with patch.object(monitoring_module, "_ERROR_REPEAT_PUBLISH_INTERVAL_MS", 50):
+            await collector.start()
+            try:
+                collector.report_error(node_id="nodeA", code="E_A", message="first", fingerprint="same", ts_ms=ts)
+                await asyncio.sleep(0.02)
+                self.assertEqual(len(bus._transport.published), 1)
+
+                for index in range(2, 51):
+                    collector.report_error(
+                        node_id="nodeA",
+                        code="E_A",
+                        message="first",
+                        fingerprint="same",
+                        ts_ms=ts + index,
+                    )
+                await asyncio.sleep(0.02)
+                self.assertEqual(len(bus._transport.published), 1)
+
+                await asyncio.sleep(0.08)
+                self.assertEqual(len(bus._transport.published), 2)
+                envelope = decode_obj(bus._transport.published[-1][1])
+                error = envelope.get("value", {}).get("error", {})
+                self.assertEqual(int(error.get("lastRepeatCount")), 50)
+                self.assertEqual(str(error.get("lastFingerprint")), "same")
+            finally:
+                await collector.stop()
+
+    async def test_clear_error_cancels_pending_repeat_publish(self) -> None:
+        bus = _FakeBus()
+        collector = MonitorCollector(
+            bus, MonitorCollectorConfig(enabled=True, interval_ms=200, window_ms=2000, gpu_enabled=False)
+        )
+        ts = int(now_ms())
+
+        with patch.object(monitoring_module, "_ERROR_REPEAT_PUBLISH_INTERVAL_MS", 100):
+            await collector.start()
+            try:
+                collector.report_error(node_id="nodeA", code="E_A", message="first", fingerprint="same", ts_ms=ts)
+                await asyncio.sleep(0.02)
+                collector.report_error(node_id="nodeA", code="E_A", message="first", fingerprint="same", ts_ms=ts + 1)
+                collector.clear_error(node_id="nodeA", fingerprint="same", ts_ms=ts + 2)
+                await asyncio.sleep(0.02)
+
+                self.assertEqual(len(bus._transport.published), 2)
+                envelope = decode_obj(bus._transport.published[-1][1])
+                error = envelope.get("value", {}).get("error", {})
+                self.assertEqual(str(error.get("currentNodeId") or ""), "")
+                self.assertEqual(str(error.get("currentMessage") or ""), "")
+            finally:
+                await collector.stop()
 
 
 if __name__ == "__main__":

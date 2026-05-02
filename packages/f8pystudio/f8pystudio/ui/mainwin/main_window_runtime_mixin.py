@@ -195,7 +195,7 @@ class MainWindowRuntimeMixin:
             if isinstance(payload_obj, dict):
                 self._monitor_alert_notifier.handle_snapshot(payload_obj, parent=self)
             if self._service_manager is not None:
-                self._service_manager.queue_refresh()
+                self._service_manager.queue_monitor_refresh()
             return
         if command == "state.update":
             payload = dict(cmd.payload or {})

@@ -8,9 +8,9 @@ from f8pysdk.time_utils import now_ms
 from msgspec import UNSET
 from qtpy import QtWidgets
 
-from f8pystudio.ui.support.ui_notifications import show_error, show_warning
+from f8pystudio.ui.support.ui_notifications import show_keyed_error, show_keyed_warning
 
-_DEFAULT_DEBOUNCE_MS = 10_000
+_DEFAULT_DEBOUNCE_MS = 1000
 _REPEAT_SUMMARY_COUNTS = frozenset({10, 100, 1000})
 _MAX_MESSAGE_CHARS = 700
 _TOAST_SEVERITIES = frozenset({"warning", "error", "critical"})
@@ -126,8 +126,9 @@ class MonitorAlertNotifier:
             message=message,
             repeat_count=repeat_count_value,
         )
+        toast_key = f"monitor:{service_id}:{node_id}:{fingerprint}"
         if severity == "warning":
-            show_warning(parent, title, body)
+            show_keyed_warning(parent, toast_key, title, body, repeat_count=repeat_count_value)
         else:
-            show_error(parent, title, body)
+            show_keyed_error(parent, toast_key, title, body, repeat_count=repeat_count_value)
         return True

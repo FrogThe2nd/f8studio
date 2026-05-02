@@ -13,6 +13,7 @@ from f8pystudio.ui.support.ui_notifications import (
     _rich_text_message,
     _use_safe_toast_window_mode,
     show_error,
+    show_keyed_warning,
     show_warning,
 )
 
@@ -62,8 +63,16 @@ def _monitor_payload(
 def test_monitor_alert_notifier_toasts_and_debounces(monkeypatch) -> None:
     shown: list[tuple[str, str, str]] = []
     monkeypatch.setattr(alerts, "now_ms", lambda: 100_000)
-    monkeypatch.setattr(alerts, "show_warning", lambda parent, title, message: shown.append(("warning", title, message)))
-    monkeypatch.setattr(alerts, "show_error", lambda parent, title, message: shown.append(("error", title, message)))
+    monkeypatch.setattr(
+        alerts,
+        "show_keyed_warning",
+        lambda parent, key, title, message, *, repeat_count=1: shown.append(("warning", title, message)),
+    )
+    monkeypatch.setattr(
+        alerts,
+        "show_keyed_error",
+        lambda parent, key, title, message, *, repeat_count=1: shown.append(("error", title, message)),
+    )
     notifier = MonitorAlertNotifier(debounce_ms=10_000)
 
     assert notifier.handle_snapshot(_monitor_payload(severity="warning", ts_ms=1000), parent=None) is True
@@ -82,8 +91,16 @@ def test_monitor_alert_notifier_toasts_and_debounces(monkeypatch) -> None:
 def test_monitor_alert_notifier_allows_repeat_summary(monkeypatch) -> None:
     shown: list[tuple[str, str, str]] = []
     monkeypatch.setattr(alerts, "now_ms", lambda: 100_000)
-    monkeypatch.setattr(alerts, "show_warning", lambda parent, title, message: shown.append(("warning", title, message)))
-    monkeypatch.setattr(alerts, "show_error", lambda parent, title, message: shown.append(("error", title, message)))
+    monkeypatch.setattr(
+        alerts,
+        "show_keyed_warning",
+        lambda parent, key, title, message, *, repeat_count=1: shown.append(("warning", title, message)),
+    )
+    monkeypatch.setattr(
+        alerts,
+        "show_keyed_error",
+        lambda parent, key, title, message, *, repeat_count=1: shown.append(("error", title, message)),
+    )
     notifier = MonitorAlertNotifier(debounce_ms=10_000)
 
     assert notifier.handle_snapshot(_monitor_payload(severity="error", repeat_count=1, ts_ms=1000), parent=None) is True
@@ -98,8 +115,16 @@ def test_monitor_alert_notifier_allows_repeat_summary(monkeypatch) -> None:
 def test_monitor_alert_notifier_ignores_info_and_clear_snapshots(monkeypatch) -> None:
     shown: list[tuple[str, str, str]] = []
     monkeypatch.setattr(alerts, "now_ms", lambda: 100_000)
-    monkeypatch.setattr(alerts, "show_warning", lambda parent, title, message: shown.append(("warning", title, message)))
-    monkeypatch.setattr(alerts, "show_error", lambda parent, title, message: shown.append(("error", title, message)))
+    monkeypatch.setattr(
+        alerts,
+        "show_keyed_warning",
+        lambda parent, key, title, message, *, repeat_count=1: shown.append(("warning", title, message)),
+    )
+    monkeypatch.setattr(
+        alerts,
+        "show_keyed_error",
+        lambda parent, key, title, message, *, repeat_count=1: shown.append(("error", title, message)),
+    )
     notifier = MonitorAlertNotifier(debounce_ms=10_000)
 
     assert notifier.handle_snapshot(_monitor_payload(severity="info", ts_ms=1000), parent=None) is False
@@ -406,6 +431,42 @@ def test_repeated_warning_updates_existing_sticky_toast() -> None:
     copied = clipboard.text()
     assert "Repeat count: 2" in copied
     assert "network timeout" in copied
+
+    toast.close()
+    parent.close()
+    QtWidgets.QApplication.processEvents()
+
+
+def test_keyed_warning_updates_existing_toast_content() -> None:
+    _ensure_app()
+    _close_active_toasts()
+    parent = QtWidgets.QWidget()
+    parent.setGeometry(100, 120, 920, 720)
+    parent.show()
+
+    show_keyed_warning(parent, "monitor:svcA:node1:fp", "svcA/node1 error", "first", repeat_count=1)
+    show_keyed_warning(parent, "monitor:svcA:node1:fp", "svcA/node1 error", "second", repeat_count=7)
+    QtWidgets.QApplication.processEvents()
+
+    assert len(_ACTIVE_TOASTS) == 1
+    toast = _ACTIVE_TOASTS[0]
+    title_label = toast.findChild(QtWidgets.QLabel, "studio-toast-title")
+    message_label = toast.findChild(QtWidgets.QLabel, "studio-toast-message")
+    assert title_label is not None
+    assert message_label is not None
+    assert "x7" in title_label.text()
+    assert "second" in message_label.text()
+
+    clipboard = QtGui.QGuiApplication.clipboard()
+    assert clipboard is not None
+    clipboard.setText("")
+    copy_button = toast.findChild(QtWidgets.QToolButton, "studio-toast-copy")
+    assert copy_button is not None
+    copy_button.click()
+
+    copied = clipboard.text()
+    assert "Repeat count: 7" in copied
+    assert "second" in copied
 
     toast.close()
     parent.close()

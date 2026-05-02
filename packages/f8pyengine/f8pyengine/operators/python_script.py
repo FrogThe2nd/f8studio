@@ -42,6 +42,7 @@ from .script_utils.script_runtime import HookSet, ScriptRuntimeCompiler
 from .script_utils.state_binding import PyEngineStatesView
 
 OPERATOR_CLASS = "f8.python_script"
+_REPEATING_ERROR_LOG_INTERVAL_MS = 2000
 logger = logging.getLogger(__name__)
 
 
@@ -279,6 +280,10 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         self._closing = False
         self._last_error: str | None = None
         self._error_seq = 0
+        self._last_logged_error_fingerprint = ""
+        self._last_logged_error_ts_ms = 0
+        self._pending_monitor_error_message = ""
+        self._pending_monitor_error_fingerprint = ""
         self._pull_error_once: set[str] = set()
         self._self_state_writes: dict[str, Any] = {}
         self._pull_cache_ctx_id: str | int | None = None
@@ -306,6 +311,10 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         self._refresh_data_out_port_cache()
 
         self._compile_and_start()
+
+    def attach(self, bus: Any) -> None:
+        super().attach(bus)
+        self._flush_pending_monitor_error()
 
     def __del__(self) -> None:
         # Best-effort fallback: close() is awaited by ServiceBus when nodes are unregistered,
@@ -364,45 +373,70 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             return
         self._metric_output_normalize_time_us += (time.perf_counter() - started_at) * 1_000_000.0
 
+    @staticmethod
+    def _error_fingerprint(stage: str, exc: BaseException) -> str:
+        return f"python-script:{stage}:{type(exc).__name__}:{exc}"
+
+    def _should_log_repeating_error(self, fingerprint: str, *, now_ms: int) -> bool:
+        if fingerprint != self._last_logged_error_fingerprint:
+            self._last_logged_error_fingerprint = fingerprint
+            self._last_logged_error_ts_ms = int(now_ms)
+            return True
+        elapsed_ms = int(now_ms) - int(self._last_logged_error_ts_ms)
+        if elapsed_ms < _REPEATING_ERROR_LOG_INTERVAL_MS:
+            return False
+        self._last_logged_error_ts_ms = int(now_ms)
+        return True
+
+    def _publish_monitor_error(self, *, message: str, fingerprint: str) -> None:
+        bus = self._bus
+        if bus is None:
+            self._pending_monitor_error_message = str(message)
+            self._pending_monitor_error_fingerprint = str(fingerprint)
+            return
+        try:
+            bus.report_error(
+                self.node_id,
+                "PYTHON_SCRIPT_ERROR",
+                str(message),
+                severity="error",
+                fingerprint=str(fingerprint),
+            )
+        except Exception as report_exc:
+            logger.error("[%s:python_script] report monitor error failed", self.node_id, exc_info=report_exc)
+
+    def _flush_pending_monitor_error(self) -> None:
+        message = str(self._pending_monitor_error_message)
+        fingerprint = str(self._pending_monitor_error_fingerprint)
+        if not message or not fingerprint:
+            return
+        self._publish_monitor_error(message=message, fingerprint=fingerprint)
+        if self._bus is not None:
+            self._pending_monitor_error_message = ""
+            self._pending_monitor_error_fingerprint = ""
+
     def _set_error(self, stage: str, exc: BaseException) -> None:
         self._error_seq = int(self._error_seq) + 1
         msg = f"{stage}: {exc}"
         self._last_error = msg
-        logger.error("[%s:python_script] error %s", self.node_id, msg, exc_info=exc)
-        try:
-            loop = asyncio.get_running_loop()
-
-            async def _report_monitor_error() -> None:
-                try:
-                    await self.report_error(
-                        "PYTHON_SCRIPT_ERROR",
-                        msg,
-                        severity="error",
-                        fingerprint=f"python-script:{stage}:{type(exc).__name__}:{exc}",
-                    )
-                except Exception as report_exc:
-                    logger.error("[%s:python_script] report monitor error failed", self.node_id, exc_info=report_exc)
-
-            loop.create_task(_report_monitor_error(), name=f"python_script:reportError:{self.node_id}")
-        except RuntimeError as loop_exc:
-            logger.debug("[%s:python_script] cannot schedule monitor error report", self.node_id, exc_info=loop_exc)
+        fingerprint = self._error_fingerprint(stage, exc)
+        if self._should_log_repeating_error(fingerprint, now_ms=self._now_ms()):
+            logger.error("[%s:python_script] error %s", self.node_id, msg, exc_info=exc)
+        self._publish_monitor_error(message=msg, fingerprint=fingerprint)
 
     def _clear_last_error(self) -> None:
         if not self._last_error:
             return
         self._last_error = None
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
+        self._pending_monitor_error_message = ""
+        self._pending_monitor_error_fingerprint = ""
+        bus = self._bus
+        if bus is None:
             return
-
-        async def _clear_monitor_error() -> None:
-            try:
-                await self.clear_error()
-            except Exception as exc:
-                logger.error("[%s:python_script] clear monitor error failed", self.node_id, exc_info=exc)
-
-        loop.create_task(_clear_monitor_error(), name=f"python_script:clearError:{self.node_id}")
+        try:
+            bus.clear_error(self.node_id)
+        except Exception as exc:
+            logger.error("[%s:python_script] clear monitor error failed", self.node_id, exc_info=exc)
 
     @staticmethod
     def _now_ms() -> int:

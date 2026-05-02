@@ -48,7 +48,7 @@ from .runtime_graph_projection import (
     build_remote_watch_targets,
     build_studio_runtime_graph,
 )
-from .runtime_session_controller import RuntimeSessionControllerMixin
+from .runtime_session_controller import PendingMonitorUpdate, RuntimeSessionControllerMixin
 from .service_endpoint_client import (
     request_service_status,
     request_service_terminate,
@@ -133,6 +133,9 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
         self._watch_targets_cache: tuple[WatchTarget, ...] | None = None
         self._monitor_center = MonitorCenter(window_ms=30 * 60 * 1000)
         self._monitor_sub: Any = None
+        self._monitor_ui_last_emit_s_by_service: dict[str, float] = {}
+        self._monitor_ui_pending_by_service: dict[str, PendingMonitorUpdate] = {}
+        self._monitor_ui_flush_task: asyncio.Task[object] | None = None
         self._nc: Any = None
         self._owned_nats_server_pid: int | None = None
         self._pending_remote_command_cbs: dict[str, Callable[[dict[str, Any] | None, str | None], None]] = {}
@@ -378,7 +381,6 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
                 self._process_gateway.stop(StopServiceRequest(service_id=sid))
             except Exception as exc:
                 self._report_exception(f"stop service process failed serviceId={sid}", exc)
-
 
 
 

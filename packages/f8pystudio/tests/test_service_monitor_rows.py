@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 from types import SimpleNamespace
@@ -13,6 +14,7 @@ from f8pystudio.bridge.studio_bridge import (  # noqa: E402
     PyStudioServiceBridge,
     PyStudioServiceBridgeConfig,
 )
+from f8pystudio.contracts.ui_commands import UiCommand  # noqa: E402
 
 
 def _snapshot(*, service_id: str, service_class: str, ts_ms: int) -> dict[str, object]:
@@ -105,6 +107,31 @@ def test_list_service_monitor_rows_always_includes_built_in_studio_service() -> 
     studio_row = by_id[bridge.studio_service_id]
     assert studio_row.service_class == "f8.pystudio"
     assert studio_row.running is False
+
+
+def test_monitor_ui_updates_coalesce_by_service() -> None:
+    bridge = PyStudioServiceBridge(PyStudioServiceBridgeConfig())
+    emitted: list[UiCommand] = []
+    bridge.ui_command.connect(emitted.append)  # type: ignore[attr-defined]
+
+    async def _run() -> None:
+        bridge._queue_monitor_ui_update(
+            service_id="svcA",
+            payload={"schemaVersion": "f8monitor/1", "serviceId": "svcA", "tsMs": 1},
+            ts_ms=1,
+        )
+        bridge._queue_monitor_ui_update(
+            service_id="svcA",
+            payload={"schemaVersion": "f8monitor/1", "serviceId": "svcA", "tsMs": 2},
+            ts_ms=2,
+        )
+        assert len(emitted) == 1
+        await asyncio.sleep(1.05)
+        assert len(emitted) == 2
+        latest = emitted[-1]
+        assert latest.ts_ms == 2
+
+    asyncio.run(_run())
 
 
 def test_list_service_monitor_rows_marks_built_in_studio_service_running_when_runtime_started() -> None:

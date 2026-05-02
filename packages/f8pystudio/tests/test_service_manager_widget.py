@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import sys
 
-from qtpy import QtCore, QtWidgets
+from qtpy import QtCore, QtTest, QtWidgets
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
@@ -134,6 +134,37 @@ def test_service_class_falls_back_to_declared_graph_service() -> None:
     assert widget._deploy_btn.isEnabled() is False
     assert widget._restart_btn.isEnabled() is False
     assert widget._toggle_btn.toolTip() == "Start service (deploy + activate)"
+
+
+def test_monitor_refresh_queue_coalesces_and_immediate_refresh_wins(monkeypatch) -> None:
+    _ensure_app()
+    monkeypatch.setattr(ServiceManagerWidget, "_MONITOR_REFRESH_INTERVAL_MS", 10)
+    bridge = _FakeBridge([_row(running=True, active=True, service_class="f8.tests.a")])
+    widget = ServiceManagerWidget(
+        bridge=bridge,  # type: ignore[arg-type]
+        get_declared_services=lambda: {"svcA": "f8.tests.a"},
+    )
+    bridge.status_requests.clear()
+
+    widget.queue_monitor_refresh()
+    widget.queue_monitor_refresh()
+    QtWidgets.QApplication.processEvents()
+    assert bridge.status_requests == []
+
+    QtTest.QTest.qWait(30)
+    QtWidgets.QApplication.processEvents()
+    assert bridge.status_requests == ["svcA"]
+
+    bridge.status_requests.clear()
+    widget.queue_monitor_refresh()
+    widget.queue_refresh()
+    QtWidgets.QApplication.processEvents()
+    assert bridge.status_requests == ["svcA"]
+    QtTest.QTest.qWait(30)
+    QtWidgets.QApplication.processEvents()
+    assert bridge.status_requests == ["svcA"]
+
+    widget.close()
 
 
 def test_table_columns_are_resizable_with_compact_defaults() -> None:

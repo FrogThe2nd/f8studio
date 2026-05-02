@@ -271,6 +271,8 @@ class _StudioToast(QtWidgets.QFrame):
         copy_enabled: bool = False,
         copy_text_override: str = "",
         is_rollup: bool = False,
+        dedupe_key: str = "",
+        repeat_count: int = 1,
     ) -> None:
         super().__init__(None)
         self._anchor = anchor.window() if anchor is not None else None
@@ -284,7 +286,8 @@ class _StudioToast(QtWidgets.QFrame):
         self._copy_enabled = bool(copy_enabled)
         self._copy_text_override = str(copy_text_override or "")
         self._is_rollup = bool(is_rollup)
-        self._repeat_count = 1
+        self._dedupe_key = str(dedupe_key or "")
+        self._repeat_count = max(1, int(repeat_count))
         self._created_at = QtCore.QDateTime.currentDateTime()
         self._folded_summaries: list[_FoldedToastSummary] = []
         self._folded_omitted_count = 0
@@ -501,6 +504,23 @@ class _StudioToast(QtWidgets.QFrame):
     def increment_repeat(self) -> None:
         self._repeat_count += 1
         self._title_label.setText(self._display_title())
+        self._apply_width_constraints()
+        self._reposition()
+
+    def set_content(
+        self,
+        *,
+        title: str,
+        message: str,
+        repeat_count: int = 1,
+        copy_text_override: str = "",
+    ) -> None:
+        self._title_text = str(title or "").strip()
+        self._message_text = str(message or "").strip()
+        self._repeat_count = max(1, int(repeat_count))
+        self._copy_text_override = str(copy_text_override or "")
+        self._title_label.setText(self._display_title())
+        self._message_label.setText(_rich_text_message(self._message_text))
         self._apply_width_constraints()
         self._reposition()
 
@@ -819,6 +839,20 @@ def _matching_sticky_detail_toast(
     return None
 
 
+def _matching_keyed_toast(
+    *,
+    anchor_key: int | None,
+    dedupe_key: str,
+) -> _StudioToast | None:
+    key = str(dedupe_key or "").strip()
+    if not key:
+        return None
+    for toast in _visible_toasts_for_anchor(anchor_key):
+        if toast._dedupe_key == key:
+            return toast
+    return None
+
+
 def _rollup_policy_for_summary(summary: _FoldedToastSummary) -> _ToastPolicy:
     if summary.severity is _ToastSeverity.ERROR:
         return _ERROR_POLICY
@@ -864,6 +898,8 @@ def _show_toast(
     message: str,
     policy: _ToastPolicy,
     fallback: Callable[[QtWidgets.QWidget | None, str, str], None],
+    dedupe_key: str = "",
+    repeat_count: int = 1,
 ) -> None:
     target_parent = _resolve_parent(parent)
     title_text = str(title or "").strip()
@@ -873,6 +909,21 @@ def _show_toast(
     try:
         anchor = target_parent if target_parent is not None else parent
         anchor_key = _anchor_stack_key(anchor)
+        dedupe_key_text = str(dedupe_key or "").strip()
+        if dedupe_key_text:
+            keyed_toast = _matching_keyed_toast(anchor_key=anchor_key, dedupe_key=dedupe_key_text)
+            if keyed_toast is not None:
+                if keyed_toast._severity is not policy.severity:
+                    keyed_toast.apply_rollup_policy(policy)
+                keyed_toast.set_content(
+                    title=title_text,
+                    message=message_text,
+                    repeat_count=repeat_count,
+                )
+                keyed_toast.raise_()
+                for toast in _visible_toasts_for_anchor(anchor_key):
+                    toast._reposition()
+                return
         if policy.sticky:
             matching_toast = _matching_sticky_detail_toast(
                 anchor_key=anchor_key,
@@ -910,6 +961,8 @@ def _show_toast(
             severity=policy.severity,
             sticky=policy.sticky,
             copy_enabled=policy.copy_enabled,
+            dedupe_key=dedupe_key_text,
+            repeat_count=repeat_count,
         )
         _ACTIVE_TOASTS.append(toast)
         toast.show_with_animation()
@@ -945,4 +998,42 @@ def show_error(parent: QtWidgets.QWidget | None, title: str, message: str) -> No
         message=message,
         policy=_ERROR_POLICY,
         fallback=QtWidgets.QMessageBox.critical,
+    )
+
+
+def show_keyed_warning(
+    parent: QtWidgets.QWidget | None,
+    key: str,
+    title: str,
+    message: str,
+    *,
+    repeat_count: int = 1,
+) -> None:
+    _show_toast(
+        parent=parent,
+        title=title,
+        message=message,
+        policy=_WARNING_POLICY,
+        fallback=QtWidgets.QMessageBox.warning,
+        dedupe_key=key,
+        repeat_count=repeat_count,
+    )
+
+
+def show_keyed_error(
+    parent: QtWidgets.QWidget | None,
+    key: str,
+    title: str,
+    message: str,
+    *,
+    repeat_count: int = 1,
+) -> None:
+    _show_toast(
+        parent=parent,
+        title=title,
+        message=message,
+        policy=_ERROR_POLICY,
+        fallback=QtWidgets.QMessageBox.critical,
+        dedupe_key=key,
+        repeat_count=repeat_count,
     )

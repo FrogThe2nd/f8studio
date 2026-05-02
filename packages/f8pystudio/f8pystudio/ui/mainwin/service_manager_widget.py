@@ -268,6 +268,7 @@ class _ServiceMonitorSortProxyModel(QtCore.QSortFilterProxyModel):
 
 
 class ServiceManagerWidget(QtWidgets.QWidget):
+    _MONITOR_REFRESH_INTERVAL_MS = 1000
     _COL_SERVICE_ID = 0
     _COL_SERVICE_CLASS = 1
     _COL_RUNNING = 2
@@ -294,6 +295,7 @@ class ServiceManagerWidget(QtWidgets.QWidget):
         self._get_declared_services = get_declared_services
         self._rows_by_service_id: dict[str, ServiceMonitorRow] = {}
         self._refresh_queued = False
+        self._monitor_refresh_queued = False
 
         self._refresh_btn = QtWidgets.QToolButton(self)
         self._toggle_btn = QtWidgets.QToolButton(self)
@@ -373,9 +375,16 @@ class ServiceManagerWidget(QtWidgets.QWidget):
         self._poll_timer.timeout.connect(self.refresh)  # type: ignore[attr-defined]
         self._poll_timer.start()
 
+        self._monitor_refresh_timer = QtCore.QTimer(self)
+        self._monitor_refresh_timer.setSingleShot(True)
+        self._monitor_refresh_timer.timeout.connect(self._flush_monitor_refresh_queue)  # type: ignore[attr-defined]
+
         self.refresh()
 
     def queue_refresh(self) -> None:
+        if self._monitor_refresh_queued:
+            self._monitor_refresh_queued = False
+            self._monitor_refresh_timer.stop()
         if self._refresh_queued:
             return
         self._refresh_queued = True
@@ -383,6 +392,16 @@ class ServiceManagerWidget(QtWidgets.QWidget):
 
     def _flush_refresh_queue(self) -> None:
         self._refresh_queued = False
+        self.refresh()
+
+    def queue_monitor_refresh(self) -> None:
+        if self._monitor_refresh_queued:
+            return
+        self._monitor_refresh_queued = True
+        self._monitor_refresh_timer.start(int(self._MONITOR_REFRESH_INTERVAL_MS))
+
+    def _flush_monitor_refresh_queue(self) -> None:
+        self._monitor_refresh_queued = False
         self.refresh()
 
     def _apply_default_column_widths(self) -> None:

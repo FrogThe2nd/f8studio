@@ -40,6 +40,7 @@ MONITOR_REPORT_SCHEMA_VERSION = "f8monitorReport/1"
 _MONITOR_SNAPSHOT_SCHEMA_DICT: dict[str, object] | None = None
 MonitorErrorSeverity = Literal["info", "warning", "error", "critical"]
 _MONITOR_ERROR_SEVERITIES: frozenset[str] = frozenset({"info", "warning", "error", "critical"})
+_ERROR_REPEAT_PUBLISH_INTERVAL_MS = 1000
 
 
 class MonitorContractError(ValueError):
@@ -469,6 +470,9 @@ class MonitorCollector:
         self._started_ts_ms = int(now_ms())
         self._task: asyncio.Task[object] | None = None
         self._publish_once_task: asyncio.Task[object] | None = None
+        self._pending_error_publish_task: asyncio.Task[object] | None = None
+        self._last_error_publish_fingerprint = ""
+        self._last_error_publish_ts_ms = 0
         self._latest: F8MonitorSnapshot | None = None
 
     @property
@@ -594,7 +598,8 @@ class MonitorCollector:
             fingerprint=fingerprint,
         )
         with self._lock:
-            if fingerprint_s == self._last_error_fingerprint:
+            previous_fingerprint = str(self._last_error_fingerprint)
+            if fingerprint_s == previous_fingerprint:
                 self._last_error_repeat_count = max(1, int(self._last_error_repeat_count)) + 1
             else:
                 self._last_error_repeat_count = 1
@@ -611,7 +616,10 @@ class MonitorCollector:
             self._current_error_fingerprint = fingerprint_s
             self._current_error_ts_ms = now_ts
             self._error_events.append(now_ts)
-        self._request_publish_once()
+        self._request_error_publish_once(
+            fingerprint=fingerprint_s,
+            immediate=fingerprint_s != previous_fingerprint,
+        )
 
     def clear_error(self, *, node_id: str, fingerprint: str | None = None, ts_ms: int | None = None) -> None:
         if not self._enabled:
@@ -630,6 +638,7 @@ class MonitorCollector:
             self._current_error_fingerprint = ""
             self._current_error_ts_ms = None
         _ = ts_ms
+        self._cancel_pending_error_publish()
         self._request_publish_once()
 
     def record_error(self, *, code: str, message: str, ts_ms: int | None = None) -> None:
@@ -685,6 +694,62 @@ class MonitorCollector:
             return
         self._publish_once_task = loop.create_task(self._publish_once(), name="monitor_collector:publish_once")
 
+    def _request_error_publish_once(self, *, fingerprint: str, immediate: bool) -> None:
+        if self._task is None:
+            return
+        fingerprint_s = str(fingerprint or "").strip()
+        now_ts = int(now_ms())
+        interval_ms = max(0, int(_ERROR_REPEAT_PUBLISH_INTERVAL_MS))
+        with self._lock:
+            last_fingerprint = str(self._last_error_publish_fingerprint)
+            last_ts = int(self._last_error_publish_ts_ms)
+            elapsed_ms = now_ts - last_ts
+            should_publish_now = (
+                bool(immediate)
+                or fingerprint_s != last_fingerprint
+                or last_ts <= 0
+                or elapsed_ms >= interval_ms
+            )
+            if should_publish_now:
+                self._last_error_publish_fingerprint = fingerprint_s
+                self._last_error_publish_ts_ms = now_ts
+            else:
+                delay_ms = max(1, interval_ms - max(0, elapsed_ms))
+
+        if should_publish_now:
+            self._cancel_pending_error_publish()
+            self._request_publish_once()
+            return
+        self._ensure_delayed_error_publish(delay_ms=delay_ms)
+
+    def _ensure_delayed_error_publish(self, *, delay_ms: int) -> None:
+        task = self._pending_error_publish_task
+        if task is not None and not task.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        delay_s = max(0.001, float(delay_ms) / 1000.0)
+        self._pending_error_publish_task = loop.create_task(
+            self._delayed_error_publish(delay_s=delay_s),
+            name="monitor_collector:error_summary_publish",
+        )
+
+    def _cancel_pending_error_publish(self) -> None:
+        task = self._pending_error_publish_task
+        self._pending_error_publish_task = None
+        if task is not None and not task.done():
+            task.cancel()
+
+    async def _delayed_error_publish(self, *, delay_s: float) -> None:
+        await asyncio.sleep(float(delay_s))
+        with self._lock:
+            self._last_error_publish_fingerprint = str(self._last_error_fingerprint)
+            self._last_error_publish_ts_ms = int(now_ms())
+        self._pending_error_publish_task = None
+        self._request_publish_once()
+
     async def start(self) -> None:
         if (not self._enabled) or self._task is not None:
             return
@@ -695,6 +760,11 @@ class MonitorCollector:
         self._task = None
         publish_once_task = self._publish_once_task
         self._publish_once_task = None
+        pending_error_publish_task = self._pending_error_publish_task
+        self._pending_error_publish_task = None
+        if pending_error_publish_task is not None:
+            pending_error_publish_task.cancel()
+            await asyncio.gather(pending_error_publish_task, return_exceptions=True)
         if publish_once_task is not None:
             publish_once_task.cancel()
             await asyncio.gather(publish_once_task, return_exceptions=True)
