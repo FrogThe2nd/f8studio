@@ -373,6 +373,31 @@ def test_warning_toast_stays_visible_until_acknowledged() -> None:
     QtWidgets.QApplication.processEvents()
 
 
+def test_warning_uses_message_box_fallback_for_modal_dialog(monkeypatch) -> None:
+    _ensure_app()
+    _close_active_toasts()
+    dialog = QtWidgets.QDialog()
+    dialog.setModal(True)
+    dialog.show()
+    QtWidgets.QApplication.processEvents()
+
+    shown: list[tuple[QtWidgets.QWidget | None, str, str]] = []
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "warning",
+        lambda parent, title, message: shown.append((parent, str(title), str(message))),
+    )
+
+    show_warning(dialog, "Invalid name", "Name already exists.")
+    QtWidgets.QApplication.processEvents()
+
+    assert shown == [(dialog, "Invalid name", "Name already exists.")]
+    assert _ACTIVE_TOASTS == []
+
+    dialog.close()
+    QtWidgets.QApplication.processEvents()
+
+
 def test_error_toast_copy_button_copies_debuggable_text() -> None:
     _ensure_app()
     _close_active_toasts()

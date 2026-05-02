@@ -176,6 +176,17 @@ def _resolve_parent(parent: QtWidgets.QWidget | None) -> QtWidgets.QWidget | Non
     return None
 
 
+def _modal_dialog_fallback_parent(parent: QtWidgets.QWidget | None) -> QtWidgets.QWidget | None:
+    app = QtWidgets.QApplication.instance()
+    if app is not None:
+        active_modal_widget = app.activeModalWidget()
+        if isinstance(active_modal_widget, QtWidgets.QDialog) and active_modal_widget.isVisible():
+            return active_modal_widget
+    if isinstance(parent, QtWidgets.QDialog) and parent.isModal():
+        return parent
+    return None
+
+
 def _screen_for_parent(parent: QtWidgets.QWidget | None) -> QtGui.QScreen | None:
     if parent is not None:
         handle = parent.windowHandle()
@@ -905,6 +916,10 @@ def _show_toast(
     title_text = str(title or "").strip()
     message_text = str(message or "").strip()
     if not title_text and not message_text:
+        return
+    modal_fallback_parent = _modal_dialog_fallback_parent(target_parent)
+    if modal_fallback_parent is not None:
+        fallback(modal_fallback_parent, title_text, message_text)
         return
     try:
         anchor = target_parent if target_parent is not None else parent

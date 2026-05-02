@@ -11,11 +11,11 @@ from ..assets.components.component_drafts import ComponentDraftService
 from ..assets.components.component_models import (
     F8ComponentEntry,
     F8ComponentRecord,
-    F8ComponentSourceKind,
     component_now_iso,
 )
 from ..assets.components.component_repository import upsert_component
-from ..assets.ui.project_asset_dialogs import AssetOverwriteChoice, AssetOverwriteMetaDialog
+from ..assets.ui.component_overwrite_choices import component_draft_overwrite_choice
+from ..assets.ui.project_asset_dialogs import AssetOverwriteMetaDialog
 from ..ui.support.ui_notifications import show_info, show_warning
 from .component_publish_payload import (
     collect_component_selected_node_ids,
@@ -100,17 +100,12 @@ class GraphComponentActionsMixin:
             return
 
         default_name = self._selected_node_name(selected_nodes[0]) if len(selected_nodes) == 1 else "Selection Component"
-        
+
         overwrite_choices = [
-            AssetOverwriteChoice(
-                asset_id=str(entry.record.componentId),
-                label=str(entry.record.name),
-                description=str(entry.record.description),
-                tags=[str(tag) for tag in list(entry.record.tags or []) if str(tag).strip()],
-            )
+            component_draft_overwrite_choice(entry)
             for entry in self._draft_component_entries()
         ]
-        overwrite_choices.sort(key=lambda choice: choice.label.lower())
+        overwrite_choices.sort(key=lambda choice: (choice.label.lower(), choice.asset_id))
 
         def _validate_save_component_name(candidate: str, overwrite_component_id: str | None) -> str | None:
             normalized_name = self._normalize_component_name(candidate)
@@ -122,7 +117,10 @@ class GraphComponentActionsMixin:
                         break
             exclude_id = None if overwrite_entry is None else str(overwrite_entry.record.componentId)
             if self._draft_component_entry_by_name(name=normalized_name, exclude_component_id=exclude_id) is not None:
-                return f"Component name '{normalized_name}' already exists. Please choose the existing component to overwrite."
+                return (
+                    f"Component draft named '{normalized_name}' already exists. "
+                    "Select that local draft as the overwrite target, or use a different name."
+                )
             return None
 
         dialog = AssetOverwriteMetaDialog(
@@ -132,7 +130,7 @@ class GraphComponentActionsMixin:
             description="",
             tags=[],
             overwrite_choices=overwrite_choices,
-            overwrite_label="Overwrite Existing Component",
+            overwrite_label="Overwrite Local Draft",
             name_validator=_validate_save_component_name,
         )
         if dialog.exec() != QtWidgets.QDialog.Accepted:

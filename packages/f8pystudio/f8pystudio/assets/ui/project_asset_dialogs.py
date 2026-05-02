@@ -10,7 +10,17 @@ from qtpy import QtCore, QtWidgets
 from ..common import format_timestamp_for_local_display, format_timestamp_tooltip
 from ..projects.project_models import F8ProjectSummary
 from ...ui.support.qt_lifecycle import qt_runtime_error_is_object_deleted
-from ...ui.support.ui_notifications import show_warning
+
+
+_VALIDATION_ERROR_STYLE = (
+    "QLabel {"
+    " color: #fff7df;"
+    " background: #5f3f0f;"
+    " border: 1px solid #a66f1c;"
+    " border-radius: 6px;"
+    " padding: 6px 8px;"
+    "}"
+)
 
 
 class ProjectAssetMetaDialog(QtWidgets.QDialog):
@@ -37,6 +47,12 @@ class ProjectAssetMetaDialog(QtWidgets.QDialog):
         form.addRow("Description", self._description)
         form.addRow("Tags (comma-separated)", self._tags)
 
+        self._validation_error = QtWidgets.QLabel(self)
+        self._validation_error.setObjectName("asset-meta-validation-error")
+        self._validation_error.setWordWrap(True)
+        self._validation_error.setStyleSheet(_VALIDATION_ERROR_STYLE)
+        self._validation_error.hide()
+
         buttons = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel,
             parent=self,
@@ -46,19 +62,29 @@ class ProjectAssetMetaDialog(QtWidgets.QDialog):
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(form)
+        layout.addWidget(self._validation_error)
         layout.addWidget(buttons)
 
     def _on_accept_clicked(self) -> None:
         name = str(self._name.text() or "").strip()
         if not name:
-            show_warning(self, "Invalid name", "Name cannot be empty.")
+            self._show_validation_error("Name cannot be empty.")
             return
         if self._name_validator is not None:
             message = self._name_validator(name)
             if message:
-                show_warning(self, "Invalid name", message)
+                self._show_validation_error(message)
                 return
+        self._clear_validation_error()
         self.accept()
+
+    def _show_validation_error(self, message: str) -> None:
+        self._validation_error.setText(str(message or "").strip())
+        self._validation_error.setVisible(True)
+
+    def _clear_validation_error(self) -> None:
+        self._validation_error.setText("")
+        self._validation_error.hide()
 
     def values(self) -> tuple[str, str, list[str]]:
         tags = [part.strip() for part in str(self._tags.text() or "").split(",")]
@@ -138,6 +164,8 @@ class AssetOverwriteChoice:
     label: str
     description: str
     tags: list[str]
+    display_label: str = ""
+    tooltip: str = ""
 
 
 class AssetOverwriteMetaDialog(QtWidgets.QDialog):
@@ -167,8 +195,18 @@ class AssetOverwriteMetaDialog(QtWidgets.QDialog):
 
         self._overwrite_combo = QtWidgets.QComboBox(self)
         self._overwrite_combo.addItem("Create New", "")
+        self._overwrite_combo.setItemData(
+            0,
+            "Create a new local editable asset.",
+            QtCore.Qt.ItemDataRole.ToolTipRole,
+        )
         for choice in self._choices_by_id.values():
-            self._overwrite_combo.addItem(str(choice.label), str(choice.asset_id))
+            combo_label = str(choice.display_label or choice.label)
+            self._overwrite_combo.addItem(combo_label, str(choice.asset_id))
+            choice_index = self._overwrite_combo.count() - 1
+            tooltip = str(choice.tooltip or "").strip()
+            if tooltip:
+                self._overwrite_combo.setItemData(choice_index, tooltip, QtCore.Qt.ItemDataRole.ToolTipRole)
         self._overwrite_combo.currentIndexChanged.connect(self._on_overwrite_changed)  # type: ignore[attr-defined]
 
         self._name = QtWidgets.QLineEdit(self._default_name, self)
@@ -181,6 +219,12 @@ class AssetOverwriteMetaDialog(QtWidgets.QDialog):
         form.addRow("Description", self._description)
         form.addRow("Tags (comma-separated)", self._tags)
 
+        self._validation_error = QtWidgets.QLabel(self)
+        self._validation_error.setObjectName("asset-overwrite-validation-error")
+        self._validation_error.setWordWrap(True)
+        self._validation_error.setStyleSheet(_VALIDATION_ERROR_STYLE)
+        self._validation_error.hide()
+
         buttons = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel,
             parent=self,
@@ -190,6 +234,7 @@ class AssetOverwriteMetaDialog(QtWidgets.QDialog):
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(form)
+        layout.addWidget(self._validation_error)
         layout.addWidget(buttons)
 
         if selected_asset_id:
@@ -216,6 +261,7 @@ class AssetOverwriteMetaDialog(QtWidgets.QDialog):
         )
 
     def _on_overwrite_changed(self) -> None:
+        self._clear_validation_error()
         selected_asset_id = self.selected_asset_id()
         if selected_asset_id is None:
             self._reset_to_defaults()
@@ -236,14 +282,23 @@ class AssetOverwriteMetaDialog(QtWidgets.QDialog):
     def _on_accept_clicked(self) -> None:
         name = str(self._name.text() or "").strip()
         if not name:
-            show_warning(self, "Invalid name", "Name cannot be empty.")
+            self._show_validation_error("Name cannot be empty.")
             return
         if self._name_validator is not None:
             message = self._name_validator(name, self.selected_asset_id())
             if message:
-                show_warning(self, "Invalid name", message)
+                self._show_validation_error(message)
                 return
+        self._clear_validation_error()
         self.accept()
+
+    def _show_validation_error(self, message: str) -> None:
+        self._validation_error.setText(str(message or "").strip())
+        self._validation_error.setVisible(True)
+
+    def _clear_validation_error(self) -> None:
+        self._validation_error.setText("")
+        self._validation_error.hide()
 
 
 class ProjectPickerDialog(QtWidgets.QDialog):

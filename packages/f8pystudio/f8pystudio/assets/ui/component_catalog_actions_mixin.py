@@ -35,6 +35,7 @@ from .project_asset_dialogs import (
     AssetOverwriteMetaDialog,
     prompt_version_notes,
 )
+from .component_overwrite_choices import component_draft_overwrite_choice
 from .catalog_hosts import ComponentCatalogActionsHost
 
 
@@ -244,16 +245,11 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
 
     def _component_overwrite_choices(self, *, exclude_component_id: str | None = None) -> list[AssetOverwriteChoice]:
         choices = [
-            AssetOverwriteChoice(
-                asset_id=str(entry.record.componentId),
-                label=str(entry.record.name),
-                description=str(entry.record.description),
-                tags=[str(tag) for tag in list(entry.record.tags or []) if str(tag).strip()],
-            )
+            component_draft_overwrite_choice(entry)
             for entry in self._draft_service_for_catalog().list_catalog_entries()
             if exclude_component_id is None or str(entry.record.componentId) != exclude_component_id
         ]
-        choices.sort(key=lambda choice: choice.label.lower())
+        choices.sort(key=lambda choice: (choice.label.lower(), choice.asset_id))
         return choices
 
     def _normalize_component_name(self, name: str) -> str:
@@ -275,7 +271,7 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
     def _validate_edit_component_name(self, candidate: str, component_id: str) -> str | None:
         normalized_name = self._normalize_component_name(candidate)
         if self._draft_entry_by_name(normalized_name, exclude_component_id=component_id) is not None:
-            return f"Component name '{normalized_name}' already exists. Please rename."
+            return f"Component draft named '{normalized_name}' already exists. Please rename."
         return None
 
     def _validate_save_component_name(self, candidate: str, overwrite_component_id: str | None) -> str | None:
@@ -283,7 +279,10 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
         overwrite_entry = None if not overwrite_component_id else self._local_entry_for_component_id(str(overwrite_component_id))
         exclude_id = None if overwrite_entry is None else str(overwrite_entry.record.componentId)
         if self._draft_entry_by_name(name=normalized_name, exclude_component_id=exclude_id) is not None:
-            return f"Component name '{normalized_name}' already exists. Please choose the existing component to overwrite."
+            return (
+                f"Component draft named '{normalized_name}' already exists. "
+                "Select that local draft as the overwrite target, or use a different name."
+            )
         return None
 
     def _on_add_clicked(self) -> None:
@@ -297,7 +296,7 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
             description="",
             tags=[],
             overwrite_choices=self._component_overwrite_choices(),
-            overwrite_label="Overwrite Existing Component",
+            overwrite_label="Overwrite Local Draft",
             name_validator=self._validate_save_component_name,
         )
         if metadata_dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:

@@ -1,11 +1,24 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from qtpy import QtCore, QtWidgets
 
+from f8pystudio.assets.components.component_catalog import ComponentCatalogService
+from f8pystudio.assets.components.component_drafts import ComponentDraftService
+from f8pystudio.assets.components.component_models import (
+    F8ComponentEntry,
+    F8ComponentRecord,
+    F8ComponentSourceKind,
+    F8ComponentVisibility,
+    component_now_iso,
+)
 from f8pystudio.assets.projects.project_storage import ProjectStorageService
+from f8pystudio.assets.ui.project_asset_dialogs import AssetOverwriteChoice, AssetOverwriteMetaDialog
+from f8pystudio.ui.support.ui_notifications import _ACTIVE_TOASTS
 from f8pystudio.ui.mainwin import project_asset_actions
 
 
@@ -268,6 +281,187 @@ def test_save_component_as_dialog_seeds_metadata_from_current_project(monkeypatc
     assert saved_record.tags == ["alpha", "beta"]
     assert saved_record.content == _session_payload("unused")
     assert info_messages == [("Component Saved", "Saved component:\nSeed Project")]
+
+
+def test_save_component_as_dialog_overwrites_only_local_drafts(monkeypatch, tmp_path: Path) -> None:
+    _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "component-overwrite-drafts.ini"), QtCore.QSettings.IniFormat)
+    service = ProjectStorageService(db_path=tmp_path / "assets.db", settings=settings)
+    _ = service.save_project(
+        content=_session_payload("seeded"),
+        name="Video AI Tracking",
+        description="Seed description",
+        tags=["tracking"],
+        set_current=True,
+    )
+    timestamp = component_now_iso()
+    draft_record = F8ComponentRecord(
+        componentId="draft-video-ai-tracking",
+        name="Video AI Tracking",
+        description="Draft description",
+        tags=["draft"],
+        content=_session_payload("draft"),
+        createdAt=timestamp,
+        updatedAt=timestamp,
+    )
+    _ = ComponentDraftService().create_draft_from_record(
+        draft_record,
+        origin_kind=None,
+        publish_target_asset_id=None,
+        publish_base_remote_version_number=None,
+        draft_id="draft-video-ai-tracking",
+    )
+    ComponentCatalogService().replace_remote_entries(
+        [
+            F8ComponentEntry(
+                record=F8ComponentRecord(
+                    componentId="remote-video-ai-tracking",
+                    name="Video AI Tracking",
+                    description="Remote description",
+                    tags=["remote"],
+                    content=_session_payload("remote"),
+                    createdAt=timestamp,
+                    updatedAt=timestamp,
+                ),
+                source=F8ComponentSourceKind.remote_private,
+                visibility=F8ComponentVisibility.private,
+                ownerUserId="user-1",
+                ownerDisplayName="Author One",
+                installed=True,
+                hasCachedContent=True,
+            )
+        ]
+    )
+
+    captured_choice_ids: list[str] = []
+    captured_choice_labels: list[str] = []
+    validation_messages: dict[str, str | None] = {}
+    saved_records: list[F8ComponentRecord] = []
+    info_messages: list[tuple[str, str]] = []
+    graph = _FakeGraph()
+    log_dock = _FakeLogDock()
+    parent = QtWidgets.QWidget()
+
+    class _DraftOverwriteDialog:
+        def __init__(
+            self,
+            *,
+            parent: QtWidgets.QWidget | None,
+            title: str,
+            name: str,
+            description: str,
+            tags: list[str],
+            overwrite_choices: list[AssetOverwriteChoice],
+            overwrite_label: str,
+            name_validator: object | None = None,
+        ) -> None:
+            del parent, title, description, tags
+            assert overwrite_label == "Overwrite Local Draft"
+            captured_choice_ids.extend([str(choice.asset_id) for choice in overwrite_choices])
+            captured_choice_labels.extend([str(choice.display_label) for choice in overwrite_choices])
+            assert callable(name_validator)
+            validator = cast(Callable[[str, str | None], str | None], name_validator)
+            validation_messages["selected_draft"] = validator(name, "draft-video-ai-tracking")
+            validation_messages["create_new"] = validator(name, None)
+
+        def exec(self) -> int:
+            return QtWidgets.QDialog.Accepted
+
+        def values(self) -> tuple[str, str, list[str], str | None]:
+            return ("Video AI Tracking", "Updated description", ["tracking"], "draft-video-ai-tracking")
+
+    monkeypatch.setattr(project_asset_actions, "ProjectStorageService", lambda: service)
+    monkeypatch.setattr(project_asset_actions, "AssetOverwriteMetaDialog", _DraftOverwriteDialog)
+    monkeypatch.setattr(
+        "f8pystudio.assets.components.component_repository.upsert_component",
+        lambda record: saved_records.append(record),
+    )
+    monkeypatch.setattr(
+        "f8pystudio.ui.support.ui_notifications.show_info",
+        lambda _parent, title, message: info_messages.append((str(title), str(message))),
+    )
+
+    saved = project_asset_actions.save_component_as_dialog(
+        parent=parent,
+        studio_graph=graph,
+        log_dock=log_dock,
+        show_warning=lambda *_args: None,
+    )
+
+    assert saved is True
+    assert captured_choice_ids == ["draft-video-ai-tracking"]
+    assert captured_choice_labels == ["Video AI Tracking (Local Draft)"]
+    assert validation_messages["selected_draft"] is None
+    assert "Select that local draft" in str(validation_messages["create_new"])
+    assert len(saved_records) == 1
+    saved_record = saved_records[0]
+    assert saved_record.componentId == "draft-video-ai-tracking"
+    assert saved_record.name == "Video AI Tracking"
+    assert saved_record.description == "Updated description"
+    assert info_messages == [("Component Updated", "Updated component:\nVideo AI Tracking")]
+
+
+def test_asset_overwrite_dialog_validation_error_is_inline_not_toast() -> None:
+    _ensure_app()
+    for toast in list(_ACTIVE_TOASTS):
+        toast.close()
+    QtWidgets.QApplication.processEvents()
+
+    dialog = AssetOverwriteMetaDialog(
+        parent=None,
+        title="Export to Component",
+        name="Video AI Tracking",
+        description="",
+        tags=[],
+        overwrite_choices=[],
+        overwrite_label="Overwrite Local Draft",
+        name_validator=lambda _candidate, _selected_id: "Component draft named 'Video AI Tracking' already exists.",
+    )
+
+    dialog._on_accept_clicked()
+    validation_label = dialog.findChild(QtWidgets.QLabel, "asset-overwrite-validation-error")
+
+    assert validation_label is not None
+    assert validation_label.text() == "Component draft named 'Video AI Tracking' already exists."
+    assert validation_label.isHidden() is False
+    assert _ACTIVE_TOASTS == []
+
+    dialog.close()
+    QtWidgets.QApplication.processEvents()
+
+
+def test_asset_overwrite_dialog_uses_display_label_without_changing_metadata_name() -> None:
+    _ensure_app()
+    choice = AssetOverwriteChoice(
+        asset_id="draft-video",
+        label="Video AI Tracking",
+        description="Draft description",
+        tags=["tracking"],
+        display_label="Video AI Tracking (Linked Local Draft)",
+        tooltip="Linked Local Draft\nDraft ID: draft-video",
+    )
+    dialog = AssetOverwriteMetaDialog(
+        parent=None,
+        title="Export to Component",
+        name="New Component",
+        description="New description",
+        tags=[],
+        overwrite_choices=[choice],
+        overwrite_label="Overwrite Local Draft",
+    )
+
+    assert dialog._overwrite_combo.itemText(1) == "Video AI Tracking (Linked Local Draft)"
+
+    dialog._overwrite_combo.setCurrentIndex(1)
+    name, description, tags, selected_asset_id = dialog.values()
+
+    assert name == "Video AI Tracking"
+    assert description == "Draft description"
+    assert tags == ["tracking"]
+    assert selected_asset_id == "draft-video"
+
+    dialog.close()
+    QtWidgets.QApplication.processEvents()
 
 
 def test_open_component_catalog_dialog_is_modeless(monkeypatch) -> None:
