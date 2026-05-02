@@ -10,6 +10,7 @@ from qtpy import QtCore, QtWidgets
 from f8pysdk.specs import schema_type
 from f8pysdk.command import parse_command_port_name
 from f8pysdk.specs import can_edit_existing as _policy_can_edit_existing
+from f8pysdk.specs import can_edit_state_field_value_schema as _can_edit_state_field_value_schema
 
 from ...ui.dialogs.schema_builder_dialog import SchemaBuilderDialog, schema_from_json_obj as _schema_from_json_obj
 from ...nodegraph.state_schema import (
@@ -340,7 +341,9 @@ def open_state_field_schema_dialog(node_item: Any, *, field_name: str) -> None:
         return
     field, index = found
     spec = node.spec
-    editable = _policy_can_edit_existing(spec, "stateFields")
+    editable = bool(
+        _policy_can_edit_existing(spec, "stateFields") and _can_edit_state_field_value_schema(field)
+    )
     missing_locked = bool(node.is_missing_locked())
     read_only = bool((not editable) or missing_locked)
     schema_value = field.valueSchema
@@ -614,7 +617,11 @@ def on_port_right_click(node_item: Any, port: Any, screen_pos: QtCore.QPoint) ->
         if found_field is None:
             return
         _field, _index = found_field
-        can_edit = bool(_policy_can_edit_existing(node.spec, "stateFields") and (not bool(node.is_missing_locked())))
+        can_edit = bool(
+            _policy_can_edit_existing(node.spec, "stateFields")
+            and _can_edit_state_field_value_schema(_field)
+            and (not bool(node.is_missing_locked()))
+        )
     else:
         return
     menu = QtWidgets.QMenu()

@@ -1,6 +1,18 @@
 from __future__ import annotations
 
-from f8pysdk.specs import F8DataPortSpec, F8ServiceSpec, F8StateAccess, F8StateSpec
+from types import SimpleNamespace
+
+from qtpy import QtWidgets
+
+from f8pysdk.specs import (
+    F8DataPortSpec,
+    F8ServiceSpec,
+    F8SpecEditPolicy,
+    F8StateAccess,
+    F8StateFieldEditPolicy,
+    F8StateSpec,
+    editable_collection_edit_policy,
+)
 from f8pysdk.specs import number_schema, string_schema
 
 from f8pystudio.nodegraph.items import service_node_port_schema_actions as actions
@@ -13,6 +25,9 @@ class _BackendNode:
     def set_spec(self, spec: F8ServiceSpec, *, rebuild: bool = False) -> None:
         self.spec = spec
 
+    def is_missing_locked(self) -> bool:
+        return False
+
 
 class _NodeItemStub:
     def __init__(self, backend_node: _BackendNode) -> None:
@@ -20,6 +35,9 @@ class _NodeItemStub:
 
     def _backend_node(self) -> _BackendNode:
         return self._backend
+
+    def _viewer_safe(self) -> None:
+        return None
 
 
 def test_port_group_and_label_helpers() -> None:
@@ -112,3 +130,155 @@ def test_replace_state_field_schema_updates_spec() -> None:
     changed = actions.replace_state_field_schema(node_item, field_name="mode", new_schema=parsed)
     assert changed is True
     assert actions.schema_brief(backend.spec.stateFields[0].valueSchema) == "string"
+
+
+def test_open_state_field_schema_dialog_allows_required_rw_schema(monkeypatch) -> None:
+    captured: dict[str, bool] = {}
+
+    class _FakeSchemaDialog:
+        def __init__(self, _parent: object, *, title: str, schema: object, read_only: bool) -> None:
+            del _parent, title, schema
+            captured["read_only"] = bool(read_only)
+
+        def exec_(self) -> int:
+            return QtWidgets.QDialog.Rejected
+
+    monkeypatch.setattr(actions, "SchemaBuilderDialog", _FakeSchemaDialog)
+    spec = F8ServiceSpec(
+        serviceClass="f8.tests.schema-dialog-state-rw",
+        label="Schema Dialog State RW",
+        editPolicy=F8SpecEditPolicy(stateFields=editable_collection_edit_policy()),
+        stateFields=[
+            F8StateSpec(name="value", valueSchema=number_schema(), access=F8StateAccess.rw, required=True)
+        ],
+    )
+    node_item = _NodeItemStub(_BackendNode(spec))
+
+    actions.open_state_field_schema_dialog(node_item, field_name="value")
+
+    assert captured["read_only"] is False
+
+
+def test_open_state_field_schema_dialog_locks_explicitly_locked_schema(monkeypatch) -> None:
+    captured: dict[str, bool] = {}
+
+    class _FakeSchemaDialog:
+        def __init__(self, _parent: object, *, title: str, schema: object, read_only: bool) -> None:
+            del _parent, title, schema
+            captured["read_only"] = bool(read_only)
+
+        def exec_(self) -> int:
+            return QtWidgets.QDialog.Rejected
+
+    monkeypatch.setattr(actions, "SchemaBuilderDialog", _FakeSchemaDialog)
+    spec = F8ServiceSpec(
+        serviceClass="f8.tests.schema-dialog-state-ro",
+        label="Schema Dialog State RO",
+        editPolicy=F8SpecEditPolicy(stateFields=editable_collection_edit_policy()),
+        stateFields=[
+            F8StateSpec(
+                name="preview",
+                valueSchema=number_schema(),
+                access=F8StateAccess.ro,
+                required=True,
+                editPolicy=F8StateFieldEditPolicy(canEditValueSchema=False),
+            )
+        ],
+    )
+    node_item = _NodeItemStub(_BackendNode(spec))
+
+    actions.open_state_field_schema_dialog(node_item, field_name="preview")
+
+    assert captured["read_only"] is True
+
+
+def test_state_field_context_menu_enables_schema_paste_when_policy_allows(monkeypatch) -> None:
+    class _FakeAction:
+        def __init__(self, text: str) -> None:
+            self.text = str(text)
+            self.enabled = True
+
+        def setEnabled(self, enabled: bool) -> None:
+            self.enabled = bool(enabled)
+
+    class _FakeMenu:
+        last: "_FakeMenu | None" = None
+
+        def __init__(self) -> None:
+            self.actions: list[_FakeAction] = []
+            _FakeMenu.last = self
+
+        def addAction(self, text: str) -> _FakeAction:
+            action = _FakeAction(text)
+            self.actions.append(action)
+            return action
+
+        def exec_(self, _screen_pos: object) -> None:
+            return None
+
+    monkeypatch.setattr(actions.QtWidgets, "QMenu", _FakeMenu)
+    spec = F8ServiceSpec(
+        serviceClass="f8.tests.schema-menu-state-rw",
+        label="Schema Menu State RW",
+        editPolicy=F8SpecEditPolicy(stateFields=editable_collection_edit_policy()),
+        stateFields=[
+            F8StateSpec(name="value", valueSchema=number_schema(), access=F8StateAccess.ro, required=True)
+        ],
+    )
+    node_item = _NodeItemStub(_BackendNode(spec))
+
+    actions.on_port_right_click(node_item, SimpleNamespace(name="[S]value"), object())
+
+    menu = _FakeMenu.last
+    assert menu is not None
+    paste_action = [action for action in menu.actions if action.text == "Paste valueSchema"][0]
+    assert paste_action.enabled is True
+
+
+def test_state_field_context_menu_disables_schema_paste_when_policy_locks(monkeypatch) -> None:
+    class _FakeAction:
+        def __init__(self, text: str) -> None:
+            self.text = str(text)
+            self.enabled = True
+
+        def setEnabled(self, enabled: bool) -> None:
+            self.enabled = bool(enabled)
+
+    class _FakeMenu:
+        last: "_FakeMenu | None" = None
+
+        def __init__(self) -> None:
+            self.actions: list[_FakeAction] = []
+            _FakeMenu.last = self
+
+        def addAction(self, text: str) -> _FakeAction:
+            action = _FakeAction(text)
+            self.actions.append(action)
+            return action
+
+        def exec_(self, _screen_pos: object) -> None:
+            return None
+
+    monkeypatch.setattr(actions.QtWidgets, "QMenu", _FakeMenu)
+    spec = F8ServiceSpec(
+        serviceClass="f8.tests.schema-menu-state-locked",
+        label="Schema Menu State Locked",
+        editPolicy=F8SpecEditPolicy(stateFields=editable_collection_edit_policy()),
+        stateFields=[
+            F8StateSpec(
+                name="preview",
+                valueSchema=number_schema(),
+                access=F8StateAccess.ro,
+                required=True,
+                editPolicy=F8StateFieldEditPolicy(canEditValueSchema=False),
+            )
+        ],
+    )
+    node_item = _NodeItemStub(_BackendNode(spec))
+
+    actions.on_port_right_click(node_item, SimpleNamespace(name="[S]preview"), object())
+
+    menu = _FakeMenu.last
+    assert menu is not None
+    paste_action = [action for action in menu.actions if action.text == "Paste valueSchema"][0]
+    assert paste_action.enabled is False

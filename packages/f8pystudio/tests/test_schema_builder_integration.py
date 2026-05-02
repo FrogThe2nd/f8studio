@@ -14,6 +14,7 @@ from f8pysdk.specs import (
     F8ServiceSpec,
     F8SpecEditPolicy,
     F8StateAccess,
+    F8StateFieldEditPolicy,
     F8StateSpec,
     editable_collection_edit_policy,
 )
@@ -162,6 +163,33 @@ def test_edit_schema_dialogs_pass_read_only_when_ui_only(monkeypatch) -> None:
         ),
     )
     required_state_field._edit_schema()
+    assert _FakeSchemaDialog.last_read_only is False
+
+    required_readonly_state_field = npw._F8EditStateFieldDialog(
+        None,
+        title="State",
+        field=F8StateSpec(
+            name="x",
+            valueSchema=schema_from_json_obj({"type": "number"}),
+            access=F8StateAccess.ro,
+            required=True,
+        ),
+    )
+    required_readonly_state_field._edit_schema()
+    assert _FakeSchemaDialog.last_read_only is False
+
+    explicitly_locked_state_field = npw._F8EditStateFieldDialog(
+        None,
+        title="State",
+        field=F8StateSpec(
+            name="x",
+            valueSchema=schema_from_json_obj({"type": "number"}),
+            access=F8StateAccess.rw,
+            required=True,
+            editPolicy=F8StateFieldEditPolicy(canEditValueSchema=False),
+        ),
+    )
+    explicitly_locked_state_field._edit_schema()
     assert _FakeSchemaDialog.last_read_only is True
 
     cmd_param = npw._F8EditCommandParamDialog(

@@ -402,6 +402,7 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
         self._original_schema = self._schema
         self._redact_on_publish = field.redactOnPublish
         self._editor_assist = field.editorAssist
+        self._edit_policy = field.editPolicy
         structure_locked = bool(self._ui_only or self._lock_identity_fields)
         self._can_rename = bool(can_rename_state_field(field) and not structure_locked)
         self._can_edit_access = bool(can_edit_state_field_access(field) and not structure_locked)
@@ -579,6 +580,7 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
             showOnNode=show_on_node,
             redactOnPublish=self._redact_on_publish,
             editorAssist=self._editor_assist,
+            editPolicy=self._edit_policy,
         )
 
     def global_hotkey(self) -> str:

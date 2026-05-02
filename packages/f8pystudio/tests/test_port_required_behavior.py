@@ -10,6 +10,7 @@ from f8pysdk.specs import (
     F8ServiceSpec,
     F8SpecEditPolicy,
     F8StateAccess,
+    F8StateFieldEditPolicy,
     F8StateSpec,
     editable_collection_edit_policy,
 )
@@ -415,10 +416,9 @@ def test_state_field_dialog_receives_required_field_without_name_special_case(mo
 
 def test_required_state_field_dialog_locks_structure() -> None:
     _ensure_app()
-    original_schema = string_schema()
     field = F8StateSpec(
         name="protected_state",
-        valueSchema=original_schema,
+        valueSchema=string_schema(),
         access=F8StateAccess.ro,
         required=True,
     )
@@ -433,11 +433,57 @@ def test_required_state_field_dialog_locks_structure() -> None:
     assert dialog._name.isEnabled() is False
     assert dialog._access.isEnabled() is False
     assert dialog._required.isEnabled() is False
-    assert dialog._schema_btn.text() == "View Schema..."
+    assert dialog._schema_btn.text() == "Edit Schema..."
     assert edited.name == "protected_state"
     assert edited.access == F8StateAccess.ro
     assert bool(edited.required) is True
+    assert edited.valueSchema is dialog._schema
+
+
+def test_state_field_dialog_honors_explicit_value_schema_lock() -> None:
+    _ensure_app()
+    original_schema = string_schema()
+    field = F8StateSpec(
+        name="locked_state",
+        valueSchema=original_schema,
+        access=F8StateAccess.rw,
+        required=True,
+        editPolicy=F8StateFieldEditPolicy(canEditValueSchema=False),
+    )
+
+    dialog = npw._F8EditStateFieldDialog(None, title="State", field=field)
+    dialog._schema = number_schema()
+    edited = dialog.field()
+
+    assert dialog._schema_btn.text() == "View Schema..."
     assert edited.valueSchema is original_schema
+    assert edited.editPolicy is field.editPolicy
+
+
+def test_required_rw_state_field_dialog_allows_value_schema_edit() -> None:
+    _ensure_app()
+    field = F8StateSpec(
+        name="value",
+        valueSchema=string_schema(),
+        access=F8StateAccess.rw,
+        required=True,
+    )
+
+    dialog = npw._F8EditStateFieldDialog(None, title="State", field=field)
+    dialog._name.setText("renamed")
+    dialog._access.setCurrentText("ro")
+    dialog._required.setChecked(False)
+    dialog._schema = number_schema()
+    edited = dialog.field()
+
+    assert dialog._name.isEnabled() is False
+    assert dialog._access.isEnabled() is False
+    assert dialog._required.isEnabled() is False
+    assert dialog._schema_btn.text() == "Edit Schema..."
+    assert edited.name == "value"
+    assert edited.access == F8StateAccess.rw
+    assert bool(edited.required) is True
+    assert edited.valueSchema is dialog._schema
 
 
 def test_optional_state_field_dialog_allows_structure_edits() -> None:

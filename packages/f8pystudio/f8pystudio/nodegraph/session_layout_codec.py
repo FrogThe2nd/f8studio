@@ -346,7 +346,12 @@ class SessionLayoutCodecMixin:
             return str(entry.get("name") or "").strip()
 
         def _state_field_can_edit_value_schema(entry: dict[str, Any]) -> bool:
-            return not bool(entry.get("required"))
+            edit_policy = entry.get("editPolicy")
+            if not isinstance(edit_policy, dict):
+                return True
+            if "canEditValueSchema" not in edit_policy:
+                return True
+            return bool(edit_policy.get("canEditValueSchema"))
 
         def _merge_state_field_item(base: dict[str, Any], session: dict[str, Any]) -> dict[str, Any]:
             merged_item = dict(base)

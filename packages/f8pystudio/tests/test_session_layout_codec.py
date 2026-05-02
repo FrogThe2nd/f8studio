@@ -4,7 +4,15 @@ from f8pysdk.codec import dump_json
 from copy import deepcopy
 from types import SimpleNamespace
 
-from f8pysdk.specs import F8Command, F8DataPortSpec, F8ServiceSpec, F8SpecEditPolicy, F8StateAccess, F8StateSpec
+from f8pysdk.specs import (
+    F8Command,
+    F8DataPortSpec,
+    F8ServiceSpec,
+    F8SpecEditPolicy,
+    F8StateAccess,
+    F8StateFieldEditPolicy,
+    F8StateSpec,
+)
 from f8pysdk.specs import (
     any_schema,
     editable_collection_edit_policy,
@@ -82,7 +90,7 @@ def test_strip_unknown_session_custom_properties_keeps_state_fields_only() -> No
     assert out["nodes"]["svc.a"]["custom"] == {"gain": 0.5, "enabled": True}
 
 
-def test_merge_session_specs_respects_required_state_value_schema_lock() -> None:
+def test_merge_session_specs_respects_explicit_required_state_value_schema_lock() -> None:
     class _Node:
         SPEC_TEMPLATE = F8ServiceSpec(
             serviceClass="f8.locked",
@@ -94,6 +102,7 @@ def test_merge_session_specs_respects_required_state_value_schema_lock() -> None
                     valueSchema=string_schema(),
                     access=F8StateAccess.ro,
                     required=True,
+                    editPolicy=F8StateFieldEditPolicy(canEditValueSchema=False),
                 )
             ],
         )
@@ -125,7 +134,100 @@ def test_merge_session_specs_respects_required_state_value_schema_lock() -> None
 
     assert merged_spec["stateFields"][0]["valueSchema"]["type"] == "string"
     assert merged_spec["stateFields"][0]["required"] is True
-    assert "editPolicy" not in merged_spec["stateFields"][0]
+    assert merged_spec["stateFields"][0]["editPolicy"] == {"canEditValueSchema": False}
+
+
+def test_merge_session_specs_preserves_required_rw_state_value_schema_edits() -> None:
+    class _Node:
+        SPEC_TEMPLATE = F8ServiceSpec(
+            serviceClass="f8.editable",
+            label="Editable",
+            editPolicy=F8SpecEditPolicy(stateFields=editable_collection_edit_policy()),
+            stateFields=[
+                F8StateSpec(
+                    name="value",
+                    valueSchema=number_schema(minimum=0.0, maximum=1.0),
+                    access=F8StateAccess.rw,
+                    required=True,
+                )
+            ],
+        )
+
+    codec = SessionLayoutCodecMixin.__new__(SessionLayoutCodecMixin)
+    codec._node_factory = SimpleNamespace(nodes={"svc.editable": _Node})
+    session_spec = F8ServiceSpec(
+        serviceClass="f8.editable",
+        label="Editable",
+        stateFields=[
+            F8StateSpec(
+                name="value",
+                valueSchema=number_schema(minimum=-1.0, maximum=2.0),
+                access=F8StateAccess.rw,
+            )
+        ],
+    )
+    layout = {
+        "nodes": {
+            "svc1": {
+                "type_": "svc.editable",
+                "f8_spec": dump_json(session_spec, mode="json"),
+            }
+        }
+    }
+
+    out = codec._merge_session_specs(deepcopy(layout))
+    merged_spec = out["nodes"]["svc1"]["f8_spec"]
+
+    assert merged_spec["stateFields"][0]["valueSchema"]["minimum"] == -1.0
+    assert merged_spec["stateFields"][0]["valueSchema"]["maximum"] == 2.0
+    assert merged_spec["stateFields"][0]["required"] is True
+
+
+def test_merge_session_specs_keeps_explicitly_locked_required_rw_state_schema() -> None:
+    class _Node:
+        SPEC_TEMPLATE = F8ServiceSpec(
+            serviceClass="f8.lockedrw",
+            label="Locked RW",
+            editPolicy=F8SpecEditPolicy(stateFields=editable_collection_edit_policy()),
+            stateFields=[
+                F8StateSpec(
+                    name="value",
+                    valueSchema=string_schema(),
+                    access=F8StateAccess.rw,
+                    required=True,
+                    editPolicy=F8StateFieldEditPolicy(canEditValueSchema=False),
+                )
+            ],
+        )
+
+    codec = SessionLayoutCodecMixin.__new__(SessionLayoutCodecMixin)
+    codec._node_factory = SimpleNamespace(nodes={"svc.locked-rw": _Node})
+    session_spec = F8ServiceSpec(
+        serviceClass="f8.lockedrw",
+        label="Locked RW",
+        stateFields=[
+            F8StateSpec(
+                name="value",
+                valueSchema=number_schema(),
+                access=F8StateAccess.rw,
+            )
+        ],
+    )
+    layout = {
+        "nodes": {
+            "svc1": {
+                "type_": "svc.locked-rw",
+                "f8_spec": dump_json(session_spec, mode="json"),
+            }
+        }
+    }
+
+    out = codec._merge_session_specs(deepcopy(layout))
+    merged_spec = out["nodes"]["svc1"]["f8_spec"]
+
+    assert merged_spec["stateFields"][0]["valueSchema"]["type"] == "string"
+    assert merged_spec["stateFields"][0]["required"] is True
+    assert merged_spec["stateFields"][0]["editPolicy"] == {"canEditValueSchema": False}
 
 
 def test_strip_invalid_connections_drops_nonexistent_ports() -> None:

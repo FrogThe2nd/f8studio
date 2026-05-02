@@ -15,10 +15,17 @@ from f8pysdk._specs.builtin_fields import (  # noqa: E402
     service_data_out_ports_with_builtins,
     service_state_fields_with_builtins,
 )
-from f8pysdk.specs import F8DataPortSpec, F8StateAccess, F8StateSpec  # noqa: E402
+from f8pysdk.specs import F8DataPortSpec, F8StateAccess, F8StateFieldEditPolicy, F8StateSpec  # noqa: E402
 from f8pysdk.nats_naming import kv_key_node_state  # noqa: E402
 from f8pysdk.codec import decode_obj  # noqa: E402
-from f8pysdk.specs import boolean_schema, string_schema  # noqa: E402
+from f8pysdk.specs import (  # noqa: E402
+    boolean_schema,
+    can_edit_state_field_access,
+    can_edit_state_field_required,
+    can_edit_state_field_value_schema,
+    can_rename_state_field,
+    string_schema,
+)
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
 
@@ -71,9 +78,11 @@ class BuiltinStateFieldTests(unittest.TestCase):
         self.assertEqual([str(x.name) for x in out], ["custom", "active", "svcId"])
         self.assertEqual(out[-2].access, F8StateAccess.rw)
         self.assertTrue(bool(out[-2].required))
+        self.assertFalse(bool(out[-2].editPolicy.canEditValueSchema))
         self.assertFalse(bool(out[-2].showOnNode))
         self.assertEqual(out[-1].access, F8StateAccess.ro)
         self.assertTrue(bool(out[-1].required))
+        self.assertFalse(bool(out[-1].editPolicy.canEditValueSchema))
         self.assertFalse(bool(out[-1].showOnNode))
 
     def test_operator_state_fields_force_override(self) -> None:
@@ -86,8 +95,69 @@ class BuiltinStateFieldTests(unittest.TestCase):
         self.assertEqual([str(x.name) for x in out], ["mode", "svcId", "operatorId"])
         self.assertEqual(out[-2].access, F8StateAccess.ro)
         self.assertTrue(bool(out[-2].required))
+        self.assertFalse(bool(out[-2].editPolicy.canEditValueSchema))
         self.assertEqual(out[-1].access, F8StateAccess.ro)
         self.assertTrue(bool(out[-1].required))
+        self.assertFalse(bool(out[-1].editPolicy.canEditValueSchema))
+
+    def test_required_state_value_schema_policy_defaults_to_editable_and_honors_lock(self) -> None:
+        editable_value = F8StateSpec(
+            name="value",
+            valueSchema=string_schema(),
+            access=F8StateAccess.rw,
+            required=True,
+        )
+        readonly_preview = F8StateSpec(
+            name="preview",
+            valueSchema=string_schema(),
+            access=F8StateAccess.ro,
+            required=True,
+        )
+        locked_preview = F8StateSpec(
+            name="lockedPreview",
+            valueSchema=string_schema(),
+            access=F8StateAccess.rw,
+            required=True,
+            editPolicy=F8StateFieldEditPolicy(canEditValueSchema=False),
+        )
+
+        self.assertTrue(can_edit_state_field_value_schema(editable_value))
+        self.assertTrue(can_edit_state_field_value_schema(readonly_preview))
+        self.assertFalse(can_edit_state_field_value_schema(locked_preview))
+
+    def test_required_state_identity_policy_remains_locked(self) -> None:
+        field = F8StateSpec(
+            name="value",
+            valueSchema=string_schema(),
+            access=F8StateAccess.rw,
+            required=True,
+            editPolicy=F8StateFieldEditPolicy(
+                canRename=True,
+                canEditAccess=True,
+                canEditRequired=True,
+            ),
+        )
+
+        self.assertFalse(can_rename_state_field(field))
+        self.assertFalse(can_edit_state_field_access(field))
+        self.assertFalse(can_edit_state_field_required(field))
+
+    def test_optional_state_field_policy_can_disable_identity_edits(self) -> None:
+        field = F8StateSpec(
+            name="value",
+            valueSchema=string_schema(),
+            access=F8StateAccess.rw,
+            required=False,
+            editPolicy=F8StateFieldEditPolicy(
+                canRename=False,
+                canEditAccess=False,
+                canEditRequired=False,
+            ),
+        )
+
+        self.assertFalse(can_rename_state_field(field))
+        self.assertFalse(can_edit_state_field_access(field))
+        self.assertFalse(can_edit_state_field_required(field))
 
     def test_service_data_out_ports_force_monitor(self) -> None:
         ports = [
@@ -145,20 +215,20 @@ class BuiltinStateFieldTests(unittest.TestCase):
         self.assertEqual(len(active_fields), 1)
         self.assertTrue(bool(active_fields[0].get("required")))
         self.assertFalse(bool(active_fields[0].get("showOnNode")))
-        self.assertNotIn("editPolicy", active_fields[0])
+        self.assertEqual(active_fields[0].get("editPolicy"), {"canEditValueSchema": False})
         self.assertEqual([x["name"] for x in operator_fields], ["threshold", "svcId", "operatorId"])
         svc_id_fields = [x for x in service_fields if str(x.get("name")) == "svcId"]
         self.assertEqual(len(svc_id_fields), 1)
         self.assertTrue(bool(svc_id_fields[0].get("required")))
-        self.assertNotIn("editPolicy", svc_id_fields[0])
+        self.assertEqual(svc_id_fields[0].get("editPolicy"), {"canEditValueSchema": False})
         operator_svc_id_fields = [x for x in operator_fields if str(x.get("name")) == "svcId"]
         self.assertEqual(len(operator_svc_id_fields), 1)
         self.assertTrue(bool(operator_svc_id_fields[0].get("required")))
-        self.assertNotIn("editPolicy", operator_svc_id_fields[0])
+        self.assertEqual(operator_svc_id_fields[0].get("editPolicy"), {"canEditValueSchema": False})
         operator_id_fields = [x for x in operator_fields if str(x.get("name")) == "operatorId"]
         self.assertEqual(len(operator_id_fields), 1)
         self.assertTrue(bool(operator_id_fields[0].get("required")))
-        self.assertNotIn("editPolicy", operator_id_fields[0])
+        self.assertEqual(operator_id_fields[0].get("editPolicy"), {"canEditValueSchema": False})
         service_data_ports = out["service"]["dataOutPorts"]
         self.assertTrue(any(str(x.get("name")) == MONITOR_PORT_NAME for x in service_data_ports))
         self.assertTrue(any(str(x.get("name")) == "telemetry" for x in service_data_ports))

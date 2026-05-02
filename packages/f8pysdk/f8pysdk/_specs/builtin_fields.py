@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..generated import F8DataPortSpec, F8OperatorSpec, F8ServiceSpec, F8StateAccess, F8StateSpec
+from ..generated import (
+    F8DataPortSpec,
+    F8OperatorSpec,
+    F8ServiceSpec,
+    F8StateAccess,
+    F8StateFieldEditPolicy,
+    F8StateSpec,
+)
 from ..monitoring import (
     MONITOR_PORT_NAME,
     monitor_snapshot_data_port,
@@ -16,6 +23,14 @@ SVC_ID_FIELD_NAME = "svcId"
 OPERATOR_ID_FIELD_NAME = "operatorId"
 
 
+def _locked_value_schema_policy() -> F8StateFieldEditPolicy:
+    return F8StateFieldEditPolicy(canEditValueSchema=False)
+
+
+def _locked_value_schema_policy_dict() -> dict[str, bool]:
+    return {"canEditValueSchema": False}
+
+
 def _service_active_state_spec() -> F8StateSpec:
     return F8StateSpec(
         name=ACTIVE_FIELD_NAME,
@@ -24,6 +39,7 @@ def _service_active_state_spec() -> F8StateSpec:
         valueSchema=boolean_schema(default=True),
         access=F8StateAccess.rw,
         required=True,
+        editPolicy=_locked_value_schema_policy(),
         showOnNode=False,
     )
 
@@ -36,6 +52,7 @@ def _svc_id_state_spec() -> F8StateSpec:
         valueSchema=string_schema(),
         access=F8StateAccess.ro,
         required=True,
+        editPolicy=_locked_value_schema_policy(),
         showOnNode=False,
     )
 
@@ -48,6 +65,7 @@ def _operator_id_state_spec() -> F8StateSpec:
         valueSchema=string_schema(),
         access=F8StateAccess.ro,
         required=True,
+        editPolicy=_locked_value_schema_policy(),
         showOnNode=False,
     )
 
@@ -122,6 +140,7 @@ def _service_active_field_dict() -> dict[str, Any]:
         "valueSchema": {"type": "boolean", "default": True},
         "access": "rw",
         "required": True,
+        "editPolicy": _locked_value_schema_policy_dict(),
         "showOnNode": False,
     }
 
@@ -134,6 +153,7 @@ def _svc_id_field_dict() -> dict[str, Any]:
         "valueSchema": {"type": "string"},
         "access": "ro",
         "required": True,
+        "editPolicy": _locked_value_schema_policy_dict(),
         "showOnNode": False,
     }
 
@@ -146,6 +166,7 @@ def _operator_id_field_dict() -> dict[str, Any]:
         "valueSchema": {"type": "string"},
         "access": "ro",
         "required": True,
+        "editPolicy": _locked_value_schema_policy_dict(),
         "showOnNode": False,
     }
 

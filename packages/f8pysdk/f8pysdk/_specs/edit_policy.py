@@ -9,6 +9,7 @@ from ..generated import (
     F8OperatorSpec,
     F8ServiceSpec,
     F8SpecEditPolicy,
+    F8StateFieldEditPolicy,
     F8StateSpec,
 )
 
@@ -85,20 +86,63 @@ def is_required_state_field(field: F8StateSpec) -> bool:
     return bool(field.required)
 
 
+def _state_field_edit_policy_or_none(field: F8StateSpec) -> F8StateFieldEditPolicy | None:
+    policy = field.editPolicy
+    if policy is None or isinstance(policy, msgspec.UnsetType):
+        return None
+    return policy
+
+
+def _policy_bool(value: bool | msgspec.UnsetType | None) -> bool | None:
+    if value is None or isinstance(value, msgspec.UnsetType):
+        return None
+    return bool(value)
+
+
 def can_rename_state_field(field: F8StateSpec) -> bool:
-    return not is_required_state_field(field)
+    if is_required_state_field(field):
+        return False
+    policy = _state_field_edit_policy_or_none(field)
+    if policy is None:
+        return True
+    override = _policy_bool(policy.canRename)
+    if override is None:
+        return True
+    return override
 
 
 def can_edit_state_field_access(field: F8StateSpec) -> bool:
-    return not is_required_state_field(field)
+    if is_required_state_field(field):
+        return False
+    policy = _state_field_edit_policy_or_none(field)
+    if policy is None:
+        return True
+    override = _policy_bool(policy.canEditAccess)
+    if override is None:
+        return True
+    return override
 
 
 def can_edit_state_field_required(field: F8StateSpec) -> bool:
-    return not is_required_state_field(field)
+    if is_required_state_field(field):
+        return False
+    policy = _state_field_edit_policy_or_none(field)
+    if policy is None:
+        return True
+    override = _policy_bool(policy.canEditRequired)
+    if override is None:
+        return True
+    return override
 
 
 def can_edit_state_field_value_schema(field: F8StateSpec) -> bool:
-    return not is_required_state_field(field)
+    policy = _state_field_edit_policy_or_none(field)
+    if policy is None:
+        return True
+    override = _policy_bool(policy.canEditValueSchema)
+    if override is None:
+        return True
+    return override
 
 
 def can_edit_state_field_structure(field: F8StateSpec) -> bool:
@@ -106,5 +150,4 @@ def can_edit_state_field_structure(field: F8StateSpec) -> bool:
         can_rename_state_field(field)
         and can_edit_state_field_access(field)
         and can_edit_state_field_required(field)
-        and can_edit_state_field_value_schema(field)
     )
