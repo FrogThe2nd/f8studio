@@ -34,6 +34,12 @@ def _rect_at_pos(item: QtWidgets.QGraphicsItem, pos: list[float] | tuple[float, 
     return QtCore.QRectF(float(pos[0]), float(pos[1]), brect.width(), brect.height())
 
 
+def _item_id(item: Any) -> str:
+    if item is None:
+        return ""
+    return str(item.id or "").strip()
+
+
 class GraphContainerBindingMixin:
     @staticmethod
     def _is_operator_node(node: Any) -> bool:
@@ -162,6 +168,62 @@ class GraphContainerBindingMixin:
         except (AttributeError, RuntimeError, TypeError, ValueError):
             pass
 
+    def _operator_current_container(self, operator: _BASE_OPERATOR_CLS_) -> _BASE_CONTAINER_CLS_ | None:
+        container_ref: Any | None = operator.view._container_item
+
+        if container_ref is not None:
+            if self._is_container_node(container_ref):
+                return container_ref
+            container_id = _item_id(container_ref)
+            if container_id:
+                container = self._container_by_id(container_id)
+                if container is not None:
+                    return container
+
+        try:
+            service_id = str(operator.svcId or "").strip()
+        except (AttributeError, RuntimeError, TypeError):
+            service_id = ""
+        return self._container_by_id(service_id)
+
+    def _selected_operators_for_same_container_drop(
+        self,
+        *,
+        anchor_operator: _BASE_OPERATOR_CLS_,
+        target_container: _BASE_CONTAINER_CLS_,
+    ) -> list[_BASE_OPERATOR_CLS_]:
+        target_container_id = _item_id(target_container)
+        if not target_container_id:
+            return [anchor_operator]
+
+        candidates: list[Any] = [anchor_operator]
+        candidates.extend(list(self.selected_nodes() or []))
+
+        operators: list[_BASE_OPERATOR_CLS_] = []
+        seen_ids: set[str] = set()
+        target_service_class = str(target_container.spec.serviceClass or "")
+        for candidate in candidates:
+            if candidate is None or not self._is_operator_node(candidate):
+                continue
+            candidate_operator = candidate
+            candidate_id = _item_id(candidate_operator)
+            if not candidate_id or candidate_id in seen_ids:
+                continue
+            service_class = str(candidate_operator.spec.serviceClass or "")
+            if service_class == _CANVAS_SERVICE_CLASS_:
+                continue
+            if service_class != target_service_class:
+                continue
+            candidate_container = self._container_at_node(candidate_operator)
+            if _item_id(candidate_container) != target_container_id:
+                continue
+            operators.append(candidate_operator)
+            seen_ids.add(candidate_id)
+
+        if anchor_operator not in operators:
+            operators.insert(0, anchor_operator)
+        return operators
+
     def _unbind_operator_from_container(
         self,
         *,
@@ -258,18 +320,8 @@ class GraphContainerBindingMixin:
         old_container = self._container_by_id(start_container_id)
         target_container = self._container_at_node(operator)
 
-        old_container_id = ""
-        if old_container is not None:
-            try:
-                old_container_id = str(old_container.id or "").strip()
-            except (AttributeError, RuntimeError, TypeError):
-                old_container_id = ""
-        target_container_id = ""
-        if target_container is not None:
-            try:
-                target_container_id = str(target_container.id or "").strip()
-            except (AttributeError, RuntimeError, TypeError):
-                target_container_id = ""
+        old_container_id = _item_id(old_container)
+        target_container_id = _item_id(target_container)
 
         if old_container_id and old_container_id == target_container_id:
             return True, ""
@@ -298,6 +350,11 @@ class GraphContainerBindingMixin:
             show_warning(self._notification_parent(), "Move Operator Failed", msg)
             return False, msg
 
+        operators_to_move = self._selected_operators_for_same_container_drop(
+            anchor_operator=operator,
+            target_container=target_container,
+        )
+
         self._unbind_operator_from_container(operator=operator, container=old_container)
         if not self._bind_operator_to_container(operator, target_container):
             self._set_node_scene_pos(operator, x=sx, y=sy)
@@ -307,7 +364,26 @@ class GraphContainerBindingMixin:
             show_warning(self._notification_parent(), "Move Operator Failed", msg)
             return False, msg
 
-        dropped_count = self._disconnect_invalid_connections_for_operator(operator)
+        bound_operators: list[_BASE_OPERATOR_CLS_] = [operator]
+        for peer_operator in operators_to_move:
+            if peer_operator is operator:
+                continue
+            peer_old_container = self._operator_current_container(peer_operator)
+            self._unbind_operator_from_container(operator=peer_operator, container=peer_old_container)
+            if self._bind_operator_to_container(peer_operator, target_container):
+                bound_operators.append(peer_operator)
+                continue
+            if peer_old_container is not None:
+                self._bind_operator_to_container(peer_operator, peer_old_container)
+            logger.warning(
+                "Failed to bind selected operator %s to target service container %s.",
+                _item_id(peer_operator),
+                target_container_id,
+            )
+
+        dropped_count = 0
+        for moved_operator in bound_operators:
+            dropped_count += self._disconnect_invalid_connections_for_operator(moved_operator)
         if dropped_count > 0:
             show_warning(
                 self._notification_parent(),
