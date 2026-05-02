@@ -148,8 +148,9 @@ def test_monitor_refresh_queue_coalesces_and_immediate_refresh_wins(monkeypatch)
 
     widget.queue_monitor_refresh()
     widget.queue_monitor_refresh()
-    QtWidgets.QApplication.processEvents()
     assert bridge.status_requests == []
+    assert widget._monitor_refresh_queued is True
+    assert widget._monitor_refresh_timer.isActive() is True
 
     QtTest.QTest.qWait(30)
     QtWidgets.QApplication.processEvents()
@@ -157,7 +158,10 @@ def test_monitor_refresh_queue_coalesces_and_immediate_refresh_wins(monkeypatch)
 
     bridge.status_requests.clear()
     widget.queue_monitor_refresh()
+    assert widget._monitor_refresh_queued is True
     widget.queue_refresh()
+    assert widget._monitor_refresh_queued is False
+    assert widget._monitor_refresh_timer.isActive() is False
     QtWidgets.QApplication.processEvents()
     assert bridge.status_requests == ["svcA"]
     QtTest.QTest.qWait(30)

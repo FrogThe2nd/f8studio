@@ -34,7 +34,14 @@ class CppCiBootstrapTest(unittest.TestCase):
     def test_bootstrap_accepts_conan_user_preset_include_path(self) -> None:
         generated_preset_path = self.root / "build" / "generators" / "CMakePresets.json"
 
-        def _fake_run(command: list[str]) -> None:
+        def _fake_run(
+            command: list[str],
+            *,
+            use_pixi_cpp_paths: bool = False,
+            use_host_pkg_config: bool = False,
+        ) -> None:
+            self.assertFalse(use_pixi_cpp_paths)
+            self.assertTrue(use_host_pkg_config)
             if command[:2] != ["conan", "install"]:
                 return
             generated_preset_path.parent.mkdir(parents=True, exist_ok=True)
@@ -96,7 +103,14 @@ class CppCiConfigureTest(unittest.TestCase):
         )
         recorded_commands: list[list[str]] = []
 
-        def _record_run(command: list[str]) -> None:
+        def _record_run(
+            command: list[str],
+            *,
+            use_pixi_cpp_paths: bool = False,
+            use_host_pkg_config: bool = False,
+        ) -> None:
+            self.assertTrue(use_pixi_cpp_paths)
+            self.assertFalse(use_host_pkg_config)
             recorded_commands.append(command)
 
         with (

@@ -2646,6 +2646,9 @@ def test_component_catalog_ignores_deleted_selection_wrapper() -> None:
         def currentItem(self) -> None:
             raise RuntimeError("Internal C++ object (PySide6.QtWidgets.QListWidget) already deleted.")
 
+        def blockSignals(self, _blocked: bool) -> None:
+            raise RuntimeError("Internal C++ object (PySide6.QtWidgets.QListWidget) already deleted.")
+
     dialog._list = _DeletedListWidget()  # type: ignore[assignment]
 
     assert dialog._selected_entry() is None
