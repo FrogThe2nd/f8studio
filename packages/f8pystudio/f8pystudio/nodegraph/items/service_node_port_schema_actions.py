@@ -565,7 +565,7 @@ def open_state_field_editor_dialog(node_item: Any, *, field_name: str) -> None:
             else None
         ),
         ui_only=ui_only,
-        lock_identity_fields=bool(editable),
+        lock_identity_fields=False,
         read_only=read_only,
     )
     if dlg.exec_() != QtWidgets.QDialog.Accepted:

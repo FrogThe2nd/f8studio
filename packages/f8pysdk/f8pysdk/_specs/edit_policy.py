@@ -4,10 +4,18 @@ from typing import Literal
 
 import msgspec
 
-from ..generated import F8CollectionEditPolicy, F8OperatorSpec, F8ServiceSpec, F8SpecEditPolicy
+from ..generated import (
+    F8CollectionEditPolicy,
+    F8OperatorSpec,
+    F8ServiceSpec,
+    F8SpecEditPolicy,
+    F8StateSpec,
+)
 
 
-EditableCollectionName = Literal["stateFields", "commands", "dataInPorts", "dataOutPorts", "execInPorts", "execOutPorts"]
+EditableCollectionName = Literal[
+    "stateFields", "commands", "dataInPorts", "dataOutPorts", "execInPorts", "execOutPorts"
+]
 SpecLike = F8ServiceSpec | F8OperatorSpec
 
 
@@ -71,3 +79,32 @@ def can_delete(spec: SpecLike, collection: EditableCollectionName) -> bool:
 
 def can_edit_existing(spec: SpecLike, collection: EditableCollectionName) -> bool:
     return bool(collection_edit_policy(spec, collection).canEditExisting)
+
+
+def is_required_state_field(field: F8StateSpec) -> bool:
+    return bool(field.required)
+
+
+def can_rename_state_field(field: F8StateSpec) -> bool:
+    return not is_required_state_field(field)
+
+
+def can_edit_state_field_access(field: F8StateSpec) -> bool:
+    return not is_required_state_field(field)
+
+
+def can_edit_state_field_required(field: F8StateSpec) -> bool:
+    return not is_required_state_field(field)
+
+
+def can_edit_state_field_value_schema(field: F8StateSpec) -> bool:
+    return not is_required_state_field(field)
+
+
+def can_edit_state_field_structure(field: F8StateSpec) -> bool:
+    return bool(
+        can_rename_state_field(field)
+        and can_edit_state_field_access(field)
+        and can_edit_state_field_required(field)
+        and can_edit_state_field_value_schema(field)
+    )

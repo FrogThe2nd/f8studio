@@ -3,7 +3,15 @@ from __future__ import annotations
 from typing import Any, Callable
 
 import msgspec
-from f8pysdk.specs import F8DataPortSpec, F8StateAccess, F8StateSpec
+from f8pysdk.specs import (
+    F8DataPortSpec,
+    F8StateAccess,
+    F8StateSpec,
+    can_edit_state_field_access,
+    can_edit_state_field_required,
+    can_edit_state_field_value_schema,
+    can_rename_state_field,
+)
 from f8pysdk.codec import copy_model
 from qtpy import QtCore, QtGui, QtWidgets
 
@@ -179,10 +187,7 @@ class _F8GlobalHotkeyEdit(QtWidgets.QWidget):
         enabled = self.isEnabled()
         self._clear_btn.setEnabled(bool(enabled))
         self._commit_btn.setEnabled(
-            bool(enabled)
-            and self._capture_active
-            and bool(self.value())
-            and self.is_submittable()
+            bool(enabled) and self._capture_active and bool(self.value()) and self.is_submittable()
         )
 
     def _commit_current_value(self) -> None:
@@ -388,6 +393,20 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
         self._ui_only = bool(ui_only)
         self._lock_identity_fields = bool(lock_identity_fields)
         self._read_only = bool(read_only)
+        self._original_name = str(field.name or "")
+        try:
+            self._original_access = F8StateAccess(field.access)
+        except (TypeError, ValueError):
+            self._original_access = F8StateAccess.rw
+        self._original_required = bool(field.required)
+        self._original_schema = self._schema
+        self._redact_on_publish = field.redactOnPublish
+        self._editor_assist = field.editorAssist
+        structure_locked = bool(self._ui_only or self._lock_identity_fields)
+        self._can_rename = bool(can_rename_state_field(field) and not structure_locked)
+        self._can_edit_access = bool(can_edit_state_field_access(field) and not structure_locked)
+        self._can_edit_required = bool(can_edit_state_field_required(field) and not structure_locked)
+        self._can_edit_value_schema = bool(can_edit_state_field_value_schema(field) and not structure_locked)
 
         self._name = QtWidgets.QLineEdit(str(field.name or ""))
         self._name.setClearButtonEnabled(True)
@@ -424,7 +443,10 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
         self._schema_summary.setStyleSheet(label_qss(color=studio_dark_theme().palette.text_muted))
         self._refresh_schema_summary()
 
-        self._schema_btn = QtWidgets.QPushButton("View Schema..." if self._read_only else "Edit Schema...", self)
+        self._schema_btn = QtWidgets.QPushButton(
+            "View Schema..." if self._schema_is_read_only() else "Edit Schema...",
+            self,
+        )
         self._schema_btn.clicked.connect(self._edit_schema)
 
         form = QtWidgets.QFormLayout()
@@ -450,10 +472,18 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
         layout.addLayout(form)
         layout.addWidget(self._buttons)
 
-        if self._ui_only or self._lock_identity_fields:
-            for w in (self._name, self._access, self._required, self._schema_summary):
-                w.setEnabled(False)
-            self._name.setToolTip("Locked by edit policy.")
+        if not self._can_rename:
+            self._name.setEnabled(False)
+            self._name.setToolTip("State field structure is locked.")
+        if not self._can_edit_access:
+            self._access.setEnabled(False)
+            self._access.setToolTip("State field structure is locked.")
+        if not self._can_edit_required:
+            self._required.setEnabled(False)
+            self._required.setToolTip("State field structure is locked.")
+        if not self._can_edit_value_schema:
+            self._schema_summary.setEnabled(False)
+            self._schema_btn.setToolTip("State field structure is locked.")
         if self._read_only:
             for w in (
                 self._name,
@@ -476,13 +506,17 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
         t = _schema_type(self._schema)
         self._schema_summary.setText(t or "unknown")
 
+    def _schema_is_read_only(self) -> bool:
+        return bool(self._ui_only or self._read_only or self._lock_identity_fields or not self._can_edit_value_schema)
+
     def _edit_schema(self) -> None:
+        schema_read_only = self._schema_is_read_only()
         dialog_type = SchemaBuilderDialog
         dlg = dialog_type(
             self,
-            title="View valueSchema" if self._read_only else "Edit valueSchema",
+            title="View valueSchema" if schema_read_only else "Edit valueSchema",
             schema=self._schema,
-            read_only=bool(self._ui_only or self._read_only),
+            read_only=schema_read_only,
         )
         if dlg.exec_() != QtWidgets.QDialog.Accepted:
             return
@@ -519,13 +553,17 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
         ok_btn.setEnabled(self._global_hotkey.is_submittable())
 
     def field(self) -> F8StateSpec:
-        name = str(self._name.text() or "").strip()
-        access_s = str(self._access.currentText() or "rw")
-        try:
-            access = F8StateAccess(access_s)
-        except Exception:
-            access = F8StateAccess.rw
-        required = bool(self._required.isChecked())
+        name = str(self._name.text() or "").strip() if self._can_rename else self._original_name
+        if self._can_edit_access:
+            access_s = str(self._access.currentText() or "rw")
+            try:
+                access = F8StateAccess(access_s)
+            except (TypeError, ValueError):
+                access = F8StateAccess.rw
+        else:
+            access = self._original_access
+        required = bool(self._required.isChecked()) if self._can_edit_required else self._original_required
+        schema = self._schema if self._can_edit_value_schema else self._original_schema
         show_on_node = bool(self._show_on_node.isChecked())
         label = str(self._label.text() or "").strip() or msgspec.UNSET
         desc = str(self._desc.toPlainText() or "").strip() or msgspec.UNSET
@@ -534,11 +572,13 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
             name=name,
             label=label,
             description=desc,
-            valueSchema=self._schema,
+            valueSchema=schema,
             access=access,
             required=required,
             uiControl=ui_control,
             showOnNode=show_on_node,
+            redactOnPublish=self._redact_on_publish,
+            editorAssist=self._editor_assist,
         )
 
     def global_hotkey(self) -> str:
@@ -570,5 +610,6 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
     def done(self, result: int) -> None:  # type: ignore[override]
         self._global_hotkey.release_capture()
         super().done(result)
+
 
 __all__ = ["_F8EditDataPortDialog", "_F8EditStateFieldDialog"]

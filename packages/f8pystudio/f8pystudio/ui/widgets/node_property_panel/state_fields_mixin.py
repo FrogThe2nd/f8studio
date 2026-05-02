@@ -106,13 +106,11 @@ class NodePropertyStateFieldsMixin:
             field=current,
             global_hotkey=_state_field_global_hotkey(node, name),
             current_binding_id=f"{str(node.id or '').strip()}:{name}",
-            hotkey_conflict_lookup=(
-                hotkey_controller.entries_for_hotkey if hotkey_controller is not None else None
-            ),
+            hotkey_conflict_lookup=(hotkey_controller.entries_for_hotkey if hotkey_controller is not None else None),
             hotkey_capture_started=(hotkey_controller.suspend_hotkeys if hotkey_controller is not None else None),
             hotkey_capture_finished=(hotkey_controller.resume_hotkeys if hotkey_controller is not None else None),
             ui_only=ui_only,
-            lock_identity_fields=bool(can_edit_existing),
+            lock_identity_fields=False,
             read_only=read_only,
         )
         if dlg.exec_() != QtWidgets.QDialog.DialogCode.Accepted:
@@ -298,7 +296,9 @@ class NodePropertyStateFieldsMixin:
         spec = get_node_spec(node)
         base = _find_base_state_field(spec, name=name) if spec is not None else None
         if base is None:
-            base = F8StateSpec(name=name, valueSchema=schema_from_json_obj_loose({"type": "any"}), access=F8StateAccess.rw)
+            base = F8StateSpec(
+                name=name, valueSchema=schema_from_json_obj_loose({"type": "any"}), access=F8StateAccess.rw
+            )
         edited = copy_model(base, deep=True)
         edited.showOnNode = bool(show_on_node)
         host._apply_state_field_ui_override(name, edited)

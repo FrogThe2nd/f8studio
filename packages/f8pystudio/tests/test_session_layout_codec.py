@@ -2,9 +2,15 @@ from __future__ import annotations
 
 from f8pysdk.codec import dump_json
 from copy import deepcopy
+from types import SimpleNamespace
 
-from f8pysdk.specs import F8Command, F8DataPortSpec, F8ServiceSpec
-from f8pysdk.specs import any_schema, number_schema
+from f8pysdk.specs import F8Command, F8DataPortSpec, F8ServiceSpec, F8SpecEditPolicy, F8StateAccess, F8StateSpec
+from f8pysdk.specs import (
+    any_schema,
+    editable_collection_edit_policy,
+    number_schema,
+    string_schema,
+)
 from f8pystudio.nodegraph.layers import F8LayerDef
 from f8pystudio.nodegraph.session_layout_codec import SessionLayoutCodecMixin
 from NodeGraphQt import NodeGraph
@@ -74,6 +80,52 @@ def test_strip_unknown_session_custom_properties_keeps_state_fields_only() -> No
     out = SessionLayoutCodecMixin._strip_unknown_session_custom_properties(deepcopy(layout))
 
     assert out["nodes"]["svc.a"]["custom"] == {"gain": 0.5, "enabled": True}
+
+
+def test_merge_session_specs_respects_required_state_value_schema_lock() -> None:
+    class _Node:
+        SPEC_TEMPLATE = F8ServiceSpec(
+            serviceClass="f8.locked",
+            label="Locked",
+            editPolicy=F8SpecEditPolicy(stateFields=editable_collection_edit_policy()),
+            stateFields=[
+                F8StateSpec(
+                    name="builtin",
+                    valueSchema=string_schema(),
+                    access=F8StateAccess.ro,
+                    required=True,
+                )
+            ],
+        )
+
+    codec = SessionLayoutCodecMixin.__new__(SessionLayoutCodecMixin)
+    codec._node_factory = SimpleNamespace(nodes={"svc.locked": _Node})
+    session_spec = F8ServiceSpec(
+        serviceClass="f8.locked",
+        label="Locked",
+        stateFields=[
+            F8StateSpec(
+                name="builtin",
+                valueSchema=number_schema(),
+                access=F8StateAccess.ro,
+            )
+        ],
+    )
+    layout = {
+        "nodes": {
+            "svc1": {
+                "type_": "svc.locked",
+                "f8_spec": dump_json(session_spec, mode="json"),
+            }
+        }
+    }
+
+    out = codec._merge_session_specs(deepcopy(layout))
+    merged_spec = out["nodes"]["svc1"]["f8_spec"]
+
+    assert merged_spec["stateFields"][0]["valueSchema"]["type"] == "string"
+    assert merged_spec["stateFields"][0]["required"] is True
+    assert "editPolicy" not in merged_spec["stateFields"][0]
 
 
 def test_strip_invalid_connections_drops_nonexistent_ports() -> None:
@@ -154,9 +206,7 @@ def test_serialize_session_includes_f8_layers_top_level() -> None:
 def test_serialize_session_preserves_base_default_visible_false() -> None:
     class _Graph(SessionLayoutCodecMixin, NodeGraph):
         def session_layer_defs(self) -> tuple[F8LayerDef, ...]:
-            return (
-                F8LayerDef(id="base", label="Base", default_visible=False, is_base=True),
-            )
+            return (F8LayerDef(id="base", label="Base", default_visible=False, is_base=True),)
 
     graph = _Graph.__new__(_Graph)
     raw_layout = {"nodes": {}, "connections": []}

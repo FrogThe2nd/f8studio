@@ -252,7 +252,12 @@ class SessionLayoutCodecMixin:
                 continue
             out_ref = c.get("out")
             in_ref = c.get("in")
-            if not (isinstance(out_ref, (list, tuple)) and len(out_ref) == 2 and isinstance(in_ref, (list, tuple)) and len(in_ref) == 2):
+            if not (
+                isinstance(out_ref, (list, tuple))
+                and len(out_ref) == 2
+                and isinstance(in_ref, (list, tuple))
+                and len(in_ref) == 2
+            ):
                 dropped += 1
                 continue
             out_nid, out_port = str(out_ref[0]), str(out_ref[1])
@@ -340,11 +345,16 @@ class SessionLayoutCodecMixin:
                 return ""
             return str(entry.get("name") or "").strip()
 
+        def _state_field_can_edit_value_schema(entry: dict[str, Any]) -> bool:
+            return not bool(entry.get("required"))
+
         def _merge_state_field_item(base: dict[str, Any], session: dict[str, Any]) -> dict[str, Any]:
             merged_item = dict(base)
-            for key in ("label", "description", "showOnNode", "uiControl", "valueSchema"):
+            for key in ("label", "description", "showOnNode", "uiControl"):
                 if key in session:
                     merged_item[key] = session.get(key)
+            if _state_field_can_edit_value_schema(base) and "valueSchema" in session:
+                merged_item["valueSchema"] = session.get("valueSchema")
             return merged_item
 
         def _merge_data_port_item(base: dict[str, Any], session: dict[str, Any]) -> dict[str, Any]:
@@ -764,7 +774,9 @@ class SessionLayoutCodecMixin:
             node_data["f8_spec"] = missing_spec
             restored += 1
         if restored:
-            logger.warning("Restored %s placeholder node(s) back to original type/spec from session metadata.", restored)
+            logger.warning(
+                "Restored %s placeholder node(s) back to original type/spec from session metadata.", restored
+            )
         return layout_data
 
     @staticmethod

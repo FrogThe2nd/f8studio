@@ -151,6 +151,19 @@ def test_edit_schema_dialogs_pass_read_only_when_ui_only(monkeypatch) -> None:
     state_field._edit_schema()
     assert _FakeSchemaDialog.last_read_only is True
 
+    required_state_field = npw._F8EditStateFieldDialog(
+        None,
+        title="State",
+        field=F8StateSpec(
+            name="x",
+            valueSchema=schema_from_json_obj({"type": "number"}),
+            access=F8StateAccess.rw,
+            required=True,
+        ),
+    )
+    required_state_field._edit_schema()
+    assert _FakeSchemaDialog.last_read_only is True
+
     cmd_param = npw._F8EditCommandParamDialog(
         None,
         title="Param",
@@ -201,7 +214,9 @@ def test_open_state_field_editor_allows_missing_locked_read_only_dialog(monkeypa
         serviceClass="f8.test",
         label="Test",
         editPolicy=F8SpecEditPolicy(stateFields=editable_collection_edit_policy()),
-        stateFields=[F8StateSpec(name="x", valueSchema=schema_from_json_obj({"type": "number"}), access=F8StateAccess.rw)],
+        stateFields=[
+            F8StateSpec(name="x", valueSchema=schema_from_json_obj({"type": "number"}), access=F8StateAccess.rw)
+        ],
     )
     node = _FakeStateNode(spec, missing_locked=True)
 

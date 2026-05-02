@@ -369,7 +369,7 @@ components:
         required:
           type: boolean
           default: false
-          description: If true, this state is protected and cannot be deleted from editable state field lists.
+          description: If true, this state is protected and cannot be deleted or structurally edited from editable state field lists.
         uiControl:
           type: string
           description: Optional UI hint DSL (e.g., slider, code[python], wrapline[json], select[availableItems], multiselect[modelClasses], dial[noloop]).

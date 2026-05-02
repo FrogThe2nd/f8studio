@@ -13,7 +13,7 @@ from f8pysdk.specs import (
     F8StateSpec,
     editable_collection_edit_policy,
 )
-from f8pysdk.specs import string_schema
+from f8pysdk.specs import number_schema, string_schema
 from f8pystudio.ui.widgets import node_property_panel as npw
 from f8pystudio.ui.widgets.node_property_panel import _F8SpecPortEditor
 from f8pystudio.ui.widgets.node_property_panel import ports as property_panel_ports
@@ -205,7 +205,10 @@ def test_state_field_reorder_persists_to_ui_overrides_without_mutating_spec_orde
 
     npw.F8StudioNodePropEditorWidget._reorder_state_fields(widget, ["optional_state", "required_state"])
 
-    assert [str(field.name or "") for field in list(node.spec.stateFields or [])] == ["required_state", "optional_state"]
+    assert [str(field.name or "") for field in list(node.spec.stateFields or [])] == [
+        "required_state",
+        "optional_state",
+    ]
     assert node.ui_overrides() == {"listOrder": {"stateFields": ["optional_state", "required_state"]}}
 
 
@@ -241,6 +244,7 @@ def test_required_data_port_dialog_is_not_ui_only_when_editable(monkeypatch) -> 
     editor._edit_data(required_row)
 
     assert captured["ui_only"] is False
+    assert captured["lock_identity_fields"] is False
     assert captured["read_only"] is False
 
 
@@ -297,7 +301,7 @@ def test_required_state_field_dialog_is_not_ui_only_when_editable(monkeypatch) -
             lock_identity_fields: bool,
             read_only: bool,
         ):
-            del _parent, title, field
+            del _parent, title
             _ = (
                 global_hotkey,
                 current_binding_id,
@@ -337,7 +341,129 @@ def test_required_state_field_dialog_is_not_ui_only_when_editable(monkeypatch) -
     npw.F8StudioNodePropEditorWidget.open_state_field_editor(widget, "required_state")
 
     assert captured["ui_only"] is False
+    assert captured["lock_identity_fields"] is False
     assert captured["read_only"] is False
+
+
+def test_state_field_dialog_receives_required_field_without_name_special_case(monkeypatch) -> None:
+    _ensure_app()
+    captured: dict[str, bool | str] = {}
+
+    class _FakeStateDialog:
+        def __init__(
+            self,
+            _parent: Any = None,
+            *,
+            title: str,
+            field: Any,
+            global_hotkey: str = "",
+            current_binding_id: str = "",
+            hotkey_conflict_lookup: Any = None,
+            hotkey_capture_started: Any = None,
+            hotkey_capture_finished: Any = None,
+            ui_only: bool,
+            lock_identity_fields: bool,
+            read_only: bool,
+        ):
+            del _parent, title
+            _ = (
+                global_hotkey,
+                current_binding_id,
+                hotkey_conflict_lookup,
+                hotkey_capture_started,
+                hotkey_capture_finished,
+            )
+            captured["ui_only"] = bool(ui_only)
+            captured["lock_identity_fields"] = bool(lock_identity_fields)
+            captured["read_only"] = bool(read_only)
+            captured["field_name"] = str(field.name or "")
+            captured["required"] = bool(field.required)
+
+        def exec_(self) -> int:
+            return QtWidgets.QDialog.Rejected
+
+    class _FakeEditor:
+        _STATE_FIELD_DIALOG_CLS = _FakeStateDialog
+
+        def __init__(self, spec: F8ServiceSpec) -> None:
+            self._node = SimpleNamespace(
+                id="svc.test",
+                spec=spec,
+                model=SimpleNamespace(f8_sys={}),
+                effective_state_fields=lambda: list(spec.stateFields or []),
+            )
+
+    spec = _make_spec()
+    spec.stateFields = [
+        *list(spec.stateFields or []),
+        F8StateSpec(
+            name="protected_state",
+            valueSchema=string_schema(),
+            access=F8StateAccess.ro,
+            required=True,
+        ),
+    ]
+    widget = _FakeEditor(spec)
+    npw.F8StudioNodePropEditorWidget.open_state_field_editor(widget, "protected_state")
+
+    assert captured["ui_only"] is False
+    assert captured["lock_identity_fields"] is False
+    assert captured["read_only"] is False
+    assert captured["field_name"] == "protected_state"
+    assert captured["required"] is True
+
+
+def test_required_state_field_dialog_locks_structure() -> None:
+    _ensure_app()
+    original_schema = string_schema()
+    field = F8StateSpec(
+        name="protected_state",
+        valueSchema=original_schema,
+        access=F8StateAccess.ro,
+        required=True,
+    )
+
+    dialog = npw._F8EditStateFieldDialog(None, title="State", field=field)
+    dialog._name.setText("renamed")
+    dialog._access.setCurrentText("rw")
+    dialog._required.setChecked(False)
+    dialog._schema = number_schema()
+    edited = dialog.field()
+
+    assert dialog._name.isEnabled() is False
+    assert dialog._access.isEnabled() is False
+    assert dialog._required.isEnabled() is False
+    assert dialog._schema_btn.text() == "View Schema..."
+    assert edited.name == "protected_state"
+    assert edited.access == F8StateAccess.ro
+    assert bool(edited.required) is True
+    assert edited.valueSchema is original_schema
+
+
+def test_optional_state_field_dialog_allows_structure_edits() -> None:
+    _ensure_app()
+    field = F8StateSpec(
+        name="editable_state",
+        valueSchema=string_schema(),
+        access=F8StateAccess.ro,
+        required=False,
+    )
+
+    dialog = npw._F8EditStateFieldDialog(None, title="State", field=field)
+    dialog._name.setText("renamed")
+    dialog._access.setCurrentText("rw")
+    dialog._required.setChecked(True)
+    dialog._schema = number_schema()
+    edited = dialog.field()
+
+    assert dialog._name.isEnabled() is True
+    assert dialog._access.isEnabled() is True
+    assert dialog._required.isEnabled() is True
+    assert dialog._schema_btn.text() == "Edit Schema..."
+    assert edited.name == "renamed"
+    assert edited.access == F8StateAccess.rw
+    assert bool(edited.required) is True
+    assert edited.valueSchema is dialog._schema
 
 
 def test_add_state_field_defaults_to_optional_and_hidden(monkeypatch) -> None:

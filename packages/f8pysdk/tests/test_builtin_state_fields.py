@@ -145,16 +145,20 @@ class BuiltinStateFieldTests(unittest.TestCase):
         self.assertEqual(len(active_fields), 1)
         self.assertTrue(bool(active_fields[0].get("required")))
         self.assertFalse(bool(active_fields[0].get("showOnNode")))
+        self.assertNotIn("editPolicy", active_fields[0])
         self.assertEqual([x["name"] for x in operator_fields], ["threshold", "svcId", "operatorId"])
         svc_id_fields = [x for x in service_fields if str(x.get("name")) == "svcId"]
         self.assertEqual(len(svc_id_fields), 1)
         self.assertTrue(bool(svc_id_fields[0].get("required")))
+        self.assertNotIn("editPolicy", svc_id_fields[0])
         operator_svc_id_fields = [x for x in operator_fields if str(x.get("name")) == "svcId"]
         self.assertEqual(len(operator_svc_id_fields), 1)
         self.assertTrue(bool(operator_svc_id_fields[0].get("required")))
+        self.assertNotIn("editPolicy", operator_svc_id_fields[0])
         operator_id_fields = [x for x in operator_fields if str(x.get("name")) == "operatorId"]
         self.assertEqual(len(operator_id_fields), 1)
         self.assertTrue(bool(operator_id_fields[0].get("required")))
+        self.assertNotIn("editPolicy", operator_id_fields[0])
         service_data_ports = out["service"]["dataOutPorts"]
         self.assertTrue(any(str(x.get("name")) == MONITOR_PORT_NAME for x in service_data_ports))
         self.assertTrue(any(str(x.get("name")) == "telemetry" for x in service_data_ports))
@@ -169,8 +173,10 @@ class LifecycleBootstrapTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         with patch("f8pysdk.service_bus.workflow.lifecycle._ensure_micro_endpoints_started") as ensure_micro:
+
             async def _noop(_bus: object) -> None:
                 return None
+
             ensure_micro.side_effect = _noop
             await bus.start()
         state = await bus.get_state("svcA", "active")
@@ -182,8 +188,10 @@ class LifecycleBootstrapTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         with patch("f8pysdk.service_bus.workflow.lifecycle._ensure_micro_endpoints_started") as ensure_micro:
+
             async def _noop(_bus: object) -> None:
                 return None
+
             ensure_micro.side_effect = _noop
             await bus.start()
         key = kv_key_node_state(node_id="svcA", field="active")
