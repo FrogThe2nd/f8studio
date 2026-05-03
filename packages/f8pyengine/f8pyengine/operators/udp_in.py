@@ -149,7 +149,7 @@ class UdpInRuntimeNode(OperatorNode, EntrypointNode):
         self._packet_ctx_order: deque[str] = deque()
         self._packet_snapshot_limit = _EXEC_PACKET_CACHE_MIN
         self._entrypoint_ctx: EntrypointContext | None = None
-        self._pending_exec_id: str | int | None = None
+        self._pending_exec_ids: deque[str | int] = deque()
         self._emit_wakeup = asyncio.Event()
         self._emit_task: asyncio.Task[None] | None = None
         self._emit_seq = 0
@@ -480,7 +480,9 @@ class UdpInRuntimeNode(OperatorNode, EntrypointNode):
     def _request_exec_emit(self, *, exec_id: str | int) -> None:
         if self._entrypoint_ctx is None:
             return
-        self._pending_exec_id = exec_id
+        self._pending_exec_ids.append(exec_id)
+        while len(self._pending_exec_ids) > self._packet_snapshot_limit:
+            self._pending_exec_ids.popleft()
         self._emit_wakeup.set()
         task = self._emit_task
         if task is not None and not task.done():
@@ -499,17 +501,15 @@ class UdpInRuntimeNode(OperatorNode, EntrypointNode):
             while True:
                 await self._emit_wakeup.wait()
                 self._emit_wakeup.clear()
-                exec_id = self._pending_exec_id
-                self._pending_exec_id = None
-                if exec_id is None:
-                    continue
-                ctx = self._entrypoint_ctx
-                if ctx is None:
-                    continue
-                try:
-                    await ctx.emit_exec("packet", exec_id=exec_id)
-                except Exception as exc:
-                    logger.exception("[%s:udp_in] emit exec failed", self.node_id, exc_info=exc)
+                while self._pending_exec_ids:
+                    exec_id = self._pending_exec_ids.popleft()
+                    ctx = self._entrypoint_ctx
+                    if ctx is None:
+                        continue
+                    try:
+                        await ctx.emit_exec("packet", exec_id=exec_id)
+                    except Exception as exc:
+                        logger.exception("[%s:udp_in] emit exec failed", self.node_id, exc_info=exc)
         except asyncio.CancelledError:
             raise
         finally:
@@ -518,7 +518,7 @@ class UdpInRuntimeNode(OperatorNode, EntrypointNode):
     async def _cancel_emit_task(self) -> None:
         task = self._emit_task
         self._emit_task = None
-        self._pending_exec_id = None
+        self._pending_exec_ids.clear()
         self._emit_wakeup.clear()
         if task is None:
             return

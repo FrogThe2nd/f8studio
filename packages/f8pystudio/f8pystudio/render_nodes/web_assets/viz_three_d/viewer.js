@@ -37,6 +37,7 @@
     personRenderCacheByName: new Map(),
     axisTreeSignature: '',
     axisTreeExpandedModels: new Set(),
+    axisTreeCollapsedModels: new Set(),
     axisTreeDisplayedNodeKeys: [],
     axisTreeDisplayedModelNames: [],
   };
@@ -391,6 +392,20 @@
     return bounds;
   }
 
+  function isNearWorldOrigin(p) {
+    return Math.abs(p.x) <= 1e-6 && Math.abs(p.y) <= 1e-6 && Math.abs(p.z) <= 1e-6;
+  }
+
+  function isRootOriginNode(nodeName, pos) {
+    if (!pos || !isNearWorldOrigin(pos)) return false;
+    const text = String(nodeName || '').trim().toLowerCase();
+    if (!text) return false;
+    const parts = text.split(/[\/\\|:]+/).filter(Boolean);
+    const leaf = parts.length > 0 ? parts[parts.length - 1] : text;
+    const normalized = leaf.replace(/[\s._-]+/g, '');
+    return normalized === 'root' || normalized === 'origin' || normalized === 'rootorigin';
+  }
+
   function clearGeometryRoot() {
     while (peopleRoot.children.length > 0) {
       const child = peopleRoot.children[0];
@@ -550,23 +565,35 @@
 
       if (totalBones <= 0) continue;
 
-      const details = document.createElement('details');
-      details.className = 'axis-model';
-      const openByUser = state.axisTreeExpandedModels.has(personName);
-      details.open = (!stableMode) || openByUser || !!searchText;
-      details.addEventListener('toggle', function () {
-        if (details.open) {
+      const expandedByUser = state.axisTreeExpandedModels.has(personName);
+      const collapsedByUser = state.axisTreeCollapsedModels.has(personName);
+      const modelOpen = !!searchText || (stableMode ? expandedByUser : !collapsedByUser);
+      const modelGroup = document.createElement('div');
+      modelGroup.className = modelOpen ? 'axis-model open' : 'axis-model';
+
+      const modelRow = document.createElement('div');
+      modelRow.className = 'axis-item axis-summary';
+      modelRow.addEventListener('click', function () {
+        const nextOpen = !modelOpen;
+        if (nextOpen) {
           state.axisTreeExpandedModels.add(personName);
+          state.axisTreeCollapsedModels.delete(personName);
         } else {
           state.axisTreeExpandedModels.delete(personName);
+          state.axisTreeCollapsedModels.add(personName);
         }
+        if (state.payload) rebuildAxisTree(state.payload, true);
       });
 
-      const modelRow = document.createElement('summary');
-      modelRow.className = 'axis-item';
       const modelCk = document.createElement('input');
       modelCk.type = 'checkbox';
       modelCk.checked = isModelAxisEnabled(personName);
+      modelCk.addEventListener('pointerdown', function (event) {
+        event.stopPropagation();
+      });
+      modelCk.addEventListener('mousedown', function (event) {
+        event.stopPropagation();
+      });
       modelCk.addEventListener('click', function (event) {
         event.stopPropagation();
       });
@@ -581,13 +608,13 @@
       modelText.textContent = personDisplayName + ' (' + String(selectedBones) + '/' + String(totalBones) + ')';
       modelRow.appendChild(modelCk);
       modelRow.appendChild(modelText);
-      details.appendChild(modelRow);
+      modelGroup.appendChild(modelRow);
 
       const nodeContainer = document.createElement('div');
       nodeContainer.className = 'bone-list';
-      details.appendChild(nodeContainer);
+      modelGroup.appendChild(nodeContainer);
 
-      const shouldRenderNodes = details.open || !!searchText;
+      const shouldRenderNodes = modelOpen || !!searchText;
       if (shouldRenderNodes) {
         const maxRows = stableMode && !searchText ? 400 : 2000;
         let rowCount = 0;
@@ -616,6 +643,15 @@
           checkbox.type = 'checkbox';
           checkbox.checked = !!state.axisVisibilityByKey.get(key);
           checkbox.disabled = !isModelAxisEnabled(personName);
+          checkbox.addEventListener('pointerdown', function (event) {
+            event.stopPropagation();
+          });
+          checkbox.addEventListener('mousedown', function (event) {
+            event.stopPropagation();
+          });
+          checkbox.addEventListener('click', function (event) {
+            event.stopPropagation();
+          });
           checkbox.addEventListener('change', function () {
             setAxisEnabled(personName, nodeName, checkbox.checked);
             if (state.payload) applyPayload(state.payload);
@@ -631,7 +667,7 @@
         }
       }
 
-      axisTreeEl.appendChild(details);
+      axisTreeEl.appendChild(modelGroup);
 
     }
 
@@ -640,6 +676,12 @@
     }
     for (const key of Array.from(state.modelAxisVisibilityByName.keys())) {
       if (!nextModelKeys.has(key)) state.modelAxisVisibilityByName.delete(key);
+    }
+    for (const key of Array.from(state.axisTreeExpandedModels.values())) {
+      if (!nextModelKeys.has(key)) state.axisTreeExpandedModels.delete(key);
+    }
+    for (const key of Array.from(state.axisTreeCollapsedModels.values())) {
+      if (!nextModelKeys.has(key)) state.axisTreeCollapsedModels.delete(key);
     }
   }
 
@@ -831,6 +873,7 @@
     const stableMode = !!(performanceHints && performanceHints.largeSkeletonMode);
     const modelEnabled = isModelAxisEnabled(name);
     let bounds = null;
+    let fallbackBounds = null;
     let boxCenter = null;
     let boxSize = null;
     const activeAxisKeys = new Set();
@@ -853,8 +896,6 @@
         const maxV = new THREE.Vector3(Math.max(x0, x1), Math.max(y0, y1), Math.max(z0, z1));
         setPersonBox(cache, minV, maxV);
 
-        bounds = mergeBounds(bounds, minV);
-        bounds = mergeBounds(bounds, maxV);
         boxCenter = minV.clone().add(maxV).multiplyScalar(0.5);
         boxSize = maxV.clone().sub(minV);
       }
@@ -884,7 +925,10 @@
       if (Number.isFinite(nodeIndex)) {
         posByIndex.set(Math.trunc(nodeIndex), pos.clone());
       }
-      bounds = mergeBounds(bounds, pos);
+      fallbackBounds = mergeBounds(fallbackBounds, pos);
+      if (!isRootOriginNode(nodeName, pos)) {
+        bounds = mergeBounds(bounds, pos);
+      }
 
       if (showSelectedBoneAxes && boneVisible) {
         const nodeKey = axisKey(name, nodeName);
@@ -959,7 +1003,7 @@
 
     cleanupStalePersonAxisHelpers(cache, activeAxisKeys);
     cache.group.visible = true;
-    return bounds;
+    return bounds || fallbackBounds;
   }
 
   function payloadSignature(payload) {
@@ -1262,6 +1306,8 @@
     clearAllLabels();
     state.axisVisibilityByKey.clear();
     state.modelAxisVisibilityByName.clear();
+    state.axisTreeExpandedModels.clear();
+    state.axisTreeCollapsedModels.clear();
     state.axisTreeSignature = '';
     state.pendingPayload = null;
     if (axisTreeEl) axisTreeEl.innerHTML = '';

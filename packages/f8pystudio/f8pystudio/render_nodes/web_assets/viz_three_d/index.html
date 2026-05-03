@@ -234,8 +234,9 @@
         border-bottom: 1px solid rgba(255, 255, 255, 0.04);
       }
 
-      summary.axis-item {
+      .axis-summary {
         padding: 4px 8px;
+        font-size: var(--gui-font-size);
         font-weight: 600;
         color: #fff;
         cursor: pointer;
@@ -245,16 +246,18 @@
         gap: 6px;
       }
 
-      summary::before {
+      .axis-summary::before {
         content: '▸';
-        font-size: 9px;
+        flex: 0 0 12px;
+        font-size: 12px;
+        line-height: 1;
         color: var(--text-dim);
         display: inline-block;
-        width: 8px;
+        width: 12px;
         transition: transform 0.2s;
       }
 
-      details[open] > summary::before {
+      .axis-model.open > .axis-summary::before {
         transform: rotate(90deg);
       }
 
@@ -270,6 +273,7 @@
         display: flex;
         align-items: center;
         gap: 6px;
+        font-size: var(--gui-font-size);
         opacity: 0.8;
       }
 

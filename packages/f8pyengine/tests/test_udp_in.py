@@ -41,11 +41,15 @@ def _send_udp(*, port: int, payload: bytes) -> None:
 @dataclass
 class _FakeEntrypointContext:
     calls: list[tuple[str, str]]
+    emit_delay_s: float
 
-    def __init__(self) -> None:
+    def __init__(self, *, emit_delay_s: float = 0.0) -> None:
         self.calls = []
+        self.emit_delay_s = float(emit_delay_s)
 
     async def emit_exec(self, out_port: str, *, exec_id: str | int) -> None:
+        if self.emit_delay_s > 0:
+            await asyncio.sleep(self.emit_delay_s)
         self.calls.append((str(out_port), str(exec_id)))
 
 
@@ -268,6 +272,35 @@ class UdpInTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsInstance(latest_packet, dict)
             assert isinstance(latest_packet, dict)
             self.assertEqual(latest_packet["text"], "second-packet")
+        finally:
+            await self._teardown_runtime(node)
+
+    async def test_exec_triggers_are_fifo_when_emit_context_is_slow(self) -> None:
+        port = _free_udp_port()
+        _bus, node, _ctx = await self._setup_runtime(port=port)
+        slow_ctx = _FakeEntrypointContext(emit_delay_s=0.01)
+        await node.start_entrypoint(slow_ctx)  # type: ignore[arg-type]
+        try:
+            packet_count = 20
+            for index in range(packet_count):
+                _send_udp(port=port, payload=f"packet-{index:02d}".encode("utf-8"))
+
+            await self._wait_exec_calls(slow_ctx, at_least=packet_count, timeout_s=2.5)
+
+            exec_ids = [call[1] for call in slow_ctx.calls]
+            self.assertEqual(len(exec_ids), packet_count)
+            self.assertEqual(len(set(exec_ids)), packet_count)
+            self.assertEqual([call[0] for call in slow_ctx.calls], ["packet"] * packet_count)
+
+            first_packet = await node.compute_output("packet", ctx_id=exec_ids[0])
+            last_packet = await node.compute_output("packet", ctx_id=exec_ids[-1])
+
+            self.assertIsInstance(first_packet, dict)
+            self.assertIsInstance(last_packet, dict)
+            assert isinstance(first_packet, dict)
+            assert isinstance(last_packet, dict)
+            self.assertEqual(first_packet["text"], "packet-00")
+            self.assertEqual(last_packet["text"], "packet-19")
         finally:
             await self._teardown_runtime(node)
 
