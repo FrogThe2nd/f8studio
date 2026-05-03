@@ -21,10 +21,10 @@ class ServiceHostConfig:
     Generic push-based service host.
 
     - One process hosts exactly one service instance (service_id).
-    - `service_class` selects which runtime registry is used to build nodes.
+    - `service_class` optionally overrides `ServiceBusConfig.service_class`.
     """
 
-    service_class: str
+    service_class: str | None = None
 
 
 class ServiceHost:
@@ -39,11 +39,11 @@ class ServiceHost:
         self,
         bus: ServiceBus,
         *,
-        config: ServiceHostConfig,
+        config: ServiceHostConfig | None = None,
         registry: RuntimeNodeRegistry | None = None,
     ) -> None:
         self._bus = bus
-        self._config = config
+        self._config = config if config is not None else ServiceHostConfig()
         self._registry = registry if registry is not None else create_runtime_node_registry()
 
         self._service_node: RuntimeNode | None = None
@@ -58,9 +58,9 @@ class ServiceHost:
         """
         if self._service_node is not None:
             return
-        service_class = str(self._config.service_class or "").strip()
+        service_class = self._service_class()
         if not service_class:
-            raise ValueError("ServiceHostConfig.service_class must be non-empty")
+            raise ValueError("service_class must be non-empty")
         node_id = str(self._bus.service_id).strip()
         try:
             node = self._registry.create_service_node(service_class=service_class, node_id=node_id, initial_state={})
@@ -81,7 +81,7 @@ class ServiceHost:
         """
         if self._service_node is None:
             await self.start()
-        service_class = str(self._config.service_class or "").strip()
+        service_class = self._service_class()
 
         want_operator_nodes: list[F8RuntimeNode] = []
         service_snapshot: F8RuntimeNode | None = None
@@ -165,6 +165,12 @@ class ServiceHost:
 
     async def validate_rungraph(self, graph: F8RuntimeGraph) -> None:
         _ = graph
+
+    def _service_class(self) -> str:
+        configured_service_class = str(self._config.service_class or "").strip()
+        if configured_service_class:
+            return configured_service_class
+        return str(self._bus.service_class or "").strip()
 
     @staticmethod
     def _needs_recreate(node: OperatorNode, snapshot: F8RuntimeNode) -> bool:

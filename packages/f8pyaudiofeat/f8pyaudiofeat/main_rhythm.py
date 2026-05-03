@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from f8pysdk.app import ServiceApp, ServiceAppDefaults
+from f8pysdk.bus import ServiceBusConfig
 from f8pysdk.registry import Registry
 
 from .constants import RHYTHM_SERVICE_CLASS
@@ -13,7 +14,7 @@ def build_app() -> ServiceApp:
     return ServiceApp(
         service_class=RHYTHM_SERVICE_CLASS,
         registry=registry,
-        defaults=ServiceAppDefaults(data_delivery="callback"),
+        defaults=ServiceAppDefaults(bus=ServiceBusConfig(data_delivery="callback")),
     )
 
 

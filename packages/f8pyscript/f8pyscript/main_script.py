@@ -6,6 +6,7 @@ from typing import Any
 import msgspec
 
 from f8pysdk.app import ServiceApp, ServiceAppDefaults
+from f8pysdk.bus import ServiceBusConfig
 from f8pysdk.capabilities import RungraphHook
 from f8pysdk.codec import unwrap_json_value
 from f8pysdk.logging_utils import configure_root_logging_from_env
@@ -71,7 +72,7 @@ def build_app() -> ServiceApp:
     return ServiceApp(
         service_class=SERVICE_CLASS,
         registry=registry,
-        defaults=ServiceAppDefaults(data_delivery="callback"),
+        defaults=ServiceAppDefaults(bus=ServiceBusConfig(data_delivery="callback")),
         setup=hooks.setup,
         teardown=hooks.teardown,
     )

@@ -12,6 +12,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from f8pysdk.app import ServiceApp, ServiceAppDefaults  # noqa: E402
+from f8pysdk.bus import ServiceBusConfig  # noqa: E402
 from f8pysdk.nodes import OperatorNode, ServiceNode  # noqa: E402
 from f8pysdk.registry import Registry  # noqa: E402
 from f8pysdk.specs import F8OperatorSpec, F8RuntimeNode, F8ServiceSpec  # noqa: E402
@@ -79,7 +80,7 @@ def test_service_app_describe_and_build_runtime_use_explicit_registry_owner() ->
     app = ServiceApp(
         service_class="svc.demo",
         registry=registry,
-        defaults=ServiceAppDefaults(data_delivery="callback"),
+        defaults=ServiceAppDefaults(bus=ServiceBusConfig(data_delivery="callback")),
     )
 
     payload = app.describe_json()

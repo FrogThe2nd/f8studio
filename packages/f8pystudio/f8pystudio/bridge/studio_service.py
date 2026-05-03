@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import logging
 from typing import Any, Callable
 
+from f8pysdk.bus import ServiceBusConfig
 from f8pysdk.registry import Registry, RuntimeNodeRegistry, create_runtime_node_registry
 from f8pysdk.runtime import ServiceRuntime, ServiceRuntimeConfig
 
@@ -73,14 +74,16 @@ class PyStudioService:
                         manifest.plugin_id,
                     )
 
-        cfg = ServiceRuntimeConfig.from_values(
-            service_id=str(self._cfg.studio_service_id),
-            service_class=SERVICE_CLASS,
-            nats_url=str(self._cfg.nats_url),
-            cross_publish_policy="routed",
-            # Studio hosts both callback-driven viz nodes and pull-driven previews
-            # like Text Viz, so cross-service inputs must stay buffered too.
-            data_delivery="callback",
+        cfg = ServiceRuntimeConfig(
+            bus=ServiceBusConfig(
+                service_id=str(self._cfg.studio_service_id),
+                service_class=SERVICE_CLASS,
+                nats_url=str(self._cfg.nats_url),
+                cross_publish_policy="routed",
+                # Studio hosts both callback-driven viz nodes and pull-driven previews
+                # like Text Viz, so cross-service inputs must stay buffered too.
+                data_delivery="callback",
+            ),
         )
         self.runtime = ServiceRuntime(cfg, registry=self._registry)
 

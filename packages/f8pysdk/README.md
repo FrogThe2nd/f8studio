@@ -110,6 +110,12 @@ Registry contract:
 - Use `RuntimeNodeRegistry` and the lower-level `register_*_spec(...)` / `register_*_factory(...)` calls only at runtime internals, compatibility boundaries, or focused tests.
 - Missing operator runtime factories now fail explicitly; generic `ServiceNode` remains the default container when a service class has no custom service factory.
 
+Runtime config contract:
+- `ServiceBusConfig` is the single runtime configuration core for service id/class, transport, routing, data delivery, cache limits, and monitor options.
+- `ServiceRuntimeConfig` only composes `bus: ServiceBusConfig` plus `registry_modules`.
+- `ServiceHost` derives its service class from `ServiceBusConfig.service_class` unless an explicit `ServiceHostConfig` override is passed.
+- `ServiceAppDefaults` stores a `ServiceBusConfig` template and turns it into a concrete runtime bus config when `service_id`, `service_class`, and CLI/env overrides are known.
+
 Compatibility note:
 - repo entrypoints now use `ServiceApp`; new code should follow that single explicit app owner model.
 - lower-level runtime composition should import `f8pysdk.host` and `f8pysdk.runtime`; the historical `service_host.py` / `service_runtime.py` implementation files have been removed.

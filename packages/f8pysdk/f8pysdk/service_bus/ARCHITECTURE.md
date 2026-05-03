@@ -62,6 +62,12 @@ Slice D notes:
 - Shared registries are explicit opt-in.
 - Passing an explicit registry instance is the supported way to share registrations across components in one process.
 
+### Configuration
+
+- `ServiceBusConfig` is the canonical runtime configuration core for service id/class, transport, routing, data delivery, cache limits, and monitoring.
+- `ServiceRuntimeConfig` composes `bus: ServiceBusConfig` with registry module loading only.
+- `ServiceHost` derives its service class from `ServiceBusConfig.service_class` unless a focused `ServiceHostConfig` override is passed for direct host tests or low-level composition.
+
 ## Canonical Chains
 
 ### State Write Chain

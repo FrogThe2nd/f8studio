@@ -128,7 +128,7 @@ class RuntimeRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(shared_a, shared_b)
 
     async def test_service_runtime_defaults_to_fresh_registry_instances(self) -> None:
-        cfg = ServiceRuntimeConfig.from_values(service_id="svc", service_class="svc.test")
+        cfg = ServiceRuntimeConfig(bus=ServiceBusConfig(service_id="svc", service_class="svc.test"))
 
         rt_a = ServiceRuntime(cfg)
         rt_b = ServiceRuntime(cfg)
@@ -136,7 +136,7 @@ class RuntimeRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNot(rt_a._registry, rt_b._registry)
 
     async def test_service_runtime_uses_explicit_shared_registry(self) -> None:
-        cfg = ServiceRuntimeConfig.from_values(service_id="svc", service_class="svc.test")
+        cfg = ServiceRuntimeConfig(bus=ServiceBusConfig(service_id="svc", service_class="svc.test"))
         registry = create_runtime_node_registry()
 
         rt_a = ServiceRuntime(cfg, registry=registry)
@@ -246,6 +246,21 @@ class RuntimeRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(bus.get_node("svc"))
         self.assertIsNone(bus.get_node("op1"))
 
+    async def test_service_host_derives_service_class_from_bus_config(self) -> None:
+        cluster = InMemoryCluster()
+        transport = InMemoryTransport(cluster=cluster, kv_bucket="kv.svc")
+        bus = ServiceBus(
+            ServiceBusConfig(service_id="svc", service_class="svc.test"),
+            transport=transport,
+        )
+        registry = create_runtime_node_registry()
+        registry.register_service_factory("svc.test", lambda node_id, node, initial_state: ServiceNode(node_id=node_id))
+        host = ServiceHost(bus, registry=registry)
+
+        await host.start()
+
+        self.assertIsNotNone(bus.get_node("svc"))
+
     async def test_service_bus_is_not_restartable_after_stop(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
@@ -264,7 +279,7 @@ class RuntimeRegressionTests(unittest.IsolatedAsyncioTestCase):
         registry = create_runtime_node_registry()
         registry.register_service_factory("svc.test", lambda node_id, node, initial_state: ServiceNode(node_id=node_id))
         runtime = ServiceRuntime(
-            ServiceRuntimeConfig.from_values(service_id="svc", service_class="svc.test"),
+            ServiceRuntimeConfig(bus=ServiceBusConfig(service_id="svc", service_class="svc.test")),
             registry=registry,
         )
         runtime.bus.start = AsyncMock()

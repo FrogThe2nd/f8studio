@@ -177,6 +177,7 @@ class ServiceBus:
         transport: NatsTransport | None = None,
         component_factory: ServiceBusComponentFactory | None = None,
     ) -> None:
+        config = config.normalized()
         self.service_id = ensure_token(config.service_id, label="service_id")
         self._service_name = str(config.service_name or "") or self.service_id
         self._service_class = str(config.service_class or "")
@@ -345,6 +346,14 @@ class ServiceBus:
 
     def _record_buffer_pull_delivery_metrics_enabled(self) -> None:
         self._monitor_collector.record_buffer_pull_delivery()
+
+    @property
+    def service_name(self) -> str:
+        return self._service_name
+
+    @property
+    def service_class(self) -> str:
+        return self._service_class
 
     @property
     def cross_publish_policy(self) -> CrossPublishPolicy:
