@@ -76,10 +76,6 @@ imgui.ini
 site/
 
 
-# Ignore generated code folders
-**/generated/*
-!**/.gitkeep
-
 **/ignore/*
 *.onnx
 
