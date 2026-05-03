@@ -12,9 +12,17 @@ if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
 from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
+from f8pysdk.specs import F8OperatorSpec, F8StateAccess, F8StateSpec  # noqa: E402
 
 from f8pyengine.constants import SERVICE_CLASS  # noqa: E402
 from f8pyengine.pyengine_node_registry import register_pyengine_specs  # noqa: E402
+
+
+def _state_field(spec: F8OperatorSpec, name: str) -> F8StateSpec:
+    matches = [field for field in list(spec.stateFields or []) if field.name == name]
+    if len(matches) != 1:
+        raise AssertionError(f"expected one state field named {name!r}, got {len(matches)}")
+    return matches[0]
 
 
 class PyEngineSignalOperatorRegistryTests(unittest.TestCase):
@@ -48,6 +56,15 @@ class PyEngineSignalOperatorRegistryTests(unittest.TestCase):
         self.assertEqual(str(operators["f8.skeleton_decoder"].paletteCategory or ""), "f8.pyengine.motion")
         self.assertEqual(str(operators["f8.vmc_decoder"].paletteCategory or ""), "f8.pyengine.motion")
         self.assertEqual(str(operators["f8.print"].paletteCategory or ""), "f8.pyengine.debug")
+
+    def test_configuration_state_fields_are_read_write(self) -> None:
+        reg = create_runtime_node_registry()
+        register_pyengine_specs(reg)
+        desc = reg.describe(SERVICE_CLASS)
+        operators = {str(spec.operatorClass or ""): spec for spec in list(desc.operators or [])}
+
+        self.assertEqual(_state_field(operators["f8.print"], "strip").access, F8StateAccess.rw)
+        self.assertEqual(_state_field(operators["f8.serial_out"], "baudrate").access, F8StateAccess.rw)
 
 
 if __name__ == "__main__":

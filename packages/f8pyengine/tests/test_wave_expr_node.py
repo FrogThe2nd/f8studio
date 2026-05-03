@@ -78,6 +78,12 @@ class WaveExprNodeTests(unittest.IsolatedAsyncioTestCase):
         operator_classes = {str(spec.operatorClass or "") for spec in list(desc.operators or [])}
         self.assertIn("f8.wave_expr", operator_classes)
 
+    def test_template_is_read_write_configuration_state(self) -> None:
+        template_fields = [field for field in list(WaveExprRuntimeNode.SPEC.stateFields or []) if field.name == "template"]
+        self.assertEqual(len(template_fields), 1)
+        self.assertEqual(template_fields[0].access, F8StateAccess.rw)
+        self.assertTrue(template_fields[0].required)
+
     async def test_generates_express_with_state_variables_and_max_t(self) -> None:
         bus = self._setup_bus(service_id="svcA")
         graph = F8RuntimeGraph(

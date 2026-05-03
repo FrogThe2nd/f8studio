@@ -477,7 +477,7 @@ WaveExprRuntimeNode.SPEC = F8OperatorSpec(
                 "and helpers include `cond`, `sequence([...])`, `tempest(t, p, c)`, phase trig, and shaping functions."
             ),
             valueSchema=string_schema(default=_DEFAULT_TEMPLATE),
-            access=F8StateAccess.wo,
+            access=F8StateAccess.rw,
             required=True,
             showOnNode=True,
             uiControl="wrapline[python]",

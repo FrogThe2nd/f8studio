@@ -339,7 +339,7 @@ StateExprRuntimeNode.SPEC = F8OperatorSpec(
             valueSchema=string_schema(default="0"),
             access=F8StateAccess.rw,
             showOnNode=True,
-            required=False,
+            required=True,
         ),
         F8StateSpec(
             name="out",
@@ -348,7 +348,7 @@ StateExprRuntimeNode.SPEC = F8OperatorSpec(
             valueSchema=any_schema(),
             access=F8StateAccess.ro,
             showOnNode=True,
-            required=False,
+            required=True,
         ),
     ],
     editPolicy=F8SpecEditPolicy(stateFields=editable_collection_edit_policy()),

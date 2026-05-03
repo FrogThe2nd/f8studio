@@ -269,7 +269,7 @@ SerialOutRuntimeNode.SPEC = F8OperatorSpec(
             label="Baudrate",
             description="Serial baud rate.",
             valueSchema=integer_schema(default=115200, minimum=300, maximum=4000000),
-            access=F8StateAccess.wo,
+            access=F8StateAccess.rw,
             required=True,
             showOnNode=False,
         ),

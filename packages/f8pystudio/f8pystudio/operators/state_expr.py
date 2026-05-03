@@ -260,8 +260,8 @@ StateExprRuntimeNode.SPEC = F8OperatorSpec(
     stateFields=[
         F8StateSpec(name="allowNumpy", label="Allow Numpy", description="Enable `np.*` and `numpy.*` inside the expression.", uiControl="toggle", valueSchema=boolean_schema(default=False), access=F8StateAccess.rw, showOnNode=False, required=False),
         F8StateSpec(name="x", description="Starter local state symbol for quick editor-side formulas.", valueSchema=any_schema(), access=F8StateAccess.rw, showOnNode=True, required=False),
-        F8StateSpec(name="code", label="Expr", description="Single Python expression. Editable RW/WO state fields are available directly by name for local studio graph evaluation.", uiControl="wrapline[python]", valueSchema=string_schema(default="x"), access=F8StateAccess.rw, showOnNode=True, required=False),
-        F8StateSpec(name="out", label="Out", description="Expression result published by the node.", valueSchema=any_schema(), access=F8StateAccess.ro, showOnNode=True, required=False),
+        F8StateSpec(name="code", label="Expr", description="Single Python expression. Editable RW/WO state fields are available directly by name for local studio graph evaluation.", uiControl="wrapline[python]", valueSchema=string_schema(default="x"), access=F8StateAccess.rw, showOnNode=True, required=True),
+        F8StateSpec(name="out", label="Out", description="Expression result published by the node.", valueSchema=any_schema(), access=F8StateAccess.ro, showOnNode=True, required=True),
     ],
     editPolicy=F8SpecEditPolicy(stateFields=editable_collection_edit_policy()),
 )

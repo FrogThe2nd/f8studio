@@ -306,7 +306,7 @@ DataExprRuntimeNode.SPEC = F8OperatorSpec(
             valueSchema=string_schema(default="x"),
             access=F8StateAccess.rw,
             showOnNode=True,
-            required=False,
+            required=True,
         ),
     ],
 )

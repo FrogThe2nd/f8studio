@@ -35,6 +35,18 @@ class PyStudioExprNodeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("f8.data_expr", operator_classes)
         self.assertIn("f8.state_expr", operator_classes)
 
+    def test_expr_state_fields_are_required(self) -> None:
+        data_code_fields = [field for field in list(DataExprRuntimeNode.SPEC.stateFields or []) if field.name == "code"]
+        state_code_fields = [field for field in list(StateExprRuntimeNode.SPEC.stateFields or []) if field.name == "code"]
+        state_out_fields = [field for field in list(StateExprRuntimeNode.SPEC.stateFields or []) if field.name == "out"]
+        self.assertEqual(len(data_code_fields), 1)
+        self.assertEqual(len(state_code_fields), 1)
+        self.assertEqual(len(state_out_fields), 1)
+        self.assertTrue(data_code_fields[0].required)
+        self.assertTrue(state_code_fields[0].required)
+        self.assertTrue(state_out_fields[0].required)
+        self.assertEqual(state_out_fields[0].access, F8StateAccess.ro)
+
     async def test_data_expr_evaluates_inside_pystudio_runtime(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("studio")

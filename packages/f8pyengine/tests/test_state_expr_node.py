@@ -73,6 +73,15 @@ class StateExprNodeTests(unittest.IsolatedAsyncioTestCase):
         operator_classes = {str(spec.operatorClass or "") for spec in list(desc.operators or [])}
         self.assertIn("f8.state_expr", operator_classes)
 
+    def test_expr_state_field_is_required(self) -> None:
+        code_fields = [field for field in list(StateExprRuntimeNode.SPEC.stateFields or []) if field.name == "code"]
+        out_fields = [field for field in list(StateExprRuntimeNode.SPEC.stateFields or []) if field.name == "out"]
+        self.assertEqual(len(code_fields), 1)
+        self.assertEqual(len(out_fields), 1)
+        self.assertTrue(code_fields[0].required)
+        self.assertTrue(out_fields[0].required)
+        self.assertEqual(out_fields[0].access, F8StateAccess.ro)
+
     async def test_maps_rw_state_fields_into_expression_symbols(self) -> None:
         bus = self._setup_bus(service_id="svcA")
         graph = F8RuntimeGraph(

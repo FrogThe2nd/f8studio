@@ -30,6 +30,11 @@ class DataExprNodeTests(unittest.IsolatedAsyncioTestCase):
         operator_classes = {str(spec.operatorClass or "") for spec in list(desc.operators or [])}
         self.assertIn("f8.data_expr", operator_classes)
 
+    def test_expr_state_field_is_required(self) -> None:
+        code_fields = [field for field in list(DataExprRuntimeNode.SPEC.stateFields or []) if field.name == "code"]
+        self.assertEqual(len(code_fields), 1)
+        self.assertTrue(code_fields[0].required)
+
     async def test_extracts_nested_fields_via_attribute_access(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
