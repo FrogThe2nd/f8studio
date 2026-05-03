@@ -9,7 +9,7 @@ from .node_registry import register_specs
 
 def build_app() -> ServiceApp:
     registry = Registry()
-    register_specs(registry.runtime_registry)
+    register_specs(registry)
     return ServiceApp(
         service_class=DETECTOR_SERVICE_CLASS,
         registry=registry,

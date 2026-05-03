@@ -21,8 +21,7 @@ from f8pysdk.specs import (
     string_schema,
 )
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.nodes import RuntimeNode
-from f8pysdk.registry import RuntimeNodeRegistry
+from f8pysdk.registry import Registry
 
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
 from f8pystudio.contracts.ui_commands import emit_ui_command
@@ -561,14 +560,10 @@ class VizTrackRuntimeNode(StudioVizRuntimeNodeBase):
                 return False
         return bool(default)
 
-def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
+def register_operator(registry: Registry) -> Registry:
 
-    def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> RuntimeNode:
-        return VizTrackRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-
-    registry.register_operator_spec(
+    registry.register_operator(
         F8OperatorSpec(
             schemaVersion=F8OperatorSchemaVersion.f8operator_1,
             serviceClass=SERVICE_CLASS,
@@ -699,6 +694,7 @@ def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
                 *viz_sampling_state_fields(show_on_node=False),
             ],
         ),
+        VizTrackRuntimeNode,
         overwrite=True,
     )
     return registry

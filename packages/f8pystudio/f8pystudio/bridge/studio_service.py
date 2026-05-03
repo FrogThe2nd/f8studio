@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import logging
 from typing import Any, Callable
 
-from f8pysdk.registry import create_runtime_node_registry, RuntimeNodeRegistry
+from f8pysdk.registry import Registry, RuntimeNodeRegistry, create_runtime_node_registry
 from f8pysdk.runtime import ServiceRuntime, ServiceRuntimeConfig
 
 from f8pystudio.plugins.loader import load_entrypoint_plugins
@@ -58,17 +58,18 @@ class PyStudioService:
         on_ui_command: Callable[[UiCommand], None] | None,
     ) -> None:
         # Register studio operators into the shared registry.
-        register_operator(self._registry)
+        registry_view = Registry.wrap(self._registry)
+        register_operator(registry_view)
         for manifest in load_entrypoint_plugins():
             for op_reg in manifest.operators:
                 try:
-                    out_registry = op_reg.register(self._registry)
+                    out_registry = op_reg.register(registry_view)
                 except Exception:
                     logger.exception("Plugin operator registration failed plugin_id=%s", manifest.plugin_id)
                     continue
-                if out_registry is not self._registry:
+                if out_registry is not registry_view:
                     logger.warning(
-                        "Plugin '%s' returned a different RuntimeNodeRegistry; keeping current instance.",
+                        "Plugin '%s' returned a different registry; keeping current instance.",
                         manifest.plugin_id,
                     )
 

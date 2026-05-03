@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from f8pysdk.registry import create_runtime_node_registry
+from f8pysdk.registry import Registry
 
 from f8pystudio.plugins.api import PluginOperatorRegistration, StudioPluginManifest
 from f8pystudio.app.program import PyStudioProgram
@@ -12,30 +12,30 @@ from f8pystudio_ext_viz_tcode.operators.viz_tcode import OPERATOR_CLASS, registe
 PALETTE_CATEGORY_VIZ = "f8.pystudio.viz"
 
 
-def test_program_plugin_runtime_registration_is_applied() -> None:
+def test_program_plugin_registry_registration_is_applied() -> None:
     called = {"count": 0}
-    registry = create_runtime_node_registry()
+    registry = Registry()
 
-    def _register(received_registry: object) -> object:
+    def _register(received_registry: Registry) -> Registry:
         assert received_registry is registry
         called["count"] += 1
         return received_registry
 
     manifest = StudioPluginManifest(
-        plugin_id="plugin_runtime",
-        plugin_name="Plugin Runtime",
+        plugin_id="plugin_registry",
+        plugin_name="Plugin Registry",
         plugin_version="1.0.0",
         operators=(PluginOperatorRegistration(register=_register),),
     )
 
-    PyStudioProgram._apply_plugin_manifests_to_runtime_registry([manifest], registry=registry)
+    PyStudioProgram._apply_plugin_manifests_to_registry([manifest], registry=registry)
     assert called["count"] == 1
 
 
-def test_program_plugin_runtime_registration_failure_is_isolated(caplog) -> None:
+def test_program_plugin_registry_registration_failure_is_isolated(caplog) -> None:
     caplog.set_level(logging.ERROR)
 
-    def _raise(_registry: object) -> object:
+    def _raise(_registry: Registry) -> Registry:
         raise RuntimeError("boom")
 
     manifest = StudioPluginManifest(
@@ -45,12 +45,12 @@ def test_program_plugin_runtime_registration_failure_is_isolated(caplog) -> None
         operators=(PluginOperatorRegistration(register=_raise),),
     )
 
-    registry = create_runtime_node_registry()
-    PyStudioProgram._apply_plugin_manifests_to_runtime_registry([manifest], registry=registry)
+    registry = Registry()
+    PyStudioProgram._apply_plugin_manifests_to_registry([manifest], registry=registry)
     assert "Operator registration failed in plugin" in caplog.text
 
 
-def test_program_plugin_runtime_registration_preserves_pystudio_viz_category() -> None:
+def test_program_plugin_registry_registration_preserves_pystudio_viz_category() -> None:
     manifest = StudioPluginManifest(
         plugin_id="plugin_tcode_viz",
         plugin_name="Plugin TCode Viz",
@@ -58,9 +58,9 @@ def test_program_plugin_runtime_registration_preserves_pystudio_viz_category() -
         operators=(PluginOperatorRegistration(register=register_viz_tcode_operator),),
     )
 
-    registry = create_runtime_node_registry()
+    registry = Registry()
 
-    PyStudioProgram._apply_plugin_manifests_to_runtime_registry([manifest], registry=registry)
+    PyStudioProgram._apply_plugin_manifests_to_registry([manifest], registry=registry)
 
     spec = next(
         (

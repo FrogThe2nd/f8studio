@@ -9,13 +9,13 @@ PyStudio plugins contribute capabilities through the `f8studio.pystudio.plugins`
 A plugin typically provides one or both of these:
 
 - renderer registrations for Studio-side node rendering/UI behavior
-- operator registrations that extend the runtime node registry used by PyStudio
+- operator registrations that extend the `Registry` used by PyStudio
 
 ## Key Pieces
 
 - `StudioPluginManifest` declares plugin metadata plus renderer/operator registrations
 - `PluginRendererRegistration` maps a `renderer_class` to a Studio node class
-- `PluginOperatorRegistration` provides a registration function that writes into `RuntimeNodeRegistry`
+- `PluginOperatorRegistration` provides a `Callable[[Registry], Registry]` registration function
 
 ## Typical Plugin Flow
 

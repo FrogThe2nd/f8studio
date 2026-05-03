@@ -16,7 +16,7 @@ if SDK_ROOT not in sys.path:
 
 from f8pysdk.specs import F8DataPortSpec, F8RuntimeGraph, F8RuntimeNode, F8StateAccess, F8StateSpec, any_schema, integer_schema  # noqa: E402
 from f8pysdk.specs import F8Edge, F8EdgeKindEnum, F8EdgeStrategyEnum  # noqa: E402
-from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
+from f8pysdk.registry import Registry, create_runtime_node_registry  # noqa: E402
 from f8pysdk.nodes import OperatorNode  # noqa: E402
 from f8pysdk.host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import buffer_input  # noqa: E402
@@ -130,7 +130,7 @@ class RecorderReplayerTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_pyengine_specs(reg)
+        register_pyengine_specs(Registry.wrap(reg))
         reg.register_operator_factory(
             SERVICE_CLASS,
             _PASSIVE_SINK_OPERATOR_CLASS,
@@ -165,7 +165,7 @@ class RecorderReplayerTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_pyengine_specs(reg)
+        register_pyengine_specs(Registry.wrap(reg))
         reg.register_operator_factory(
             SERVICE_CLASS,
             _PASSIVE_SINK_OPERATOR_CLASS,

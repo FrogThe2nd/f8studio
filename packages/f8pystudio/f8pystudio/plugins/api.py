@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from collections.abc import Callable
 from typing import Any, Protocol, runtime_checkable
 
-from f8pysdk.registry import RuntimeNodeRegistry
+from f8pysdk.registry import Registry
 
 
 @dataclass(frozen=True)
@@ -15,7 +15,7 @@ class PluginRendererRegistration:
 
 @dataclass(frozen=True)
 class PluginOperatorRegistration:
-    register: Callable[[RuntimeNodeRegistry], RuntimeNodeRegistry]
+    register: Callable[[Registry], Registry]
 
 
 @dataclass(frozen=True)

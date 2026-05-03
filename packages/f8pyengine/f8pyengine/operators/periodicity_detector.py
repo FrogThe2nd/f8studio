@@ -17,7 +17,7 @@ from f8pysdk.specs import (
 )
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.nodes import OperatorNode
-from f8pysdk.registry import RuntimeNodeRegistry
+from f8pysdk.registry import Registry
 
 from ..constants import SERVICE_CLASS
 
@@ -489,11 +489,6 @@ PeriodicityDetectorRuntimeNode.SPEC = F8OperatorSpec(
 )
 
 
-def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
-
-    def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
-        return PeriodicityDetectorRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
-
-    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    registry.register_operator_spec(PeriodicityDetectorRuntimeNode.SPEC, overwrite=True)
+def register_operator(registry: Registry) -> Registry:
+    registry.register_operator(PeriodicityDetectorRuntimeNode.SPEC, PeriodicityDetectorRuntimeNode, overwrite=True)
     return registry

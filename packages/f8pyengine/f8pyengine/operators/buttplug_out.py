@@ -24,7 +24,7 @@ from f8pysdk.codec import coerce_flag, coerce_float, coerce_int, coerce_str
 from f8pysdk.codec import unwrap_json_value
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.nodes import OperatorNode
-from f8pysdk.registry import RuntimeNodeRegistry
+from f8pysdk.registry import Registry
 
 from ..constants import SERVICE_CLASS
 
@@ -1123,11 +1123,6 @@ ButtplugOutRuntimeNode.SPEC = F8OperatorSpec(
     ],
 )
 
-def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
-
-    def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
-        return ButtplugOutRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
-
-    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    registry.register_operator_spec(ButtplugOutRuntimeNode.SPEC, overwrite=True)
+def register_operator(registry: Registry) -> Registry:
+    registry.register_operator(ButtplugOutRuntimeNode.SPEC, ButtplugOutRuntimeNode, overwrite=True)
     return registry

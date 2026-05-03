@@ -13,7 +13,7 @@ for p in (PKG_STUDIO, PKG_SDK):
 
 from f8pysdk.specs import F8DataPortSpec, any_schema  # noqa: E402
 from f8pysdk.specs import F8RuntimeNode  # noqa: E402
-from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
+from f8pysdk.registry import Registry, create_runtime_node_registry  # noqa: E402
 
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS  # noqa: E402
 from f8pystudio.operators.viz_three_d import OPERATOR_CLASS, VizThreeDRuntimeNode, register_operator  # noqa: E402
@@ -142,7 +142,7 @@ class VizThreeDInputTests(unittest.IsolatedAsyncioTestCase):
 class VizThreeDOperatorSpecDefaultsTests(unittest.TestCase):
     def test_register_operator_uses_safe_heavy_render_defaults(self) -> None:
         registry = create_runtime_node_registry()
-        register_operator(registry)
+        register_operator(Registry.wrap(registry))
 
         spec = next(
             operator_spec

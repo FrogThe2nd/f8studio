@@ -10,7 +10,7 @@ if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
 from f8pysdk.specs import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
-from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
+from f8pysdk.registry import Registry, create_runtime_node_registry  # noqa: E402
 from f8pysdk.host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import buffer_input  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
@@ -25,7 +25,7 @@ from f8pysdk.specs import F8DataPortSpec, any_schema  # noqa: E402
 class DataExprNodeTests(unittest.IsolatedAsyncioTestCase):
     def test_registered_in_pyengine_specs(self) -> None:
         reg = create_runtime_node_registry()
-        register_pyengine_specs(reg)
+        register_pyengine_specs(Registry.wrap(reg))
         desc = reg.describe(SERVICE_CLASS)
         operator_classes = {str(spec.operatorClass or "") for spec in list(desc.operators or [])}
         self.assertIn("f8.data_expr", operator_classes)
@@ -39,7 +39,7 @@ class DataExprNodeTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         op = F8RuntimeNode(
@@ -71,7 +71,7 @@ class DataExprNodeTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         op = F8RuntimeNode(
@@ -107,7 +107,7 @@ class DataExprNodeTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         op = F8RuntimeNode(
@@ -138,7 +138,7 @@ class DataExprNodeTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         op = F8RuntimeNode(
@@ -170,7 +170,7 @@ class DataExprNodeTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         op = F8RuntimeNode(
@@ -201,7 +201,7 @@ class DataExprNodeTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         op = F8RuntimeNode(
@@ -231,7 +231,7 @@ class DataExprNodeTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         op = F8RuntimeNode(
@@ -265,7 +265,7 @@ class DataExprNodeTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         op = F8RuntimeNode(

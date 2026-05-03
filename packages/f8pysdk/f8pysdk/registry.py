@@ -204,15 +204,6 @@ class RuntimeNodeRegistry:
             raise OperatorAlreadyRegistered(f"service runtime already registered for {normalized_service_class}")
         self._by_service_service[normalized_service_class] = factory
 
-    def register_service(
-        self,
-        service_class: str,
-        factory: ServiceFactory,
-        *,
-        overwrite: bool = False,
-    ) -> None:
-        self.register_service_factory(service_class, factory, overwrite=overwrite)
-
     def create_service_node(
         self,
         *,
@@ -385,11 +376,13 @@ class Registry:
     def describe(self, service_class: str) -> F8ServiceDescribe:
         return self._runtime_registry.describe(service_class)
 
-    def register_service_spec(self, spec: F8ServiceSpec, *, overwrite: bool = False) -> None:
+    def register_service_spec(self, spec: F8ServiceSpec, *, overwrite: bool = False) -> "Registry":
         self._runtime_registry.register_service_spec(spec, overwrite=overwrite)
+        return self
 
-    def register_operator_spec(self, spec: F8OperatorSpec, *, overwrite: bool = False) -> None:
+    def register_operator_spec(self, spec: F8OperatorSpec, *, overwrite: bool = False) -> "Registry":
         self._runtime_registry.register_operator_spec(spec, overwrite=overwrite)
+        return self
 
     def register_service_factory(
         self,
@@ -397,12 +390,13 @@ class Registry:
         factory: ServiceFactoryLike,
         *,
         overwrite: bool = False,
-    ) -> None:
+    ) -> "Registry":
         self._runtime_registry.register_service_factory(
             service_class,
             _coerce_service_factory(factory),
             overwrite=overwrite,
         )
+        return self
 
     def register_operator_factory(
         self,
@@ -411,13 +405,14 @@ class Registry:
         factory: OperatorFactoryLike,
         *,
         overwrite: bool = False,
-    ) -> None:
+    ) -> "Registry":
         self._runtime_registry.register_operator_factory(
             service_class,
             operator_class,
             _coerce_operator_factory(factory),
             overwrite=overwrite,
         )
+        return self
 
     def register_service(
         self,
@@ -425,9 +420,14 @@ class Registry:
         factory: ServiceFactoryLike,
         *,
         overwrite: bool = False,
-    ) -> None:
-        self.register_service_spec(spec, overwrite=overwrite)
-        self.register_service_factory(str(spec.serviceClass or ""), factory, overwrite=overwrite)
+    ) -> "Registry":
+        self._runtime_registry.register_service_spec(spec, overwrite=overwrite)
+        self._runtime_registry.register_service_factory(
+            str(spec.serviceClass or ""),
+            _coerce_service_factory(factory),
+            overwrite=overwrite,
+        )
+        return self
 
     def register_operator(
         self,
@@ -435,14 +435,15 @@ class Registry:
         factory: OperatorFactoryLike,
         *,
         overwrite: bool = False,
-    ) -> None:
-        self.register_operator_spec(spec, overwrite=overwrite)
-        self.register_operator_factory(
+    ) -> "Registry":
+        self._runtime_registry.register_operator_spec(spec, overwrite=overwrite)
+        self._runtime_registry.register_operator_factory(
             str(spec.serviceClass or ""),
             str(spec.operatorClass or ""),
-            factory,
+            _coerce_operator_factory(factory),
             overwrite=overwrite,
         )
+        return self
 
     def create_service_node(
         self,
@@ -485,8 +486,9 @@ class Registry:
             initial_state=initial_state,
         )
 
-    def load_modules(self, modules: list[str]) -> None:
+    def load_modules(self, modules: list[str]) -> "Registry":
         self._runtime_registry.load_modules(modules)
+        return self
 
 
 def create_runtime_node_registry() -> RuntimeNodeRegistry:

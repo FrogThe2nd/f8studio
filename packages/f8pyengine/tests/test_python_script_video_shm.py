@@ -12,7 +12,7 @@ if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
 from f8pysdk.specs import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
-from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
+from f8pysdk.registry import Registry, create_runtime_node_registry  # noqa: E402
 from f8pysdk.host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.shm.video import VIDEO_FORMAT_FLOW2_F16, VideoShmWriter  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
@@ -42,7 +42,7 @@ class PythonScriptVideoShmTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         shm_name = f"test.shm.ps.flow.{uuid.uuid4().hex}"
@@ -103,7 +103,7 @@ class PythonScriptVideoShmTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         shm_name = f"test.shm.ps.raw.{uuid.uuid4().hex}"
@@ -151,7 +151,7 @@ class PythonScriptVideoShmTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         shm_b = f"test.shm.ps.b.{uuid.uuid4().hex}"
@@ -193,7 +193,7 @@ class PythonScriptVideoShmTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         shm_name = f"test.shm.ps.cleanup.{uuid.uuid4().hex}"

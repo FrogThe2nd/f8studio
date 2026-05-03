@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from f8pysdk.registry import create_runtime_node_registry
+from f8pysdk.registry import Registry
 
 from f8pystudio.plugins.api import PluginOperatorRegistration, StudioPluginManifest
 
 
 def test_manifest_can_carry_operator_registration_callable() -> None:
-    def _register(registry: object) -> object:
+    def _register(registry: Registry) -> Registry:
         return registry
 
     manifest = StudioPluginManifest(
@@ -17,6 +17,6 @@ def test_manifest_can_carry_operator_registration_callable() -> None:
     )
 
     assert len(manifest.operators) == 1
-    registry = create_runtime_node_registry()
+    registry = Registry()
     out_registry = manifest.operators[0].register(registry)
     assert out_registry is registry

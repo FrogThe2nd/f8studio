@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from f8pysdk.registry import Registry
 from f8pystudio.plugins.api import (
     PluginOperatorRegistration,
     PluginRendererRegistration,
@@ -51,7 +52,7 @@ class _Plugin(StudioPlugin):
 
 
 def _manifest(plugin_id: str) -> StudioPluginManifest:
-    def _register(registry: object) -> object:
+    def _register(registry: Registry) -> Registry:
         return registry
 
     return StudioPluginManifest(

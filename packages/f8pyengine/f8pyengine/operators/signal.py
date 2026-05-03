@@ -16,7 +16,7 @@ from f8pysdk.specs import (
 )
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.nodes import OperatorNode
-from f8pysdk.registry import RuntimeNodeRegistry
+from f8pysdk.registry import Registry
 
 from ..constants import SERVICE_CLASS
 
@@ -462,22 +462,8 @@ TempestRuntimeNode.SPEC = F8OperatorSpec(
     ],
 )
 
-def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
-
-    def _cosine_factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
-        return CosineRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
-
-    def _tempest_factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
-        return TempestRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
-
-    def _phase_factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
-        return PhaseRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
-
-    registry.register_operator_factory(SERVICE_CLASS, COSINE_OPERATOR_CLASS, _cosine_factory, overwrite=True)
-    registry.register_operator_factory(SERVICE_CLASS, TEMPEST_OPERATOR_CLASS, _tempest_factory, overwrite=True)
-    registry.register_operator_factory(SERVICE_CLASS, PHASE_OPERATOR_CLASS, _phase_factory, overwrite=True)
-
-    registry.register_operator_spec(CosineRuntimeNode.SPEC, overwrite=True)
-    registry.register_operator_spec(TempestRuntimeNode.SPEC, overwrite=True)
-    registry.register_operator_spec(PhaseRuntimeNode.SPEC, overwrite=True)
+def register_operator(registry: Registry) -> Registry:
+    registry.register_operator(CosineRuntimeNode.SPEC, CosineRuntimeNode, overwrite=True)
+    registry.register_operator(TempestRuntimeNode.SPEC, TempestRuntimeNode, overwrite=True)
+    registry.register_operator(PhaseRuntimeNode.SPEC, PhaseRuntimeNode, overwrite=True)
     return registry

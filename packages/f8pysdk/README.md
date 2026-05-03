@@ -14,7 +14,7 @@ Core stable public modules:
 - `f8pysdk.runtime`: `ServiceRuntime` and `ServiceRuntimeConfig`
 - `f8pysdk.specs`: generated protocol models, schema helpers, and spec metadata/edit-policy helpers
 - `f8pysdk.nodes`: `RuntimeNode`, `ServiceNode`, `OperatorNode`
-- `f8pysdk.registry`: `RuntimeNodeRegistry` and registry errors
+- `f8pysdk.registry`: author-facing `Registry`, low-level `RuntimeNodeRegistry`, and registry errors
 - `f8pysdk.command`: command result/output policy types
 - `f8pysdk.data`: data delivery and cross-publish policy types
 - `f8pysdk.monitoring`: monitor snapshot collection/config types
@@ -82,8 +82,15 @@ from mysvc.specs import MY_OPERATOR_SPEC, MY_SERVICE_SPEC
 from mysvc.nodes import MyOperatorNode, MyServiceNode
 
 registry = Registry()
-registry.register_service(MY_SERVICE_SPEC, MyServiceNode)
-registry.register_operator(MY_OPERATOR_SPEC, MyOperatorNode)
+
+
+def register_specs(registry: Registry) -> Registry:
+    registry.register_service(MY_SERVICE_SPEC, MyServiceNode)
+    registry.register_operator(MY_OPERATOR_SPEC, MyOperatorNode)
+    return registry
+
+
+register_specs(registry)
 
 app = ServiceApp(
     service_class="f8.myservice",
@@ -95,12 +102,12 @@ app.run(service_id="svc-a", nats_url="nats://127.0.0.1:4222")
 
 Registry contract:
 - `Registry()` creates a fresh process-local runtime registry owner by default.
-- Use `ServiceApp.build_shared_registry()` or `shared_runtime_node_registry()` only when process-global sharing is intentional.
+- Use `ServiceApp.build_shared_registry()` or `shared_registry()` only when process-global sharing is intentional.
 - `Registry.register_service(spec, node_type_or_factory)` pairs describe-time metadata with runtime node construction in one call.
 - `Registry.register_operator(spec, node_type_or_factory)` does the same for operators.
 - Pass an explicit registry into `ServiceRuntime(...)` or `ServiceHost(...)` when multiple components must share registration state.
-- Use `register_service_spec(...)` / `register_operator_spec(...)` for describe-time metadata.
-- Use `register_service_factory(...)` / `register_operator_factory(...)` for runtime node construction.
+- Keep service/operator modules on `def register_specs(registry: Registry) -> Registry` or `def register_operator(registry: Registry) -> Registry`; return the same registry for chaining/composition.
+- Use `RuntimeNodeRegistry` and the lower-level `register_*_spec(...)` / `register_*_factory(...)` calls only at runtime internals, compatibility boundaries, or focused tests.
 - Missing operator runtime factories now fail explicitly; generic `ServiceNode` remains the default container when a service class has no custom service factory.
 
 Compatibility note:
@@ -132,7 +139,7 @@ Stable helper modules:
 - `f8pysdk.data`: data delivery and cross-publish policy types
 - `f8pysdk.monitoring`: monitor collector façade
 - `f8pysdk.nodes`: runtime node base classes
-- `f8pysdk.registry`: runtime registry and registry errors
+- `f8pysdk.registry`: author-facing registry, low-level runtime registry, and registry errors
 - `f8pysdk.transport`: NATS transport façade and KV reset helpers
 - `f8pysdk.testing`: in-memory harness plus emit/pull/buffer helpers for tests
 

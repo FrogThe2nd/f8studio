@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
-
 from f8pysdk.specs import (
     array_schema,
     F8DataPortSpec,
-    F8RuntimeNode,
     F8ServiceSchemaVersion,
     F8ServiceSpec,
     F8StateAccess,
@@ -15,8 +12,7 @@ from f8pysdk.specs import (
     number_schema,
     string_schema,
 )
-from f8pysdk.nodes import RuntimeNode
-from f8pysdk.registry import create_runtime_node_registry, RuntimeNodeRegistry, shared_runtime_node_registry
+from f8pysdk.registry import Registry, RuntimeNodeRegistry, create_runtime_node_registry, shared_runtime_node_registry
 
 from .constants import CORE_SERVICE_CLASS, RHYTHM_SERVICE_CLASS
 from .core_service_node import AudioCoreFeatureServiceNode
@@ -137,8 +133,8 @@ def _rhythm_state_fields() -> list[F8StateSpec]:
     ]
 
 
-def _register_core(reg: RuntimeNodeRegistry) -> None:
-    reg.register_service_spec(
+def _register_core(registry: Registry) -> None:
+    registry.register_service(
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,
             serviceClass=CORE_SERVICE_CLASS,
@@ -157,17 +153,13 @@ def _register_core(reg: RuntimeNodeRegistry) -> None:
                 )
             ],
         ),
+        AudioCoreFeatureServiceNode,
         overwrite=True,
     )
 
-    def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> RuntimeNode:
-        return AudioCoreFeatureServiceNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register_service_factory(CORE_SERVICE_CLASS, _factory, overwrite=True)
-
-
-def _register_rhythm(reg: RuntimeNodeRegistry) -> None:
-    reg.register_service_spec(
+def _register_rhythm(registry: Registry) -> None:
+    registry.register_service(
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,
             serviceClass=RHYTHM_SERVICE_CLASS,
@@ -193,24 +185,24 @@ def _register_rhythm(reg: RuntimeNodeRegistry) -> None:
                 )
             ],
         ),
+        AudioRhythmFeatureServiceNode,
         overwrite=True,
     )
 
-    def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> RuntimeNode:
-        return AudioRhythmFeatureServiceNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register_service_factory(RHYTHM_SERVICE_CLASS, _factory, overwrite=True)
-
-
-def register_specs(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
+def register_specs(registry: Registry) -> Registry:
     _register_core(registry)
     _register_rhythm(registry)
     return registry
 
 
 def create_audiofeat_registry() -> RuntimeNodeRegistry:
-    return register_specs(create_runtime_node_registry())
+    runtime_registry = create_runtime_node_registry()
+    register_specs(Registry.wrap(runtime_registry))
+    return runtime_registry
 
 
 def shared_audiofeat_registry() -> RuntimeNodeRegistry:
-    return register_specs(shared_runtime_node_registry())
+    runtime_registry = shared_runtime_node_registry()
+    register_specs(Registry.wrap(runtime_registry))
+    return runtime_registry

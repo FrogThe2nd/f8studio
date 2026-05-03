@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from f8pysdk.codec import dump_json
-from f8pysdk.registry import RuntimeNodeRegistry
+from f8pysdk.registry import Registry
 from f8pysdk.service_runtime_tools.inventory.catalog import ServiceCatalog
 from f8pysdk.service_runtime_tools.inventory.describe import (
     last_discovery_error_lines,
@@ -72,16 +72,16 @@ class PyStudioProgram:
         return None
 
     def describe_json(self) -> dict[str, Any]:
-        registry = create_pystudio_registry()
+        registry = Registry.wrap(create_pystudio_registry())
         manifests = self._load_plugin_manifests()
-        self._apply_plugin_manifests_to_runtime_registry(manifests, registry=registry)
+        self._apply_plugin_manifests_to_registry(manifests, registry=registry)
         return dump_json(registry.describe(SERVICE_CLASS), mode="json")
 
     @staticmethod
     def _inject_pystudio_specs_from_registry(
         catalog: ServiceCatalog,
         *,
-        registry: RuntimeNodeRegistry,
+        registry: Registry,
     ) -> str | None:
         service_spec = registry.service_spec(SERVICE_CLASS)
         if service_spec is None:
@@ -93,7 +93,10 @@ class PyStudioProgram:
 
     @staticmethod
     def _inject_builtin_pystudio_specs(catalog: ServiceCatalog) -> str | None:
-        return PyStudioProgram._inject_pystudio_specs_from_registry(catalog, registry=create_pystudio_registry())
+        return PyStudioProgram._inject_pystudio_specs_from_registry(
+            catalog,
+            registry=Registry.wrap(create_pystudio_registry()),
+        )
 
     @staticmethod
     def _load_plugin_manifests() -> list[StudioPluginManifest]:
@@ -108,8 +111,8 @@ class PyStudioProgram:
         return manifests
 
     @staticmethod
-    def _apply_plugin_manifests_to_runtime_registry(
-        manifests: list[StudioPluginManifest], *, registry: RuntimeNodeRegistry
+    def _apply_plugin_manifests_to_registry(
+        manifests: list[StudioPluginManifest], *, registry: Registry
     ) -> None:
         if not manifests:
             return
@@ -122,7 +125,7 @@ class PyStudioProgram:
                     continue
                 if out_reg is not registry:
                     logger.warning(
-                        "Plugin '%s' returned a different RuntimeNodeRegistry instance; ignoring replacement.",
+                        "Plugin '%s' returned a different registry instance; ignoring replacement.",
                         manifest.plugin_id,
                     )
 
@@ -217,8 +220,8 @@ class PyStudioProgram:
         from f8pystudio.ui.mainwin.main_window import F8StudioMainWin
 
         manifests = self._load_plugin_manifests()
-        studio_registry = shared_pystudio_registry()
-        self._apply_plugin_manifests_to_runtime_registry(manifests, registry=studio_registry)
+        studio_registry = Registry.wrap(shared_pystudio_registry())
+        self._apply_plugin_manifests_to_registry(manifests, registry=studio_registry)
 
         load_discovery_into_catalog(
             catalog=ServiceCatalog.instance(),
@@ -234,7 +237,7 @@ class PyStudioProgram:
         try:
             QtCore.QCoreApplication.setAttribute(QtCore.Qt.AA_ShareOpenGLContexts, True)  # type: ignore[attr-defined]
         except Exception:
-            pass
+            logger.exception("Failed to set Qt shared OpenGL context attribute")
 
         app = QtWidgets.QApplication([])
         app.setOrganizationName("Feel8")

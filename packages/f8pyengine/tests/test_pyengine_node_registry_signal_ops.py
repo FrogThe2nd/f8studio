@@ -11,7 +11,7 @@ if ROOT not in sys.path:
 if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
-from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
+from f8pysdk.registry import Registry, create_runtime_node_registry  # noqa: E402
 from f8pysdk.specs import F8OperatorSpec, F8StateAccess, F8StateSpec  # noqa: E402
 
 from f8pyengine.constants import SERVICE_CLASS  # noqa: E402
@@ -28,7 +28,7 @@ def _state_field(spec: F8OperatorSpec, name: str) -> F8StateSpec:
 class PyEngineSignalOperatorRegistryTests(unittest.TestCase):
     def test_signal_processing_operators_are_registered(self) -> None:
         reg = create_runtime_node_registry()
-        register_pyengine_specs(reg)
+        register_pyengine_specs(Registry.wrap(reg))
         desc = reg.describe(SERVICE_CLASS)
         operator_classes = {str(spec.operatorClass or "") for spec in list(desc.operators or [])}
 
@@ -43,7 +43,7 @@ class PyEngineSignalOperatorRegistryTests(unittest.TestCase):
 
     def test_operator_palette_categories_are_grouped_by_function(self) -> None:
         reg = create_runtime_node_registry()
-        register_pyengine_specs(reg)
+        register_pyengine_specs(Registry.wrap(reg))
         desc = reg.describe(SERVICE_CLASS)
         operators = {str(spec.operatorClass or ""): spec for spec in list(desc.operators or [])}
 
@@ -59,7 +59,7 @@ class PyEngineSignalOperatorRegistryTests(unittest.TestCase):
 
     def test_configuration_state_fields_are_read_write(self) -> None:
         reg = create_runtime_node_registry()
-        register_pyengine_specs(reg)
+        register_pyengine_specs(Registry.wrap(reg))
         desc = reg.describe(SERVICE_CLASS)
         operators = {str(spec.operatorClass or ""): spec for spec in list(desc.operators or [])}
 

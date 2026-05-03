@@ -1,18 +1,14 @@
 from __future__ import annotations
 
-from typing import Any
-
 from f8pysdk.specs import F8ServiceSchemaVersion, F8ServiceSpec, F8StateAccess, F8StateSpec, boolean_schema, string_schema
-from f8pysdk.specs import F8RuntimeNode
-from f8pysdk.nodes import RuntimeNode
-from f8pysdk.registry import create_runtime_node_registry, RuntimeNodeRegistry, shared_runtime_node_registry
+from f8pysdk.registry import Registry, RuntimeNodeRegistry, create_runtime_node_registry, shared_runtime_node_registry
 
 from .constants import SERVICE_CLASS
 from .proclauncher_service_node import ProcLauncherServiceNode
 
 
-def register_proclauncher_specs(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
-    registry.register_service_spec(
+def register_proclauncher_specs(registry: Registry) -> Registry:
+    registry.register_service(
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,
             serviceClass=SERVICE_CLASS,
@@ -53,19 +49,19 @@ def register_proclauncher_specs(registry: RuntimeNodeRegistry) -> RuntimeNodeReg
                 ),
             ],
         ),
+        ProcLauncherServiceNode,
         overwrite=True,
     )
-
-    def _service_factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> RuntimeNode:
-        return ProcLauncherServiceNode(node_id=node_id, node=node, initial_state=initial_state)
-
-    registry.register_service_factory(SERVICE_CLASS, _service_factory, overwrite=True)
     return registry
 
 
 def create_proclauncher_registry() -> RuntimeNodeRegistry:
-    return register_proclauncher_specs(create_runtime_node_registry())
+    runtime_registry = create_runtime_node_registry()
+    register_proclauncher_specs(Registry.wrap(runtime_registry))
+    return runtime_registry
 
 
 def shared_proclauncher_registry() -> RuntimeNodeRegistry:
-    return register_proclauncher_specs(shared_runtime_node_registry())
+    runtime_registry = shared_runtime_node_registry()
+    register_proclauncher_specs(Registry.wrap(runtime_registry))
+    return runtime_registry

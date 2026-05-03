@@ -4,9 +4,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from NodeGraphQt import BaseNode
-from f8pysdk.registry import create_runtime_node_registry
+from f8pysdk.nodes import OperatorNode
+from f8pysdk.registry import Registry
 from f8pysdk.service_runtime_tools.inventory.catalog import ServiceCatalog
-from f8pysdk.specs import F8OperatorSchemaVersion, F8OperatorSpec, F8ServiceSchemaVersion, F8ServiceSpec
+from f8pysdk.specs import F8OperatorSchemaVersion, F8OperatorSpec, F8RuntimeNode, F8ServiceSchemaVersion, F8ServiceSpec
 
 from f8pystudio.plugins.api import PluginOperatorRegistration, PluginRendererRegistration, StudioPluginManifest
 from f8pystudio.app.program import PyStudioProgram
@@ -83,26 +84,38 @@ def test_program_manifest_application_enables_renderer_key_in_registry() -> None
 
 def test_program_applies_plugin_operator_registration() -> None:
     called = {"count": 0}
-    registry = create_runtime_node_registry()
+    registry = Registry()
 
-    def _register(received_registry: object) -> object:
+    def _register(received_registry: Registry) -> Registry:
         assert received_registry is registry
         called["count"] += 1
         return received_registry
 
     manifest = _manifest("plugin_ops", "renderer.ops", operator_reg=PluginOperatorRegistration(register=_register))
-    PyStudioProgram._apply_plugin_manifests_to_runtime_registry([manifest], registry=registry)
+    PyStudioProgram._apply_plugin_manifests_to_registry([manifest], registry=registry)
     assert called["count"] == 1
 
 
 def test_program_injects_plugin_operator_specs_into_catalog() -> None:
     catalog = ServiceCatalog.instance()
     catalog.clear()
-    registry = create_pystudio_registry()
+    registry = Registry.wrap(create_pystudio_registry())
 
-    def _register(received_registry: object) -> object:
+    class _PluginTestRuntimeNode(OperatorNode):
+        def __init__(
+            self,
+            *,
+            node_id: str,
+            node: F8RuntimeNode,
+            initial_state: dict[str, Any] | None = None,
+        ) -> None:
+            del node
+            del initial_state
+            super().__init__(node_id=node_id)
+
+    def _register(received_registry: Registry) -> Registry:
         assert received_registry is registry
-        registry.register_operator_spec(
+        registry.register_operator(
             F8OperatorSpec(
                 schemaVersion=F8OperatorSchemaVersion.f8operator_1,
                 serviceClass=SERVICE_CLASS,
@@ -111,6 +124,7 @@ def test_program_injects_plugin_operator_specs_into_catalog() -> None:
                 label="Plugin Test Viz",
                 rendererClass="plugin_test_renderer",
             ),
+            _PluginTestRuntimeNode,
             overwrite=True,
         )
         return received_registry
@@ -122,7 +136,7 @@ def test_program_injects_plugin_operator_specs_into_catalog() -> None:
     )
 
     try:
-        PyStudioProgram._apply_plugin_manifests_to_runtime_registry([manifest], registry=registry)
+        PyStudioProgram._apply_plugin_manifests_to_registry([manifest], registry=registry)
         injected_service_class = PyStudioProgram._inject_pystudio_specs_from_registry(catalog, registry=registry)
         operator_classes = {str(op.operatorClass) for op in catalog.operators.all() if op.serviceClass == SERVICE_CLASS}
 

@@ -154,7 +154,7 @@ class PyEngineService(ServiceHookBase):
 
 def build_app() -> ServiceApp:
     registry = Registry()
-    register_pyengine_specs(registry.runtime_registry)
+    register_pyengine_specs(registry)
     hooks = PyEngineService()
     return ServiceApp(
         service_class=SERVICE_CLASS,

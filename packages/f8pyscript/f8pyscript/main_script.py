@@ -66,7 +66,7 @@ class _ScriptRuntimeHooks(RungraphHook):
 
 def build_app() -> ServiceApp:
     registry = Registry()
-    register_specs(registry.runtime_registry)
+    register_specs(registry)
     hooks = _ScriptRuntimeHooks()
     return ServiceApp(
         service_class=SERVICE_CLASS,

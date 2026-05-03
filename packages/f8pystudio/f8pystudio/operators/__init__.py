@@ -1,4 +1,4 @@
-from f8pysdk.registry import create_runtime_node_registry, RuntimeNodeRegistry, shared_runtime_node_registry
+from f8pysdk.registry import Registry, RuntimeNodeRegistry, create_runtime_node_registry, shared_runtime_node_registry
 
 from .viz_text import VizTextRuntimeNode, register_operator as register_viz_text
 from .viz_track import VizTrackRuntimeNode, register_operator as register_viz_track
@@ -34,7 +34,7 @@ __all__ = [
 ]
 
 
-def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
+def register_operator(registry: Registry) -> Registry:
     """
     Register all Studio in-process operators.
     """
@@ -55,8 +55,12 @@ def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 
 
 def create_operator_registry() -> RuntimeNodeRegistry:
-    return register_operator(create_runtime_node_registry())
+    runtime_registry = create_runtime_node_registry()
+    register_operator(Registry.wrap(runtime_registry))
+    return runtime_registry
 
 
 def shared_operator_registry() -> RuntimeNodeRegistry:
-    return register_operator(shared_runtime_node_registry())
+    runtime_registry = shared_runtime_node_registry()
+    register_operator(Registry.wrap(runtime_registry))
+    return runtime_registry

@@ -28,7 +28,7 @@ async def _teardown(runtime: ServiceRuntime) -> None:
 
 def build_app() -> ServiceApp:
     registry = Registry()
-    register_proclauncher_specs(registry.runtime_registry)
+    register_proclauncher_specs(registry)
     return ServiceApp(
         service_class=SERVICE_CLASS,
         registry=registry,

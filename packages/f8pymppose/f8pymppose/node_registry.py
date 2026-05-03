@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
-
 from f8pysdk.specs import (
     array_schema,
     F8DataPortSpec,
-    F8RuntimeNode,
     F8ServiceSchemaVersion,
     F8ServiceSpec,
     F8StateAccess,
@@ -16,8 +13,7 @@ from f8pysdk.specs import (
     string_schema,
     any_schema,
 )
-from f8pysdk.nodes import RuntimeNode
-from f8pysdk.registry import create_runtime_node_registry, RuntimeNodeRegistry, shared_runtime_node_registry
+from f8pysdk.registry import Registry, RuntimeNodeRegistry, create_runtime_node_registry, shared_runtime_node_registry
 
 from .config import (
     DEFAULT_INFER_EVERY_N,
@@ -168,8 +164,8 @@ def _state_fields() -> list[F8StateSpec]:
     ]
 
 
-def register_specs(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
-    registry.register_service_spec(
+def register_specs(registry: Registry) -> Registry:
+    registry.register_service(
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,
             serviceClass=POSE_SERVICE_CLASS,
@@ -193,19 +189,19 @@ def register_specs(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
                 ),
             ],
         ),
+        MediaPipePoseServiceNode,
         overwrite=True,
     )
-
-    def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> RuntimeNode:
-        return MediaPipePoseServiceNode(node_id=node_id, node=node, initial_state=initial_state)
-
-    registry.register_service_factory(POSE_SERVICE_CLASS, _factory, overwrite=True)
     return registry
 
 
 def create_mppose_registry() -> RuntimeNodeRegistry:
-    return register_specs(create_runtime_node_registry())
+    runtime_registry = create_runtime_node_registry()
+    register_specs(Registry.wrap(runtime_registry))
+    return runtime_registry
 
 
 def shared_mppose_registry() -> RuntimeNodeRegistry:
-    return register_specs(shared_runtime_node_registry())
+    runtime_registry = shared_runtime_node_registry()
+    register_specs(Registry.wrap(runtime_registry))
+    return runtime_registry

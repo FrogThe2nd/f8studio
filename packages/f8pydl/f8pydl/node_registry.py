@@ -17,7 +17,7 @@ from f8pysdk.specs import (
     string_schema,
 )
 from f8pysdk.nodes import RuntimeNode
-from f8pysdk.registry import create_runtime_node_registry, RuntimeNodeRegistry, shared_runtime_node_registry
+from f8pysdk.registry import Registry, RuntimeNodeRegistry, create_runtime_node_registry, shared_runtime_node_registry
 
 from .constants import CLASSIFIER_SERVICE_CLASS, DETECTOR_SERVICE_CLASS, DETECTION_SORTER_SERVICE_CLASS, HUMAN_DETECTOR_SERVICE_CLASS
 from .constants import OPTFLOW_SERVICE_CLASS, TCNWAVE_SERVICE_CLASS
@@ -481,8 +481,19 @@ def _tcn_wave_state_fields() -> list[F8StateSpec]:
     return fields
 
 
-def _register_classifier(reg: RuntimeNodeRegistry) -> None:
-    reg.register_service_spec(
+def _register_classifier(registry: Registry) -> None:
+    def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> RuntimeNode:
+        return OnnxVisionServiceNode(
+            node_id=node_id,
+            node=node,
+            initial_state=initial_state,
+            service_class=CLASSIFIER_SERVICE_CLASS,
+            service_task="classifier",
+            output_port="classifications",
+            allowed_tasks={"yolo_cls"},
+        )
+
+    registry.register_service(
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,
             serviceClass=CLASSIFIER_SERVICE_CLASS,
@@ -505,25 +516,24 @@ def _register_classifier(reg: RuntimeNodeRegistry) -> None:
                 ),
             ],
         ),
+        _factory,
         overwrite=True,
     )
 
+
+def _register_detector(registry: Registry) -> None:
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> RuntimeNode:
         return OnnxVisionServiceNode(
             node_id=node_id,
             node=node,
             initial_state=initial_state,
-            service_class=CLASSIFIER_SERVICE_CLASS,
-            service_task="classifier",
-            output_port="classifications",
-            allowed_tasks={"yolo_cls"},
+            service_class=DETECTOR_SERVICE_CLASS,
+            service_task="detector",
+            output_port="detections",
+            allowed_tasks={"yolo_det", "yolo_obb", "yowo_temporal_det"},
         )
 
-    reg.register_service_factory(CLASSIFIER_SERVICE_CLASS, _factory, overwrite=True)
-
-
-def _register_detector(reg: RuntimeNodeRegistry) -> None:
-    reg.register_service_spec(
+    registry.register_service(
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,
             serviceClass=DETECTOR_SERVICE_CLASS,
@@ -546,25 +556,24 @@ def _register_detector(reg: RuntimeNodeRegistry) -> None:
                 ),
             ],
         ),
+        _factory,
         overwrite=True,
     )
 
+
+def _register_human_detector(registry: Registry) -> None:
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> RuntimeNode:
         return OnnxVisionServiceNode(
             node_id=node_id,
             node=node,
             initial_state=initial_state,
-            service_class=DETECTOR_SERVICE_CLASS,
-            service_task="detector",
+            service_class=HUMAN_DETECTOR_SERVICE_CLASS,
+            service_task="humandetector",
             output_port="detections",
-            allowed_tasks={"yolo_det", "yolo_obb", "yowo_temporal_det"},
+            allowed_tasks={"yolo_det", "yolo_pose"},
         )
 
-    reg.register_service_factory(DETECTOR_SERVICE_CLASS, _factory, overwrite=True)
-
-
-def _register_human_detector(reg: RuntimeNodeRegistry) -> None:
-    reg.register_service_spec(
+    registry.register_service(
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,
             serviceClass=HUMAN_DETECTOR_SERVICE_CLASS,
@@ -587,25 +596,22 @@ def _register_human_detector(reg: RuntimeNodeRegistry) -> None:
                 ),
             ],
         ),
+        _factory,
         overwrite=True,
     )
 
+
+def _register_optflow(registry: Registry) -> None:
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> RuntimeNode:
-        return OnnxVisionServiceNode(
+        return OnnxOptflowServiceNode(
             node_id=node_id,
             node=node,
             initial_state=initial_state,
-            service_class=HUMAN_DETECTOR_SERVICE_CLASS,
-            service_task="humandetector",
-            output_port="detections",
-            allowed_tasks={"yolo_det", "yolo_pose"},
+            service_class=OPTFLOW_SERVICE_CLASS,
+            allowed_tasks={"optflow_neuflowv2"},
         )
 
-    reg.register_service_factory(HUMAN_DETECTOR_SERVICE_CLASS, _factory, overwrite=True)
-
-
-def _register_optflow(reg: RuntimeNodeRegistry) -> None:
-    reg.register_service_spec(
+    registry.register_service(
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,
             serviceClass=OPTFLOW_SERVICE_CLASS,
@@ -618,23 +624,13 @@ def _register_optflow(reg: RuntimeNodeRegistry) -> None:
             stateFields=_optflow_state_fields(),
             dataOutPorts=[],
         ),
+        _factory,
         overwrite=True,
     )
 
-    def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> RuntimeNode:
-        return OnnxOptflowServiceNode(
-            node_id=node_id,
-            node=node,
-            initial_state=initial_state,
-            service_class=OPTFLOW_SERVICE_CLASS,
-            allowed_tasks={"optflow_neuflowv2"},
-        )
 
-    reg.register_service_factory(OPTFLOW_SERVICE_CLASS, _factory, overwrite=True)
-
-
-def _register_detection_sorter(reg: RuntimeNodeRegistry) -> None:
-    reg.register_service_spec(
+def _register_detection_sorter(registry: Registry) -> None:
+    registry.register_service(
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,
             serviceClass=DETECTION_SORTER_SERVICE_CLASS,
@@ -662,17 +658,21 @@ def _register_detection_sorter(reg: RuntimeNodeRegistry) -> None:
                 ),
             ],
         ),
+        DetectionSorterServiceNode,
         overwrite=True,
     )
 
+def _register_tcn_wave(registry: Registry) -> None:
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> RuntimeNode:
-        return DetectionSorterServiceNode(node_id=node_id, node=node, initial_state=initial_state)
+        return OnnxTcnWaveServiceNode(
+            node_id=node_id,
+            node=node,
+            initial_state=initial_state,
+            service_class=TCNWAVE_SERVICE_CLASS,
+            allowed_tasks={"tcn_wave"},
+        )
 
-    reg.register_service_factory(DETECTION_SORTER_SERVICE_CLASS, _factory, overwrite=True)
-
-
-def _register_tcn_wave(reg: RuntimeNodeRegistry) -> None:
-    reg.register_service_spec(
+    registry.register_service(
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,
             serviceClass=TCNWAVE_SERVICE_CLASS,
@@ -691,22 +691,12 @@ def _register_tcn_wave(reg: RuntimeNodeRegistry) -> None:
                 ),
             ],
         ),
+        _factory,
         overwrite=True,
     )
 
-    def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> RuntimeNode:
-        return OnnxTcnWaveServiceNode(
-            node_id=node_id,
-            node=node,
-            initial_state=initial_state,
-            service_class=TCNWAVE_SERVICE_CLASS,
-            allowed_tasks={"tcn_wave"},
-        )
 
-    reg.register_service_factory(TCNWAVE_SERVICE_CLASS, _factory, overwrite=True)
-
-
-def register_specs(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
+def register_specs(registry: Registry) -> Registry:
     _register_classifier(registry)
     _register_detector(registry)
     _register_human_detector(registry)
@@ -717,8 +707,12 @@ def register_specs(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 
 
 def create_pydl_registry() -> RuntimeNodeRegistry:
-    return register_specs(create_runtime_node_registry())
+    runtime_registry = create_runtime_node_registry()
+    register_specs(Registry.wrap(runtime_registry))
+    return runtime_registry
 
 
 def shared_pydl_registry() -> RuntimeNodeRegistry:
-    return register_specs(shared_runtime_node_registry())
+    runtime_registry = shared_runtime_node_registry()
+    register_specs(Registry.wrap(runtime_registry))
+    return runtime_registry

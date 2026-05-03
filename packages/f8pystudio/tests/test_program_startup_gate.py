@@ -132,7 +132,7 @@ def _patch_program_dependencies(monkeypatch) -> list[tuple[object | None, str, s
     monkeypatch.setattr("f8pystudio.app.program.PyStudioServiceBridge", _FakeBridge)
     monkeypatch.setattr("f8pystudio.ui.mainwin.main_window.F8StudioMainWin", _FakeMainWindow)
     monkeypatch.setattr(PyStudioProgram, "_load_plugin_manifests", lambda self: [])
-    monkeypatch.setattr(PyStudioProgram, "_apply_plugin_manifests_to_runtime_registry", lambda self, manifests, registry: None)
+    monkeypatch.setattr(PyStudioProgram, "_apply_plugin_manifests_to_registry", lambda self, manifests, registry: None)
     monkeypatch.setattr(PyStudioProgram, "_apply_plugin_manifests_to_renderers", lambda self, manifests: None)
     monkeypatch.setattr(PyStudioProgram, "build_node_classes", lambda self: [])
     monkeypatch.setattr(PyStudioProgram, "_studio_icon_path", lambda self: None)

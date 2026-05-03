@@ -69,7 +69,7 @@ class _ExprRuntimeHooks(RungraphHook):
 
 def build_app() -> ServiceApp:
     registry = Registry()
-    register_expr_specs(registry.runtime_registry)
+    register_expr_specs(registry)
     hooks = _ExprRuntimeHooks()
     return ServiceApp(
         service_class=EXPR_SERVICE_CLASS,

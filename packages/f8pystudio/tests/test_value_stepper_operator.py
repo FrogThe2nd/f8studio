@@ -12,7 +12,7 @@ from f8pysdk.specs import (
     F8StateSpec,
 )
 from f8pysdk.nodes import RuntimeNode
-from f8pysdk.registry import create_runtime_node_registry
+from f8pysdk.registry import Registry, create_runtime_node_registry
 from f8pysdk.specs import integer_schema, number_schema
 from f8pysdk.specs import (
     can_add as policy_can_add,
@@ -52,7 +52,7 @@ def _value_stepper_node(node_id: str = "stepper") -> F8RuntimeNode:
 class ValueStepperOperatorSpecTests(unittest.TestCase):
     def test_register_operator_exposes_value_stepper_spec(self) -> None:
         registry = create_runtime_node_registry()
-        register_operator(registry)
+        register_operator(Registry.wrap(registry))
 
         spec = next(
             operator_spec

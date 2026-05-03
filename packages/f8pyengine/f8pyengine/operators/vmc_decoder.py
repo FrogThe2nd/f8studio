@@ -23,7 +23,7 @@ from f8pysdk.specs import (
 )
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.nodes import OperatorNode
-from f8pysdk.registry import RuntimeNodeRegistry
+from f8pysdk.registry import Registry
 from f8pysdk.time_utils import now_ms
 
 from ..constants import SERVICE_CLASS
@@ -728,10 +728,6 @@ VmcDecoderRuntimeNode.SPEC = F8OperatorSpec(
 )
 
 
-def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
-    def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
-        return VmcDecoderRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
-
-    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    registry.register_operator_spec(VmcDecoderRuntimeNode.SPEC, overwrite=True)
+def register_operator(registry: Registry) -> Registry:
+    registry.register_operator(VmcDecoderRuntimeNode.SPEC, VmcDecoderRuntimeNode, overwrite=True)
     return registry

@@ -18,7 +18,7 @@ from f8pysdk.specs import (
 )
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.nodes import OperatorNode
-from f8pysdk.registry import RuntimeNodeRegistry
+from f8pysdk.registry import Registry
 
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
 from .categories import PALETTE_CATEGORY_CONTROL
@@ -325,11 +325,6 @@ class ValueStepperRuntimeNode(OperatorNode):
         self._last_trigger_ts_ms = trigger_ts
 
 
-def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
-
-    def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
-        return ValueStepperRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
-
-    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    registry.register_operator_spec(ValueStepperRuntimeNode.SPEC, overwrite=True)
+def register_operator(registry: Registry) -> Registry:
+    registry.register_operator(ValueStepperRuntimeNode.SPEC, ValueStepperRuntimeNode, overwrite=True)
     return registry

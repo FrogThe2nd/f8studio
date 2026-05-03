@@ -23,7 +23,7 @@ from f8pysdk.specs import (  # noqa: E402
     F8RuntimeNode,
 )
 from f8pysdk.nodes import OperatorNode  # noqa: E402
-from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
+from f8pysdk.registry import Registry, create_runtime_node_registry  # noqa: E402
 from f8pysdk.host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
@@ -165,7 +165,7 @@ class LovenseMockServerNodeTests(unittest.IsolatedAsyncioTestCase):
         bus = harness.create_bus("svcA")
 
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
 
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
@@ -249,7 +249,7 @@ class LovenseMockServerNodeTests(unittest.IsolatedAsyncioTestCase):
         bus = harness.create_bus("svcA")
 
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         op = F8RuntimeNode(
@@ -283,7 +283,7 @@ class LovenseMockServerExecTriggerTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_pyengine_specs(reg)
+        register_pyengine_specs(Registry.wrap(reg))
         reg.register_operator_factory(
             SERVICE_CLASS,
             "f8.test_probe_exec",

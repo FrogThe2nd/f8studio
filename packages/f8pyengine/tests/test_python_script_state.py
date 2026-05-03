@@ -21,7 +21,7 @@ from f8pysdk.specs import (  # noqa: E402
     string_schema,
 )
 from f8pysdk.specs import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
-from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
+from f8pysdk.registry import Registry, create_runtime_node_registry  # noqa: E402
 from f8pysdk.host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.service_bus.runtime import ServiceBus  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
@@ -121,7 +121,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         code = (
@@ -150,7 +150,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         state_fields = list(PythonScriptRuntimeNode.SPEC.stateFields or [])
@@ -176,7 +176,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         code = (
@@ -198,7 +198,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         state_fields = list(PythonScriptRuntimeNode.SPEC.stateFields or [])
@@ -226,7 +226,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         code = (
@@ -248,7 +248,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         code = (
@@ -275,7 +275,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         state_fields = list(PythonScriptRuntimeNode.SPEC.stateFields or [])
@@ -305,7 +305,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         state_fields = list(PythonScriptRuntimeNode.SPEC.stateFields or [])
@@ -337,7 +337,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         state_fields = list(PythonScriptRuntimeNode.SPEC.stateFields or [])
@@ -380,7 +380,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         state_fields = list(PythonScriptRuntimeNode.SPEC.stateFields or [])
@@ -408,7 +408,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         data_in_ports = [
@@ -436,7 +436,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         msg_schema = F8ComplexObjectTypeSchema(
@@ -464,7 +464,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         bone_schema = F8ComplexObjectTypeSchema(
@@ -497,7 +497,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         data_in_ports = [F8DataPortSpec(name="hip-pos", description="", valueSchema=string_schema(), required=True)]
@@ -519,7 +519,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         data_in_ports = [
@@ -546,7 +546,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         msg_schema = F8ComplexObjectTypeSchema(
@@ -597,7 +597,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         msg_schema = F8ComplexObjectTypeSchema(
@@ -633,7 +633,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         code = (
@@ -657,7 +657,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         data_in_ports = [F8DataPortSpec(name="payload", description="", valueSchema=any_schema(), required=True)]
@@ -683,7 +683,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         code = (
@@ -705,7 +705,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         code = (
@@ -727,7 +727,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         code = (
@@ -751,7 +751,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         code = "x = 1\n"
@@ -770,7 +770,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         bad_code = "def onMsg(ctx, inputs)\n    return 1\n"
@@ -793,7 +793,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_operator(reg)
+        register_operator(Registry.wrap(reg))
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         code = (

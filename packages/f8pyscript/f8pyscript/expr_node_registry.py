@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
-
 from f8pysdk.specs import (
     F8DataPortSpec,
-    F8RuntimeNode,
     F8SpecEditPolicy,
     F8ServiceSchemaVersion,
     F8ServiceSpec,
@@ -15,15 +12,14 @@ from f8pysdk.specs import (
     editable_collection_edit_policy,
     string_schema,
 )
-from f8pysdk.nodes import RuntimeNode
-from f8pysdk.registry import create_runtime_node_registry, RuntimeNodeRegistry, shared_runtime_node_registry
+from f8pysdk.registry import Registry, RuntimeNodeRegistry, create_runtime_node_registry, shared_runtime_node_registry
 
 from .constants import EXPR_SERVICE_CLASS
 from .expr_service_node import DEFAULT_CODE, PythonExprServiceNode
 
 
-def register_expr_specs(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
-    registry.register_service_spec(
+def register_expr_specs(registry: Registry) -> Registry:
+    registry.register_service(
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,
             serviceClass=EXPR_SERVICE_CLASS,
@@ -74,19 +70,19 @@ def register_expr_specs(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
                 dataOutPorts=editable_collection_edit_policy(),
             ),
         ),
+        PythonExprServiceNode,
         overwrite=True,
     )
-
-    def _service_factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> RuntimeNode:
-        return PythonExprServiceNode(node_id=node_id, node=node, initial_state=initial_state)
-
-    registry.register_service_factory(EXPR_SERVICE_CLASS, _service_factory, overwrite=True)
     return registry
 
 
 def create_pyexpr_registry() -> RuntimeNodeRegistry:
-    return register_expr_specs(create_runtime_node_registry())
+    runtime_registry = create_runtime_node_registry()
+    register_expr_specs(Registry.wrap(runtime_registry))
+    return runtime_registry
 
 
 def shared_pyexpr_registry() -> RuntimeNodeRegistry:
-    return register_expr_specs(shared_runtime_node_registry())
+    runtime_registry = shared_runtime_node_registry()
+    register_expr_specs(Registry.wrap(runtime_registry))
+    return runtime_registry
