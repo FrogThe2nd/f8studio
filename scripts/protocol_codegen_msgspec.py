@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import importlib.util
 import subprocess
 import sys
@@ -138,6 +139,33 @@ def _smoke_test_generated(output_path: Path) -> None:
     _ = msgspec.to_builtins(cmd_reply)
 
 
+def _generated_public_names(source: str) -> list[str]:
+    tree = ast.parse(source)
+    names: list[str] = ["UNSET"]
+    seen: set[str] = set(names)
+    for node in tree.body:
+        name: str | None = None
+        if isinstance(node, ast.ClassDef):
+            name = node.name
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            name = node.target.id
+        elif isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            name = node.targets[0].id
+
+        if name is None or name.startswith("_") or name in seen:
+            continue
+        names.append(name)
+        seen.add(name)
+    return names
+
+
+def _render_generated_all(names: list[str]) -> str:
+    lines = ["", "__all__ = ["]
+    lines.extend(f'    "{name}",' for name in names)
+    lines.append("]")
+    return "\n".join(lines) + "\n"
+
+
 def _postprocess_generated(output_path: Path) -> None:
     source = output_path.read_text(encoding="utf-8")
     updated = re.sub(
@@ -148,6 +176,10 @@ def _postprocess_generated(output_path: Path) -> None:
     )
     if updated == source:
         raise RuntimeError("generated module is missing F8ComponentRecord for post-processing")
+    public_names = _generated_public_names(updated)
+    if "F8RuntimeGraph" not in public_names:
+        raise RuntimeError("generated module is missing F8RuntimeGraph for __all__ post-processing")
+    updated = updated.rstrip() + _render_generated_all(public_names)
     output_path.write_text(updated, encoding="utf-8")
 
 

@@ -50,3 +50,13 @@ def coerce_spec_payload(value: object) -> F8ServiceSpec | F8OperatorSpec:
     if "operatorClass" in value:
         return validate_as(F8OperatorSpec, value)
     return validate_as(F8ServiceSpec, value)
+
+
+__all__ = [
+    "SpecKind",
+    "UNCATEGORIZED_PALETTE_CATEGORY",
+    "coerce_spec_payload",
+    "palette_category_from_spec",
+    "spec_kind_from_mapping",
+    "spec_kind_from_spec",
+]
