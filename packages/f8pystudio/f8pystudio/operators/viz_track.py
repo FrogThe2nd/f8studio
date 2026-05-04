@@ -119,12 +119,16 @@ class VizTrackRuntimeNode(StudioVizRuntimeNodeBase):
         self._history_ms: int = 500
         self._history_frames: int = 10
         self._throttle_ms: int = 50
+        self._video_transport: str = "legacy_shm"
+        self._video_key: str = ""
         self._video_shm_name: str = ""
         self._flow_arrow_scale: float = 1.0
         self._flow_arrow_min_mag: float = 0.0
         self._flow_arrow_max_count: int = 2000
         self._show_dense_flow: bool = True
         self._show_sparse_flow: bool = True
+        self._flow_transport: str = "legacy_shm"
+        self._flow_key: str = ""
         self._flow_shm_name: str = ""
         self._dense_flow_mode: str = "hsv"
 
@@ -175,6 +179,14 @@ class VizTrackRuntimeNode(StudioVizRuntimeNodeBase):
         elif f == "historyFrames":
             self._history_frames = await self._get_int_state("historyFrames", default=10, minimum=1, maximum=200)
             self._dirty = True
+        elif f == "videoTransport":
+            video_transport = await self._get_str_state("videoTransport", default=self._video_transport)
+            video_transport = str(video_transport).strip().lower()
+            self._video_transport = video_transport if video_transport in ("legacy_shm", "zenoh") else "legacy_shm"
+            self._dirty = True
+        elif f == "videoKey":
+            self._video_key = await self._get_str_state("videoKey", default="")
+            self._dirty = True
         elif f == "videoShmName":
             self._video_shm_name = await self._get_str_state("videoShmName", default="")
             self._dirty = True
@@ -192,6 +204,14 @@ class VizTrackRuntimeNode(StudioVizRuntimeNodeBase):
             self._dirty = True
         elif f == "showSparseFlow":
             self._show_sparse_flow = await self._get_bool_state("showSparseFlow", default=True)
+            self._dirty = True
+        elif f == "flowTransport":
+            flow_transport = await self._get_str_state("flowTransport", default=self._flow_transport)
+            flow_transport = str(flow_transport).strip().lower()
+            self._flow_transport = flow_transport if flow_transport in ("legacy_shm", "zenoh") else "legacy_shm"
+            self._dirty = True
+        elif f == "flowKey":
+            self._flow_key = await self._get_str_state("flowKey", default="")
             self._dirty = True
         elif f == "flowShmName":
             self._flow_shm_name = await self._get_str_state("flowShmName", default="")
@@ -266,12 +286,27 @@ class VizTrackRuntimeNode(StudioVizRuntimeNodeBase):
 
         if schema_version == "f8visionFlowShm/1":
             shm_name = ""
+            flow_transport = ""
+            flow_key = ""
             try:
                 shm_name = str(payload.get("shmName") or "").strip()
             except (AttributeError, TypeError, ValueError):
                 shm_name = ""
+            try:
+                flow_transport = str(payload.get("flowTransport") or payload.get("transport") or "").strip().lower()
+            except (AttributeError, TypeError, ValueError):
+                flow_transport = ""
+            try:
+                flow_key = str(payload.get("flowKey") or payload.get("key") or "").strip()
+            except (AttributeError, TypeError, ValueError):
+                flow_key = ""
+            if flow_transport in ("legacy_shm", "zenoh"):
+                self._flow_transport = flow_transport
+            if flow_key:
+                self._flow_key = flow_key
             if shm_name:
                 self._flow_shm_name = shm_name
+            if shm_name or flow_key:
                 self._dirty = True
                 await self._schedule_refresh(now_ms=now)
             return
@@ -377,12 +412,20 @@ class VizTrackRuntimeNode(StudioVizRuntimeNodeBase):
         self._throttle_ms = await self._get_int_state("throttleMs", default=50, minimum=0, maximum=60000)
         self._history_ms = await self._get_int_state("historyMs", default=500, minimum=0, maximum=60000)
         self._history_frames = await self._get_int_state("historyFrames", default=10, minimum=1, maximum=200)
+        video_transport = await self._get_str_state("videoTransport", default="legacy_shm")
+        video_transport = str(video_transport).strip().lower()
+        self._video_transport = video_transport if video_transport in ("legacy_shm", "zenoh") else "legacy_shm"
+        self._video_key = await self._get_str_state("videoKey", default="")
         self._video_shm_name = await self._get_str_state("videoShmName", default="")
         self._flow_arrow_scale = await self._get_float_state("flowArrowScale", default=1.0, minimum=0.1, maximum=20.0)
         self._flow_arrow_min_mag = await self._get_float_state("flowArrowMinMag", default=0.0, minimum=0.0, maximum=100.0)
         self._flow_arrow_max_count = await self._get_int_state("flowArrowMaxCount", default=2000, minimum=100, maximum=20000)
         self._show_dense_flow = await self._get_bool_state("showDenseFlow", default=True)
         self._show_sparse_flow = await self._get_bool_state("showSparseFlow", default=True)
+        flow_transport = await self._get_str_state("flowTransport", default="legacy_shm")
+        flow_transport = str(flow_transport).strip().lower()
+        self._flow_transport = flow_transport if flow_transport in ("legacy_shm", "zenoh") else "legacy_shm"
+        self._flow_key = await self._get_str_state("flowKey", default="")
         self._flow_shm_name = await self._get_str_state("flowShmName", default="")
         dense_flow_mode = await self._get_str_state("denseFlowMode", default="hsv")
         dense_flow_mode = str(dense_flow_mode).strip().lower()
@@ -463,9 +506,13 @@ class VizTrackRuntimeNode(StudioVizRuntimeNodeBase):
                 "flowArrowMaxCount": int(self._flow_arrow_max_count),
                 "showDenseFlow": bool(self._show_dense_flow),
                 "showSparseFlow": bool(self._show_sparse_flow),
+                "flowTransport": str(self._flow_transport or "legacy_shm"),
+                "flowKey": str(self._flow_key or "").strip(),
                 "flowShmName": str(self._flow_shm_name or "").strip(),
                 "denseFlowMode": str(self._dense_flow_mode),
                 "nowMs": int(now_ms),
+                "videoTransport": str(self._video_transport or "legacy_shm"),
+                "videoKey": str(self._video_key or "").strip(),
                 "videoShmName": str(self._video_shm_name or "").strip(),
             },
             ts_ms=int(now_ms),
@@ -620,6 +667,24 @@ def register_operator(registry: Registry) -> Registry:
                     showOnNode=False,
                 ),
                 F8StateSpec(
+                    name="videoTransport",
+                    label="Video Transport",
+                    description="Video background transport backend. Use zenoh with videoKey; legacy_shm keeps old videoShmName.",
+                    valueSchema=string_schema(default="legacy_shm", enum=["legacy_shm", "zenoh"]),
+                    access=F8StateAccess.rw,
+                    required=True,
+                    showOnNode=True,
+                ),
+                F8StateSpec(
+                    name="videoKey",
+                    label="Video Key",
+                    description="Transport-specific video background key.",
+                    valueSchema=string_schema(default=""),
+                    access=F8StateAccess.rw,
+                    required=True,
+                    showOnNode=True,
+                ),
+                F8StateSpec(
                     name="videoShmName",
                     label="Video SHM Name",
                     description="Optional BGRA Video SHM mapping name used as Track Viz background.",
@@ -672,6 +737,24 @@ def register_operator(registry: Registry) -> Registry:
                     access=F8StateAccess.rw,
                     required=True,
                     showOnNode=False,
+                ),
+                F8StateSpec(
+                    name="flowTransport",
+                    label="Flow Transport",
+                    description="Dense flow transport backend. Use zenoh with flowKey; legacy_shm keeps old flowShmName.",
+                    valueSchema=string_schema(default="legacy_shm", enum=["legacy_shm", "zenoh"]),
+                    access=F8StateAccess.rw,
+                    required=True,
+                    showOnNode=True,
+                ),
+                F8StateSpec(
+                    name="flowKey",
+                    label="Flow Key",
+                    description="Transport-specific dense flow key.",
+                    valueSchema=string_schema(default=""),
+                    access=F8StateAccess.rw,
+                    required=True,
+                    showOnNode=True,
                 ),
                 F8StateSpec(
                     name="flowShmName",

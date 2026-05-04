@@ -8,7 +8,12 @@ import numpy as np
 from qtpy import QtCore, QtGui, QtWidgets
 from NodeGraphQt.nodes.base_node import NodeBaseWidget
 
-from f8pysdk.shm import VIDEO_FORMAT_FLOW2_F16, VideoShmReader
+from f8pysdk.shm import VIDEO_FORMAT_BGRA32, VIDEO_FORMAT_FLOW2_F16
+from f8pysdk.video_transport import (
+    LatestVideoFrameTransport,
+    LegacyShmLatestVideoFrameTransport,
+    ZenohLatestVideoFrameTransport,
+)
 
 from ..nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from ..nodegraph.viz_operator_nodeitem import F8StudioVizOperatorNodeItem
@@ -389,10 +394,14 @@ class _TrackVizPane(QtWidgets.QWidget):
         self._pending = None
         self._last_wh: tuple[int, int] | None = None
         self._scene_size: tuple[int, int] | None = None
+        self._video_transport = "legacy_shm"
+        self._video_key = ""
         self._video_shm_name = ""
         self._video_shm_throttle_ms = 33
-        self._video_reader: VideoShmReader | None = None
-        self._flow_reader: VideoShmReader | None = None
+        self._video_reader: LatestVideoFrameTransport | None = None
+        self._flow_transport = "legacy_shm"
+        self._flow_key = ""
+        self._flow_reader: LatestVideoFrameTransport | None = None
         self._video_frame_id = 0
         self._flow_frame_id = 0
         self._video_frame_bytes: bytes | None = None
@@ -438,9 +447,25 @@ class _TrackVizPane(QtWidgets.QWidget):
         except (AttributeError, TypeError, ValueError):
             video_shm_name = ""
         try:
+            video_transport = str(payload.get("videoTransport") or "legacy_shm").strip().lower()
+        except (AttributeError, TypeError, ValueError):
+            video_transport = "legacy_shm"
+        try:
+            video_key = str(payload.get("videoKey") or "").strip()
+        except (AttributeError, TypeError, ValueError):
+            video_key = ""
+        try:
             flow_shm_name = str(payload.get("flowShmName") or "").strip()
         except (AttributeError, TypeError, ValueError):
             flow_shm_name = ""
+        try:
+            flow_transport = str(payload.get("flowTransport") or "legacy_shm").strip().lower()
+        except (AttributeError, TypeError, ValueError):
+            flow_transport = "legacy_shm"
+        try:
+            flow_key = str(payload.get("flowKey") or "").strip()
+        except (AttributeError, TypeError, ValueError):
+            flow_key = ""
         try:
             dense_flow_mode = str(payload.get("denseFlowMode") or "hsv").strip().lower()
         except (AttributeError, TypeError, ValueError):
@@ -456,8 +481,12 @@ class _TrackVizPane(QtWidgets.QWidget):
 
         self._set_video_config(
             shm_name=video_shm_name,
+            video_transport=video_transport,
+            video_key=video_key,
             throttle_ms=video_shm_throttle_ms,
             flow_shm_name=flow_shm_name,
+            flow_transport=flow_transport,
+            flow_key=flow_key,
             show_dense_flow=show_dense_flow,
             show_sparse_flow=show_sparse_flow,
             dense_flow_mode=dense_flow_mode,
@@ -491,8 +520,12 @@ class _TrackVizPane(QtWidgets.QWidget):
         self,
         *,
         shm_name: str,
+        video_transport: str,
+        video_key: str,
         throttle_ms: int,
         flow_shm_name: str,
+        flow_transport: str,
+        flow_key: str,
         show_dense_flow: bool,
         show_sparse_flow: bool,
         dense_flow_mode: str,
@@ -503,13 +536,33 @@ class _TrackVizPane(QtWidgets.QWidget):
             self._video_timer.setInterval(self._video_shm_throttle_ms)
 
         next_name = str(shm_name or "").strip()
-        if next_name != self._video_shm_name:
+        next_video_transport = str(video_transport or "legacy_shm").strip().lower()
+        if next_video_transport not in ("legacy_shm", "zenoh"):
+            next_video_transport = "legacy_shm"
+        next_video_key = str(video_key or "").strip()
+        if (
+            next_name != self._video_shm_name
+            or next_video_transport != self._video_transport
+            or next_video_key != self._video_key
+        ):
             self._video_shm_name = next_name
+            self._video_transport = next_video_transport
+            self._video_key = next_video_key
             self._reset_video_reader()
 
         next_flow_name = str(flow_shm_name or "").strip()
-        if next_flow_name != self._flow_shm_name:
+        next_flow_transport = str(flow_transport or "legacy_shm").strip().lower()
+        if next_flow_transport not in ("legacy_shm", "zenoh"):
+            next_flow_transport = "legacy_shm"
+        next_flow_key = str(flow_key or "").strip()
+        if (
+            next_flow_name != self._flow_shm_name
+            or next_flow_transport != self._flow_transport
+            or next_flow_key != self._flow_key
+        ):
             self._flow_shm_name = next_flow_name
+            self._flow_transport = next_flow_transport
+            self._flow_key = next_flow_key
             self._reset_flow_reader()
 
         self._show_dense_flow = bool(show_dense_flow)
@@ -519,14 +572,16 @@ class _TrackVizPane(QtWidgets.QWidget):
         self._sync_video_timer_with_update_state()
 
     def _sync_video_timer_with_update_state(self) -> None:
-        has_input = bool(self._video_shm_name) or (self._show_dense_flow and bool(self._flow_shm_name))
+        has_video_input = bool(self._video_key) if self._video_transport == "zenoh" else bool(self._video_shm_name)
+        has_flow_input = bool(self._flow_key) if self._flow_transport == "zenoh" else bool(self._flow_shm_name)
+        has_input = has_video_input or (self._show_dense_flow and has_flow_input)
         if has_input and self.update_enabled():
             if not self._video_timer.isActive():
                 self._video_timer.start()
             return
         if self._video_timer.isActive():
             self._video_timer.stop()
-        if not self._video_shm_name:
+        if not has_video_input:
             self._canvas.set_video_frame(None)
             self._video_size = None
             self._sync_canvas_geometry()
@@ -579,95 +634,100 @@ class _TrackVizPane(QtWidgets.QWidget):
     def _ensure_video_reader(self) -> bool:
         if self._video_reader is not None:
             return True
-        if not self._video_shm_name:
-            return False
         try:
-            reader = VideoShmReader(self._video_shm_name)
-            reader.open(use_event=False)
+            if self._video_transport == "zenoh":
+                if not self._video_key:
+                    return False
+                reader: LatestVideoFrameTransport = ZenohLatestVideoFrameTransport.open_subscriber(self._video_key)
+            else:
+                if not self._video_shm_name:
+                    return False
+                reader = LegacyShmLatestVideoFrameTransport.open_reader(self._video_shm_name, use_event=False)
             self._video_reader = reader
             return True
-        except Exception as exc:
-            if hasattr(self, "_status") and self._status is not None:
-                self._status.setText(f"video shm open failed: {exc}")
+        except (FileNotFoundError, OSError, RuntimeError, ValueError):
             self._video_reader = None
             return False
 
     def _ensure_flow_reader(self) -> bool:
         if self._flow_reader is not None:
             return True
-        if not self._flow_shm_name:
-            return False
         try:
-            reader = VideoShmReader(self._flow_shm_name)
-            reader.open(use_event=False)
+            if self._flow_transport == "zenoh":
+                if not self._flow_key:
+                    return False
+                reader: LatestVideoFrameTransport = ZenohLatestVideoFrameTransport.open_subscriber(self._flow_key)
+            else:
+                if not self._flow_shm_name:
+                    return False
+                reader = LegacyShmLatestVideoFrameTransport.open_reader(self._flow_shm_name, use_event=False)
             self._flow_reader = reader
             return True
-        except Exception as exc:
-            if hasattr(self, "_status") and self._status is not None:
-                self._status.setText(f"flow shm open failed: {exc}")
+        except (FileNotFoundError, OSError, RuntimeError, ValueError):
             self._flow_reader = None
             return False
 
     def _read_flow_uv(self) -> tuple[np.ndarray, int, int] | None:
         if not self._ensure_flow_reader() or self._flow_reader is None:
             return None
+        frame = self._flow_reader.poll_latest()
+        if frame is None:
+            return None
         try:
-            header, payload = self._flow_reader.read_latest_frame()
-        except Exception:
-            return None
-        if header is None or payload is None:
-            return None
-        if int(header.fmt) != VIDEO_FORMAT_FLOW2_F16:
-            return None
-        frame_id = int(header.frame_id)
-        if frame_id == self._flow_frame_id:
-            return None
-        self._flow_frame_id = frame_id
+            if int(frame.fmt) != VIDEO_FORMAT_FLOW2_F16:
+                return None
+            frame_id = int(frame.frame_id)
+            if frame_id == self._flow_frame_id:
+                return None
+            self._flow_frame_id = frame_id
 
-        w = int(header.width)
-        h = int(header.height)
-        pitch = int(header.pitch)
-        if w <= 0 or h <= 0 or pitch < w * 4:
-            return None
-        row_bytes = w * 4
-        rows = []
-        for y in range(h):
-            off = y * pitch
-            rows.append(bytes(payload[off : off + row_bytes]))
-        uv = np.frombuffer(b"".join(rows), dtype="<f2").reshape(h, w, 2).astype(np.float32)
-        return uv, w, h
+            w = int(frame.width)
+            h = int(frame.height)
+            pitch = int(frame.pitch)
+            if w <= 0 or h <= 0 or pitch < w * 4:
+                return None
+            row_bytes = w * 4
+            rows = []
+            for y in range(h):
+                off = y * pitch
+                rows.append(bytes(frame.payload[off : off + row_bytes]))
+            uv = np.frombuffer(b"".join(rows), dtype="<f2").reshape(h, w, 2).astype(np.float32)
+            return uv, w, h
+        finally:
+            frame.release()
 
     def _tick_video(self) -> None:
         if not self.update_enabled():
             return
         if self._ensure_video_reader() and self._video_reader is not None:
-            try:
-                header, payload = self._video_reader.read_latest_bgra()
-            except Exception as exc:
-                if hasattr(self, "_status") and self._status is not None:
-                    self._status.setText(f"video shm read failed: {exc}")
-                header = None
-                payload = None
-            if header is not None and payload is not None:
-                frame_id = int(header.frame_id)
-                if frame_id != self._video_frame_id:
-                    w = int(header.width)
-                    h = int(header.height)
-                    pitch = int(header.pitch)
-                    if w > 0 and h > 0 and pitch > 0:
-                        frame_bytes = bytes(payload)
-                        self._video_frame_bytes = frame_bytes
-                        self._video_frame_id = frame_id
-                        try:
-                            img = QtGui.QImage(frame_bytes, w, h, pitch, QtGui.QImage.Format_ARGB32)
-                            safe_img = img.copy()
-                            self._video_size = (w, h)
-                            self._canvas.set_video_frame(safe_img)
-                            self._sync_canvas_geometry()
-                        except (AttributeError, RuntimeError, TypeError, ValueError):
-                            pass
+            frame = self._video_reader.poll_latest()
+            if frame is not None:
+                try:
+                    if int(frame.fmt) != int(VIDEO_FORMAT_BGRA32):
+                        frame_id = 0
+                    else:
+                        frame_id = int(frame.frame_id)
+                    if frame_id != 0 and frame_id != self._video_frame_id:
+                        w = int(frame.width)
+                        h = int(frame.height)
+                        pitch = int(frame.pitch)
+                        if w > 0 and h > 0 and pitch > 0:
+                            frame_bytes = bytes(frame.payload[: int(pitch) * int(h)])
+                            self._video_frame_bytes = frame_bytes
+                            self._video_frame_id = frame_id
+                            try:
+                                img = QtGui.QImage(frame_bytes, w, h, pitch, QtGui.QImage.Format_ARGB32)
+                                safe_img = img.copy()
+                                self._video_size = (w, h)
+                                self._canvas.set_video_frame(safe_img)
+                                self._sync_canvas_geometry()
+                            except (AttributeError, RuntimeError, TypeError, ValueError):
+                                pass
+                finally:
+                    frame.release()
 
-        if not self._show_dense_flow or not self._flow_shm_name:
+        has_flow_input = bool(self._flow_key) if self._flow_transport == "zenoh" else bool(self._flow_shm_name)
+        if not self._show_dense_flow or not has_flow_input:
             return
 
         flow_data = self._read_flow_uv()
