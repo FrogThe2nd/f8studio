@@ -18,13 +18,13 @@
 
 #include <spdlog/spdlog.h>
 
-#include "f8cppsdk/data_bus.h"
 #include "f8cppsdk/f8_naming.h"
 #include "f8cppsdk/generated/protocol_models.h"
 #include "f8cppsdk/msg_codec.h"
 #include "f8cppsdk/rungraph_routes.h"
 #include "f8cppsdk/state_kv.h"
 #include "f8cppsdk/time_utils.h"
+#include "f8cppsdk/zenoh_transport.h"
 
 #if defined(__linux__)
 #include <unistd.h>
@@ -161,6 +161,98 @@ std::string command_input_state_field(const std::string& name) {
 
 std::string command_output_state_field(const std::string& name) {
   return "__cmd__." + command_key_for_name(name) + ".out";
+}
+
+std::string new_control_req_id() {
+  return std::to_string(static_cast<long long>(now_ms()));
+}
+
+struct ControlEnvelope {
+  std::string req_id;
+  json raw = json::object();
+  json args = json::object();
+  json meta = json::object();
+};
+
+ControlEnvelope parse_control_envelope(const RuntimeBytes& bytes) {
+  ControlEnvelope out;
+  if (!bytes.empty() && !decode_json(bytes.data(), bytes.size(), out.raw)) {
+    out.raw = json::object();
+  }
+  if (!out.raw.is_object()) {
+    out.raw = json::object();
+  }
+  if (out.raw.contains("reqId") && out.raw["reqId"].is_string()) {
+    out.req_id = out.raw["reqId"].get<std::string>();
+  }
+  if (out.req_id.empty()) {
+    out.req_id = new_control_req_id();
+  }
+  if (out.raw.contains("args") && out.raw["args"].is_object()) {
+    out.args = out.raw["args"];
+  }
+  if (out.raw.contains("meta") && out.raw["meta"].is_object()) {
+    out.meta = out.raw["meta"];
+  }
+  return out;
+}
+
+RuntimeBytes encode_control_response(const std::string& req_id, bool ok, const json& result,
+                                     const std::string& err_code, const std::string& err_message) {
+  json payload;
+  payload["reqId"] = req_id;
+  payload["ok"] = ok;
+  payload["result"] = ok ? result : json(nullptr);
+  if (!ok) {
+    payload["error"] = json{{"code", err_code.empty() ? "INTERNAL" : err_code}, {"message", err_message}};
+  } else {
+    payload["error"] = json(nullptr);
+  }
+  return encode_json(payload);
+}
+
+RuntimeBytes encode_ready_payload(const std::string& service_id, bool ready, const std::string& reason,
+                                  std::int64_t ts_ms) {
+  const std::int64_t ts = ts_ms > 0 ? ts_ms : now_ms();
+  json payload = json::object();
+  payload["serviceId"] = ensure_token(service_id, "service_id");
+  payload["ready"] = ready;
+  payload["reason"] = reason;
+  payload["ts"] = ts;
+  return encode_json(payload);
+}
+
+RuntimeBytes encode_node_state_payload(const std::string& service_id, const json& value, const std::string& source,
+                                       const json& extra_meta, std::int64_t ts_ms, const std::string& origin) {
+  const std::int64_t ts = ts_ms > 0 ? ts_ms : now_ms();
+  json payload;
+  payload["value"] = value;
+  payload["actor"] = ensure_token(service_id, "service_id");
+  payload["ts"] = ts;
+  if (!source.empty()) {
+    payload["source"] = source;
+  }
+  if (!origin.empty()) {
+    payload["origin"] = origin;
+  }
+  if (extra_meta.is_object()) {
+    for (auto it = extra_meta.begin(); it != extra_meta.end(); ++it) {
+      const std::string k = it.key();
+      if (k == "value" || k == "actor" || k == "ts" || k == "source" || k == "origin") {
+        continue;
+      }
+      payload[k] = it.value();
+    }
+  }
+  return encode_json(payload);
+}
+
+RuntimeBytes encode_data_payload(const json& value, std::int64_t ts_ms) {
+  const std::int64_t ts = ts_ms > 0 ? ts_ms : now_ms();
+  json payload;
+  payload["value"] = value;
+  payload["ts"] = ts;
+  return encode_json(payload);
 }
 
 bool hidden_command_state_direction(const std::string& field, std::string& direction) {
@@ -464,6 +556,154 @@ std::size_t ServiceBus::drain_main_thread(std::size_t max_tasks) {
   return main_thread_.drain(max_tasks);
 }
 
+void ServiceBus::handle_data_payload(const std::string& subject, const RuntimeBytes& bytes) {
+  json payload = json::object();
+  if (!decode_json(bytes.data(), bytes.size(), payload)) {
+    return;
+  }
+  if (!payload.is_object()) return;
+
+  json value = payload.contains("value") ? payload["value"] : json();
+  const std::int64_t ts_ms = coerce_inbound_ts_ms(payload, 0);
+
+  json meta = payload;
+  if (meta.is_object()) {
+    meta.erase("value");
+    meta["subject"] = subject;
+  } else {
+    meta = json::object({{"subject", subject}});
+  }
+
+  const auto value_ptr = std::make_shared<const json>(std::move(value));
+  const auto snapshot = std::atomic_load(&data_routes_snapshot_);
+  if (!snapshot) return;
+
+  main_thread_.post([this, snapshot, subject, value_ptr, ts_ms, meta]() {
+    const auto it = snapshot->by_subject.find(subject);
+    if (it == snapshot->by_subject.end()) return;
+    const auto& routes = it->second;
+    if (routes.empty()) return;
+
+    const std::int64_t now = now_ms();
+    for (const auto& r : routes) {
+      if (!r.buf) continue;
+      if (r.timeout_ms > 0 && ts_ms > 0 && (now - ts_ms) > r.timeout_ms) {
+        continue;
+      }
+      auto& buf = *r.buf;
+      std::lock_guard<std::mutex> lock(buf.mu);
+      std::int64_t dropped = 0;
+      if (buf.strategy == EdgeStrategy::kLatest && !buf.queue.empty()) {
+        dropped = static_cast<std::int64_t>(buf.queue.size());
+      }
+      buf.last_seen_value = value_ptr;
+      buf.last_seen_ts_ms = ts_ms;
+      if (buf.strategy == EdgeStrategy::kLatest) {
+        buf.queue.clear();
+      }
+      buf.queue.emplace_back(value_ptr, ts_ms);
+      monitor_record_observed(r.to_port);
+      if (dropped > 0) {
+        monitor_record_dropped(dropped);
+      }
+    }
+
+    if (cfg_.data_delivery != DataDeliveryMode::kPush && cfg_.data_delivery != DataDeliveryMode::kBoth) {
+      return;
+    }
+
+    std::vector<DataReceivableNode*> nodes;
+    {
+      std::lock_guard<std::mutex> lock(handlers_mu_);
+      nodes = data_nodes_;
+    }
+    if (nodes.empty()) return;
+
+    for (const auto& r : routes) {
+      if (r.timeout_ms > 0 && ts_ms > 0 && (now - ts_ms) > r.timeout_ms) {
+        continue;
+      }
+      json m = meta;
+      m["fromServiceId"] = r.from_service_id;
+      m["fromNodeId"] = r.from_node_id;
+      m["fromPort"] = r.from_port;
+      for (auto* n : nodes) {
+        if (!n) continue;
+        try {
+          n->on_data(r.to_node_id, r.to_port, *value_ptr, ts_ms, m);
+        } catch (const std::exception& exc) {
+          monitor_record_error("DATA_CALLBACK_FAILED", exc.what(), ts_ms);
+        } catch (...) {
+          monitor_record_error("DATA_CALLBACK_FAILED", "on_data threw unknown exception", ts_ms);
+        }
+      }
+    }
+  });
+}
+
+void ServiceBus::handle_peer_state_payload(const std::string& peer, const std::string& key, const RuntimeBytes& bytes) {
+  constexpr const char* kPrefix = "nodes.";
+  constexpr const char* kStateMarker = ".state.";
+  if (key.rfind(kPrefix, 0) != 0) return;
+  const std::size_t marker = key.find(kStateMarker);
+  if (marker == std::string::npos) return;
+
+  const std::size_t node_begin = std::strlen(kPrefix);
+  const std::size_t node_end = marker;
+  if (node_end <= node_begin) return;
+  const std::string remote_node_id = key.substr(node_begin, node_end - node_begin);
+
+  const std::size_t field_begin = marker + std::strlen(kStateMarker);
+  if (field_begin >= key.size()) return;
+  const std::string remote_field = key.substr(field_begin);
+
+  std::vector<_NodeFieldKey> targets;
+  {
+    std::lock_guard<std::mutex> lock(state_mu_);
+    const auto it = cross_state_in_.find(_RemoteStateKey{peer, remote_node_id, remote_field});
+    if (it == cross_state_in_.end()) return;
+    targets = it->second;
+  }
+  if (targets.empty()) return;
+
+  nlohmann::json payload = nlohmann::json::object();
+  if (!decode_json(bytes.data(), bytes.size(), payload)) {
+    return;
+  }
+  if (!payload.is_object()) return;
+
+  const nlohmann::json value = payload.contains("value") ? payload["value"] : nlohmann::json();
+  const std::int64_t ts_ms = coerce_inbound_ts_ms(payload, now_ms());
+  nlohmann::json meta = payload;
+  if (meta.is_object()) {
+    meta.erase("value");
+  } else {
+    meta = nlohmann::json::object();
+  }
+  meta["peerServiceId"] = peer;
+  meta["remoteKey"] = key;
+  meta["fromNodeId"] = remote_node_id;
+  meta["fromField"] = remote_field;
+
+  if (state_debug_enabled()) {
+    std::string v_s;
+    try {
+      v_s = value.dump();
+    } catch (const std::exception& exc) {
+      v_s = std::string("<json_dump_failed: ") + exc.what() + ">";
+    } catch (...) {
+      v_s = "<json_dump_failed: unknown error>";
+    }
+    if (v_s.size() > 160) v_s = v_s.substr(0, 157) + "...";
+    spdlog::info("state_debug[{}] cross_state_watch peer={} key={} ts={} targets={} value={}", cfg_.service_id,
+                 peer, key, ts_ms, targets.size(), v_s);
+  }
+
+  for (const auto& t : targets) {
+    publish_state_local(t.node_id, t.field, value, ts_ms, "state_edge_cross", meta, "external", true, true);
+  }
+}
+
 void ServiceBus::apply_data_routes_from_rungraph(const json& graph_obj) {
   auto new_routes = parse_cross_service_data_routes(graph_obj, cfg_.service_id);
 
@@ -516,114 +756,69 @@ void ServiceBus::apply_data_routes_from_rungraph(const json& graph_obj) {
     }
     try {
       it->second.unsubscribe();
+    } catch (const std::exception& exc) {
+      spdlog::warn("NATS data unsubscribe failed serviceId={} subject={}: {}", cfg_.service_id, it->first, exc.what());
     } catch (...) {
+      spdlog::warn("NATS data unsubscribe failed serviceId={} subject={}: unknown error", cfg_.service_id, it->first);
     }
     it = data_subs_.erase(it);
+  }
+  for (auto it = runtime_data_subs_.begin(); it != runtime_data_subs_.end();) {
+    if (next_snapshot->by_subject.find(it->first) != next_snapshot->by_subject.end()) {
+      ++it;
+      continue;
+    }
+    try {
+      if (it->second) {
+        it->second->stop();
+      }
+    } catch (const std::exception& exc) {
+      spdlog::warn("runtime data unsubscribe failed serviceId={} subject={}: {}", cfg_.service_id, it->first,
+                   exc.what());
+    } catch (...) {
+      spdlog::warn("runtime data unsubscribe failed serviceId={} subject={}: unknown error", cfg_.service_id,
+                   it->first);
+    }
+    it = runtime_data_subs_.erase(it);
   }
 
   // Subscribe new subjects.
   for (const auto& kv : next_snapshot->by_subject) {
     const std::string& subject = kv.first;
-    if (data_subs_.find(subject) != data_subs_.end()) {
+    if (cfg_.bus_backend == BusBackend::kNats) {
+      if (data_subs_.find(subject) != data_subs_.end()) {
+        continue;
+      }
+      auto sub = nats_.subscribe(subject, [this, subject](natsMsg* msg) {
+        if (msg == nullptr) return;
+        const void* data = natsMsg_GetData(msg);
+        const int len = natsMsg_GetDataLength(msg);
+        if (data == nullptr || len < 0) return;
+        RuntimeBytes bytes(static_cast<std::size_t>(len));
+        std::memcpy(bytes.data(), data, static_cast<std::size_t>(len));
+        handle_data_payload(subject, bytes);
+      });
+      if (sub.valid()) {
+        data_subs_.emplace(subject, std::move(sub));
+      }
       continue;
     }
-    auto sub = nats_.subscribe(subject, [this, subject](natsMsg* msg) {
-      if (msg == nullptr) return;
-      const void* data = natsMsg_GetData(msg);
-      const int len = natsMsg_GetDataLength(msg);
-      if (data == nullptr || len < 0) return;
 
-      json payload = json::object();
-      if (!decode_json(data, static_cast<std::size_t>(len), payload)) {
-        return;
-      }
-      if (!payload.is_object()) return;
-
-      json value = payload.contains("value") ? payload["value"] : json();
-      const std::int64_t ts_ms = coerce_inbound_ts_ms(payload, 0);
-
-      json meta = payload;
-      try {
-        if (meta.is_object()) meta.erase("value");
-      } catch (...) {
-        meta = json::object();
-      }
-
-      // Enrich meta for consumers.
-      try {
-        meta["subject"] = subject;
-      } catch (...) {
-      }
-
-      const auto value_ptr = std::make_shared<const json>(std::move(value));
-      const auto snapshot = std::atomic_load(&data_routes_snapshot_);
-      if (!snapshot) return;
-
-      main_thread_.post([this, snapshot, subject, value_ptr, ts_ms, meta]() {
-        const auto it = snapshot->by_subject.find(subject);
-        if (it == snapshot->by_subject.end()) return;
-        const auto& routes = it->second;
-        if (routes.empty()) return;
-
-        const std::int64_t now = now_ms();
-        for (const auto& r : routes) {
-          if (!r.buf) continue;
-          if (r.timeout_ms > 0 && ts_ms > 0 && (now - ts_ms) > r.timeout_ms) {
-            continue;
-          }
-          auto& buf = *r.buf;
-          std::lock_guard<std::mutex> lock(buf.mu);
-          std::int64_t dropped = 0;
-          if (buf.strategy == EdgeStrategy::kLatest && !buf.queue.empty()) {
-            dropped = static_cast<std::int64_t>(buf.queue.size());
-          }
-          buf.last_seen_value = value_ptr;
-          buf.last_seen_ts_ms = ts_ms;
-          if (buf.strategy == EdgeStrategy::kLatest) {
-            buf.queue.clear();
-          }
-          buf.queue.emplace_back(value_ptr, ts_ms);
-          monitor_record_observed(r.to_port);
-          if (dropped > 0) {
-            monitor_record_dropped(dropped);
-          }
-        }
-
-        if (cfg_.data_delivery != DataDeliveryMode::kPush && cfg_.data_delivery != DataDeliveryMode::kBoth) {
-          return;
-        }
-
-        std::vector<DataReceivableNode*> nodes;
-        {
-          std::lock_guard<std::mutex> lock(handlers_mu_);
-          nodes = data_nodes_;
-        }
-        if (nodes.empty()) return;
-
-        for (const auto& r : routes) {
-          if (r.timeout_ms > 0 && ts_ms > 0 && (now - ts_ms) > r.timeout_ms) {
-            continue;
-          }
-          json m = meta;
-          try {
-            m["fromServiceId"] = r.from_service_id;
-            m["fromNodeId"] = r.from_node_id;
-            m["fromPort"] = r.from_port;
-          } catch (...) {
-          }
-          for (auto* n : nodes) {
-            if (!n) continue;
-            try {
-              n->on_data(r.to_node_id, r.to_port, *value_ptr, ts_ms, m);
-            } catch (...) {
-              continue;
-            }
-          }
-        }
-      });
+    if (runtime_data_subs_.find(subject) != runtime_data_subs_.end()) {
+      continue;
+    }
+    if (!runtime_transport_) {
+      spdlog::warn("runtime data subscription skipped without transport serviceId={} subject={}", cfg_.service_id,
+                   subject);
+      continue;
+    }
+    auto sub = runtime_transport_->subscribe(subject, [this](const RuntimeMessage& msg) {
+      handle_data_payload(msg.subject, msg.payload);
     });
-    if (sub.valid()) {
-      data_subs_.emplace(subject, std::move(sub));
+    if (sub && sub->valid()) {
+      runtime_data_subs_.emplace(subject, std::move(sub));
+    } else {
+      spdlog::warn("runtime data subscription failed serviceId={} subject={}", cfg_.service_id, subject);
     }
   }
 
@@ -640,15 +835,22 @@ bool ServiceBus::start() {
     cfg_.service_name = cfg_.service_id;
   }
   cfg_.apply_runtime_backend(cfg_.runtime_backend_config());
-  if (cfg_.bus_backend != BusBackend::kNats) {
-    spdlog::error(
-        "service_bus backend={} is configured for serviceId={}, but the C++ Zenoh/mem transport implementation is not "
-        "linked in this migration slice; start with --bus-backend nats to use the legacy C++ runtime.",
-        bus_backend_to_string(cfg_.bus_backend), cfg_.service_id);
-    return false;
-  }
   terminate_.store(false, std::memory_order_release);
   ready_.store(false, std::memory_order_release);
+
+  if (cfg_.bus_backend == BusBackend::kNats) {
+    return start_nats_backend();
+  }
+  if (cfg_.bus_backend == BusBackend::kZenoh) {
+    return start_zenoh_backend();
+  }
+
+  spdlog::error("service_bus backend={} is not implemented for C++ serviceId={}",
+                bus_backend_to_string(cfg_.bus_backend), cfg_.service_id);
+  return false;
+}
+
+bool ServiceBus::start_nats_backend() {
   if (!nats_.connect(cfg_.nats_url)) {
     return false;
   }
@@ -706,20 +908,19 @@ bool ServiceBus::start() {
 
         // Avoid loopback: ignore updates authored by this service process.
         // External state changes (other actors) still flow through.
-        try {
-          const std::string actor = payload.value("actor", std::string());
+        if (payload.contains("actor") && payload["actor"].is_string()) {
+          const std::string actor = payload["actor"].get<std::string>();
           if (!actor.empty() && actor == cfg_.service_id) {
             return;
           }
-        } catch (...) {
         }
 
         const nlohmann::json value = payload.contains("value") ? payload["value"] : nlohmann::json();
         const std::int64_t ts_ms = coerce_inbound_ts_ms(payload, 0);
         nlohmann::json meta = payload;
-        try {
-          if (meta.is_object()) meta.erase("value");
-        } catch (...) {
+        if (meta.is_object()) {
+          meta.erase("value");
+        } else {
           meta = nlohmann::json::object();
         }
 
@@ -738,11 +939,19 @@ bool ServiceBus::start() {
   try {
     (void)kv_set_node_state(kv_, cfg_.service_id, cfg_.service_id, "svcId", cfg_.service_id, "system",
                             json{{"builtin", true}}, 0, "system");
-  } catch (...) {}
+  } catch (const std::exception& exc) {
+    spdlog::warn("seed svcId state failed serviceId={}: {}", cfg_.service_id, exc.what());
+  } catch (...) {
+    spdlog::warn("seed svcId state failed serviceId={}: unknown error", cfg_.service_id);
+  }
   try {
     (void)kv_set_node_state(kv_, cfg_.service_id, cfg_.service_id, "active", active_.load(std::memory_order_acquire),
                             "system", json{{"builtin", true}, {"bootstrap", true}}, 0, "runtime");
-  } catch (...) {}
+  } catch (const std::exception& exc) {
+    spdlog::warn("seed active state failed serviceId={}: {}", cfg_.service_id, exc.what());
+  } catch (...) {
+    spdlog::warn("seed active state failed serviceId={}: unknown error", cfg_.service_id);
+  }
 
   // Announce readiness after endpoints are up.
   (void)kv_set_ready(kv_, cfg_.service_id, true, "start");
@@ -753,11 +962,296 @@ bool ServiceBus::start() {
   return true;
 }
 
+bool ServiceBus::start_zenoh_backend() {
+  runtime_transport_ = std::make_unique<ZenohTransport>();
+  if (!runtime_transport_->connect(cfg_.runtime_backend_config(), cfg_.service_id)) {
+    runtime_transport_.reset();
+    return false;
+  }
+
+  if (!start_runtime_control_endpoints()) {
+    stop_runtime_control_endpoints();
+    runtime_transport_->close();
+    runtime_transport_.reset();
+    return false;
+  }
+
+  load_active_from_kv();
+
+  (void)runtime_set_ready(false, "starting");
+  ready_.store(false, std::memory_order_release);
+
+  (void)runtime_set_node_state(cfg_.service_id, "svcId", cfg_.service_id, "system", json{{"builtin", true}}, 0,
+                               "system");
+  (void)runtime_set_node_state(cfg_.service_id, "active", active_.load(std::memory_order_acquire), "system",
+                               json{{"builtin", true}, {"bootstrap", true}}, 0, "runtime");
+
+  (void)runtime_set_ready(true, "start");
+  ready_.store(true, std::memory_order_release);
+  start_monitor_thread();
+  spdlog::info("service_bus started serviceId={} backend={}", cfg_.service_id, bus_backend_to_string(cfg_.bus_backend));
+  return true;
+}
+
+bool ServiceBus::start_runtime_control_endpoints() {
+  if (!runtime_transport_) {
+    spdlog::error("runtime control endpoints require an active runtime transport serviceId={}", cfg_.service_id);
+    return false;
+  }
+
+  struct EndpointRegistration {
+    std::string endpoint;
+    std::string subject;
+  };
+
+  const std::vector<EndpointRegistration> registrations = {
+      {"activate", svc_endpoint_subject(cfg_.service_id, "activate")},
+      {"deactivate", svc_endpoint_subject(cfg_.service_id, "deactivate")},
+      {"set_active", svc_endpoint_subject(cfg_.service_id, "set_active")},
+      {"status", svc_endpoint_subject(cfg_.service_id, "status")},
+      {"terminate", svc_endpoint_subject(cfg_.service_id, "terminate")},
+      {"quit", svc_endpoint_subject(cfg_.service_id, "quit")},
+      {"cmd", cmd_channel_subject(cfg_.service_id)},
+      {"set_state", svc_endpoint_subject(cfg_.service_id, "set_state")},
+      {"set_rungraph", svc_endpoint_subject(cfg_.service_id, "set_rungraph")},
+  };
+
+  for (const EndpointRegistration& registration : registrations) {
+    auto handle = runtime_transport_->serve(
+        registration.subject,
+        [this, endpoint = registration.endpoint](const RuntimeMessage& msg) {
+          return handle_runtime_control_request(endpoint, msg);
+        });
+    if (!handle || !handle->valid()) {
+      spdlog::error("runtime control endpoint registration failed serviceId={} endpoint={} subject={}",
+                    cfg_.service_id, registration.endpoint, registration.subject);
+      stop_runtime_control_endpoints();
+      return false;
+    }
+    runtime_control_endpoints_.push_back(std::move(handle));
+  }
+  return true;
+}
+
+void ServiceBus::stop_runtime_control_endpoints() {
+  for (auto& handle : runtime_control_endpoints_) {
+    if (!handle) {
+      continue;
+    }
+    try {
+      handle->stop();
+    } catch (const std::exception& exc) {
+      spdlog::warn("runtime control endpoint stop failed serviceId={}: {}", cfg_.service_id, exc.what());
+    } catch (...) {
+      spdlog::warn("runtime control endpoint stop failed serviceId={}: unknown error", cfg_.service_id);
+    }
+  }
+  runtime_control_endpoints_.clear();
+}
+
+RuntimeBytes ServiceBus::handle_runtime_control_request(const std::string& endpoint, const RuntimeMessage& msg) {
+  const auto env = parse_control_envelope(msg.payload);
+  std::string err_code;
+  std::string err_msg;
+  json result = json::object();
+
+  auto ok_response = [&](const json& out) { return encode_control_response(env.req_id, true, out, "", ""); };
+  auto error_response = [&](const std::string& code, const std::string& message) {
+    return encode_control_response(env.req_id, false, json(nullptr), code, message);
+  };
+
+  try {
+    if (endpoint == "activate") {
+      on_activate(env.meta);
+      return ok_response(json{{"active", true}});
+    }
+    if (endpoint == "deactivate") {
+      on_deactivate(env.meta);
+      return ok_response(json{{"active", false}});
+    }
+    if (endpoint == "set_active") {
+      const json* src = nullptr;
+      if (env.args.contains("active")) {
+        src = &env.args;
+      } else if (env.raw.contains("active")) {
+        src = &env.raw;
+      } else {
+        return error_response("INVALID_ARGS", "missing active");
+      }
+
+      f8::cppsdk::generated::F8SetActiveArgs req;
+      f8::cppsdk::generated::ParseError perr;
+      if (!f8::cppsdk::generated::parse_F8SetActiveArgs(*src, req, perr)) {
+        return error_response("INVALID_ARGS", perr.message.empty() ? "invalid request" : perr.message);
+      }
+      on_set_active(req.active, env.meta);
+      return ok_response(json{{"active", req.active}});
+    }
+    if (endpoint == "status") {
+      return ok_response(json{{"serviceId", cfg_.service_id}, {"active", is_active()}});
+    }
+    if (endpoint == "terminate" || endpoint == "quit") {
+      spdlog::info("{} requested serviceId={}", endpoint, cfg_.service_id);
+      json out;
+      const bool ok = on_command("terminate", env.args, env.meta, out, err_code, err_msg);
+      if (!ok) {
+        return error_response(err_code, err_msg);
+      }
+      return ok_response(json{{"terminating", true}});
+    }
+    if (endpoint == "set_state") {
+      const json* src = nullptr;
+      if (env.args.contains("nodeId") || env.args.contains("field") || env.args.contains("value")) {
+        src = &env.args;
+      } else if (env.raw.contains("nodeId") || env.raw.contains("field") || env.raw.contains("value")) {
+        src = &env.raw;
+      } else {
+        return error_response("INVALID_ARGS", "missing nodeId/field/value");
+      }
+
+      f8::cppsdk::generated::F8SetStateArgs req;
+      f8::cppsdk::generated::ParseError perr;
+      if (!f8::cppsdk::generated::parse_F8SetStateArgs(*src, req, perr)) {
+        return error_response("INVALID_ARGS", perr.message.empty() ? "invalid request" : perr.message);
+      }
+
+      const bool ok = on_set_state(req.nodeId, req.field, req.value, env.meta, err_code, err_msg);
+      if (!ok) {
+        return error_response(err_code, err_msg);
+      }
+      return ok_response(json{{"nodeId", req.nodeId}, {"field", req.field}});
+    }
+    if (endpoint == "set_rungraph") {
+      json graph_obj;
+      f8::cppsdk::generated::ParseError perr;
+      if (env.args.contains("graph") && env.args["graph"].is_object()) {
+        f8::cppsdk::generated::F8SetRungraphArgs req;
+        if (!f8::cppsdk::generated::parse_F8SetRungraphArgs(env.args, req, perr)) {
+          return error_response("INVALID_ARGS", perr.message.empty() ? "invalid request" : perr.message);
+        }
+        graph_obj = env.args["graph"];
+      } else if (env.raw.contains("graph") && env.raw["graph"].is_object()) {
+        f8::cppsdk::generated::F8SetRungraphArgs req;
+        if (!f8::cppsdk::generated::parse_F8SetRungraphArgs(env.raw, req, perr)) {
+          return error_response("INVALID_ARGS", perr.message.empty() ? "invalid request" : perr.message);
+        }
+        graph_obj = env.raw["graph"];
+      } else if (env.raw.is_object() && env.raw.contains("nodes") && env.raw.contains("edges")) {
+        f8::cppsdk::generated::F8RuntimeGraph req;
+        if (!f8::cppsdk::generated::parse_F8RuntimeGraph(env.raw, req, perr)) {
+          return error_response("INVALID_ARGS", perr.message.empty() ? "invalid request" : perr.message);
+        }
+        graph_obj = env.raw;
+      } else {
+        return error_response("INVALID_ARGS", "missing graph");
+      }
+
+      const bool ok = on_set_rungraph(graph_obj, env.meta, err_code, err_msg);
+      if (!ok) {
+        return error_response(err_code, err_msg);
+      }
+      return ok_response(json{{"graphId", graph_obj.value("graphId", "")}});
+    }
+    if (endpoint == "cmd") {
+      f8::cppsdk::generated::F8CommandInvokeRequest req;
+      f8::cppsdk::generated::ParseError perr;
+      if (!f8::cppsdk::generated::parse_F8CommandInvokeRequest(env.raw, req, perr)) {
+        return error_response("INVALID_ARGS", perr.message.empty() ? "invalid request" : perr.message);
+      }
+      json out;
+      const bool ok = on_command(req.call, req.args, req.meta, out, err_code, err_msg);
+      if (!ok) {
+        return error_response(err_code, err_msg);
+      }
+      return ok_response(out);
+    }
+  } catch (const std::exception& exc) {
+    spdlog::error("runtime control endpoint failed serviceId={} endpoint={}: {}", cfg_.service_id, endpoint, exc.what());
+    return error_response("INTERNAL", exc.what());
+  } catch (...) {
+    spdlog::error("runtime control endpoint failed serviceId={} endpoint={}: unknown error", cfg_.service_id, endpoint);
+    return error_response("INTERNAL", "unknown error");
+  }
+
+  return error_response("NOT_FOUND", "unknown endpoint");
+}
+
+bool ServiceBus::runtime_publish_data(const std::string& from_node_id, const std::string& port_id, const json& value,
+                                      std::int64_t ts_ms) {
+  const auto subject = data_subject(cfg_.service_id, from_node_id, port_id);
+  const auto bytes = encode_data_payload(value, ts_ms);
+  if (cfg_.bus_backend == BusBackend::kNats) {
+    return nats_.publish(subject, bytes.data(), bytes.size());
+  }
+  if (runtime_transport_) {
+    return runtime_transport_->publish(subject, bytes);
+  }
+  return false;
+}
+
+bool ServiceBus::runtime_kv_put(const std::string& key, const RuntimeBytes& bytes) {
+  if (cfg_.bus_backend == BusBackend::kNats) {
+    return kv_.put(key, bytes.data(), bytes.size());
+  }
+  if (runtime_transport_) {
+    return runtime_transport_->kv_put(key, bytes);
+  }
+  return false;
+}
+
+std::optional<RuntimeBytes> ServiceBus::runtime_kv_get(const std::string& key) {
+  if (cfg_.bus_backend == BusBackend::kNats) {
+    return kv_.get(key);
+  }
+  if (runtime_transport_) {
+    return runtime_transport_->kv_get(key);
+  }
+  return std::nullopt;
+}
+
+std::optional<RuntimeBytes> ServiceBus::runtime_kv_get_in_bucket(const std::string& bucket, const std::string& key) {
+  if (cfg_.bus_backend == BusBackend::kNats) {
+    if (bucket == kv_bucket_for_service(cfg_.service_id)) {
+      return kv_.get(key);
+    }
+    std::lock_guard<std::mutex> lock(state_mu_);
+    constexpr const char* kBucketPrefix = "svc_";
+    if (bucket.rfind(kBucketPrefix, 0) != 0) {
+      spdlog::warn("unsupported runtime KV bucket serviceId={} bucket={}", cfg_.service_id, bucket);
+      return std::nullopt;
+    }
+    const auto peer_service_id = bucket.substr(std::string(kBucketPrefix).size());
+    const auto it = peer_kv_by_service_id_.find(peer_service_id);
+    if (it != peer_kv_by_service_id_.end() && it->second) {
+      return it->second->get(key);
+    }
+    return std::nullopt;
+  }
+  if (runtime_transport_) {
+    return runtime_transport_->kv_get_in_bucket(bucket, key);
+  }
+  return std::nullopt;
+}
+
+bool ServiceBus::runtime_set_ready(bool ready, const std::string& reason, std::int64_t ts_ms) {
+  const auto raw = encode_ready_payload(cfg_.service_id, ready, reason, ts_ms);
+  return runtime_kv_put(kv_key_ready(), raw);
+}
+
+bool ServiceBus::runtime_set_node_state(const std::string& node_id, const std::string& field, const json& value,
+                                        const std::string& source, const json& extra_meta, std::int64_t ts_ms,
+                                        const std::string& origin) {
+  const auto raw = encode_node_state_payload(cfg_.service_id, value, source, extra_meta, ts_ms, origin);
+  return runtime_kv_put(kv_key_node_state(node_id, field), raw);
+}
+
 void ServiceBus::stop() {
   ready_.store(false, std::memory_order_release);
   stop_monitor_thread();
   if (kv_.valid()) {
     (void)kv_set_ready(kv_, cfg_.service_id, false, "stop");
+  } else if (runtime_transport_ && !cfg_.service_id.empty()) {
+    (void)runtime_set_ready(false, "stop");
   }
 
   {
@@ -772,6 +1266,20 @@ void ServiceBus::stop() {
       }
     }
     peer_kv_by_service_id_.clear();
+    for (auto& kv : peer_state_subs_by_service_id_) {
+      try {
+        if (kv.second) {
+          kv.second->stop();
+        }
+      } catch (const std::exception& exc) {
+        spdlog::warn("peer state subscription stop failed serviceId={} peer={}: {}", cfg_.service_id, kv.first,
+                     exc.what());
+      } catch (...) {
+        spdlog::warn("peer state subscription stop failed serviceId={} peer={}: unknown error", cfg_.service_id,
+                     kv.first);
+      }
+    }
+    peer_state_subs_by_service_id_.clear();
     cross_state_in_.clear();
     cross_state_targets_.clear();
   }
@@ -779,22 +1287,50 @@ void ServiceBus::stop() {
   if (ctrl_) {
     try {
       ctrl_->stop();
-    } catch (...) {}
+    } catch (const std::exception& exc) {
+      spdlog::warn("control plane stop failed serviceId={}: {}", cfg_.service_id, exc.what());
+    } catch (...) {
+      spdlog::warn("control plane stop failed serviceId={}: unknown error", cfg_.service_id);
+    }
   }
   ctrl_.reset();
+  stop_runtime_control_endpoints();
 
   try {
     kv_.stop_watch();
-  } catch (...) {}
+  } catch (const std::exception& exc) {
+    spdlog::warn("KV watch stop failed serviceId={}: {}", cfg_.service_id, exc.what());
+  } catch (...) {
+    spdlog::warn("KV watch stop failed serviceId={}: unknown error", cfg_.service_id);
+  }
   {
     std::lock_guard<std::mutex> lock(data_mu_);
     for (auto& kv : data_subs_) {
       try {
         kv.second.unsubscribe();
+      } catch (const std::exception& exc) {
+        spdlog::warn("NATS data subscription stop failed serviceId={} subject={}: {}", cfg_.service_id, kv.first,
+                     exc.what());
       } catch (...) {
+        spdlog::warn("NATS data subscription stop failed serviceId={} subject={}: unknown error", cfg_.service_id,
+                     kv.first);
       }
     }
     data_subs_.clear();
+    for (auto& kv : runtime_data_subs_) {
+      try {
+        if (kv.second) {
+          kv.second->stop();
+        }
+      } catch (const std::exception& exc) {
+        spdlog::warn("runtime data subscription stop failed serviceId={} subject={}: {}", cfg_.service_id, kv.first,
+                     exc.what());
+      } catch (...) {
+        spdlog::warn("runtime data subscription stop failed serviceId={} subject={}: unknown error", cfg_.service_id,
+                     kv.first);
+      }
+    }
+    runtime_data_subs_.clear();
     data_inputs_.clear();
     std::atomic_store(&data_routes_snapshot_, std::shared_ptr<const _DataRoutingSnapshot>{});
   }
@@ -809,9 +1345,17 @@ void ServiceBus::stop() {
   }
   try {
     main_thread_.clear();
-  } catch (...) {}
+  } catch (const std::exception& exc) {
+    spdlog::warn("main-thread queue clear failed serviceId={}: {}", cfg_.service_id, exc.what());
+  } catch (...) {
+    spdlog::warn("main-thread queue clear failed serviceId={}: unknown error", cfg_.service_id);
+  }
   kv_.close();
   nats_.close();
+  if (runtime_transport_) {
+    runtime_transport_->close();
+    runtime_transport_.reset();
+  }
 }
 
 void ServiceBus::wait_terminate() {
@@ -824,7 +1368,7 @@ void ServiceBus::set_active_local(bool active, const json& meta, const std::stri
 
   // Persist `nodes.<serviceId>.state.active` (mirror pysdk).
   const json extra = meta.is_object() ? meta : json::object();
-  (void)kv_set_node_state(kv_, cfg_.service_id, cfg_.service_id, "active", active, source, extra, 0, "runtime");
+  (void)runtime_set_node_state(cfg_.service_id, "active", active, source, extra, 0, "runtime");
 
   std::vector<LifecycleNode*> nodes;
   {
@@ -1133,7 +1677,7 @@ void ServiceBus::monitor_loop() {
         continue;
       }
     }
-    (void)publish_data(nats_, cfg_.service_id, cfg_.service_id, "monitor", snapshot, ts);
+    (void)runtime_publish_data(cfg_.service_id, "monitor", snapshot, ts);
   }
 }
 
@@ -1251,7 +1795,7 @@ bool ServiceBus::on_set_rungraph(const json& graph_obj, const json& meta, std::s
       return false;
     }
     const auto bytes = encode_json(persisted);
-    (void)kv_.put(kv_key_rungraph(), bytes.data(), bytes.size());
+    (void)runtime_kv_put(kv_key_rungraph(), bytes);
   } catch (const std::exception& ex) {
     error_code = "INTERNAL";
     error_message = ex.what();
@@ -1431,7 +1975,7 @@ bool ServiceBus::on_command(const std::string& call, const json& args, const jso
 void ServiceBus::load_active_from_kv() {
   try {
     const auto key = kv_key_node_state(cfg_.service_id, "active");
-    const auto raw = kv_.get(key);
+    const auto raw = runtime_kv_get(key);
     if (!raw.has_value()) {
       return;
     }
@@ -1447,8 +1991,10 @@ void ServiceBus::load_active_from_kv() {
       return;
     }
     set_active_local(v.get<bool>(), json::object({{"init", true}}), "kv");
+  } catch (const std::exception& exc) {
+    spdlog::warn("load active state failed serviceId={}: {}", cfg_.service_id, exc.what());
   } catch (...) {
-    return;
+    spdlog::warn("load active state failed serviceId={}: unknown error", cfg_.service_id);
   }
 }
 
@@ -1460,7 +2006,7 @@ bool ServiceBus::emit_data(const std::string& from_node_id, const std::string& p
   const std::int64_t now_ts = now_ms();
   const std::int64_t emit_ts = ts_ms > 0 ? ts_ms : now_ts;
   monitor_record_processed(port, emit_ts, now_ts);
-  return publish_data(nats_, cfg_.service_id, node, port, value, ts_ms);
+  return runtime_publish_data(node, port, value, ts_ms);
 }
 
 std::optional<json> ServiceBus::pull_data(const std::string& node_id, const std::string& port_id) {
@@ -1525,7 +2071,7 @@ ServiceBus::StateRead ServiceBus::get_state(const std::string& node_id, const st
   }
 
   const auto key = kv_key_node_state(nid, f);
-  auto raw = kv_.get(key);
+  auto raw = runtime_kv_get(key);
   if (!raw.has_value()) {
     return StateRead{false, json(nullptr), std::nullopt};
   }
@@ -1661,125 +2207,125 @@ void ServiceBus::apply_rungraph_local(const json& graph_obj, std::string& error_
 
   apply_data_routes_from_rungraph(graph_obj);
 
-  // Ensure peer KV watches are running for any cross-state dependencies.
-  // This mirrors f8pysdk's cross-service state routing (remote KV watch + initial sync).
+  // Ensure peer state watches are running for any cross-state dependencies.
+  // This mirrors f8pysdk's cross-service state routing (remote watch + initial sync).
   std::unordered_set<std::string> want_peers;
   for (const auto& t : cross_state_initial_reads) {
     want_peers.insert(std::get<0>(t));
   }
-  {
-    std::lock_guard<std::mutex> lock(state_mu_);
-    for (auto it = peer_kv_by_service_id_.begin(); it != peer_kv_by_service_id_.end();) {
-      if (want_peers.find(it->first) != want_peers.end()) {
-        ++it;
+
+  if (cfg_.bus_backend == BusBackend::kNats) {
+    {
+      std::lock_guard<std::mutex> lock(state_mu_);
+      for (auto it = peer_kv_by_service_id_.begin(); it != peer_kv_by_service_id_.end();) {
+        if (want_peers.find(it->first) != want_peers.end()) {
+          ++it;
+          continue;
+        }
+        try {
+          if (it->second) {
+            it->second->stop_watch();
+            it->second->close();
+          }
+        } catch (const std::exception& exc) {
+          spdlog::warn("peer KV close failed serviceId={} peer={}: {}", cfg_.service_id, it->first, exc.what());
+        } catch (...) {
+          spdlog::warn("peer KV close failed serviceId={} peer={}: unknown error", cfg_.service_id, it->first);
+        }
+        it = peer_kv_by_service_id_.erase(it);
+      }
+    }
+
+    for (const auto& peer : want_peers) {
+      bool has_peer = false;
+      {
+        std::lock_guard<std::mutex> lock(state_mu_);
+        has_peer = (peer_kv_by_service_id_.find(peer) != peer_kv_by_service_id_.end());
+      }
+      if (has_peer) continue;
+
+      auto kv_peer = std::make_unique<KvStore>();
+      KvConfig kvc;
+      kvc.bucket = kv_bucket_for_service(peer);
+      kvc.memory_storage = true;
+      kvc.history = 1;
+      if (!kv_peer->open_or_create(nats_.jetstream(), kvc)) {
+        spdlog::warn("peer KV open failed bucket={} peer={}", kvc.bucket, peer);
         continue;
       }
-      try {
-        if (it->second) {
-          it->second->stop_watch();
-          it->second->close();
-        }
-      } catch (...) {
+
+      const bool ok = kv_peer->watch(
+          "nodes.>",
+          [this, peer](const std::string& key, const std::vector<std::uint8_t>& bytes) {
+            handle_peer_state_payload(peer, key, bytes);
+          },
+          true);
+
+      if (!ok) {
+        kv_peer->close();
+        continue;
       }
-      it = peer_kv_by_service_id_.erase(it);
+      {
+        std::lock_guard<std::mutex> lock(state_mu_);
+        peer_kv_by_service_id_[peer] = std::move(kv_peer);
+      }
+      if (state_debug_enabled()) {
+        spdlog::info("state_debug[{}] cross_state_watch_started peer={} bucket={}", cfg_.service_id, peer, kvc.bucket);
+      }
     }
-  }
-
-  for (const auto& peer : want_peers) {
-    bool has_peer = false;
+  } else {
     {
       std::lock_guard<std::mutex> lock(state_mu_);
-      has_peer = (peer_kv_by_service_id_.find(peer) != peer_kv_by_service_id_.end());
+      for (auto it = peer_state_subs_by_service_id_.begin(); it != peer_state_subs_by_service_id_.end();) {
+        if (want_peers.find(it->first) != want_peers.end()) {
+          ++it;
+          continue;
+        }
+        try {
+          if (it->second) {
+            it->second->stop();
+          }
+        } catch (const std::exception& exc) {
+          spdlog::warn("peer state subscription stop failed serviceId={} peer={}: {}", cfg_.service_id, it->first,
+                       exc.what());
+        } catch (...) {
+          spdlog::warn("peer state subscription stop failed serviceId={} peer={}: unknown error", cfg_.service_id,
+                       it->first);
+        }
+        it = peer_state_subs_by_service_id_.erase(it);
+      }
     }
-    if (has_peer) continue;
 
-    auto kv_peer = std::make_unique<KvStore>();
-    KvConfig kvc;
-    kvc.bucket = kv_bucket_for_service(peer);
-    kvc.memory_storage = true;
-    kvc.history = 1;
-    if (!kv_peer->open_or_create(nats_.jetstream(), kvc)) {
-      spdlog::warn("peer KV open failed bucket={} peer={}", kvc.bucket, peer);
-      continue;
-    }
+    for (const auto& peer : want_peers) {
+      bool has_peer = false;
+      {
+        std::lock_guard<std::mutex> lock(state_mu_);
+        has_peer = (peer_state_subs_by_service_id_.find(peer) != peer_state_subs_by_service_id_.end());
+      }
+      if (has_peer) continue;
+      if (!runtime_transport_) {
+        spdlog::warn("peer state subscription skipped without runtime transport serviceId={} peer={}", cfg_.service_id,
+                     peer);
+        continue;
+      }
 
-    const bool ok = kv_peer->watch(
-        "nodes.>",
-        [this, peer](const std::string& key, const std::vector<std::uint8_t>& bytes) {
-          constexpr const char* kPrefix = "nodes.";
-          constexpr const char* kStateMarker = ".state.";
-          if (key.rfind(kPrefix, 0) != 0) return;
-          const std::size_t marker = key.find(kStateMarker);
-          if (marker == std::string::npos) return;
-
-          const std::size_t node_begin = std::strlen(kPrefix);
-          const std::size_t node_end = marker;
-          if (node_end <= node_begin) return;
-          const std::string remote_node_id = key.substr(node_begin, node_end - node_begin);
-
-          const std::size_t field_begin = marker + std::strlen(kStateMarker);
-          if (field_begin >= key.size()) return;
-          const std::string remote_field = key.substr(field_begin);
-
-          std::vector<_NodeFieldKey> targets;
-          {
-            std::lock_guard<std::mutex> lock(state_mu_);
-            const auto it = cross_state_in_.find(_RemoteStateKey{peer, remote_node_id, remote_field});
-            if (it == cross_state_in_.end()) return;
-            targets = it->second;
-          }
-          if (targets.empty()) return;
-
-          nlohmann::json payload = nlohmann::json::object();
-          if (!decode_json(bytes.data(), bytes.size(), payload)) {
-            return;
-          }
-          if (!payload.is_object()) return;
-
-          const nlohmann::json value = payload.contains("value") ? payload["value"] : nlohmann::json();
-          const std::int64_t ts_ms = coerce_inbound_ts_ms(payload, now_ms());
-          nlohmann::json meta = payload;
-          try {
-            if (meta.is_object()) meta.erase("value");
-          } catch (...) {
-            meta = nlohmann::json::object();
-          }
-          meta["peerServiceId"] = peer;
-          meta["remoteKey"] = key;
-          meta["fromNodeId"] = remote_node_id;
-          meta["fromField"] = remote_field;
-
-          if (state_debug_enabled()) {
-            try {
-              std::string v_s;
-              try {
-                v_s = value.dump();
-              } catch (...) {
-                v_s = "<non_json>";
-              }
-              if (v_s.size() > 160) v_s = v_s.substr(0, 157) + "...";
-              spdlog::info("state_debug[{}] cross_state_watch peer={} key={} ts={} targets={} value={}", cfg_.service_id,
-                           peer, key, ts_ms, targets.size(), v_s);
-            } catch (...) {
-            }
-          }
-
-          for (const auto& t : targets) {
-            publish_state_local(t.node_id, t.field, value, ts_ms, "state_edge_cross", meta, "external", true, true);
-          }
-        },
-        true);
-
-    if (!ok) {
-      kv_peer->close();
-      continue;
-    }
-    {
-      std::lock_guard<std::mutex> lock(state_mu_);
-      peer_kv_by_service_id_[peer] = std::move(kv_peer);
-    }
-    if (state_debug_enabled()) {
-      spdlog::info("state_debug[{}] cross_state_watch_started peer={} bucket={}", cfg_.service_id, peer, kvc.bucket);
+      const std::string bucket = kv_bucket_for_service(peer);
+      auto sub = runtime_transport_->kv_watch_in_bucket(
+          bucket, "nodes.>",
+          [this, peer](const std::string& key, const RuntimeBytes& bytes) {
+            handle_peer_state_payload(peer, key, bytes);
+          });
+      if (!sub || !sub->valid()) {
+        spdlog::warn("peer state subscription failed serviceId={} peer={} bucket={}", cfg_.service_id, peer, bucket);
+        continue;
+      }
+      {
+        std::lock_guard<std::mutex> lock(state_mu_);
+        peer_state_subs_by_service_id_[peer] = std::move(sub);
+      }
+      if (state_debug_enabled()) {
+        spdlog::info("state_debug[{}] cross_state_watch_started peer={} bucket={}", cfg_.service_id, peer, bucket);
+      }
     }
   }
 
@@ -1788,77 +2334,28 @@ void ServiceBus::apply_rungraph_local(const json& graph_obj, std::string& error_
     const std::string peer = std::get<0>(t);
     const std::string remote_node_id = std::get<1>(t);
     const std::string remote_field = std::get<2>(t);
-    std::unique_ptr<KvStore>* kv_peer_ptr = nullptr;
-    {
-      std::lock_guard<std::mutex> lock(state_mu_);
-      auto it = peer_kv_by_service_id_.find(peer);
-      if (it != peer_kv_by_service_id_.end()) kv_peer_ptr = &it->second;
-    }
-    if (kv_peer_ptr == nullptr || kv_peer_ptr->get() == nullptr) continue;
-
     std::string remote_key;
     try {
       remote_key = kv_key_node_state(remote_node_id, remote_field);
+    } catch (const std::exception& exc) {
+      spdlog::warn("cross-state initial key build failed serviceId={} peer={}: {}", cfg_.service_id, peer, exc.what());
+      continue;
     } catch (...) {
+      spdlog::warn("cross-state initial key build failed serviceId={} peer={}: unknown error", cfg_.service_id, peer);
       continue;
     }
-    const auto raw = (*kv_peer_ptr)->get(remote_key);
+    const auto raw = runtime_kv_get_in_bucket(kv_bucket_for_service(peer), remote_key);
     if (!raw.has_value()) {
       if (state_debug_enabled()) {
         spdlog::info("state_debug[{}] cross_state_initial_miss peer={} key={}", cfg_.service_id, peer, remote_key);
       }
       continue;
     }
-
-    // Reuse the same parsing path as the watcher callback.
-    constexpr const char* kPrefix = "nodes.";
-    constexpr const char* kStateMarker = ".state.";
-    if (remote_key.rfind(kPrefix, 0) != 0) continue;
-    const std::size_t marker = remote_key.find(kStateMarker);
-    if (marker == std::string::npos) continue;
-
-    nlohmann::json payload = nlohmann::json::object();
-    if (!decode_json(raw->data(), raw->size(), payload)) {
-      continue;
-    }
-    if (!payload.is_object()) continue;
-
-    const nlohmann::json value = payload.contains("value") ? payload["value"] : nlohmann::json();
-    const std::int64_t ts_ms = coerce_inbound_ts_ms(payload, now_ms());
-    nlohmann::json meta = payload;
-    try {
-      if (meta.is_object()) meta.erase("value");
-    } catch (...) {
-      meta = nlohmann::json::object();
-    }
-    meta["peerServiceId"] = peer;
-    meta["remoteKey"] = remote_key;
-    meta["fromNodeId"] = remote_node_id;
-    meta["fromField"] = remote_field;
-
-    std::vector<_NodeFieldKey> targets;
-    {
-      std::lock_guard<std::mutex> lock(state_mu_);
-      const auto it = cross_state_in_.find(_RemoteStateKey{peer, remote_node_id, remote_field});
-      if (it != cross_state_in_.end()) targets = it->second;
-    }
     if (state_debug_enabled()) {
-      try {
-        std::string v_s;
-        try {
-          v_s = value.dump();
-        } catch (...) {
-          v_s = "<non_json>";
-        }
-        if (v_s.size() > 160) v_s = v_s.substr(0, 157) + "...";
-        spdlog::info("state_debug[{}] cross_state_initial_hit peer={} key={} ts={} targets={} value={}", cfg_.service_id,
-                     peer, remote_key, ts_ms, targets.size(), v_s);
-      } catch (...) {
-      }
+      spdlog::info("state_debug[{}] cross_state_initial_hit peer={} key={} bytes={}", cfg_.service_id, peer,
+                   remote_key, raw->size());
     }
-    for (const auto& tgt : targets) {
-      publish_state_local(tgt.node_id, tgt.field, value, ts_ms, "state_edge_cross", meta, "external", true, true);
-    }
+    handle_peer_state_payload(peer, remote_key, *raw);
   }
 
   // Apply per-node stateValues (best-effort reconcile using rungraph meta.ts).
@@ -2086,7 +2583,7 @@ void ServiceBus::publish_state_local(const std::string& node_id, const std::stri
   }
 
   const json extra = meta.is_object() ? meta : json::object();
-  (void)kv_set_node_state(kv_, cfg_.service_id, nid, f, value, source, extra, ts_ms, origin);
+  (void)runtime_set_node_state(nid, f, value, source, extra, ts_ms, origin);
   bool is_command_input = false;
   {
     std::lock_guard<std::mutex> lock(state_mu_);

@@ -134,9 +134,12 @@ class ZenohTransport::Impl final {
       if (!config_.zenoh_listen.empty()) {
         zenoh_config.insert_json5("listen/endpoints", json_array_for_endpoints(config_.zenoh_listen));
       }
+      zenoh_config.insert_json5("transport/shared_memory/enabled", "true");
 
       auto session = std::make_unique<zenoh::Session>(zenoh::Session::open(std::move(zenoh_config)));
       session_ = std::move(session);
+      liveliness_token_ =
+          session_->liveliness_declare_token(zenoh::KeyExpr(zenoh_service_liveliness_key(service_id_)));
       start_kv_queryables_locked();
       return true;
     } catch (const std::exception& exc) {
@@ -368,6 +371,14 @@ class ZenohTransport::Impl final {
   std::optional<RuntimeBytes> kv_get_in_bucket(const std::string& bucket, const std::string& key) {
 #if F8_WITH_ZENOH
     const std::string peer_service_id = kv_bucket_to_service_id(bucket);
+    if (peer_service_id == service_id_) {
+      std::lock_guard<std::mutex> lock(mu_);
+      const auto it = kv_.find(trim_runtime_string(key));
+      if (it == kv_.end()) {
+        return std::nullopt;
+      }
+      return it->second;
+    }
     const std::string selector = zenoh_kv_key(peer_service_id, key);
     struct RequestState {
       std::mutex mu;
@@ -470,6 +481,16 @@ class ZenohTransport::Impl final {
   void close_locked() {
 #if F8_WITH_ZENOH
     internal_queryables_.clear();
+    if (liveliness_token_.has_value()) {
+      try {
+        std::move(*liveliness_token_).undeclare();
+      } catch (const std::exception& exc) {
+        spdlog::warn("zenoh liveliness token undeclare failed serviceId={}: {}", service_id_, exc.what());
+      } catch (...) {
+        spdlog::warn("zenoh liveliness token undeclare failed serviceId={}: unknown error", service_id_);
+      }
+      liveliness_token_.reset();
+    }
     if (session_) {
       try {
         session_->close();
@@ -545,6 +566,7 @@ class ZenohTransport::Impl final {
   std::unordered_map<std::string, RuntimeBytes> kv_;
 #if F8_WITH_ZENOH
   std::unique_ptr<zenoh::Session> session_;
+  std::optional<zenoh::LivelinessToken> liveliness_token_;
   std::vector<std::unique_ptr<RuntimeSubscription>> internal_queryables_;
 #endif
 };

@@ -22,6 +22,7 @@
 #include "f8cppsdk/main_thread_queue.h"
 #include "f8cppsdk/rungraph_routes.h"
 #include "f8cppsdk/runtime_backend.h"
+#include "f8cppsdk/runtime_transport.h"
 #include "f8cppsdk/kv_store.h"
 #include "f8cppsdk/nats_client.h"
 #include "f8cppsdk/service_control_plane.h"
@@ -157,6 +158,23 @@ class ServiceBus final : public ServiceControlHandler {
                   std::string& error_message) override;
 
  private:
+  bool start_nats_backend();
+  bool start_zenoh_backend();
+  bool start_runtime_control_endpoints();
+  void stop_runtime_control_endpoints();
+  RuntimeBytes handle_runtime_control_request(const std::string& endpoint, const RuntimeMessage& msg);
+  bool runtime_publish_data(const std::string& from_node_id, const std::string& port_id, const json& value,
+                            std::int64_t ts_ms = 0);
+  bool runtime_kv_put(const std::string& key, const RuntimeBytes& bytes);
+  std::optional<RuntimeBytes> runtime_kv_get(const std::string& key);
+  std::optional<RuntimeBytes> runtime_kv_get_in_bucket(const std::string& bucket, const std::string& key);
+  bool runtime_set_ready(bool ready, const std::string& reason = "", std::int64_t ts_ms = 0);
+  bool runtime_set_node_state(const std::string& node_id, const std::string& field, const json& value,
+                              const std::string& source = "runtime",
+                              const json& extra_meta = json::object(), std::int64_t ts_ms = 0,
+                              const std::string& origin = "runtime");
+  void handle_data_payload(const std::string& subject, const RuntimeBytes& bytes);
+  void handle_peer_state_payload(const std::string& peer, const std::string& key, const RuntimeBytes& bytes);
   void load_active_from_kv();
   void apply_data_routes_from_rungraph(const json& graph_obj);
   void apply_rungraph_local(const json& graph_obj, std::string& error_code, std::string& error_message);
@@ -198,6 +216,8 @@ class ServiceBus final : public ServiceControlHandler {
   NatsClient nats_;
   KvStore kv_;
   std::unique_ptr<ServiceControlPlaneServer> ctrl_;
+  std::unique_ptr<RuntimeTransport> runtime_transport_;
+  std::vector<std::unique_ptr<RuntimeSubscription>> runtime_control_endpoints_;
 
   MainThreadQueue main_thread_;
 
@@ -281,6 +301,7 @@ class ServiceBus final : public ServiceControlHandler {
 
   mutable std::mutex data_mu_;
   std::unordered_map<std::string, NatsSubscription> data_subs_;
+  std::unordered_map<std::string, std::unique_ptr<RuntimeSubscription>> runtime_data_subs_;
   std::unordered_map<_NodePortKey, std::shared_ptr<_InputBuffer>, _NodePortKeyHash> data_inputs_;
 
   struct _RouteRuntime {
@@ -311,6 +332,7 @@ class ServiceBus final : public ServiceControlHandler {
   std::unordered_map<_RemoteStateKey, std::vector<_NodeFieldKey>, _RemoteStateKeyHash> cross_state_in_;
   std::unordered_set<_NodeFieldKey, _NodeFieldKeyHash> cross_state_targets_;
   std::unordered_map<std::string, std::unique_ptr<KvStore>> peer_kv_by_service_id_;
+  std::unordered_map<std::string, std::unique_ptr<RuntimeSubscription>> peer_state_subs_by_service_id_;
   bool has_rungraph_ = false;
 
   std::thread monitor_thread_;
