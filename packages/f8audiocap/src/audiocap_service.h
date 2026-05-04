@@ -14,6 +14,7 @@
 
 #include "f8cppsdk/audio_shared_memory_sink.h"
 #include "f8cppsdk/capabilities.h"
+#include "f8cppsdk/latest_audio_chunk_transport.h"
 #include "f8cppsdk/shm/audio.h"
 #include "f8cppsdk/service_bus.h"
 #include "wasapi_loopback_capture.h"
@@ -71,6 +72,7 @@ class AudioCapService final : public f8::cppsdk::LifecycleNode,
   void set_active_local(bool active, const nlohmann::json& meta);
   void publish_static_state();
   void publish_dynamic_state();
+  bool write_audio_chunk_interleaved_f32(const float* samples, std::uint32_t frames, std::int64_t ts_ms);
 
   static std::string default_audio_shm_name(const std::string& service_id);
 
@@ -83,6 +85,10 @@ class AudioCapService final : public f8::cppsdk::LifecycleNode,
   std::unique_ptr<f8::cppsdk::ServiceBus> bus_;
 
   std::unique_ptr<f8::cppsdk::AudioSharedMemorySink> shm_;
+  std::shared_ptr<f8::cppsdk::ZenohLatestAudioChunkPublisher> zenoh_audio_publisher_;
+  std::string zenoh_audio_key_;
+  std::atomic<std::uint64_t> zenoh_audio_seq_{0};
+  std::atomic<std::uint64_t> zenoh_audio_frame_index_{0};
 
   std::mutex state_mu_;
   std::unordered_map<std::string, nlohmann::json> published_state_;

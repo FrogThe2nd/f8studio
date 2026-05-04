@@ -18,6 +18,7 @@ from f8pysdk.nats_naming import ensure_token
 from f8pysdk.nodes import OperatorNode
 from f8pysdk.registry import Registry
 from f8pysdk.shm import audio_shm_name
+from f8pysdk.zenoh_naming import zenoh_data_key
 
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
 from f8pystudio.contracts.ui_commands import emit_ui_command
@@ -31,6 +32,16 @@ RENDERER_CLASS = "viz_audio"
 def _default_audio_shm_name(service_id: str) -> str:
     s = str(service_id or "").strip()
     return audio_shm_name(s) if s else ""
+
+
+def _default_audio_zenoh_key(service_id: str) -> str:
+    s = str(service_id or "").strip()
+    if not s:
+        return ""
+    try:
+        return zenoh_data_key(s, node_id=s, port_id="audio")
+    except ValueError:
+        return ""
 
 
 class VizAudioRuntimeNode(OperatorNode):
@@ -82,6 +93,24 @@ class VizAudioRuntimeNode(OperatorNode):
                 showOnNode=True,
             ),
             F8StateSpec(
+                name="audioTransport",
+                label="Audio Transport",
+                description="Audio input transport backend. Zenoh uses audioKey; legacy_shm uses shmName.",
+                valueSchema=string_schema(default="legacy_shm", enum=["legacy_shm", "zenoh"]),
+                access=F8StateAccess.rw,
+                required=True,
+                showOnNode=True,
+            ),
+            F8StateSpec(
+                name="audioKey",
+                label="Audio Key",
+                description="Transport-specific audio stream key.",
+                valueSchema=string_schema(default=""),
+                access=F8StateAccess.rw,
+                required=True,
+                showOnNode=True,
+            ),
+            F8StateSpec(
                 name="throttleMs",
                 label="Refresh (ms)",
                 description="UI refresh interval in milliseconds (0 = as fast as possible).",
@@ -122,6 +151,8 @@ class VizAudioRuntimeNode(OperatorNode):
         self._config_loaded = False
         self._service_id = ""
         self._shm_name = ""
+        self._audio_transport = "legacy_shm"
+        self._audio_key = ""
         self._throttle_ms = 20
         self._history_ms = 250
         self._channel = 0
@@ -147,14 +178,20 @@ class VizAudioRuntimeNode(OperatorNode):
         emit_ui_command(self.node_id, "viz.audio.detach", {}, ts_ms=int(time.time() * 1000))
 
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
+        del value
         f = str(field or "").strip()
-        if f not in ("serviceId", "shmName", "throttleMs", "historyMs", "channel"):
+        if f not in ("serviceId", "shmName", "audioTransport", "audioKey", "throttleMs", "historyMs", "channel"):
             return
         await self._ensure_config_loaded()
         if f == "serviceId":
             self._service_id = str(await self._get_str_state("serviceId", default=self._service_id)).strip()
         elif f == "shmName":
             self._shm_name = str(await self._get_str_state("shmName", default=self._shm_name)).strip()
+        elif f == "audioTransport":
+            transport = str(await self._get_str_state("audioTransport", default=self._audio_transport)).strip().lower()
+            self._audio_transport = transport if transport in ("legacy_shm", "zenoh") else "legacy_shm"
+        elif f == "audioKey":
+            self._audio_key = str(await self._get_str_state("audioKey", default=self._audio_key)).strip()
         elif f == "throttleMs":
             self._throttle_ms = await self._get_int_state("throttleMs", default=self._throttle_ms, minimum=0, maximum=60000)
         elif f == "historyMs":
@@ -168,6 +205,13 @@ class VizAudioRuntimeNode(OperatorNode):
             return
         self._service_id = str(await self._get_str_state("serviceId", default=str(self._initial_state.get("serviceId", "")))).strip()
         self._shm_name = str(await self._get_str_state("shmName", default=str(self._initial_state.get("shmName", "")))).strip()
+        transport = str(
+            await self._get_str_state("audioTransport", default=str(self._initial_state.get("audioTransport", "legacy_shm")))
+        ).strip().lower()
+        self._audio_transport = transport if transport in ("legacy_shm", "zenoh") else "legacy_shm"
+        self._audio_key = str(
+            await self._get_str_state("audioKey", default=str(self._initial_state.get("audioKey", "")))
+        ).strip()
         self._throttle_ms = await self._get_int_state("throttleMs", default=20, minimum=0, maximum=60000)
         self._history_ms = await self._get_int_state("historyMs", default=250, minimum=20, maximum=60000)
         self._channel = await self._get_int_state("channel", default=0, minimum=0, maximum=16)
@@ -185,14 +229,21 @@ class VizAudioRuntimeNode(OperatorNode):
 
     async def _push_config_async(self, now_ms: int) -> None:
         shm_name = str(self._shm_name or "").strip()
+        if not shm_name and self._audio_transport == "legacy_shm":
+            shm_name = str(self._audio_key or "").strip()
         if not shm_name:
             shm_name = _default_audio_shm_name(self._service_id)
+        audio_key = str(self._audio_key or "").strip()
+        if not audio_key and self._audio_transport == "zenoh":
+            audio_key = _default_audio_zenoh_key(self._service_id)
         emit_ui_command(
             self.node_id,
             "viz.audio.set",
             {
                 "shmName": shm_name,
                 "serviceId": str(self._service_id or "").strip(),
+                "audioTransport": str(self._audio_transport or "legacy_shm"),
+                "audioKey": audio_key,
                 "throttleMs": int(self._throttle_ms),
                 "historyMs": int(self._history_ms),
                 "channel": int(self._channel),

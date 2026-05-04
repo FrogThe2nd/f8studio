@@ -9,7 +9,12 @@ import pyqtgraph as pg  # type: ignore[import-not-found]
 from qtpy import QtCore, QtWidgets
 from NodeGraphQt.nodes.base_node import NodeBaseWidget
 
-from f8pysdk.shm import AudioShmReader, read_audio_header, SAMPLE_FORMAT_F32LE
+from f8pysdk.audio_transport import (
+    LatestAudioChunkTransport,
+    LegacyShmLatestAudioChunkTransport,
+    ZenohLatestAudioChunkTransport,
+)
+from f8pysdk.shm import SAMPLE_FORMAT_F32LE
 
 from ..nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from ..nodegraph.viz_operator_nodeitem import F8StudioVizOperatorNodeItem
@@ -97,7 +102,9 @@ class _AudioShmPane(QtWidgets.QWidget):
         self._timer.timeout.connect(self._tick)  # type: ignore[attr-defined]
         self._timer.setInterval(20)
 
-        self._reader: AudioShmReader | None = None
+        self._reader: LatestAudioChunkTransport | None = None
+        self._audio_transport = "legacy_shm"
+        self._audio_key = ""
         self._shm_name = ""
         self._last_seq = 0
 
@@ -118,14 +125,33 @@ class _AudioShmPane(QtWidgets.QWidget):
         self._update.setChecked(bool(enabled))
         self._sync_timer_with_update_state()
 
-    def set_config(self, *, shm_name: str, throttle_ms: int, history_ms: int, channel: int) -> None:
+    def set_config(
+        self,
+        *,
+        shm_name: str,
+        audio_transport: str,
+        audio_key: str,
+        throttle_ms: int,
+        history_ms: int,
+        channel: int,
+    ) -> None:
         shm_name = str(shm_name or "").strip()
+        audio_key = str(audio_key or "").strip()
+        audio_transport = str(audio_transport or "legacy_shm").strip().lower()
+        if audio_transport not in ("legacy_shm", "zenoh"):
+            audio_transport = "legacy_shm"
         self._history_ms = max(20, int(history_ms))
         self._channel = max(0, int(channel))
         throttle_ms = max(0, int(throttle_ms))
         self._timer.setInterval(max(1, throttle_ms) if throttle_ms > 0 else 1)
-        if shm_name != self._shm_name:
+        if (
+            shm_name != self._shm_name
+            or audio_key != self._audio_key
+            or audio_transport != self._audio_transport
+        ):
             self._shm_name = shm_name
+            self._audio_key = audio_key
+            self._audio_transport = audio_transport
             self._reset_reader()
         self._sync_timer_with_update_state()
 
@@ -146,7 +172,8 @@ class _AudioShmPane(QtWidgets.QWidget):
         self._last_seq = 0
 
     def _sync_timer_with_update_state(self) -> None:
-        if self.update_enabled() and self._shm_name:
+        has_source = bool(self._audio_key) if self._audio_transport == "zenoh" else bool(self._shm_name)
+        if self.update_enabled() and has_source:
             if not self._timer.isActive():
                 self._timer.start()
             return
@@ -157,11 +184,18 @@ class _AudioShmPane(QtWidgets.QWidget):
         if self._reader is not None:
             return True
         try:
-            r = AudioShmReader(self._shm_name)
-            r.open(use_event=False)
+            if self._audio_transport == "zenoh":
+                if not self._audio_key:
+                    return False
+                r: LatestAudioChunkTransport = ZenohLatestAudioChunkTransport.open_subscriber(self._audio_key)
+            else:
+                if not self._shm_name:
+                    return False
+                r = LegacyShmLatestAudioChunkTransport.open_reader(self._shm_name, use_event=False)
             self._reader = r
             return True
-        except Exception as exc:
+        except (FileNotFoundError, OSError, RuntimeError, ValueError) as exc:
+            del exc
             self._reader = None
             return False
 
@@ -178,48 +212,46 @@ class _AudioShmPane(QtWidgets.QWidget):
         if not self._ensure_reader():
             return
         assert self._reader is not None
-        buf = self._reader.buf
-        hdr = read_audio_header(buf)
-        if hdr is None or hdr.magic != 0xF8A11A02 or hdr.version != 1:
+        chunk = self._reader.poll_latest()
+        if chunk is None:
             return
-        if int(hdr.fmt) != int(SAMPLE_FORMAT_F32LE):
-            return
-        if hdr.sample_rate <= 0 or hdr.channels <= 0:
-            return
-        if int(hdr.sample_rate) != int(self._sample_rate) or self._window_frames == 0:
-            self._rebuild_window(int(hdr.sample_rate))
-
-        seq = int(hdr.write_seq)
-        if seq <= 0 or seq == int(self._last_seq):
-            return
-
-        h2, ch, payload = self._reader.read_chunk_f32(seq)
-        if h2 is None or ch is None or payload is None:
-            return
-        frames = int(ch.frames)
-        if frames <= 0:
-            self._last_seq = seq
-            return
-
-        channels = int(h2.channels)
-        samples = np.frombuffer(payload, dtype=np.float32).copy()
         try:
-            samples = samples.reshape((frames, channels))
-        except (TypeError, ValueError):
+            if int(chunk.fmt) != int(SAMPLE_FORMAT_F32LE):
+                return
+            if chunk.sample_rate <= 0 or chunk.channels <= 0:
+                return
+            if int(chunk.sample_rate) != int(self._sample_rate) or self._window_frames == 0:
+                self._rebuild_window(int(chunk.sample_rate))
+
+            seq = int(chunk.seq)
+            if seq <= 0 or seq == int(self._last_seq):
+                return
+
+            frames = int(chunk.frames)
+            if frames <= 0:
+                self._last_seq = seq
+                return
+
+            channels = int(chunk.channels)
+            samples = np.frombuffer(chunk.payload, dtype=np.float32).copy()
+            try:
+                samples = samples.reshape((frames, channels))
+            except (TypeError, ValueError):
+                self._last_seq = seq
+                return
+            idx = min(max(0, int(self._channel)), max(0, channels - 1))
+            y = samples[:, idx]
+
+            if frames >= self._window_frames:
+                self._y[:] = y[-self._window_frames :]
+            else:
+                self._y[:-frames] = self._y[frames:]
+                self._y[-frames:] = y[:frames]
+
+            self._curve.setData(self._x, self._y)
             self._last_seq = seq
-            return
-        idx = min(max(0, int(self._channel)), max(0, channels - 1))
-        y = samples[:, idx]
-
-        if frames >= self._window_frames:
-            self._y[:] = y[-self._window_frames :]
-        else:
-            self._y[:-frames] = self._y[frames:]
-            self._y[-frames:] = y[:frames]
-
-        peak = float(np.max(np.abs(y))) if y.size else 0.0
-        self._curve.setData(self._x, self._y)
-        self._last_seq = seq
+        finally:
+            chunk.release()
 
 
 class _AudioShmWidget(NodeBaseWidget):
@@ -265,8 +297,24 @@ class _AudioShmWidget(NodeBaseWidget):
             return
         cb(bool(enabled))
 
-    def set_config(self, *, shm_name: str, throttle_ms: int, history_ms: int, channel: int) -> None:
-        self._pane.set_config(shm_name=shm_name, throttle_ms=throttle_ms, history_ms=history_ms, channel=channel)
+    def set_config(
+        self,
+        *,
+        shm_name: str,
+        audio_transport: str,
+        audio_key: str,
+        throttle_ms: int,
+        history_ms: int,
+        channel: int,
+    ) -> None:
+        self._pane.set_config(
+            shm_name=shm_name,
+            audio_transport=audio_transport,
+            audio_key=audio_key,
+            throttle_ms=throttle_ms,
+            history_ms=history_ms,
+            channel=channel,
+        )
 
     def detach(self) -> None:
         self._pane.detach()
@@ -325,6 +373,8 @@ class VizAudioRenderNode(F8StudioOperatorBaseNode):
         try:
             payload = dict(cmd.payload or {})
             shm_name = str(payload.get("shmName") or "").strip()
+            audio_transport = str(payload.get("audioTransport") or "legacy_shm").strip().lower()
+            audio_key = str(payload.get("audioKey") or "").strip()
             throttle_ms = int(payload.get("throttleMs") or 20)
             history_ms = int(payload.get("historyMs") or 250)
             channel = int(payload.get("channel") or 0)
@@ -333,4 +383,11 @@ class VizAudioRenderNode(F8StudioOperatorBaseNode):
         widget = self._widget()
         if widget is None:
             return
-        widget.set_config(shm_name=shm_name, throttle_ms=throttle_ms, history_ms=history_ms, channel=channel)
+        widget.set_config(
+            shm_name=shm_name,
+            audio_transport=audio_transport,
+            audio_key=audio_key,
+            throttle_ms=throttle_ms,
+            history_ms=history_ms,
+            channel=channel,
+        )
