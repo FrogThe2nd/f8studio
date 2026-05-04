@@ -10,8 +10,10 @@ from f8pysdk.specs import (
     F8StateAccess,
     F8StateSpec,
     can_add as _policy_can_add,
+    can_delete_state_field as _policy_can_delete_state_field,
     can_delete as _policy_can_delete,
     can_edit_existing as _policy_can_edit_existing,
+    can_rename_state_field as _policy_can_rename_state_field,
 )
 from f8pysdk.codec import copy_model
 
@@ -388,8 +390,17 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         row.name_committed.connect(lambda value: self._rename_patch_state(row, value))
         row.setToolTip(self._state_terminal_tooltip(field))
         row.set_row_editable(
-            allow_rename=bool(not self._missing_locked and not self._inspect_mode),
-            allow_delete=bool(self._state_can_delete and not self._missing_locked and not bool(field.required) and not self._inspect_mode),
+            allow_rename=bool(
+                not self._missing_locked
+                and not self._inspect_mode
+                and _policy_can_rename_state_field(field)
+            ),
+            allow_delete=bool(
+                self._state_can_delete
+                and not self._missing_locked
+                and not self._inspect_mode
+                and _policy_can_delete_state_field(field)
+            ),
             allow_edit=True,
         )
         row.set_edit_tooltip("View state terminal..." if self._inspect_mode else "Edit state terminal...")

@@ -24,6 +24,13 @@ json schema_integer(const std::int64_t default_value) {
   return json{{"type", "integer"}, {"default", default_value}, {"minimum", 0}};
 }
 
+json locked_builtin_state_policy() {
+  return json{{"canRename", false},
+              {"canEditAccess", false},
+              {"canEditRequired", false},
+              {"canEditValueSchema", false}};
+}
+
 json state_field(const std::string& name, const json& value_schema, const std::string& access, const std::string& label,
                  const std::string& description, const bool required, const bool show_on_node) {
   return json{
@@ -33,6 +40,7 @@ json state_field(const std::string& name, const json& value_schema, const std::s
       {"valueSchema", value_schema},
       {"access", access},
       {"required", required},
+      {"editPolicy", locked_builtin_state_policy()},
       {"showOnNode", show_on_node},
   };
 }

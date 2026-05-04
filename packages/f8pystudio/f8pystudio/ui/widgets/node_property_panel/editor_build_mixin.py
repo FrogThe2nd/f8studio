@@ -14,6 +14,7 @@ from f8pysdk.specs import (
     F8ServiceSpec,
     F8StateAccess,
     can_add as _policy_can_add,
+    can_delete_state_field as _policy_can_delete_state_field,
     can_delete as _policy_can_delete,
 )
 
@@ -293,8 +294,12 @@ class NodePropertyEditorBuildMixin(NodePropertyEditorTabsMixin):
                 or inspect_mode
             )
             _set_read_only_widget(widget, read_only=bool(read_only))
-            required = bool(field.required)
-            allow_delete = bool(can_delete_state and not required and not inspect_mode)
+            allow_delete = bool(
+                can_delete_state
+                and not missing_locked
+                and not inspect_mode
+                and _policy_can_delete_state_field(field)
+            )
             label_txt = str(field.label or "").strip()
             desc_txt = str(field.description or "").strip()
             show_on_node = bool(field.showOnNode)

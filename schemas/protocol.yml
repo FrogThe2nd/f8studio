@@ -387,7 +387,7 @@ components:
         required:
           type: boolean
           default: false
-          description: If true, this state is protected and cannot be deleted, renamed, or have its access/required flags changed from editable state field lists.
+          description: If true, deploy validation treats this state as required. This is not an edit lock; use editPolicy to restrict renaming, required/access edits, or valueSchema edits.
         editPolicy:
           $ref: "#/components/schemas/F8StateFieldEditPolicy"
         uiControl:

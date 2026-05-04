@@ -18,6 +18,7 @@ from f8pysdk.specs import number_schema, string_schema
 from f8pystudio.ui.widgets import node_property_panel as npw
 from f8pystudio.ui.widgets.node_property_panel import _F8SpecPortEditor
 from f8pystudio.ui.widgets.node_property_panel import ports as property_panel_ports
+from f8pystudio.ui.widgets.node_property_panel import state_fields_mixin as property_panel_state_fields
 from f8pystudio.nodegraph.spec_mutations import set_ports
 
 
@@ -47,6 +48,28 @@ class _FakeNode:
     def set_ui_overrides(self, value: dict[str, object] | None, *, rebuild: bool = True) -> None:
         _ = rebuild
         self._ui_overrides = dict(value or {})
+
+    def sync_from_spec(self) -> None:
+        return None
+
+
+class _FakeStateEditor:
+    def __init__(self, node: _FakeNode) -> None:
+        self._node = node
+        self.applied = False
+
+    def _state_field_base_order(self, spec: F8ServiceSpec | None = None) -> list[str]:
+        active_spec = spec if spec is not None else self._node.spec
+        return [str(field.name or "").strip() for field in list(active_spec.stateFields or [])]
+
+    def _apply_state_field_spec_delete(self, name: str) -> None:
+        npw.F8StudioNodePropEditorWidget._apply_state_field_spec_delete(self, name)
+
+    def _resync_node_from_spec(self) -> None:
+        npw.F8StudioNodePropEditorWidget._resync_node_from_spec(self)
+
+    def _on_spec_applied(self) -> None:
+        self.applied = True
 
 
 def _ensure_app() -> QtWidgets.QApplication:
@@ -211,6 +234,53 @@ def test_state_field_reorder_persists_to_ui_overrides_without_mutating_spec_orde
         "optional_state",
     ]
     assert node.ui_overrides() == {"listOrder": {"stateFields": ["optional_state", "required_state"]}}
+
+
+def test_delete_state_field_allows_required_when_policy_allows(monkeypatch) -> None:
+    _ensure_app()
+    node = _FakeNode(_make_spec())
+    widget = _FakeStateEditor(node)
+
+    monkeypatch.setattr(
+        property_panel_state_fields.QtWidgets.QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QtWidgets.QMessageBox.StandardButton.Yes,
+    )
+
+    npw.F8StudioNodePropEditorWidget.delete_state_field(widget, "required_state")
+
+    assert [str(field.name or "") for field in list(node.spec.stateFields or [])] == ["optional_state"]
+    assert widget.applied is True
+
+
+def test_delete_state_field_respects_explicit_identity_lock(monkeypatch) -> None:
+    _ensure_app()
+    spec = _make_spec()
+    spec.stateFields = [
+        F8StateSpec(
+            name="locked_state",
+            valueSchema=string_schema(),
+            access=F8StateAccess.rw,
+            required=True,
+            editPolicy=F8StateFieldEditPolicy(canRename=False),
+        ),
+        F8StateSpec(name="optional_state", valueSchema=string_schema(), access=F8StateAccess.rw, required=False),
+    ]
+    node = _FakeNode(spec)
+    widget = _FakeStateEditor(node)
+
+    def _fail_question(*_args: object, **_kwargs: object) -> QtWidgets.QMessageBox.StandardButton:
+        raise AssertionError("locked state field should not ask for delete confirmation")
+
+    monkeypatch.setattr(property_panel_state_fields.QtWidgets.QMessageBox, "question", _fail_question)
+
+    npw.F8StudioNodePropEditorWidget.delete_state_field(widget, "locked_state")
+
+    assert [str(field.name or "") for field in list(node.spec.stateFields or [])] == [
+        "locked_state",
+        "optional_state",
+    ]
+    assert widget.applied is False
 
 
 def test_required_data_port_dialog_is_not_ui_only_when_editable(monkeypatch) -> None:
@@ -414,7 +484,7 @@ def test_state_field_dialog_receives_required_field_without_name_special_case(mo
     assert captured["required"] is True
 
 
-def test_required_state_field_dialog_locks_structure() -> None:
+def test_required_state_field_dialog_allows_structure_edits() -> None:
     _ensure_app()
     field = F8StateSpec(
         name="protected_state",
@@ -430,12 +500,43 @@ def test_required_state_field_dialog_locks_structure() -> None:
     dialog._schema = number_schema()
     edited = dialog.field()
 
+    assert dialog._name.isEnabled() is True
+    assert dialog._access.isEnabled() is True
+    assert dialog._required.isEnabled() is True
+    assert dialog._schema_btn.text() == "Edit Schema..."
+    assert edited.name == "renamed"
+    assert edited.access == F8StateAccess.rw
+    assert bool(edited.required) is False
+    assert edited.valueSchema is dialog._schema
+
+
+def test_state_field_dialog_honors_explicit_identity_lock() -> None:
+    _ensure_app()
+    field = F8StateSpec(
+        name="locked_state",
+        valueSchema=string_schema(),
+        access=F8StateAccess.rw,
+        required=True,
+        editPolicy=F8StateFieldEditPolicy(
+            canRename=False,
+            canEditAccess=False,
+            canEditRequired=False,
+        ),
+    )
+
+    dialog = npw._F8EditStateFieldDialog(None, title="State", field=field)
+    dialog._name.setText("renamed")
+    dialog._access.setCurrentText("ro")
+    dialog._required.setChecked(False)
+    dialog._schema = number_schema()
+    edited = dialog.field()
+
     assert dialog._name.isEnabled() is False
     assert dialog._access.isEnabled() is False
     assert dialog._required.isEnabled() is False
     assert dialog._schema_btn.text() == "Edit Schema..."
-    assert edited.name == "protected_state"
-    assert edited.access == F8StateAccess.ro
+    assert edited.name == "locked_state"
+    assert edited.access == F8StateAccess.rw
     assert bool(edited.required) is True
     assert edited.valueSchema is dialog._schema
 
@@ -460,7 +561,7 @@ def test_state_field_dialog_honors_explicit_value_schema_lock() -> None:
     assert edited.editPolicy is field.editPolicy
 
 
-def test_required_rw_state_field_dialog_allows_value_schema_edit() -> None:
+def test_required_rw_state_field_dialog_allows_structure_and_value_schema_edit() -> None:
     _ensure_app()
     field = F8StateSpec(
         name="value",
@@ -476,13 +577,13 @@ def test_required_rw_state_field_dialog_allows_value_schema_edit() -> None:
     dialog._schema = number_schema()
     edited = dialog.field()
 
-    assert dialog._name.isEnabled() is False
-    assert dialog._access.isEnabled() is False
-    assert dialog._required.isEnabled() is False
+    assert dialog._name.isEnabled() is True
+    assert dialog._access.isEnabled() is True
+    assert dialog._required.isEnabled() is True
     assert dialog._schema_btn.text() == "Edit Schema..."
-    assert edited.name == "value"
-    assert edited.access == F8StateAccess.rw
-    assert bool(edited.required) is True
+    assert edited.name == "renamed"
+    assert edited.access == F8StateAccess.ro
+    assert bool(edited.required) is False
     assert edited.valueSchema is dialog._schema
 
 

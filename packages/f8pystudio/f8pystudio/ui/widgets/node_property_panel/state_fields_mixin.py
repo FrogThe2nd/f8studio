@@ -10,6 +10,7 @@ from f8pysdk.specs import (
     F8StateAccess,
     F8StateSpec,
     can_add as _policy_can_add,
+    can_delete_state_field as _policy_can_delete_state_field,
     can_delete as _policy_can_delete,
     can_edit_existing as _policy_can_edit_existing,
 )
@@ -187,12 +188,17 @@ class NodePropertyStateFieldsMixin:
                 eff_fields = list(spec.stateFields or [])
             except Exception:
                 eff_fields = []
+        current_field: F8StateSpec | None = None
         for field in eff_fields:
             try:
-                if str(field.name or "").strip() == name and bool(field.required):
-                    return
+                field_name = str(field.name or "").strip()
             except (AttributeError, TypeError):
                 continue
+            if field_name == name:
+                current_field = field
+                break
+        if current_field is not None and not _policy_can_delete_state_field(current_field):
+            return
         if (
             QtWidgets.QMessageBox.question(host, "Delete state field", f"Delete '{name}'?")
             != QtWidgets.QMessageBox.StandardButton.Yes

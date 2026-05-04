@@ -117,6 +117,7 @@ def test_merge_session_specs_respects_explicit_required_state_value_schema_lock(
                 name="builtin",
                 valueSchema=number_schema(),
                 access=F8StateAccess.ro,
+                required=True,
             )
         ],
     )
@@ -137,7 +138,7 @@ def test_merge_session_specs_respects_explicit_required_state_value_schema_lock(
     assert merged_spec["stateFields"][0]["editPolicy"] == {"canEditValueSchema": False}
 
 
-def test_merge_session_specs_preserves_required_rw_state_value_schema_edits() -> None:
+def test_merge_session_specs_preserves_required_rw_state_structure_and_value_schema_edits() -> None:
     class _Node:
         SPEC_TEMPLATE = F8ServiceSpec(
             serviceClass="f8.editable",
@@ -162,7 +163,8 @@ def test_merge_session_specs_preserves_required_rw_state_value_schema_edits() ->
             F8StateSpec(
                 name="value",
                 valueSchema=number_schema(minimum=-1.0, maximum=2.0),
-                access=F8StateAccess.rw,
+                access=F8StateAccess.ro,
+                required=False,
             )
         ],
     )
@@ -180,7 +182,85 @@ def test_merge_session_specs_preserves_required_rw_state_value_schema_edits() ->
 
     assert merged_spec["stateFields"][0]["valueSchema"]["minimum"] == -1.0
     assert merged_spec["stateFields"][0]["valueSchema"]["maximum"] == 2.0
-    assert merged_spec["stateFields"][0]["required"] is True
+    assert merged_spec["stateFields"][0]["access"] == "ro"
+    assert merged_spec["stateFields"][0]["required"] is False
+
+
+def test_merge_session_specs_allows_deleting_required_state_when_policy_allows() -> None:
+    class _Node:
+        SPEC_TEMPLATE = F8ServiceSpec(
+            serviceClass="f8.required.delete",
+            label="Required Delete",
+            editPolicy=F8SpecEditPolicy(stateFields=editable_collection_edit_policy()),
+            stateFields=[
+                F8StateSpec(
+                    name="value",
+                    valueSchema=number_schema(),
+                    access=F8StateAccess.rw,
+                    required=True,
+                )
+            ],
+        )
+
+    codec = SessionLayoutCodecMixin.__new__(SessionLayoutCodecMixin)
+    codec._node_factory = SimpleNamespace(nodes={"svc.required.delete": _Node})
+    session_spec = F8ServiceSpec(
+        serviceClass="f8.required.delete",
+        label="Required Delete",
+        stateFields=[],
+    )
+    layout = {
+        "nodes": {
+            "svc1": {
+                "type_": "svc.required.delete",
+                "f8_spec": dump_json(session_spec, mode="json"),
+            }
+        }
+    }
+
+    out = codec._merge_session_specs(deepcopy(layout))
+    merged_spec = out["nodes"]["svc1"]["f8_spec"]
+
+    assert merged_spec["stateFields"] == []
+
+
+def test_merge_session_specs_keeps_identity_locked_required_state() -> None:
+    class _Node:
+        SPEC_TEMPLATE = F8ServiceSpec(
+            serviceClass="f8.required.locked",
+            label="Required Locked",
+            editPolicy=F8SpecEditPolicy(stateFields=editable_collection_edit_policy()),
+            stateFields=[
+                F8StateSpec(
+                    name="value",
+                    valueSchema=number_schema(),
+                    access=F8StateAccess.rw,
+                    required=True,
+                    editPolicy=F8StateFieldEditPolicy(canRename=False),
+                )
+            ],
+        )
+
+    codec = SessionLayoutCodecMixin.__new__(SessionLayoutCodecMixin)
+    codec._node_factory = SimpleNamespace(nodes={"svc.required.locked": _Node})
+    session_spec = F8ServiceSpec(
+        serviceClass="f8.required.locked",
+        label="Required Locked",
+        stateFields=[],
+    )
+    layout = {
+        "nodes": {
+            "svc1": {
+                "type_": "svc.required.locked",
+                "f8_spec": dump_json(session_spec, mode="json"),
+            }
+        }
+    }
+
+    out = codec._merge_session_specs(deepcopy(layout))
+    merged_spec = out["nodes"]["svc1"]["f8_spec"]
+
+    assert [field["name"] for field in merged_spec["stateFields"]] == ["value"]
 
 
 def test_merge_session_specs_keeps_explicitly_locked_required_rw_state_schema() -> None:
@@ -210,6 +290,7 @@ def test_merge_session_specs_keeps_explicitly_locked_required_rw_state_schema() 
                 name="value",
                 valueSchema=number_schema(),
                 access=F8StateAccess.rw,
+                required=True,
             )
         ],
     )

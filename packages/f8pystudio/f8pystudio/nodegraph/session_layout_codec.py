@@ -5,7 +5,7 @@ from f8pysdk.codec import copy_model, dump_json, validate_as
 import json
 import logging
 import os
-from typing import Any
+from typing import Any, Callable
 
 from qtpy import QtCore, QtWidgets
 from NodeGraphQt.base.commands import PortConnectedCmd
@@ -345,19 +345,35 @@ class SessionLayoutCodecMixin:
                 return ""
             return str(entry.get("name") or "").strip()
 
-        def _state_field_can_edit_value_schema(entry: dict[str, Any]) -> bool:
+        def _state_field_policy_allows(entry: dict[str, Any], key: str) -> bool:
             edit_policy = entry.get("editPolicy")
             if not isinstance(edit_policy, dict):
                 return True
-            if "canEditValueSchema" not in edit_policy:
+            if key not in edit_policy:
                 return True
-            return bool(edit_policy.get("canEditValueSchema"))
+            return bool(edit_policy.get(key))
+
+        def _state_field_can_delete(entry: dict[str, Any]) -> bool:
+            return _state_field_policy_allows(entry, "canRename")
+
+        def _state_field_can_edit_value_schema(entry: dict[str, Any]) -> bool:
+            return _state_field_policy_allows(entry, "canEditValueSchema")
+
+        def _state_field_can_edit_access(entry: dict[str, Any]) -> bool:
+            return _state_field_policy_allows(entry, "canEditAccess")
+
+        def _state_field_can_edit_required(entry: dict[str, Any]) -> bool:
+            return _state_field_policy_allows(entry, "canEditRequired")
 
         def _merge_state_field_item(base: dict[str, Any], session: dict[str, Any]) -> dict[str, Any]:
             merged_item = dict(base)
             for key in ("label", "description", "showOnNode", "uiControl"):
                 if key in session:
                     merged_item[key] = session.get(key)
+            if _state_field_can_edit_access(base) and "access" in session:
+                merged_item["access"] = session.get("access")
+            if _state_field_can_edit_required(base) and "required" in session:
+                merged_item["required"] = session.get("required")
             if _state_field_can_edit_value_schema(base) and "valueSchema" in session:
                 merged_item["valueSchema"] = session.get("valueSchema")
             return merged_item
@@ -397,6 +413,9 @@ class SessionLayoutCodecMixin:
                 merged_item["params"] = _merge_command_params(base.get("params"), session.get("params"))
             return merged_item
 
+        def _named_item_can_delete_by_required(entry: dict[str, Any]) -> bool:
+            return not bool(entry.get("required"))
+
         def _merge_named_list(
             *,
             base_items_obj: object,
@@ -405,6 +424,7 @@ class SessionLayoutCodecMixin:
             can_delete: bool,
             can_edit_existing: bool,
             merge_item: Any,
+            can_delete_item: Callable[[dict[str, Any]], bool] = _named_item_can_delete_by_required,
         ) -> list[dict[str, Any]]:
             base_items = [item for item in list(base_items_obj or []) if isinstance(item, dict)]
             session_items = [item for item in list(session_items_obj or []) if isinstance(item, dict)]
@@ -420,7 +440,7 @@ class SessionLayoutCodecMixin:
                 base_names.add(base_name)
                 session_item = session_by_name.get(base_name)
                 if session_item is None:
-                    if can_delete and not bool(base_item.get("required")):
+                    if can_delete and can_delete_item(base_item):
                         continue
                     out.append(dict(base_item))
                     continue
@@ -564,6 +584,7 @@ class SessionLayoutCodecMixin:
                     can_delete=can_delete_state,
                     can_edit_existing=can_edit_state,
                     merge_item=_merge_state_field_item,
+                    can_delete_item=_state_field_can_delete,
                 )
                 merged["execInPorts"] = _merge_string_list(
                     base_items_obj=merged.get("execInPorts"),
@@ -619,6 +640,7 @@ class SessionLayoutCodecMixin:
                     can_delete=can_delete_state,
                     can_edit_existing=can_edit_state,
                     merge_item=_merge_state_field_item,
+                    can_delete_item=_state_field_can_delete,
                 )
                 merged["commands"] = _merge_named_list(
                     base_items_obj=merged.get("commands"),

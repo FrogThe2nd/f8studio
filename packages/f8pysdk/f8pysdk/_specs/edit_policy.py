@@ -100,8 +100,6 @@ def _policy_bool(value: bool | msgspec.UnsetType | None) -> bool | None:
 
 
 def can_rename_state_field(field: F8StateSpec) -> bool:
-    if is_required_state_field(field):
-        return False
     policy = _state_field_edit_policy_or_none(field)
     if policy is None:
         return True
@@ -112,8 +110,6 @@ def can_rename_state_field(field: F8StateSpec) -> bool:
 
 
 def can_edit_state_field_access(field: F8StateSpec) -> bool:
-    if is_required_state_field(field):
-        return False
     policy = _state_field_edit_policy_or_none(field)
     if policy is None:
         return True
@@ -124,8 +120,6 @@ def can_edit_state_field_access(field: F8StateSpec) -> bool:
 
 
 def can_edit_state_field_required(field: F8StateSpec) -> bool:
-    if is_required_state_field(field):
-        return False
     policy = _state_field_edit_policy_or_none(field)
     if policy is None:
         return True
@@ -145,6 +139,10 @@ def can_edit_state_field_value_schema(field: F8StateSpec) -> bool:
     return override
 
 
+def can_delete_state_field(field: F8StateSpec) -> bool:
+    return can_rename_state_field(field)
+
+
 def can_edit_state_field_structure(field: F8StateSpec) -> bool:
     return bool(
         can_rename_state_field(field)
@@ -157,6 +155,7 @@ __all__ = [
     "EditableCollectionName",
     "SpecLike",
     "can_add",
+    "can_delete_state_field",
     "can_delete",
     "can_edit_existing",
     "can_edit_state_field_access",
