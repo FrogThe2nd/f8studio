@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any, TYPE_CHECKING
 
 from ...generated import F8Edge, F8EdgeKindEnum, F8RuntimeGraph, F8StateAccess
@@ -21,6 +22,11 @@ StateRouteTarget = tuple[str, str, F8Edge]
 StateRouteTable = dict[tuple[str, str], tuple[StateRouteTarget, ...]]
 CrossStateBindingKey = tuple[str, str]
 CrossStateBindingTable = dict[CrossStateBindingKey, tuple[StateRouteTarget, ...]]
+
+log = logging.getLogger(__name__)
+
+_CROSS_STATE_INITIAL_GET_TIMEOUT_S = 0.08
+_CROSS_STATE_INITIAL_SYNC_BUDGET_S = 0.30
 
 
 class StateRouter:
@@ -134,7 +140,11 @@ class StateRouter:
         async def _sync_one(peer: str, bucket: str, remote_key: str) -> None:
             async with sem:
                 try:
-                    raw = await self._bus._transport.kv_get_in_bucket(bucket, remote_key)
+                    raw = await self._bus._transport.kv_get_in_bucket(
+                        bucket,
+                        remote_key,
+                        timeout=_CROSS_STATE_INITIAL_GET_TIMEOUT_S,
+                    )
                 except Exception as exc:
                     log_error_once(
                         self._bus,
@@ -153,7 +163,27 @@ class StateRouter:
             )
             tasks.append(task)
 
-        await asyncio.gather(*tasks)
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*tasks),
+                timeout=_CROSS_STATE_INITIAL_SYNC_BUDGET_S,
+            )
+        except asyncio.TimeoutError:
+            pending_count = sum(1 for task in tasks if not task.done())
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            cancelled_count = sum(1 for task in tasks if task.cancelled())
+            blocked_count = pending_count or cancelled_count
+            if blocked_count > 0:
+                log.info(
+                    "service_bus[%s] cross-state initial sync budget exhausted jobs=%s pending=%s budget_s=%.3f",
+                    self._bus.service_id,
+                    len(tasks),
+                    blocked_count,
+                    _CROSS_STATE_INITIAL_SYNC_BUDGET_S,
+                )
 
     async def on_remote_state_kv(
         self,

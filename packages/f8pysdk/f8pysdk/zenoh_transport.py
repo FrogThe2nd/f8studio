@@ -257,7 +257,7 @@ class ZenohTransport:
         self._subs.append(handle)
         return handle
 
-    async def kv_get_in_bucket(self, bucket: str, key: str) -> bytes | None:
+    async def kv_get_in_bucket(self, bucket: str, key: str, *, timeout: float | None = None) -> bytes | None:
         peer_service_id = kv_bucket_to_service_id(bucket)
         key_s = str(key or "").strip()
         if not key_s:
@@ -266,9 +266,10 @@ class ZenohTransport:
             return self._kv.get(key_s)
         session = await self._require_session()
         selector = zenoh_kv_key(peer_service_id, key_s)
+        timeout_s = 1.0 if timeout is None else max(0.001, float(timeout))
         try:
-            replies = await asyncio.to_thread(session.get, selector, timeout=1.0)
-            reply = await self._recv_reply(replies, timeout_s=1.0)
+            replies = await asyncio.to_thread(session.get, selector, timeout=timeout_s)
+            reply = await self._recv_reply(replies, timeout_s=timeout_s)
         except Exception as exc:
             log.debug("zenoh kv get failed bucket=%s key=%s", bucket, key_s, exc_info=exc)
             return None

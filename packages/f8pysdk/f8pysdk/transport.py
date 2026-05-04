@@ -451,7 +451,8 @@ class NatsTransport:
         task = asyncio.create_task(_pump(), name=f"kv_watch:{bucket_s}:{pattern_s}")
         return (managed, task)
 
-    async def kv_get_in_bucket(self, bucket: str, key: str) -> bytes | None:
+    async def kv_get_in_bucket(self, bucket: str, key: str, *, timeout: float | None = None) -> bytes | None:
+        del timeout
         try:
             kv = await self.kv_store(str(bucket))
         except Exception:

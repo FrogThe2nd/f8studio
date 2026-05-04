@@ -36,6 +36,10 @@ using json = nlohmann::json;
 
 namespace {
 
+constexpr std::chrono::milliseconds kRuntimeKvGetDefaultTimeout{1000};
+constexpr std::chrono::milliseconds kZenohCrossStateInitialGetTimeout{80};
+constexpr std::chrono::milliseconds kZenohCrossStateInitialSyncBudget{300};
+
 bool state_debug_enabled() {
   const char* v = std::getenv("F8_STATE_DEBUG");
   if (v == nullptr) return false;
@@ -1209,8 +1213,10 @@ std::optional<RuntimeBytes> ServiceBus::runtime_kv_get(const std::string& key) {
   return std::nullopt;
 }
 
-std::optional<RuntimeBytes> ServiceBus::runtime_kv_get_in_bucket(const std::string& bucket, const std::string& key) {
+std::optional<RuntimeBytes> ServiceBus::runtime_kv_get_in_bucket(const std::string& bucket, const std::string& key,
+                                                                 std::chrono::milliseconds timeout) {
   if (cfg_.bus_backend == BusBackend::kNats) {
+    (void)timeout;
     if (bucket == kv_bucket_for_service(cfg_.service_id)) {
       return kv_.get(key);
     }
@@ -1228,7 +1234,7 @@ std::optional<RuntimeBytes> ServiceBus::runtime_kv_get_in_bucket(const std::stri
     return std::nullopt;
   }
   if (runtime_transport_) {
-    return runtime_transport_->kv_get_in_bucket(bucket, key);
+    return runtime_transport_->kv_get_in_bucket(bucket, key, timeout);
   }
   return std::nullopt;
 }
@@ -1817,8 +1823,10 @@ bool ServiceBus::on_set_rungraph(const json& graph_obj, const json& meta, std::s
       std::string _code;
       std::string _msg;
       (void)n->on_set_rungraph(graph_obj, meta, _code, _msg);
+    } catch (const std::exception& exc) {
+      spdlog::warn("rungraph hook failed serviceId={}: {}", cfg_.service_id, exc.what());
     } catch (...) {
-      continue;
+      spdlog::warn("rungraph hook failed serviceId={}: unknown error", cfg_.service_id);
     }
   }
   return true;
@@ -2137,7 +2145,8 @@ void ServiceBus::apply_rungraph_local(const json& graph_obj, std::string& error_
   std::unordered_map<_NodeFieldKey, std::vector<_NodeFieldKey>, _NodeFieldKeyHash> intra_state_out;
   std::unordered_map<_RemoteStateKey, std::vector<_NodeFieldKey>, _RemoteStateKeyHash> cross_state_in;
   std::unordered_set<_NodeFieldKey, _NodeFieldKeyHash> cross_state_targets;
-  std::vector<std::tuple<std::string, std::string, std::string>> cross_state_initial_reads;
+  std::unordered_set<_RemoteStateKey, _RemoteStateKeyHash> cross_state_initial_read_set;
+  std::vector<_RemoteStateKey> cross_state_initial_reads;
 
   const std::string sid = cfg_.service_id;
 
@@ -2204,9 +2213,12 @@ void ServiceBus::apply_rungraph_local(const json& graph_obj, std::string& error_
       intra_state_out[{from_node, from_field}].push_back({to_node, to_field});
     } else {
       // Cross-service state binding (remote KV -> local field).
-      cross_state_in[{from_sid, from_node, from_field}].push_back({to_node, to_field});
+      const _RemoteStateKey remote_state_key{from_sid, from_node, from_field};
+      cross_state_in[remote_state_key].push_back({to_node, to_field});
       cross_state_targets.insert({to_node, to_field});
-      cross_state_initial_reads.emplace_back(from_sid, from_node, from_field);
+      if (cross_state_initial_read_set.insert(remote_state_key).second) {
+        cross_state_initial_reads.push_back(remote_state_key);
+      }
     }
   }
 
@@ -2227,8 +2239,8 @@ void ServiceBus::apply_rungraph_local(const json& graph_obj, std::string& error_
   // Ensure peer state watches are running for any cross-state dependencies.
   // This mirrors f8pysdk's cross-service state routing (remote watch + initial sync).
   std::unordered_set<std::string> want_peers;
-  for (const auto& t : cross_state_initial_reads) {
-    want_peers.insert(std::get<0>(t));
+  for (const auto& remote_state_key : cross_state_initial_reads) {
+    want_peers.insert(remote_state_key.peer_service_id);
   }
 
   if (cfg_.bus_backend == BusBackend::kNats) {
@@ -2347,10 +2359,25 @@ void ServiceBus::apply_rungraph_local(const json& graph_obj, std::string& error_
   }
 
   // Initial sync for cross-state targets: best-effort pull current remote values once.
-  for (const auto& t : cross_state_initial_reads) {
-    const std::string peer = std::get<0>(t);
-    const std::string remote_node_id = std::get<1>(t);
-    const std::string remote_field = std::get<2>(t);
+  const bool bounded_initial_sync = cfg_.bus_backend != BusBackend::kNats;
+  const auto initial_sync_started_at = std::chrono::steady_clock::now();
+  std::size_t initial_sync_hits = 0;
+  std::size_t initial_sync_misses = 0;
+  std::size_t initial_sync_skipped = 0;
+  for (std::size_t i = 0; i < cross_state_initial_reads.size(); ++i) {
+    if (bounded_initial_sync) {
+      const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now() - initial_sync_started_at);
+      if (elapsed >= kZenohCrossStateInitialSyncBudget) {
+        initial_sync_skipped += cross_state_initial_reads.size() - i;
+        break;
+      }
+    }
+
+    const _RemoteStateKey& remote_state_key = cross_state_initial_reads[i];
+    const std::string& peer = remote_state_key.peer_service_id;
+    const std::string& remote_node_id = remote_state_key.remote_node_id;
+    const std::string& remote_field = remote_state_key.remote_field;
     std::string remote_key;
     try {
       remote_key = kv_key_node_state(remote_node_id, remote_field);
@@ -2361,18 +2388,39 @@ void ServiceBus::apply_rungraph_local(const json& graph_obj, std::string& error_
       spdlog::warn("cross-state initial key build failed serviceId={} peer={}: unknown error", cfg_.service_id, peer);
       continue;
     }
-    const auto raw = runtime_kv_get_in_bucket(kv_bucket_for_service(peer), remote_key);
+
+    std::chrono::milliseconds get_timeout = kRuntimeKvGetDefaultTimeout;
+    if (bounded_initial_sync) {
+      const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now() - initial_sync_started_at);
+      const auto remaining = kZenohCrossStateInitialSyncBudget - elapsed;
+      if (remaining <= std::chrono::milliseconds(0)) {
+        initial_sync_skipped += cross_state_initial_reads.size() - i;
+        break;
+      }
+      get_timeout = std::min(kZenohCrossStateInitialGetTimeout, remaining);
+    }
+
+    const auto raw = runtime_kv_get_in_bucket(kv_bucket_for_service(peer), remote_key, get_timeout);
     if (!raw.has_value()) {
+      ++initial_sync_misses;
       if (state_debug_enabled()) {
         spdlog::info("state_debug[{}] cross_state_initial_miss peer={} key={}", cfg_.service_id, peer, remote_key);
       }
       continue;
     }
+    ++initial_sync_hits;
     if (state_debug_enabled()) {
       spdlog::info("state_debug[{}] cross_state_initial_hit peer={} key={} bytes={}", cfg_.service_id, peer,
                    remote_key, raw->size());
     }
     handle_peer_state_payload(peer, remote_key, *raw);
+  }
+  if (bounded_initial_sync && initial_sync_skipped > 0) {
+    spdlog::info(
+        "cross-state initial sync budget exhausted serviceId={} reads={} hits={} misses={} skipped={} budgetMs={}",
+        cfg_.service_id, cross_state_initial_reads.size(), initial_sync_hits, initial_sync_misses,
+        initial_sync_skipped, kZenohCrossStateInitialSyncBudget.count());
   }
 
   // Apply per-node stateValues (best-effort reconcile using rungraph meta.ts).

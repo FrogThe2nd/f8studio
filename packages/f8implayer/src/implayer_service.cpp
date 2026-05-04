@@ -1549,11 +1549,10 @@ bool ImPlayerService::on_set_rungraph(const nlohmann::json& graph_obj, const nlo
       // Service node snapshot has no operatorClass.
       bool is_service_snapshot = true;
       if (n.contains("operatorClass") && !n["operatorClass"].is_null()) {
-        try {
-          const std::string oc = n["operatorClass"].is_string() ? n["operatorClass"].get<std::string>() : "";
-          if (!oc.empty())
-            is_service_snapshot = false;
-        } catch (...) {}
+        const auto& operator_class = n["operatorClass"];
+        const std::string oc = operator_class.is_string() ? operator_class.get<std::string>() : "";
+        if (!oc.empty())
+          is_service_snapshot = false;
       }
       if (!is_service_snapshot)
         continue;
@@ -1601,8 +1600,11 @@ bool ImPlayerService::on_set_rungraph(const nlohmann::json& graph_obj, const nlo
     // Ensure the KV bucket has a full snapshot quickly (reduces monitor "miss" spam).
     publish_static_state();
     publish_dynamic_state();
+  } catch (const std::exception& exc) {
+    spdlog::warn("implayer set_rungraph state reconcile failed serviceId={}: {}", cfg_.service_id, exc.what());
   } catch (...) {
     // Deploy should not fail because of a local parse issue.
+    spdlog::warn("implayer set_rungraph state reconcile failed serviceId={}: unknown error", cfg_.service_id);
   }
 
   return true;

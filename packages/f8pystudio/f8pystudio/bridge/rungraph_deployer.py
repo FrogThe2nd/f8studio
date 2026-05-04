@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -71,7 +72,14 @@ class NatsRungraphGateway:
         transport = NatsTransport(NatsTransportConfig(url=str(self.config.nats_url), kv_bucket=bucket))
         await transport.connect()
         try:
-            await wait_service_ready(transport, timeout_s=float(self.config.ready_timeout_s))
+            try:
+                await wait_service_ready(transport, timeout_s=float(self.config.ready_timeout_s))
+            except asyncio.TimeoutError:
+                return RungraphDeployResult(
+                    service_id=service_id,
+                    success=False,
+                    error_message=f"service not ready within {float(self.config.ready_timeout_s):g}s",
+                )
             graph_for_request = self._normalize_graph_for_request(req.graph)
             request_payload = F8SetRungraphRequest(
                 reqId=new_id(),
@@ -133,11 +141,18 @@ class RuntimeRungraphGateway:
         transport = self._build_transport(service_id)
         await transport.connect()
         try:
-            await wait_service_ready(
-                transport,
-                timeout_s=float(self.config.ready_timeout_s),
-                bucket=(bucket if self.config.bus_backend != "nats" else None),
-            )
+            try:
+                await wait_service_ready(
+                    transport,
+                    timeout_s=float(self.config.ready_timeout_s),
+                    bucket=(bucket if self.config.bus_backend != "nats" else None),
+                )
+            except asyncio.TimeoutError:
+                return RungraphDeployResult(
+                    service_id=service_id,
+                    success=False,
+                    error_message=f"service not ready within {float(self.config.ready_timeout_s):g}s",
+                )
             graph_for_request = self._normalize_graph_for_request(req.graph)
             request_payload = F8SetRungraphRequest(
                 reqId=new_id(),

@@ -56,7 +56,13 @@ class RuntimeTransport(Protocol):
         cb: TransportCallback,
     ) -> Any: ...
 
-    async def kv_get_in_bucket(self, bucket: str, key: str) -> bytes | None: ...
+    async def kv_get_in_bucket(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        timeout: float | None = None,
+    ) -> bytes | None: ...
 
 
 __all__ = [

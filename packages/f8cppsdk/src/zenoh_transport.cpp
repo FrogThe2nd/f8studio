@@ -368,7 +368,8 @@ class ZenohTransport::Impl final {
     return it->second;
   }
 
-  std::optional<RuntimeBytes> kv_get_in_bucket(const std::string& bucket, const std::string& key) {
+  std::optional<RuntimeBytes> kv_get_in_bucket(const std::string& bucket, const std::string& key,
+                                               std::chrono::milliseconds timeout) {
 #if F8_WITH_ZENOH
     const std::string peer_service_id = kv_bucket_to_service_id(bucket);
     if (peer_service_id == service_id_) {
@@ -389,13 +390,14 @@ class ZenohTransport::Impl final {
 
     auto state = std::make_shared<RequestState>();
     try {
+      const auto wait_timeout = timeout.count() > 0 ? timeout : std::chrono::milliseconds(1);
       {
         std::lock_guard<std::mutex> lock(mu_);
         if (!session_) {
           return std::nullopt;
         }
         zenoh::Session::GetOptions options = zenoh::Session::GetOptions::create_default();
-        options.timeout_ms = 1000;
+        options.timeout_ms = static_cast<std::uint64_t>(wait_timeout.count());
         options.is_express = true;
         session_->get(
             zenoh::KeyExpr(selector), "",
@@ -419,7 +421,7 @@ class ZenohTransport::Impl final {
       }
 
       std::unique_lock<std::mutex> state_lock(state->mu);
-      (void)state->cv.wait_for(state_lock, std::chrono::milliseconds(1000), [state]() { return state->done; });
+      (void)state->cv.wait_for(state_lock, wait_timeout, [state]() { return state->done; });
       return state->reply;
     } catch (const std::exception& exc) {
       spdlog::error("zenoh kv_get_in_bucket failed bucket={} key={}: {}", bucket, key, exc.what());
@@ -608,8 +610,9 @@ std::optional<RuntimeBytes> ZenohTransport::kv_get(const std::string& key) {
   return impl_->kv_get(key);
 }
 
-std::optional<RuntimeBytes> ZenohTransport::kv_get_in_bucket(const std::string& bucket, const std::string& key) {
-  return impl_->kv_get_in_bucket(bucket, key);
+std::optional<RuntimeBytes> ZenohTransport::kv_get_in_bucket(const std::string& bucket, const std::string& key,
+                                                             std::chrono::milliseconds timeout) {
+  return impl_->kv_get_in_bucket(bucket, key, timeout);
 }
 
 std::unique_ptr<RuntimeSubscription> ZenohTransport::kv_watch_in_bucket(const std::string& bucket,

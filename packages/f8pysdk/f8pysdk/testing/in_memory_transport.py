@@ -190,5 +190,6 @@ class InMemoryTransport:
         task = asyncio.create_task(asyncio.sleep(0), name=f"mem_kv_watch:{bucket}:{key_pattern}")
         return (handle, task)
 
-    async def kv_get_in_bucket(self, bucket: str, key: str) -> bytes | None:
+    async def kv_get_in_bucket(self, bucket: str, key: str, *, timeout: float | None = None) -> bytes | None:
+        del timeout
         return await self._cluster.kv_get(str(bucket), str(key))

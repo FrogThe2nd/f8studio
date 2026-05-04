@@ -45,7 +45,9 @@ class RuntimeTransport {
 
   virtual bool kv_put(const std::string& key, const RuntimeBytes& payload) = 0;
   virtual std::optional<RuntimeBytes> kv_get(const std::string& key) = 0;
-  virtual std::optional<RuntimeBytes> kv_get_in_bucket(const std::string& bucket, const std::string& key) = 0;
+  virtual std::optional<RuntimeBytes> kv_get_in_bucket(
+      const std::string& bucket, const std::string& key,
+      std::chrono::milliseconds timeout = std::chrono::milliseconds(1000)) = 0;
   virtual std::unique_ptr<RuntimeSubscription> kv_watch_in_bucket(const std::string& bucket, const std::string& pattern,
                                                                   RuntimeKvWatchHandler handler) = 0;
 };

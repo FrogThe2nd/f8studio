@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -170,7 +171,9 @@ class ServiceBus final : public ServiceControlHandler {
                             std::int64_t ts_ms = 0);
   bool runtime_kv_put(const std::string& key, const RuntimeBytes& bytes);
   std::optional<RuntimeBytes> runtime_kv_get(const std::string& key);
-  std::optional<RuntimeBytes> runtime_kv_get_in_bucket(const std::string& bucket, const std::string& key);
+  std::optional<RuntimeBytes> runtime_kv_get_in_bucket(
+      const std::string& bucket, const std::string& key,
+      std::chrono::milliseconds timeout = std::chrono::milliseconds(1000));
   bool runtime_set_ready(bool ready, const std::string& reason = "", std::int64_t ts_ms = 0);
   bool runtime_set_node_state(const std::string& node_id, const std::string& field, const json& value,
                               const std::string& source = "runtime",
