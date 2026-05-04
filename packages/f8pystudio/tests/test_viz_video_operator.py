@@ -30,11 +30,15 @@ class VizVideoOperatorTests(unittest.IsolatedAsyncioTestCase):
         runtime._service_id = "svc.scalar"
         runtime._shm_name = ""
         runtime._throttle_ms = 17
+        runtime._flow_transport = "zenoh"
+        runtime._flow_key = "f8/test/flow"
         runtime._flow_shm_name = "shm.flow"
         runtime._flow_display_mode = "hsv"
         runtime._flow_mag_scale = 5.0
         runtime._flow_stride = 9
         runtime._scale_mode = "fit"
+        runtime._scalar_transport = "zenoh"
+        runtime._scalar_key = "f8/test/scalar"
         runtime._scalar_shm_name = "shm.scalar"
         runtime._scalar_display_mode = "colormap"
         runtime._scalar_colormap = "viridis"
@@ -53,11 +57,15 @@ class VizVideoOperatorTests(unittest.IsolatedAsyncioTestCase):
         assert payload["shmName"] == video_shm_name("svc.scalar")
         assert payload["throttleMs"] == 17
         assert payload["flowShmName"] == "shm.flow"
+        assert payload["flowTransport"] == "zenoh"
+        assert payload["flowKey"] == "f8/test/flow"
         assert payload["flowDisplayMode"] == "hsv"
         assert payload["flowMagScale"] == 5.0
         assert payload["flowStride"] == 9
         assert payload["scaleMode"] == "fit"
         assert payload["scalarShmName"] == "shm.scalar"
+        assert payload["scalarTransport"] == "zenoh"
+        assert payload["scalarKey"] == "f8/test/scalar"
         assert payload["scalarDisplayMode"] == "colormap"
         assert payload["scalarColormap"] == "viridis"
         assert payload["scalarRangeMode"] == "manual"
