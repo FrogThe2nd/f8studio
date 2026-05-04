@@ -258,6 +258,8 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libxkbcommon-1.13.1-hca5e8e5_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libxml2-16-2.15.2-hca6bf5a_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libxml2-2.15.2-he237659_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/libzenohc-1.9.0-hf675912_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/libzenohcxx-1.9.0-hecca717_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libzlib-1.3.2-h25fd6f3_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/lz4-c-1.10.0-h5888daf_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/lzo-2.10-h280c20c_1002.conda
@@ -325,6 +327,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/xorg-xorgproto-2025.1-hb03c661_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/yaml-0.2.5-h280c20c_3.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/yt-dlp-2025.8.20-pyhd8ed1ab_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/zenoh-rust-abi-1.9.0.1.93.1-hbe27b5b_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zimg-3.0.6-hecca717_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zlib-1.3.2-h25fd6f3_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zstd-1.5.7-hb78ec9c_6.conda
@@ -356,6 +359,8 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/win-64/libusb-1.0.29-h1839187_0.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/libuv-1.51.0-hfd05255_1.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/libvulkan-loader-1.4.341.0-h477610d_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/win-64/libzenohc-1.9.0-hcc20cc8_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/win-64/libzenohcxx-1.9.0-hac47afa_0.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/libzlib-1.3.1-h2466b09_2.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/markupsafe-3.0.3-py313hd650c13_0.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/ninja-1.13.2-h477610d_0.conda
@@ -384,6 +389,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/win_inet_pton-1.1.0-pyh7428d3b_8.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/yaml-0.2.5-h6a83c73_3.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/yt-dlp-2025.8.20-pyhd8ed1ab_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/win-64/zenoh-rust-abi-1.9.0.1.93.1-heb1d585_0.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/zstd-1.5.7-h534d264_6.conda
   default:
     channels:
@@ -4776,6 +4782,52 @@ packages:
   license_family: MIT
   size: 557492
   timestamp: 1772704601644
+- conda: https://conda.anaconda.org/conda-forge/linux-64/libzenohc-1.9.0-hf675912_0.conda
+  sha256: 258bcd6ed30bb8ff37bc642d3cddd73745d3a41841563c1338a68801799df05c
+  md5: 470e8500c861b15cf3a6bc32603259f6
+  depends:
+  - __glibc >=2.17,<3.0.a0
+  - libgcc >=14
+  - libstdcxx >=14
+  - zenoh-rust-abi >=1.9.0.1.93.1,<1.9.0.1.93.2.0a0
+  constrains:
+  - __glibc >=2.17
+  license: Apache-2.0 OR EPL-2.0
+  size: 5048496
+  timestamp: 1777493052497
+- conda: https://conda.anaconda.org/conda-forge/win-64/libzenohc-1.9.0-hcc20cc8_0.conda
+  sha256: 0af6fa66e67a464479dbc9da6c122759cc9e64f72eeb9f20884fdb60cef1f1bc
+  md5: b630584b7fe576683c795db80214c286
+  depends:
+  - ucrt >=10.0.20348.0
+  - vc >=14.3,<15
+  - vc14_runtime >=14.44.35208
+  - zenoh-rust-abi >=1.9.0.1.93.1,<1.9.0.1.93.2.0a0
+  license: Apache-2.0 OR EPL-2.0
+  size: 4426312
+  timestamp: 1777494070129
+- conda: https://conda.anaconda.org/conda-forge/linux-64/libzenohcxx-1.9.0-hecca717_0.conda
+  sha256: e6103c8698084c3a5e98922a8230328e2116f29d90d7a9b45b3aedffeb8654b5
+  md5: 4b68f28b57803915170e64206cdaed66
+  depends:
+  - __glibc >=2.17,<3.0.a0
+  - libgcc >=14
+  - libstdcxx >=14
+  - libzenohc >=1.9.0,<1.9.1.0a0
+  license: Apache-2.0 OR EPL-2.0
+  size: 68944
+  timestamp: 1777524548098
+- conda: https://conda.anaconda.org/conda-forge/win-64/libzenohcxx-1.9.0-hac47afa_0.conda
+  sha256: d06cf19cfc05711677ba9a53a12ea8161a1f697c5c16b7804d7b48a2b0709bda
+  md5: ae0b090b3fb665982106daf8129fde73
+  depends:
+  - libzenohc >=1.9.0,<1.9.1.0a0
+  - ucrt >=10.0.20348.0
+  - vc >=14.3,<15
+  - vc14_runtime >=14.44.35208
+  license: Apache-2.0 OR EPL-2.0
+  size: 68147
+  timestamp: 1777524710089
 - conda: https://conda.anaconda.org/conda-forge/linux-64/libzlib-1.3.1-hb9d3cd8_2.conda
   sha256: d4bfe88d7cb447768e31650f06257995601f89076080e76df55e3112d4e47dc4
   md5: edb0dca6bc32e4f4789199455a1dbeb8
@@ -7433,6 +7485,26 @@ packages:
   license: Unlicense
   size: 2021644
   timestamp: 1755727857758
+- conda: https://conda.anaconda.org/conda-forge/linux-64/zenoh-rust-abi-1.9.0.1.93.1-hbe27b5b_0.conda
+  sha256: 5b5d5a2fb37f6ceed0c85a0ab640b0a1e3fb888dc7bf5bae73fe7ee7f22dba08
+  md5: 5571b414f694e52e90f286bdfba56b7d
+  depends:
+  - __glibc >=2.17,<3.0.a0
+  constrains:
+  - __glibc >=2.17
+  license: Apache-2.0 OR EPL-2.0
+  size: 52693
+  timestamp: 1775854540199
+- conda: https://conda.anaconda.org/conda-forge/win-64/zenoh-rust-abi-1.9.0.1.93.1-heb1d585_0.conda
+  sha256: 5bd008b130765dec98cfc3840c716a53ab67605439e3f653c18da2158affda12
+  md5: 9966387c08f20c0531187c462380b6a3
+  depends:
+  - ucrt >=10.0.20348.0
+  - vc >=14.3,<15
+  - vc14_runtime >=14.44.35208
+  license: Apache-2.0 OR EPL-2.0
+  size: 52672
+  timestamp: 1775854702148
 - pypi: https://files.pythonhosted.org/packages/42/37/22f1727da356ed3fcbd31f68d4a477f15c232997c87e270cfffb927459ac/zensical-0.0.24-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
   name: zensical
   version: 0.0.24
