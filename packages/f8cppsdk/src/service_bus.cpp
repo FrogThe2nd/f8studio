@@ -2089,6 +2089,23 @@ ServiceBus::StateRead ServiceBus::get_state(const std::string& node_id, const st
   return StateRead{true, v, ts};
 }
 
+bool ServiceBus::publish_state(const std::string& node_id, const std::string& field, const json& value,
+                               const std::string& source, const json& meta, std::int64_t ts_ms,
+                               const std::string& origin) {
+  try {
+    publish_state_local(node_id, field, value, ts_ms > 0 ? ts_ms : now_ms(), source, meta, origin, false, false);
+    return true;
+  } catch (const std::exception& exc) {
+    spdlog::warn("publish_state failed serviceId={} nodeId={} field={}: {}", cfg_.service_id, node_id, field,
+                 exc.what());
+    return false;
+  } catch (...) {
+    spdlog::warn("publish_state failed serviceId={} nodeId={} field={}: unknown error", cfg_.service_id, node_id,
+                 field);
+    return false;
+  }
+}
+
 void ServiceBus::apply_rungraph_local(const json& graph_obj, std::string& error_code, std::string& error_message) {
   using namespace f8::cppsdk::generated;
 

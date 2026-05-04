@@ -20,10 +20,8 @@
 #include <nlohmann/json.hpp>
 
 #include "f8cppsdk/describe_schema.h"
-#include "f8cppsdk/data_bus.h"
 #include "f8cppsdk/f8_naming.h"
 #include "f8cppsdk/shm/video.h"
-#include "f8cppsdk/state_kv.h"
 #include "f8cppsdk/time_utils.h"
 #include "f8cppsdk/video_shared_memory_sink.h"
 #include "implayer_gui.h"
@@ -1047,7 +1045,7 @@ void ImPlayerService::tick() {
     evt["duration"] = duration_seconds_.load(std::memory_order_relaxed);
     evt["playing"] = playing_.load(std::memory_order_relaxed);
     if (bus_) {
-      (void)f8::cppsdk::publish_data(bus_->nats(), cfg_.service_id, cfg_.service_id, "playback", evt, now);
+      (void)bus_->emit_data(cfg_.service_id, "playback", evt, now);
     }
   }
 
@@ -1518,7 +1516,7 @@ bool ImPlayerService::on_set_state(const std::string& node_id, const std::string
     if (it == published_state_.end() || it->second != write_value) {
       published_state_[f] = write_value;
       if (bus_ && !is_sensitive_auth_field(f)) {
-        f8::cppsdk::kv_set_node_state(bus_->kv(), cfg_.service_id, cfg_.service_id, f, write_value, "endpoint", meta);
+        (void)bus_->publish_state(cfg_.service_id, f, write_value, "endpoint", meta);
       }
     }
   }
@@ -2223,7 +2221,7 @@ void ImPlayerService::publish_static_state() {
   }
   for (const auto& [field, v] : updates) {
     if (bus_) {
-      f8::cppsdk::kv_set_node_state(bus_->kv(), cfg_.service_id, cfg_.service_id, field, v, "runtime", meta);
+      (void)bus_->publish_state(cfg_.service_id, field, v, "runtime", meta);
     }
   }
 }
@@ -2286,7 +2284,7 @@ void ImPlayerService::publish_dynamic_state() {
 
   for (const auto& [field, v] : updates) {
     if (bus_) {
-      f8::cppsdk::kv_set_node_state(bus_->kv(), cfg_.service_id, cfg_.service_id, field, v, "runtime", meta);
+      (void)bus_->publish_state(cfg_.service_id, field, v, "runtime", meta);
     }
   }
 }

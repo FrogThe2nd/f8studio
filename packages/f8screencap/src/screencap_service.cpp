@@ -11,7 +11,6 @@
 #include "f8cppsdk/describe_schema.h"
 #include "f8cppsdk/f8_naming.h"
 #include "f8cppsdk/shm/video.h"
-#include "f8cppsdk/state_kv.h"
 #include "f8cppsdk/time_utils.h"
 #include "f8cppsdk/video_shared_memory_sink.h"
 
@@ -252,8 +251,7 @@ void ScreenCapService::tick() {
           std::lock_guard<std::mutex> lock(state_mu_);
           published_state_["window"] = value;
           if (bus_) {
-            f8::cppsdk::kv_set_node_state(bus_->kv(), cfg_.service_id, cfg_.service_id, "window", value, "picker",
-                                          meta);
+            (void)bus_->publish_state(cfg_.service_id, "window", value, "picker", meta);
           }
           continue;
         }
@@ -412,7 +410,7 @@ bool ScreenCapService::on_set_state(const std::string& node_id, const std::strin
     if (it == published_state_.end() || it->second != write_value) {
       published_state_[f] = write_value;
       if (bus_) {
-        f8::cppsdk::kv_set_node_state(bus_->kv(), cfg_.service_id, cfg_.service_id, f, write_value, "endpoint", meta);
+        (void)bus_->publish_state(cfg_.service_id, f, write_value, "endpoint", meta);
       }
     }
 
@@ -437,7 +435,7 @@ bool ScreenCapService::on_set_state(const std::string& node_id, const std::strin
       }
       published_state_["window"] = w;
       if (bus_) {
-        f8::cppsdk::kv_set_node_state(bus_->kv(), cfg_.service_id, cfg_.service_id, "window", w, "endpoint", meta);
+        (void)bus_->publish_state(cfg_.service_id, "window", w, "endpoint", meta);
       }
     }
 #else
@@ -461,7 +459,7 @@ bool ScreenCapService::on_set_state(const std::string& node_id, const std::strin
       }
       published_state_["window"] = w;
       if (bus_) {
-        f8::cppsdk::kv_set_node_state(bus_->kv(), cfg_.service_id, cfg_.service_id, "window", w, "endpoint", meta);
+        (void)bus_->publish_state(cfg_.service_id, "window", w, "endpoint", meta);
       }
     }
 #endif
@@ -698,7 +696,7 @@ void ScreenCapService::publish_static_state() {
       return;
     published_state_[field] = v;
     if (bus_)
-      f8::cppsdk::kv_set_node_state(bus_->kv(), cfg_.service_id, cfg_.service_id, field, v, "init", json::object());
+      (void)bus_->publish_state(cfg_.service_id, field, v, "init", json::object());
   };
 
   set_if_changed("serviceClass", cfg_.service_class);
@@ -775,7 +773,7 @@ void ScreenCapService::publish_dynamic_state() {
       return;
     published_state_[field] = v;
     if (bus_)
-      f8::cppsdk::kv_set_node_state(bus_->kv(), cfg_.service_id, cfg_.service_id, field, v, "tick", json::object());
+      (void)bus_->publish_state(cfg_.service_id, field, v, "tick", json::object());
   };
   auto publish_error_if_changed = [&](const std::string& message) {
     if (published_error_message_ == message) {

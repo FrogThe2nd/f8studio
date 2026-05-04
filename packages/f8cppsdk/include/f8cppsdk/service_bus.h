@@ -144,6 +144,9 @@ class ServiceBus final : public ServiceControlHandler {
   // ---- state ----------------------------------------------------------
   // Read state from local cache/KV (wire-compatible with f8pysdk get_state).
   StateRead get_state(const std::string& node_id, const std::string& field);
+  bool publish_state(const std::string& node_id, const std::string& field, const json& value,
+                     const std::string& source = "runtime", const json& meta = json::object(),
+                     std::int64_t ts_ms = 0, const std::string& origin = "runtime");
 
  // ---- ServiceControlHandler (endpoints) ------------------------------
   bool is_active() const override;

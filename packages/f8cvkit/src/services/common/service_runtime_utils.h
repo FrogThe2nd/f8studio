@@ -12,7 +12,6 @@
 #include <nlohmann/json.hpp>
 
 #include "f8cppsdk/service_bus.h"
-#include "f8cppsdk/state_kv.h"
 
 namespace f8::cvkit::service_runtime {
 
@@ -187,7 +186,7 @@ inline void publish_state_if_changed(std::mutex& state_mu,
 
   published_state[field] = value;
   if (bus != nullptr) {
-    (void)f8::cppsdk::kv_set_node_state(bus->kv(), service_id, service_id, field, value, source, meta);
+    (void)bus->publish_state(service_id, field, value, source, meta);
   }
 }
 

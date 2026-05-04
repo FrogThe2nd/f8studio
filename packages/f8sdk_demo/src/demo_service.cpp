@@ -5,8 +5,6 @@
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 
-#include "f8cppsdk/data_bus.h"
-#include "f8cppsdk/state_kv.h"
 #include "f8cppsdk/time_utils.h"
 
 namespace f8::sdk_demo {
@@ -79,8 +77,7 @@ void DemoService::tick() {
     last_heartbeat_ms_ = now;
     ++heartbeat_seq_;
     if (bus_) {
-      (void)f8::cppsdk::publish_data(bus_->nats(), cfg_.service_id, cfg_.service_id, "heartbeat",
-                                    json{{"seq", heartbeat_seq_}, {"ts", now}}, now);
+      (void)bus_->emit_data(cfg_.service_id, "heartbeat", json{{"seq", heartbeat_seq_}, {"ts", now}}, now);
     }
   }
 }
@@ -92,7 +89,7 @@ void DemoService::publish_state_if_changed(const std::string& field, const json&
   if (it != published_state_.end() && it->second == value) return;
   published_state_[field] = value;
   if (bus_) {
-    (void)f8::cppsdk::kv_set_node_state(bus_->kv(), cfg_.service_id, cfg_.service_id, field, value, source, meta);
+    (void)bus_->publish_state(cfg_.service_id, field, value, source, meta);
   }
 }
 

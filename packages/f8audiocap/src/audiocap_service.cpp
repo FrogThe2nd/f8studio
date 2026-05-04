@@ -12,7 +12,6 @@
 #include "f8cppsdk/describe_schema.h"
 #include "f8cppsdk/f8_naming.h"
 #include "f8cppsdk/shm/audio.h"
-#include "f8cppsdk/state_kv.h"
 #include "f8cppsdk/time_utils.h"
 #include "wasapi_loopback_capture.h"
 
@@ -434,7 +433,7 @@ void AudioCapService::publish_static_state() {
     if (it != published_state_.end() && it->second == v) return;
     published_state_[field] = v;
     if (bus_) {
-      f8::cppsdk::kv_set_node_state(bus_->kv(), cfg_.service_id, cfg_.service_id, field, v, "init", json::object());
+      (void)bus_->publish_state(cfg_.service_id, field, v, "init", json::object());
     }
   };
 
