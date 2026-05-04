@@ -6,6 +6,7 @@ import traceback
 from dataclasses import replace
 from typing import Any
 
+from f8pysdk.bus import ServiceBus
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
 
@@ -56,6 +57,10 @@ class MediaPipePoseServiceNode(ServiceNode):
 
         self._video_input = VideoShmInput()
         self._pose_runtime: Any | None = None
+        self._zenoh_config_path: str | None = None
+        self._zenoh_connect: tuple[str, ...] = ()
+        self._zenoh_listen: tuple[str, ...] = ()
+        self._zenoh_shm_pool_bytes = 256 * 1024 * 1024
 
         self._last_error_signature = ""
         self._last_error_repeats = 0
@@ -64,6 +69,12 @@ class MediaPipePoseServiceNode(ServiceNode):
 
     def attach(self, bus: Any) -> None:
         super().attach(bus)
+        if isinstance(bus, ServiceBus):
+            cfg = bus.config
+            self._zenoh_config_path = cfg.zenoh_config_path
+            self._zenoh_connect = cfg.zenoh_connect
+            self._zenoh_listen = cfg.zenoh_listen
+            self._zenoh_shm_pool_bytes = cfg.zenoh_shm_pool_bytes
         loop = asyncio.get_running_loop()
         loop.create_task(self._ensure_config_loaded(), name=f"f8mppose:init:{self.node_id}")
         self._task = loop.create_task(self._loop(), name=f"f8mppose:loop:{self.node_id}")
@@ -90,7 +101,22 @@ class MediaPipePoseServiceNode(ServiceNode):
         if name == "shmName":
             self._shm_name = coerce_str(await self.get_state_value("shmName"), default=self._shm_name)
             self._config = replace(self._config, shm_name=self._shm_name)
-            await self._maybe_reopen_shm()
+            await self._maybe_reopen_video_input()
+            return
+
+        if name == "videoTransport":
+            video_transport = coerce_str(
+                await self.get_state_value("videoTransport"), default=self._video_transport
+            ).strip().lower()
+            self._video_transport = video_transport if video_transport in ("legacy_shm", "zenoh") else "legacy_shm"
+            self._config = replace(self._config, video_transport=self._video_transport)
+            await self._maybe_reopen_video_input()
+            return
+
+        if name == "videoKey":
+            self._video_key = coerce_str(await self.get_state_value("videoKey"), default=self._video_key)
+            self._config = replace(self._config, video_key=self._video_key)
+            await self._maybe_reopen_video_input()
             return
 
         if name == "inferEveryN":
@@ -170,6 +196,21 @@ class MediaPipePoseServiceNode(ServiceNode):
                 ),
                 default="",
             ),
+            video_transport=self._coerce_video_transport(
+                state_or_default(
+                    await self.get_state_value("videoTransport"),
+                    self._initial_state.get("videoTransport"),
+                    default="legacy_shm",
+                )
+            ),
+            video_key=coerce_str(
+                state_or_default(
+                    await self.get_state_value("videoKey"),
+                    self._initial_state.get("videoKey"),
+                    default="",
+                ),
+                default="",
+            ),
             infer_every_n=coerce_int(
                 state_or_default(
                     await self.get_state_value("inferEveryN"),
@@ -232,12 +273,21 @@ class MediaPipePoseServiceNode(ServiceNode):
 
     def _apply_config(self, config: PoseServiceConfig) -> None:
         self._shm_name = config.shm_name
+        self._video_transport = self._coerce_video_transport(config.video_transport)
+        self._video_key = config.video_key
         self._infer_every_n = config.infer_every_n
         self._model_complexity = config.model_complexity
         self._min_detection_confidence = config.min_detection_confidence
         self._min_tracking_confidence = config.min_tracking_confidence
         self._visibility_threshold = config.visibility_threshold
         self._skeleton_source = config.skeleton_source
+
+    @staticmethod
+    def _coerce_video_transport(value: Any) -> str:
+        text = coerce_str(value, default="legacy_shm").strip().lower()
+        if text == "zenoh":
+            return "zenoh"
+        return "legacy_shm"
 
     async def _set_last_error(self, message: str) -> None:
         normalized = str(message or "")
@@ -291,14 +341,30 @@ class MediaPipePoseServiceNode(ServiceNode):
         )
         self._pose_runtime = create_pose_runtime(config)
 
-    async def _maybe_reopen_shm(self) -> None:
-        want = self._resolve_shm_name()
-        if want == self._video_input.open_name:
+    async def _maybe_reopen_video_input(self) -> None:
+        video_transport = self._selected_video_transport()
+        video_key = self._resolve_video_key()
+        shm_name = self._resolve_shm_name()
+        if self._video_input.is_open_for(
+            video_transport=video_transport,
+            video_key=video_key,
+            shm_name=shm_name,
+        ):
             return
         self._close_video_input()
 
     def _resolve_shm_name(self) -> str:
         return str(self._shm_name or "").strip()
+
+    def _resolve_video_key(self) -> str:
+        return str(self._video_key or "").strip()
+
+    def _selected_video_transport(self) -> str:
+        if str(self._video_transport or "").strip().lower() == "zenoh":
+            return "zenoh"
+        if self._resolve_video_key():
+            return "zenoh"
+        return "legacy_shm"
 
     def _close_video_input(self) -> None:
         try:
@@ -359,13 +425,30 @@ class MediaPipePoseServiceNode(ServiceNode):
                 await self._ensure_config_loaded()
                 await self._ensure_pose_runtime()
 
+                video_transport = self._selected_video_transport()
+                video_key = self._resolve_video_key()
                 shm_name = self._resolve_shm_name()
-                if not shm_name:
+                if video_transport == "zenoh" and not video_key:
+                    await asyncio.sleep(0.05)
+                    continue
+                if video_transport == "legacy_shm" and not shm_name:
                     await asyncio.sleep(0.05)
                     continue
 
-                if not self._video_input.is_open:
-                    self._video_input.open(shm_name)
+                if not self._video_input.is_open_for(
+                    video_transport=video_transport,
+                    video_key=video_key,
+                    shm_name=shm_name,
+                ):
+                    self._video_input.open(
+                        video_transport=video_transport,
+                        video_key=video_key,
+                        shm_name=shm_name,
+                        config_path=self._zenoh_config_path,
+                        connect=self._zenoh_connect,
+                        listen=self._zenoh_listen,
+                        shm_pool_bytes=self._zenoh_shm_pool_bytes,
+                    )
 
                 frame = self._video_input.read_frame()
                 if frame is None:
