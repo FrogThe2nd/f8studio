@@ -702,6 +702,10 @@ void ScreenCapService::publish_static_state() {
   set_if_changed("serviceClass", cfg_.service_class);
   set_if_changed("videoShmName", shm_ ? shm_->regionName() : "");
   set_if_changed("videoShmEvent", shm_ ? shm_->frameEventName() : "");
+  set_if_changed("videoTransport", "legacy_shm");
+  set_if_changed("videoKey", shm_ ? shm_->regionName() : "");
+  set_if_changed("videoFormat", "bgra32");
+  set_if_changed("videoFrameSchemaVersion", 1);
 
   set_if_changed("mode", cfg_.mode);
   set_if_changed("fps", cfg_.fps);
@@ -815,6 +819,12 @@ json ScreenCapService::describe() {
   service["stateFields"] = json::array({
       state_field("videoShmName", schema_string(), "ro", "Video SHM", "Shared memory region name", true),
       state_field("videoShmEvent", schema_string(), "ro", "Video Event", "Shared memory event name", false),
+      state_field("videoTransport", schema_string_enum({"legacy_shm", "zenoh"}), "ro", "Video Transport",
+                  "Frame transport backend", true),
+      state_field("videoKey", schema_string(), "ro", "Video Key", "Transport-specific video stream key", true),
+      state_field("videoFormat", schema_string_enum({"bgra32", "bgr24", "flow2_f16", "scalar1_f32"}), "ro",
+                  "Video Format", "Frame payload format", false),
+      state_field("videoFrameSchemaVersion", schema_integer(), "ro", "Video Schema", "Frame schema version", false),
       state_field("mode", schema_string_enum({"display", "window", "region"}), "rw", "Mode", "display|window|region",
                   false),
       state_field("fps", schema_number(), "rw", "FPS", "Capture rate", true),

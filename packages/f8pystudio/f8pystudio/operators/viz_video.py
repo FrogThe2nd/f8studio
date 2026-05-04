@@ -83,6 +83,33 @@ class VizVideoRuntimeNode(OperatorNode):
                 showOnNode=True,
             ),
             F8StateSpec(
+                name="videoTransport",
+                label="Video Transport",
+                description="Frame transport backend.",
+                valueSchema=string_schema(default="legacy_shm", enum=["legacy_shm", "zenoh"]),
+                access=F8StateAccess.rw,
+                required=True,
+                showOnNode=False,
+            ),
+            F8StateSpec(
+                name="videoKey",
+                label="Video Key",
+                description="Transport-specific video stream key. Used as SHM name when videoTransport=legacy_shm.",
+                valueSchema=string_schema(default=""),
+                access=F8StateAccess.rw,
+                required=True,
+                showOnNode=True,
+            ),
+            F8StateSpec(
+                name="videoFormat",
+                label="Video Format",
+                description="Frame payload format.",
+                valueSchema=string_schema(default="bgra32", enum=["bgra32", "bgr24", "flow2_f16", "scalar1_f32"]),
+                access=F8StateAccess.rw,
+                required=True,
+                showOnNode=False,
+            ),
+            F8StateSpec(
                 name="throttleMs",
                 label="Refresh (ms)",
                 description="UI refresh interval in milliseconds (0 = as fast as possible).",
@@ -240,6 +267,9 @@ class VizVideoRuntimeNode(OperatorNode):
         self._config_loaded = False
         self._service_id = ""
         self._shm_name = ""
+        self._video_transport = "legacy_shm"
+        self._video_key = ""
+        self._video_format = "bgra32"
         self._throttle_ms = 33
         self._flow_shm_name = ""
         self._flow_display_mode = "off"
@@ -282,6 +312,9 @@ class VizVideoRuntimeNode(OperatorNode):
         if f not in (
             "serviceId",
             "shmName",
+            "videoTransport",
+            "videoKey",
+            "videoFormat",
             "throttleMs",
             "flowShmName",
             "flowDisplayMode",
@@ -305,6 +338,14 @@ class VizVideoRuntimeNode(OperatorNode):
             self._service_id = str(await self._get_str_state("serviceId", default=self._service_id)).strip()
         elif f == "shmName":
             self._shm_name = str(await self._get_str_state("shmName", default=self._shm_name)).strip()
+        elif f == "videoTransport":
+            transport = str(await self._get_str_state("videoTransport", default=self._video_transport)).strip().lower()
+            self._video_transport = transport if transport in ("legacy_shm", "zenoh") else "legacy_shm"
+        elif f == "videoKey":
+            self._video_key = str(await self._get_str_state("videoKey", default=self._video_key)).strip()
+        elif f == "videoFormat":
+            fmt = str(await self._get_str_state("videoFormat", default=self._video_format)).strip().lower()
+            self._video_format = fmt if fmt in ("bgra32", "bgr24", "flow2_f16", "scalar1_f32") else "bgra32"
         elif f == "throttleMs":
             self._throttle_ms = await self._get_int_state("throttleMs", default=self._throttle_ms, minimum=0, maximum=60000)
         elif f == "flowShmName":
@@ -370,6 +411,15 @@ class VizVideoRuntimeNode(OperatorNode):
             return
         self._service_id = str(await self._get_str_state("serviceId", default=str(self._initial_state.get("serviceId", "")))).strip()
         self._shm_name = str(await self._get_str_state("shmName", default=str(self._initial_state.get("shmName", "")))).strip()
+        transport = str(
+            await self._get_str_state("videoTransport", default=str(self._initial_state.get("videoTransport", "legacy_shm")))
+        ).strip().lower()
+        self._video_transport = transport if transport in ("legacy_shm", "zenoh") else "legacy_shm"
+        self._video_key = str(
+            await self._get_str_state("videoKey", default=str(self._initial_state.get("videoKey", "")))
+        ).strip()
+        fmt = str(await self._get_str_state("videoFormat", default=str(self._initial_state.get("videoFormat", "bgra32")))).strip().lower()
+        self._video_format = fmt if fmt in ("bgra32", "bgr24", "flow2_f16", "scalar1_f32") else "bgra32"
         self._throttle_ms = await self._get_int_state("throttleMs", default=33, minimum=0, maximum=60000)
         self._flow_shm_name = str(await self._get_str_state("flowShmName", default=str(self._initial_state.get("flowShmName", "")))).strip()
         flow_mode = str(await self._get_str_state("flowDisplayMode", default=str(self._initial_state.get("flowDisplayMode", "off")))).strip().lower()
@@ -429,6 +479,8 @@ class VizVideoRuntimeNode(OperatorNode):
 
     async def _push_config_async(self, now_ms: int) -> None:
         shm_name = str(self._shm_name or "").strip()
+        if not shm_name and self._video_transport == "legacy_shm":
+            shm_name = str(self._video_key or "").strip()
         if not shm_name:
             shm_name = _default_video_shm_name(self._service_id)
         emit_ui_command(
@@ -437,6 +489,9 @@ class VizVideoRuntimeNode(OperatorNode):
             {
                 "shmName": shm_name,
                 "serviceId": str(self._service_id or "").strip(),
+                "videoTransport": str(self._video_transport or "legacy_shm"),
+                "videoKey": str(self._video_key or "").strip(),
+                "videoFormat": str(self._video_format or "bgra32"),
                 "throttleMs": int(self._throttle_ms),
                 "flowShmName": str(self._flow_shm_name or "").strip(),
                 "flowDisplayMode": str(self._flow_display_mode or "off"),

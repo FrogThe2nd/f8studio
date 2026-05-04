@@ -2210,6 +2210,10 @@ void ImPlayerService::publish_static_state() {
     want("serviceClass", cfg_.service_class);
     want("videoShmName", shm_->regionName());
     want("videoShmEvent", shm_->frameEventName());
+    want("videoTransport", "legacy_shm");
+    want("videoKey", shm_->regionName());
+    want("videoFormat", "bgra32");
+    want("videoFrameSchemaVersion", 1);
     want("loop", loop_);
     want("videoShmMaxWidth", cfg_.video_shm_max_width);
     want("videoShmMaxHeight", cfg_.video_shm_max_height);
@@ -2310,6 +2314,12 @@ json ImPlayerService::describe() {
       state_field("videoShmName", schema_string(), "ro", "Video SHM", "Shared memory region name.", true),
       state_field("videoShmEvent", schema_string(), "ro", "Video Event", "Optional named event to signal new frames.",
                   false),
+      state_field("videoTransport", schema_string_enum({"legacy_shm", "zenoh"}), "ro", "Video Transport",
+                  "Frame transport backend.", true),
+      state_field("videoKey", schema_string(), "ro", "Video Key", "Transport-specific video stream key.", true),
+      state_field("videoFormat", schema_string_enum({"bgra32", "bgr24", "flow2_f16", "scalar1_f32"}), "ro",
+                  "Video Format", "Frame payload format.", false),
+      state_field("videoFrameSchemaVersion", schema_integer(), "ro", "Video Schema", "Frame schema version.", false),
       state_field("videoShmMaxWidth", schema_integer(), "rw", "SHM Max Width", "Downsample limit (0 = auto).", false),
       state_field("videoShmMaxHeight", schema_integer(), "rw", "SHM Max Height", "Downsample limit (0 = auto).", false),
       state_field("videoShmMaxFps", schema_number(), "rw", "SHM Max FPS", "Copy rate limit (0 = unlimited).", false),
