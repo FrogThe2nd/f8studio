@@ -11,10 +11,12 @@
 #include <spdlog/spdlog.h>
 
 #include "f8cppsdk/describe_schema.h"
+#include "f8cppsdk/latest_video_frame_transport.h"
 #include "f8cppsdk/shm/naming.h"
 #include "f8cppsdk/shm/sizing.h"
 #include "f8cppsdk/state_kv.h"
 #include "f8cppsdk/time_utils.h"
+#include "f8cppsdk/zenoh_naming.h"
 #include "../common/service_runtime_utils.h"
 
 namespace f8::cvkit::dense_optflow {
@@ -24,6 +26,7 @@ using f8::cppsdk::describe::schema_integer;
 using f8::cppsdk::describe::schema_number;
 using f8::cppsdk::describe::schema_object;
 using f8::cppsdk::describe::schema_string;
+using f8::cppsdk::describe::schema_string_enum;
 using f8::cppsdk::describe::state_field;
 
 namespace {
@@ -106,12 +109,17 @@ bool DenseOptflowService::start() {
   }
 
   input_shm_name_.clear();
+  input_video_transport_ = runtime_backend.bus_backend == f8::cppsdk::BusBackend::kZenoh ? "zenoh" : "legacy_shm";
+  input_video_key_.clear();
   compute_every_n_frames_ = 2;
   flow_shm_name_ = "shm." + cfg_.service_id + ".flow";
+  flow_transport_ = "legacy_shm";
+  flow_key_.clear();
   flow_shm_format_ = "flow2_f16";
   compute_scale_ = 0.5;
 
   video_.close();
+  input_zenoh_video_.reset();
   frame_bgra_.clear();
   flow_payload_.clear();
   last_notify_seq_ = 0;
@@ -138,11 +146,35 @@ bool DenseOptflowService::start() {
   monitor_total_process_ms_ = 0.0;
   monitor_fps_ = 0.0;
 
+  if (runtime_backend.bus_backend == f8::cppsdk::BusBackend::kZenoh) {
+    const std::string key = f8::cppsdk::zenoh_data_key(cfg_.service_id, cfg_.service_id, "flow");
+    auto publisher = std::make_shared<f8::cppsdk::ZenohLatestVideoFramePublisher>();
+    if (publisher->open(runtime_backend, key)) {
+      flow_transport_ = "zenoh";
+      flow_key_ = key;
+      flow_zenoh_publisher_ = publisher;
+      flow_sink_.set_frame_observer([publisher](const f8::cppsdk::VideoFrameView& frame) {
+        (void)publisher->publish_frame(frame);
+      });
+      spdlog::info("dense_optflow zenoh flow publisher enabled serviceId={} key={}", cfg_.service_id, key);
+    } else {
+      flow_sink_.clear_frame_observer();
+      flow_zenoh_publisher_.reset();
+      spdlog::warn("dense_optflow zenoh flow publisher unavailable serviceId={}, using legacy flow SHM metadata",
+                   cfg_.service_id);
+    }
+  }
+
   publish_state_if_changed("serviceClass", cfg_.service_class, "init", json::object());
   publish_state_if_changed("inputShmName", "", "init", json::object());
+  publish_state_if_changed("inputVideoTransport", input_video_transport_, "init", json::object());
+  publish_state_if_changed("inputVideoKey", input_video_key_, "init", json::object());
   publish_state_if_changed("computeEveryNFrames", compute_every_n_frames_, "init", json::object());
   publish_state_if_changed("flowShmName", flow_shm_name_, "init", json::object());
+  publish_state_if_changed("flowTransport", flow_transport_, "init", json::object());
+  publish_state_if_changed("flowKey", flow_key_, "init", json::object());
   publish_state_if_changed("flowShmFormat", flow_shm_format_, "init", json::object());
+  publish_state_if_changed("flowFrameSchemaVersion", 1, "init", json::object());
   publish_state_if_changed("computeScale", compute_scale_, "init", json::object());
   publish_state_if_changed("flowOutputScaleX", 1.0, "init", json::object());
   publish_state_if_changed("flowOutputScaleY", 1.0, "init", json::object());
@@ -165,6 +197,15 @@ void DenseOptflowService::stop() {
 
   std::lock_guard<std::mutex> lock(flow_mu_);
   video_.close();
+  if (input_zenoh_video_) {
+    input_zenoh_video_->close();
+  }
+  input_zenoh_video_.reset();
+  flow_sink_.clear_frame_observer();
+  if (flow_zenoh_publisher_) {
+    flow_zenoh_publisher_->close();
+  }
+  flow_zenoh_publisher_.reset();
 }
 
 void DenseOptflowService::tick() {
@@ -242,7 +283,13 @@ void DenseOptflowService::on_state(const std::string& node_id, const std::string
         return;
       }
       input_shm_name_ = next;
+      input_video_transport_ = "legacy_shm";
+      input_video_key_ = next;
       video_.close();
+      if (input_zenoh_video_) {
+        input_zenoh_video_->close();
+      }
+      input_zenoh_video_.reset();
       last_video_open_attempt_ms_ = 0;
       last_notify_seq_ = 0;
       last_frame_id_ = 0;
@@ -258,6 +305,85 @@ void DenseOptflowService::on_state(const std::string& node_id, const std::string
       prev_height_ = 0;
     }
     publish_state_if_changed("inputShmName", input_shm_name_, "state", meta);
+    publish_state_if_changed("inputVideoTransport", input_video_transport_, "state", meta);
+    publish_state_if_changed("inputVideoKey", input_video_key_, "state", meta);
+    return;
+  }
+
+  if (field == "inputVideoTransport" && value.is_string()) {
+    const std::string next =
+        service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(value.get<std::string>()));
+    if (next != "legacy_shm" && next != "zenoh") {
+      publish_error_if_changed("invalid inputVideoTransport: " + next, "state", meta);
+      return;
+    }
+    {
+      std::lock_guard<std::mutex> lock(flow_mu_);
+      if (next == input_video_transport_) {
+        publish_state_if_changed("inputVideoTransport", input_video_transport_, "state", meta);
+        return;
+      }
+      input_video_transport_ = next;
+      video_.close();
+      if (input_zenoh_video_) {
+        input_zenoh_video_->close();
+      }
+      input_zenoh_video_.reset();
+      last_video_open_attempt_ms_ = 0;
+      last_notify_seq_ = 0;
+      last_frame_id_ = 0;
+      frame_counter_ = 0;
+      frame_bgra_.clear();
+      prev_gray_.release();
+      gray_.release();
+      prev_compute_.release();
+      gray_compute_.release();
+      flow_compute_.release();
+      has_prev_gray_ = false;
+      prev_width_ = 0;
+      prev_height_ = 0;
+    }
+    publish_state_if_changed("inputVideoTransport", input_video_transport_, "state", meta);
+    publish_error_if_changed("", "state", meta);
+    return;
+  }
+
+  if (field == "inputVideoKey" && value.is_string()) {
+    const std::string next = service_runtime::trim_copy(value.get<std::string>());
+    {
+      std::lock_guard<std::mutex> lock(flow_mu_);
+      if (next == input_video_key_) {
+        publish_state_if_changed("inputVideoKey", input_video_key_, "state", meta);
+        return;
+      }
+      input_video_key_ = next;
+      if (input_video_transport_ == "legacy_shm") {
+        input_shm_name_ = next;
+      }
+      video_.close();
+      if (input_zenoh_video_) {
+        input_zenoh_video_->close();
+      }
+      input_zenoh_video_.reset();
+      last_video_open_attempt_ms_ = 0;
+      last_notify_seq_ = 0;
+      last_frame_id_ = 0;
+      frame_counter_ = 0;
+      frame_bgra_.clear();
+      prev_gray_.release();
+      gray_.release();
+      prev_compute_.release();
+      gray_compute_.release();
+      flow_compute_.release();
+      has_prev_gray_ = false;
+      prev_width_ = 0;
+      prev_height_ = 0;
+    }
+    publish_state_if_changed("inputVideoKey", input_video_key_, "state", meta);
+    if (input_video_transport_ == "legacy_shm") {
+      publish_state_if_changed("inputShmName", input_shm_name_, "state", meta);
+    }
+    publish_error_if_changed("", "state", meta);
     return;
   }
 
@@ -299,6 +425,34 @@ void DenseOptflowService::on_data(const std::string& node_id, const std::string&
 }
 
 bool DenseOptflowService::ensure_video_open() {
+  if (input_video_transport_ == "zenoh") {
+    if (input_zenoh_video_ && input_zenoh_video_->valid()) {
+      return true;
+    }
+
+    const std::int64_t now = f8::cppsdk::now_ms();
+    if (last_video_open_attempt_ms_ > 0 && (now - last_video_open_attempt_ms_) < 1000) {
+      return false;
+    }
+    last_video_open_attempt_ms_ = now;
+
+    if (input_video_key_.empty()) {
+      publish_error_if_changed("missing inputVideoKey", "runtime", json::object());
+      return false;
+    }
+
+    auto subscriber = std::make_unique<f8::cppsdk::ZenohLatestVideoFrameSubscriber>();
+    const auto runtime_backend =
+        f8::cppsdk::runtime_backend_config_with_legacy_nats_url(cfg_.runtime_backend, cfg_.nats_url);
+    if (!subscriber->open(runtime_backend, input_video_key_)) {
+      publish_error_if_changed("zenoh video subscribe failed: " + input_video_key_, "runtime", json::object());
+      return false;
+    }
+    input_zenoh_video_ = std::move(subscriber);
+    publish_error_if_changed("", "runtime", json::object());
+    return true;
+  }
+
   f8::cppsdk::VideoSharedMemoryHeader hdr{};
   if (video_.readHeader(hdr)) {
     return true;
@@ -333,18 +487,38 @@ void DenseOptflowService::process_frame_once() {
     return;
   }
 
-  std::uint32_t observed_notify_seq = last_notify_seq_;
-  if (!video_.waitNewFrame(last_notify_seq_, 20, &observed_notify_seq)) {
-    return;
-  }
-  last_notify_seq_ = observed_notify_seq;
-
   f8::cppsdk::VideoSharedMemoryHeader hdr{};
-  if (!video_.peekLatestHeader(hdr)) {
-    return;
-  }
-  if (hdr.frame_id == 0 || hdr.frame_id == last_frame_id_) {
-    return;
+  if (input_video_transport_ == "zenoh") {
+    if (!input_zenoh_video_) {
+      return;
+    }
+    auto latest = input_zenoh_video_->wait_latest(std::chrono::milliseconds(20));
+    if (!latest.has_value()) {
+      return;
+    }
+    if (latest->frame_id == 0 || latest->frame_id == last_frame_id_) {
+      return;
+    }
+    hdr.width = latest->width;
+    hdr.height = latest->height;
+    hdr.pitch = latest->pitch;
+    hdr.format = latest->format;
+    hdr.frame_id = latest->frame_id;
+    hdr.ts_ms = latest->ts_ms;
+    frame_bgra_ = std::move(latest->payload);
+  } else {
+    std::uint32_t observed_notify_seq = last_notify_seq_;
+    if (!video_.waitNewFrame(last_notify_seq_, 20, &observed_notify_seq)) {
+      return;
+    }
+    last_notify_seq_ = observed_notify_seq;
+
+    if (!video_.peekLatestHeader(hdr)) {
+      return;
+    }
+    if (hdr.frame_id == 0 || hdr.frame_id == last_frame_id_) {
+      return;
+    }
   }
 
   ++monitor_observed_frames_;
@@ -356,28 +530,30 @@ void DenseOptflowService::process_frame_once() {
     return;
   }
 
-  if (!video_.copyLatestFrameIfChanged(frame_bgra_, hdr, last_frame_id_)) {
-    return;
-  }
-  if (hdr.frame_id == 0 || hdr.frame_id == last_frame_id_) {
-    return;
+  if (input_video_transport_ != "zenoh") {
+    if (!video_.copyLatestFrameIfChanged(frame_bgra_, hdr, last_frame_id_)) {
+      return;
+    }
+    if (hdr.frame_id == 0 || hdr.frame_id == last_frame_id_) {
+      return;
+    }
   }
   last_frame_id_ = hdr.frame_id;
 
   if (hdr.format != 1 || hdr.width == 0 || hdr.height == 0 || hdr.pitch == 0) {
     ++monitor_fail_frames_;
-    publish_error_if_changed("unsupported video shm format", "runtime", json::object());
+    publish_error_if_changed("unsupported video frame format", "runtime", json::object());
     return;
   }
   const std::size_t row_bytes = static_cast<std::size_t>(hdr.pitch);
   if (row_bytes < static_cast<std::size_t>(hdr.width) * 4) {
     ++monitor_fail_frames_;
-    publish_error_if_changed("invalid video shm pitch", "runtime", json::object());
+    publish_error_if_changed("invalid video frame pitch", "runtime", json::object());
     return;
   }
   if (frame_bgra_.size() < row_bytes * static_cast<std::size_t>(hdr.height)) {
     ++monitor_fail_frames_;
-    publish_error_if_changed("video shm frame too small", "runtime", json::object());
+    publish_error_if_changed("video frame too small", "runtime", json::object());
     return;
   }
 
@@ -484,6 +660,9 @@ void DenseOptflowService::process_frame_once() {
   }
 
   publish_state_if_changed("flowShmFormat", flow_shm_format_, "runtime", json::object());
+  publish_state_if_changed("flowTransport", flow_transport_, "runtime", json::object());
+  publish_state_if_changed("flowKey", flow_key_, "runtime", json::object());
+  publish_state_if_changed("flowFrameSchemaVersion", 1, "runtime", json::object());
   publish_state_if_changed("computeScale", compute_scale_, "runtime", json::object());
   publish_state_if_changed("flowOutputScaleX", static_cast<double>(flow.cols) / static_cast<double>(std::max(1, gray_.cols)),
                            "runtime", json::object());
@@ -509,10 +688,18 @@ json DenseOptflowService::describe() {
   service["tags"] = json::array({"cv", "optical_flow", "flow_field"});
   service["stateFields"] = json::array({
       state_field("inputShmName", schema_string(), "rw", "Input Video SHM", "Input SHM name (e.g. shm.xxx.video).", true),
+      state_field("inputVideoTransport", schema_string_enum({"legacy_shm", "zenoh"}), "rw", "Input Video Transport",
+                  "Input video frame transport backend.", false),
+      state_field("inputVideoKey", schema_string(), "rw", "Input Video Key", "Input video frame transport key.", true),
       state_field("computeEveryNFrames", schema_integer(2, 1, 120), "rw", "Compute Every N Frames",
                   "Compute flow once per N new frames.", false),
       state_field("flowShmName", schema_string(), "ro", "Flow SHM Name", "Output SHM name for UV flow field.", true),
+      state_field("flowTransport", schema_string_enum({"legacy_shm", "zenoh"}), "ro", "Flow Transport",
+                  "Output flow frame transport backend.", false),
+      state_field("flowKey", schema_string(), "ro", "Flow Key", "Output flow frame transport key.", true),
       state_field("flowShmFormat", schema_string(), "ro", "Flow SHM Format", "Flow payload format. Fixed to flow2_f16.", false),
+      state_field("flowFrameSchemaVersion", schema_integer(1, 1, 1), "ro", "Flow Frame Schema",
+                  "Output flow frame schema version.", false),
       state_field("computeScale", schema_number(0.5, 0.25, 1.0), "rw", "Compute Scale",
                   "Farneback compute scale; output flow stays at compute scale.", false),
       state_field("flowOutputScaleX", schema_number(), "ro", "Flow Output Scale X", "Output flow width / source width.", false),

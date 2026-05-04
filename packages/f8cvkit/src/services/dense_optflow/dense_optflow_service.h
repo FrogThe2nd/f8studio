@@ -12,6 +12,7 @@
 #include <opencv2/core.hpp>
 
 #include "f8cppsdk/capabilities.h"
+#include "f8cppsdk/latest_video_frame_transport.h"
 #include "f8cppsdk/service_bus.h"
 #include "f8cppsdk/video_shared_memory_sink.h"
 
@@ -71,14 +72,20 @@ class DenseOptflowService final : public f8::cppsdk::LifecycleNode,
 
   // Input SHM settings.
   std::string input_shm_name_;
+  std::string input_video_transport_ = "legacy_shm";
+  std::string input_video_key_;
   int compute_every_n_frames_ = 2;
   std::string flow_shm_name_;
+  std::string flow_transport_ = "legacy_shm";
+  std::string flow_key_;
   std::string flow_shm_format_ = "flow2_f16";
   double compute_scale_ = 0.5;
 
   // Video reader state.
   f8::cppsdk::VideoSharedMemoryReader video_;
+  std::unique_ptr<f8::cppsdk::ZenohLatestVideoFrameSubscriber> input_zenoh_video_;
   f8::cppsdk::VideoSharedMemorySink flow_sink_;
+  std::shared_ptr<f8::cppsdk::ZenohLatestVideoFramePublisher> flow_zenoh_publisher_;
   std::vector<std::byte> frame_bgra_;
   std::vector<std::byte> flow_payload_;
   std::uint32_t last_notify_seq_ = 0;

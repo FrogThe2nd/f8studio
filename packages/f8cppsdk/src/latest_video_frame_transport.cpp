@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <condition_variable>
+#include <cstring>
 #include <limits>
 #include <mutex>
 #include <optional>
@@ -192,8 +193,8 @@ bool decode_zenoh_video_frame(const RuntimeBytes& raw, LatestVideoFrame& out, st
   out.format = format;
   out.frame_id = frame_id;
   out.ts_ms = ts_ms;
-  const auto begin = raw.begin() + static_cast<std::ptrdiff_t>(header_bytes);
-  out.payload.assign(begin, begin + static_cast<std::ptrdiff_t>(payload_bytes));
+  out.payload.resize(payload_bytes);
+  std::memcpy(out.payload.data(), raw.data() + header_bytes, payload_bytes);
   return true;
 }
 

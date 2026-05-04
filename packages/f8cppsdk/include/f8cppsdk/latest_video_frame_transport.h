@@ -6,6 +6,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "f8cppsdk/runtime_backend.h"
 #include "f8cppsdk/runtime_transport.h"
@@ -24,7 +25,7 @@ struct LatestVideoFrame {
   std::uint32_t format = 0;
   std::uint64_t frame_id = 0;
   std::int64_t ts_ms = 0;
-  RuntimeBytes payload;
+  std::vector<std::byte> payload;
 };
 
 bool encode_zenoh_video_frame(const VideoFrameView& frame, RuntimeBytes& out, std::string* error_message = nullptr);
