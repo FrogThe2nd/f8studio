@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 from qtpy import QtGui, QtWidgets
 
+from f8pysdk.video_transport import LatestVideoFrame
 from f8pystudio.render_nodes.viz_video import (
     _VideoShmPane,
     _apply_colormap,
@@ -144,9 +145,14 @@ def test_try_render_scalar_skips_non_scalar_format() -> None:
     pane._scalar_display_mode = "colormap"
     pane._ensure_scalar_reader = lambda: True  # type: ignore[method-assign]
     pane._scalar_reader = SimpleNamespace(
-        read_latest_frame=lambda: (
-            SimpleNamespace(fmt=1, width=2, height=2, pitch=8),
-            memoryview(bytes(16)),
+        poll_latest=lambda: LatestVideoFrame(
+            width=2,
+            height=2,
+            pitch=8,
+            fmt=1,
+            frame_id=1,
+            ts_ms=0,
+            payload=memoryview(bytes(16)),
         )
     )
     assert pane._try_render_scalar() is None

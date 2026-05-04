@@ -6,7 +6,8 @@ import numpy as np
 from NodeGraphQt.nodes.base_node import NodeBaseWidget
 from qtpy import QtCore, QtGui, QtWidgets
 
-from f8pysdk.shm import VIDEO_FORMAT_FLOW2_F16, VIDEO_FORMAT_SCALAR1_F32, VideoShmReader
+from f8pysdk.shm import VIDEO_FORMAT_BGRA32, VIDEO_FORMAT_FLOW2_F16, VIDEO_FORMAT_SCALAR1_F32
+from f8pysdk.video_transport import LegacyShmLatestVideoFrameTransport
 
 from ..nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from ..nodegraph.viz_operator_nodeitem import F8StudioVizOperatorNodeItem
@@ -188,9 +189,9 @@ class _VideoShmPane(QtWidgets.QWidget):
         self._timer.timeout.connect(self._tick)  # type: ignore[attr-defined]
         self._timer.setInterval(33)
 
-        self._video_reader: VideoShmReader | None = None
-        self._flow_reader: VideoShmReader | None = None
-        self._scalar_reader: VideoShmReader | None = None
+        self._video_reader: LegacyShmLatestVideoFrameTransport | None = None
+        self._flow_reader: LegacyShmLatestVideoFrameTransport | None = None
+        self._scalar_reader: LegacyShmLatestVideoFrameTransport | None = None
         self._video_shm_name = ""
         self._flow_shm_name = ""
         self._scalar_shm_name = ""
@@ -342,11 +343,9 @@ class _VideoShmPane(QtWidgets.QWidget):
         if not self._video_shm_name:
             return False
         try:
-            r = VideoShmReader(self._video_shm_name)
-            r.open(use_event=False)
-            self._video_reader = r
+            self._video_reader = LegacyShmLatestVideoFrameTransport.open_reader(self._video_shm_name, use_event=False)
             return True
-        except Exception:
+        except (FileNotFoundError, OSError, RuntimeError):
             self._video_reader = None
             return False
 
@@ -356,11 +355,9 @@ class _VideoShmPane(QtWidgets.QWidget):
         if not self._flow_shm_name:
             return False
         try:
-            r = VideoShmReader(self._flow_shm_name)
-            r.open(use_event=False)
-            self._flow_reader = r
+            self._flow_reader = LegacyShmLatestVideoFrameTransport.open_reader(self._flow_shm_name, use_event=False)
             return True
-        except Exception:
+        except (FileNotFoundError, OSError, RuntimeError):
             self._flow_reader = None
             return False
 
@@ -370,11 +367,9 @@ class _VideoShmPane(QtWidgets.QWidget):
         if not self._scalar_shm_name:
             return False
         try:
-            r = VideoShmReader(self._scalar_shm_name)
-            r.open(use_event=False)
-            self._scalar_reader = r
+            self._scalar_reader = LegacyShmLatestVideoFrameTransport.open_reader(self._scalar_shm_name, use_event=False)
             return True
-        except Exception:
+        except (FileNotFoundError, OSError, RuntimeError):
             self._scalar_reader = None
             return False
 
@@ -382,26 +377,31 @@ class _VideoShmPane(QtWidgets.QWidget):
         if not self._ensure_video_reader() or self._video_reader is None:
             return
         try:
-            header, payload = self._video_reader.read_latest_bgra()
-        except Exception:
+            frame = self._video_reader.poll_latest()
+        except (BufferError, OSError, RuntimeError, ValueError):
             return
-        if header is None or payload is None:
+        if frame is None:
             return
-        frame_id = int(header.frame_id)
-        if frame_id == self._last_video_frame_id:
-            return
-        w = int(header.width)
-        h = int(header.height)
-        pitch = int(header.pitch)
-        if w <= 0 or h <= 0 or pitch <= 0:
-            return
-        frame_bytes = bytes(payload)
         try:
-            img = QtGui.QImage(frame_bytes, w, h, pitch, QtGui.QImage.Format_ARGB32)
-            self._latest_video = img.copy()
-            self._last_video_frame_id = frame_id
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            return
+            if int(frame.fmt) != VIDEO_FORMAT_BGRA32:
+                return
+            frame_id = int(frame.frame_id)
+            if frame_id == self._last_video_frame_id:
+                return
+            w = int(frame.width)
+            h = int(frame.height)
+            pitch = int(frame.pitch)
+            if w <= 0 or h <= 0 or pitch <= 0:
+                return
+            frame_bytes = frame.payload_bytes()
+            try:
+                img = QtGui.QImage(frame_bytes, w, h, pitch, QtGui.QImage.Format_ARGB32)
+                self._latest_video = img.copy()
+                self._last_video_frame_id = frame_id
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                return
+        finally:
+            frame.release()
 
     def _render_hsv_flow(self, payload: memoryview, width: int, height: int, pitch: int) -> QtGui.QImage | None:
         row_bytes = width * 4
@@ -508,26 +508,29 @@ class _VideoShmPane(QtWidgets.QWidget):
         if not self._ensure_flow_reader() or self._flow_reader is None:
             return None
         try:
-            header, payload = self._flow_reader.read_latest_frame()
-        except Exception:
+            frame = self._flow_reader.poll_latest()
+        except (BufferError, OSError, RuntimeError, ValueError):
             return None
-        if header is None or payload is None:
+        if frame is None:
             return None
-        if int(header.fmt) != VIDEO_FORMAT_FLOW2_F16:
-            return None
-        frame_id = int(header.frame_id)
-        if frame_id == self._last_flow_frame_id:
-            return None
-        self._last_flow_frame_id = frame_id
+        try:
+            if int(frame.fmt) != VIDEO_FORMAT_FLOW2_F16:
+                return None
+            frame_id = int(frame.frame_id)
+            if frame_id == self._last_flow_frame_id:
+                return None
+            self._last_flow_frame_id = frame_id
 
-        width = int(header.width)
-        height = int(header.height)
-        pitch = int(header.pitch)
-        if width <= 0 or height <= 0 or pitch <= 0:
-            return None
-        if self._flow_display_mode == "hsv":
-            return self._render_hsv_flow(payload, width, height, pitch)
-        return self._render_arrows_flow(payload, width, height, pitch)
+            width = int(frame.width)
+            height = int(frame.height)
+            pitch = int(frame.pitch)
+            if width <= 0 or height <= 0 or pitch <= 0:
+                return None
+            if self._flow_display_mode == "hsv":
+                return self._render_hsv_flow(frame.payload, width, height, pitch)
+            return self._render_arrows_flow(frame.payload, width, height, pitch)
+        finally:
+            frame.release()
 
     def _try_render_scalar(self) -> QtGui.QImage | None:
         if self._scalar_display_mode == "off":
@@ -535,20 +538,23 @@ class _VideoShmPane(QtWidgets.QWidget):
         if not self._ensure_scalar_reader() or self._scalar_reader is None:
             return None
         try:
-            header, payload = self._scalar_reader.read_latest_frame()
-        except Exception:
+            frame = self._scalar_reader.poll_latest()
+        except (BufferError, OSError, RuntimeError, ValueError):
             return None
-        if header is None or payload is None:
+        if frame is None:
             return None
-        if int(header.fmt) != VIDEO_FORMAT_SCALAR1_F32:
-            return None
+        try:
+            if int(frame.fmt) != VIDEO_FORMAT_SCALAR1_F32:
+                return None
 
-        width = int(header.width)
-        height = int(header.height)
-        pitch = int(header.pitch)
-        if width <= 0 or height <= 0 or pitch <= 0:
-            return None
-        return self._render_scalar_colormap(payload, width, height, pitch)
+            width = int(frame.width)
+            height = int(frame.height)
+            pitch = int(frame.pitch)
+            if width <= 0 or height <= 0 or pitch <= 0:
+                return None
+            return self._render_scalar_colormap(frame.payload, width, height, pitch)
+        finally:
+            frame.release()
 
     def _present(self, image: QtGui.QImage) -> None:
         pix = QtGui.QPixmap.fromImage(image)
