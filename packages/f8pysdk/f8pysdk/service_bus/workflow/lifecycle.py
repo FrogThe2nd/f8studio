@@ -8,7 +8,7 @@ from ...capabilities import LifecycleNode
 from ...state import StateWriteOrigin, StateWriteSource
 from ...time_utils import now_ms
 from ..state.pipeline import publish_state
-from ..internal.micro import ServiceBusMicroEndpoints
+from ..internal.control_endpoints import create_service_control_endpoint_server
 from ...codec import encode_obj
 from .metadata import build_lifecycle_event_meta, build_lifecycle_state_meta
 
@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 async def _ensure_micro_endpoints_started(bus: "ServiceBus") -> None:
     if bus._micro_endpoints is not None:
         return
-    endpoints = ServiceBusMicroEndpoints(bus)
+    endpoints = create_service_control_endpoint_server(bus)
     bus._micro_endpoints = endpoints
     await endpoints.start()
 

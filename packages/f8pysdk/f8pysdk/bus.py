@@ -7,11 +7,12 @@ Prefer `f8pysdk.bus` over `f8pysdk.service_bus`, whose package root is no
 longer a public barrel.
 """
 
-from .service_bus.config import ServiceBusConfig
+from .service_bus.config import BusBackend, ServiceBusConfig
 from .service_bus.runtime import DefaultServiceBusComponentFactory, ServiceBus, ServiceBusComponentFactory
 
 __all__ = [
     "DefaultServiceBusComponentFactory",
+    "BusBackend",
     "ServiceBus",
     "ServiceBusComponentFactory",
     "ServiceBusConfig",

@@ -17,7 +17,9 @@ from ..command import CommandExecutionResult, CommandOutputPolicy
 from ..data import CrossPublishPolicy, DataDeliveryMode
 from ..generated import F8RuntimeGraph
 from ..nats_naming import ensure_token, kv_bucket_for_service, kv_key_ready, kv_key_rungraph
+from ..runtime_transport import RuntimeTransport
 from ..transport import NatsTransport, NatsTransportConfig
+from ..zenoh_transport import ZenohTransport, ZenohTransportConfig
 from ..state import StateRead, StateWriteOrigin, StateWriteSource
 from ..time_utils import now_ms
 from .config import ServiceBusConfig, _debug_state_enabled
@@ -33,7 +35,7 @@ from .workflow.lifecycle import stop as _stop_impl
 from .workflow.rungraph import set_rungraph as _set_rungraph_impl
 
 if TYPE_CHECKING:
-    from .internal.micro import ServiceBusMicroEndpoints
+    from .internal.control_endpoints import ServiceControlEndpointServer
 
 
 log = logging.getLogger(__name__)
@@ -174,10 +176,12 @@ class ServiceBus:
         self,
         config: ServiceBusConfig,
         *,
-        transport: NatsTransport | None = None,
+        transport: RuntimeTransport | None = None,
         component_factory: ServiceBusComponentFactory | None = None,
     ) -> None:
         config = config.normalized()
+        self._config = config
+        self._bus_backend = config.bus_backend
         self.service_id = ensure_token(config.service_id, label="service_id")
         self._service_name = str(config.service_name or "") or self.service_id
         self._service_class = str(config.service_class or "")
@@ -199,15 +203,34 @@ class ServiceBus:
 
         bucket = kv_bucket_for_service(self.service_id)
         if transport is None:
-            self._transport = NatsTransport(
-                NatsTransportConfig(
-                    url=str(config.nats_url),
-                    kv_bucket=str(bucket),
-                    kv_storage=config.kv_storage,
-                    delete_bucket_on_connect=bool(config.delete_bucket_on_start),
-                    delete_bucket_on_close=bool(config.delete_bucket_on_stop),
+            if config.bus_backend == "nats":
+                self._transport = NatsTransport(
+                    NatsTransportConfig(
+                        url=str(config.nats_url),
+                        kv_bucket=str(bucket),
+                        kv_storage=config.kv_storage,
+                        delete_bucket_on_connect=bool(config.delete_bucket_on_start),
+                        delete_bucket_on_close=bool(config.delete_bucket_on_stop),
+                    )
                 )
-            )
+            elif config.bus_backend == "zenoh":
+                self._transport = ZenohTransport(
+                    ZenohTransportConfig(
+                        service_id=self.service_id,
+                        config_path=config.zenoh_config_path,
+                        connect=config.zenoh_connect,
+                        listen=config.zenoh_listen,
+                        shm_pool_bytes=config.zenoh_shm_pool_bytes,
+                    )
+                )
+            elif config.bus_backend == "mem":
+                from ..testing.in_memory_transport import InMemoryCluster, InMemoryTransport
+
+                self._transport = InMemoryTransport(cluster=InMemoryCluster(), kv_bucket=str(bucket))
+            else:
+                raise ValueError(
+                    f"Invalid bus_backend={config.bus_backend!r}; expected 'zenoh', 'nats', or 'mem'."
+                )
         else:
             self._transport = transport
 
@@ -216,7 +239,7 @@ class ServiceBus:
 
         self._rungraph_key = kv_key_rungraph()
         self._ready_key = kv_key_ready()
-        self._micro_endpoints: ServiceBusMicroEndpoints | None = None
+        self._micro_endpoints: ServiceControlEndpointServer | None = None
         self._component_factory = component_factory if component_factory is not None else DefaultServiceBusComponentFactory()
 
         self._data_router = self._component_factory.create_data_router(
@@ -354,6 +377,10 @@ class ServiceBus:
     @property
     def service_class(self) -> str:
         return self._service_class
+
+    @property
+    def bus_backend(self) -> str:
+        return self._bus_backend
 
     @property
     def cross_publish_policy(self) -> CrossPublishPolicy:

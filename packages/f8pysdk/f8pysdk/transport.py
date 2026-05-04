@@ -12,6 +12,8 @@ from nats.errors import TimeoutError as NatsTimeoutError  # type: ignore[import-
 from nats.js.api import KeyValueConfig, StorageType  # type: ignore[import-not-found]
 from nats.js.errors import BucketNotFoundError, NotFoundError as JsNotFoundError  # type: ignore[import-not-found]
 
+from .runtime_transport import RequestHandler
+
 log = logging.getLogger(__name__)
 
 
@@ -232,6 +234,29 @@ class NatsTransport:
                 log.error("subscriber raw callback failed subject=%s", subject, exc_info=exc)
 
         sub = await self._nc.subscribe(str(subject), queue=str(queue) if queue else None, cb=_handler)
+        self._subs.append(sub)
+        return sub
+
+    async def serve(self, subject: str, handler: RequestHandler) -> Any:
+        if self._nc is None:
+            await self.connect()
+        if self._nc is None:
+            raise RuntimeError("NATS not connected")
+
+        async def _handler(msg: Any) -> None:
+            try:
+                response = await handler(bytes(msg.data or b""))  # type: ignore[attr-defined]
+                if response is None:
+                    response = b""
+                await msg.respond(bytes(response))  # type: ignore[attr-defined]
+            except Exception as exc:
+                log.error("NATS request handler failed subject=%s", subject, exc_info=exc)
+                try:
+                    await msg.respond(b"")  # type: ignore[attr-defined]
+                except Exception as respond_exc:
+                    log.debug("NATS empty error response failed subject=%s", subject, exc_info=respond_exc)
+
+        sub = await self._nc.subscribe(str(subject), cb=_handler)
         self._subs.append(sub)
         return sub
 

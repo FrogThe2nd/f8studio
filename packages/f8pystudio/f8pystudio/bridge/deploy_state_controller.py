@@ -16,6 +16,7 @@ from .rungraph_deploy_flow import pick_compiled
 from .runtime_graph_projection import build_local_state_field_index, build_remote_watch_targets, build_studio_runtime_graph
 from .service_endpoint_client import request_set_remote_state
 from .studio_runtime_flow import apply_remote_state_watches_if_changed, install_studio_runtime_graph
+from .remote_state_watcher import WatchTarget
 from ..nodegraph.runtime_compiler import CompiledRuntimeGraphs
 from f8pystudio.studio_specs.registry import SERVICE_CLASS
 
@@ -199,11 +200,11 @@ class DeployStateControllerMixin:
         value_json = coerce_json_value(value)
 
         async def _do() -> None:
-            nc = await self._ensure_nc()
-            if nc is None:
+            requester = await self._ensure_requester()
+            if requester is None:
                 return
             result = await request_set_remote_state(
-                nc,
+                requester,
                 service_id=service_id,
                 node_id=node_id,
                 field=field,

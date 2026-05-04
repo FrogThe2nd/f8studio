@@ -11,6 +11,7 @@ from typing import Any
 
 import msgspec
 
+from ...bus import BusBackend
 from .._internal.error_reporting import ExceptionLogOnce, fingerprint_exception
 from ..inventory.catalog import ServiceCatalog
 from ..inventory.entry import load_service_entry
@@ -23,7 +24,12 @@ logger = logging.getLogger(__name__)
 class ServiceProcessConfig:
     service_class: str
     service_id: str
+    bus_backend: BusBackend = "zenoh"
     nats_url: str = "nats://127.0.0.1:4222"
+    zenoh_config_path: str | None = None
+    zenoh_connect: tuple[str, ...] = ()
+    zenoh_listen: tuple[str, ...] = ()
+    zenoh_shm_pool_bytes: int = 256 * 1024 * 1024
     purge_kv_bucket_on_start: bool = True
 
 
@@ -150,6 +156,7 @@ class ServiceProcessManager:
     def start(self, cfg: ServiceProcessConfig, *, on_output: Any | None = None) -> None:
         service_class = str(cfg.service_class).strip()
         service_id = str(cfg.service_id).strip()
+        bus_backend = str(cfg.bus_backend or "zenoh").strip().lower()
         nats_url = str(cfg.nats_url).strip()
 
         entry_path = self._catalog.service_entry_path(service_class)
@@ -167,7 +174,7 @@ class ServiceProcessManager:
             return
         self._cleanup_entry(service_id)
 
-        if cfg.purge_kv_bucket_on_start:
+        if cfg.purge_kv_bucket_on_start and bus_backend == "nats":
             try:
                 from f8pysdk.nats_naming import kv_bucket_for_service
                 from f8pysdk.transport import reset_kv_bucket_sync
@@ -181,7 +188,18 @@ class ServiceProcessManager:
 
         launch = entry.launch
         cmd = [str(launch.command), *[str(a) for a in (launch.args or [])]]
-        cmd += ["--service-id", service_id, "--nats-url", nats_url]
+        cmd += ["--service-id", service_id, "--bus-backend", bus_backend]
+        if bus_backend == "nats":
+            cmd += ["--nats-url", nats_url]
+        else:
+            zenoh_config_path = str(cfg.zenoh_config_path or "").strip()
+            if zenoh_config_path:
+                cmd += ["--zenoh-config", zenoh_config_path]
+            for endpoint in tuple(str(item).strip() for item in cfg.zenoh_connect if str(item).strip()):
+                cmd += ["--zenoh-connect", endpoint]
+            for endpoint in tuple(str(item).strip() for item in cfg.zenoh_listen if str(item).strip()):
+                cmd += ["--zenoh-listen", endpoint]
+            cmd += ["--zenoh-shm-pool-bytes", str(max(0, int(cfg.zenoh_shm_pool_bytes)))]
 
         env = os.environ.copy()
         launch_env = launch.env
@@ -191,7 +209,18 @@ class ServiceProcessManager:
             except (AttributeError, RuntimeError, TypeError, ValueError):
                 pass
         env["F8_SERVICE_ID"] = service_id
-        env["F8_NATS_URL"] = nats_url
+        env["F8_BUS_BACKEND"] = bus_backend
+        if bus_backend == "nats":
+            env["F8_NATS_URL"] = nats_url
+        else:
+            zenoh_config_path = str(cfg.zenoh_config_path or "").strip()
+            if zenoh_config_path:
+                env["F8_ZENOH_CONFIG"] = zenoh_config_path
+            if cfg.zenoh_connect:
+                env["F8_ZENOH_CONNECT"] = ",".join(str(item).strip() for item in cfg.zenoh_connect if str(item).strip())
+            if cfg.zenoh_listen:
+                env["F8_ZENOH_LISTEN"] = ",".join(str(item).strip() for item in cfg.zenoh_listen if str(item).strip())
+            env["F8_ZENOH_SHM_POOL_BYTES"] = str(max(0, int(cfg.zenoh_shm_pool_bytes)))
         env.setdefault("PYTHONUNBUFFERED", "1")
         env.setdefault("PYTHONIOENCODING", "utf-8")
 

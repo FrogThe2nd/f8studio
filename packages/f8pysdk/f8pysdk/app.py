@@ -7,11 +7,12 @@ import json
 import logging
 import os
 import sys
+import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from .bus import ServiceBusConfig
+from .bus import BusBackend, ServiceBusConfig
 from .codec import dump_json
 from .monitoring import validate_describe_monitor_contract
 from .registry import Registry, RuntimeNodeRegistry, shared_runtime_node_registry
@@ -47,18 +48,67 @@ class ServiceAppDefaults:
         *,
         service_id: str,
         service_class: str,
+        bus_backend: BusBackend | str | None = None,
         nats_url: str | None = None,
+        zenoh_config_path: str | None = None,
+        zenoh_connect: tuple[str, ...] | None = None,
+        zenoh_listen: tuple[str, ...] | None = None,
+        zenoh_shm_pool_bytes: int | None = None,
     ) -> ServiceBusConfig:
         return self.bus.for_service(
             service_id=service_id,
             service_class=service_class,
+            bus_backend=bus_backend,
             nats_url=nats_url,
+            zenoh_config_path=zenoh_config_path,
+            zenoh_connect=zenoh_connect,
+            zenoh_listen=zenoh_listen,
+            zenoh_shm_pool_bytes=zenoh_shm_pool_bytes,
         )
 
 
 def _env_or(default: str, key: str) -> str:
     value = os.environ.get(key)
     return value.strip() if value and value.strip() else default
+
+
+def _env_tuple(default: tuple[str, ...], key: str) -> tuple[str, ...]:
+    value = os.environ.get(key)
+    if value is None or not value.strip():
+        return tuple(default)
+    return _parse_tuple_arg(value)
+
+
+def _parse_tuple_arg(value: str | tuple[str, ...] | list[str]) -> tuple[str, ...]:
+    if isinstance(value, tuple):
+        return tuple(str(item).strip() for item in value if str(item).strip())
+    if isinstance(value, list):
+        items: list[str] = []
+        for part in value:
+            items.extend(_parse_tuple_arg(str(part)))
+        return tuple(items)
+    text = str(value or "").strip()
+    if not text:
+        return ()
+    out: list[str] = []
+    for part in text.replace(";", ",").split(","):
+        item = part.strip()
+        if item:
+            out.append(item)
+    return tuple(out)
+
+
+def _env_backend(default: BusBackend, key: str) -> BusBackend:
+    raw = (os.environ.get(key) or "").strip().lower()
+    if not raw:
+        return default
+    if raw == "zenoh":
+        return "zenoh"
+    if raw == "nats":
+        return "nats"
+    if raw == "mem":
+        return "mem"
+    return default
 
 
 def _parse_bool_arg(value: str) -> bool:
@@ -183,6 +233,11 @@ class ServiceApp:
         self._setup = setup
         self._teardown = teardown
         self._runtime_config_factory = runtime_config_factory
+        self._cli_bus_backend: BusBackend | str | None = None
+        self._cli_zenoh_config_path: str | None = None
+        self._cli_zenoh_connect: tuple[str, ...] | None = None
+        self._cli_zenoh_listen: tuple[str, ...] | None = None
+        self._cli_zenoh_shm_pool_bytes: int | None = None
 
     @property
     def service_class(self) -> str:
@@ -200,7 +255,17 @@ class ServiceApp:
     def build_shared_registry() -> Registry:
         return Registry.wrap(shared_runtime_node_registry())
 
-    def build_runtime_config(self, *, service_id: str, nats_url: str | None = None) -> ServiceRuntimeConfig:
+    def build_runtime_config(
+        self,
+        *,
+        service_id: str,
+        bus_backend: BusBackend | str | None = None,
+        nats_url: str | None = None,
+        zenoh_config_path: str | None = None,
+        zenoh_connect: tuple[str, ...] | None = None,
+        zenoh_listen: tuple[str, ...] | None = None,
+        zenoh_shm_pool_bytes: int | None = None,
+    ) -> ServiceRuntimeConfig:
         resolved_nats_url = str(nats_url or self._defaults.bus.nats_url).strip()
         if self._runtime_config_factory is not None:
             return self._runtime_config_factory(str(service_id), resolved_nats_url)
@@ -208,7 +273,12 @@ class ServiceApp:
         bus = defaults.build_bus_config(
             service_id=str(service_id),
             service_class=self.service_class,
+            bus_backend=bus_backend,
             nats_url=resolved_nats_url,
+            zenoh_config_path=zenoh_config_path,
+            zenoh_connect=zenoh_connect,
+            zenoh_listen=zenoh_listen,
+            zenoh_shm_pool_bytes=zenoh_shm_pool_bytes,
         )
         return ServiceRuntimeConfig(bus=bus, registry_modules=defaults.registry_modules)
 
@@ -216,10 +286,23 @@ class ServiceApp:
         self,
         *,
         service_id: str,
+        bus_backend: BusBackend | str | None = None,
         nats_url: str | None = None,
+        zenoh_config_path: str | None = None,
+        zenoh_connect: tuple[str, ...] | None = None,
+        zenoh_listen: tuple[str, ...] | None = None,
+        zenoh_shm_pool_bytes: int | None = None,
         monitor_overrides: MonitorRuntimeOverrides | None = None,
     ) -> ServiceRuntime:
-        runtime_cfg = self.build_runtime_config(service_id=service_id, nats_url=nats_url)
+        runtime_cfg = self.build_runtime_config(
+            service_id=service_id,
+            bus_backend=bus_backend,
+            nats_url=nats_url,
+            zenoh_config_path=zenoh_config_path,
+            zenoh_connect=zenoh_connect,
+            zenoh_listen=zenoh_listen,
+            zenoh_shm_pool_bytes=zenoh_shm_pool_bytes,
+        )
         runtime_cfg = _apply_monitor_overrides(runtime_cfg, overrides=monitor_overrides)
         return ServiceRuntime(runtime_cfg, registry=self.runtime_registry)
 
@@ -232,12 +315,22 @@ class ServiceApp:
         self,
         *,
         service_id: str,
+        bus_backend: BusBackend | str | None = None,
         nats_url: str | None = None,
+        zenoh_config_path: str | None = None,
+        zenoh_connect: tuple[str, ...] | None = None,
+        zenoh_listen: tuple[str, ...] | None = None,
+        zenoh_shm_pool_bytes: int | None = None,
         monitor_overrides: MonitorRuntimeOverrides | None = None,
     ) -> None:
         runtime = self.build_runtime(
             service_id=service_id,
+            bus_backend=bus_backend,
             nats_url=nats_url,
+            zenoh_config_path=zenoh_config_path,
+            zenoh_connect=zenoh_connect,
+            zenoh_listen=zenoh_listen,
+            zenoh_shm_pool_bytes=zenoh_shm_pool_bytes,
             monitor_overrides=monitor_overrides,
         )
         await _run_runtime_hook(self._setup, runtime)
@@ -255,12 +348,22 @@ class ServiceApp:
         self,
         *,
         service_id: str,
+        bus_backend: BusBackend | str | None = None,
         nats_url: str | None = None,
+        zenoh_config_path: str | None = None,
+        zenoh_connect: tuple[str, ...] | None = None,
+        zenoh_listen: tuple[str, ...] | None = None,
+        zenoh_shm_pool_bytes: int | None = None,
         monitor_overrides: MonitorRuntimeOverrides | None = None,
     ) -> None:
         await self.run_async(
             service_id=service_id,
+            bus_backend=bus_backend,
             nats_url=nats_url,
+            zenoh_config_path=zenoh_config_path,
+            zenoh_connect=zenoh_connect,
+            zenoh_listen=zenoh_listen,
+            zenoh_shm_pool_bytes=zenoh_shm_pool_bytes,
             monitor_overrides=monitor_overrides,
         )
 
@@ -268,22 +371,73 @@ class ServiceApp:
         self,
         *,
         service_id: str,
+        bus_backend: BusBackend | str | None = None,
         nats_url: str | None = None,
+        zenoh_config_path: str | None = None,
+        zenoh_connect: tuple[str, ...] | None = None,
+        zenoh_listen: tuple[str, ...] | None = None,
+        zenoh_shm_pool_bytes: int | None = None,
         monitor_overrides: MonitorRuntimeOverrides | None = None,
     ) -> None:
         asyncio.run(
             self.run_async(
                 service_id=service_id,
+                bus_backend=bus_backend if bus_backend is not None else self._cli_bus_backend,
                 nats_url=nats_url,
+                zenoh_config_path=zenoh_config_path if zenoh_config_path is not None else self._cli_zenoh_config_path,
+                zenoh_connect=zenoh_connect if zenoh_connect is not None else self._cli_zenoh_connect,
+                zenoh_listen=zenoh_listen if zenoh_listen is not None else self._cli_zenoh_listen,
+                zenoh_shm_pool_bytes=(
+                    zenoh_shm_pool_bytes
+                    if zenoh_shm_pool_bytes is not None
+                    else self._cli_zenoh_shm_pool_bytes
+                ),
                 monitor_overrides=monitor_overrides,
             )
         )
 
     def cli(self, argv: list[str] | None = None, *, program_name: str | None = None) -> int:
+        argv_for_warning = list(argv if argv is not None else sys.argv[1:])
+        nats_url_supplied = bool(os.environ.get("F8_NATS_URL")) or any(
+            item == "--nats-url" or item.startswith("--nats-url=") for item in argv_for_warning
+        )
         parser = argparse.ArgumentParser(description=program_name or self.service_class)
         parser.add_argument("--describe", action="store_true", help="Output the service description in JSON format")
         parser.add_argument("--service-id", default=_env_or("", "F8_SERVICE_ID"), help="Service instance id (required)")
-        parser.add_argument("--nats-url", default=_env_or(self._defaults.bus.nats_url, "F8_NATS_URL"), help="NATS server URL")
+        parser.add_argument(
+            "--bus-backend",
+            choices=("zenoh", "nats", "mem"),
+            default=_env_backend(self._defaults.bus.bus_backend, "F8_BUS_BACKEND"),
+            help="Runtime bus backend (env: F8_BUS_BACKEND, default: zenoh).",
+        )
+        parser.add_argument(
+            "--nats-url",
+            default=_env_or(self._defaults.bus.nats_url, "F8_NATS_URL"),
+            help="Deprecated: NATS server URL, only used with --bus-backend nats.",
+        )
+        parser.add_argument(
+            "--zenoh-config",
+            default=_env_or(str(self._defaults.bus.zenoh_config_path or ""), "F8_ZENOH_CONFIG"),
+            help="Zenoh config file path (env: F8_ZENOH_CONFIG).",
+        )
+        parser.add_argument(
+            "--zenoh-connect",
+            action="append",
+            default=list(_env_tuple(self._defaults.bus.zenoh_connect, "F8_ZENOH_CONNECT")),
+            help="Zenoh connect endpoint(s), comma-separated or repeated (env: F8_ZENOH_CONNECT).",
+        )
+        parser.add_argument(
+            "--zenoh-listen",
+            action="append",
+            default=list(_env_tuple(self._defaults.bus.zenoh_listen, "F8_ZENOH_LISTEN")),
+            help="Zenoh listen endpoint(s), comma-separated or repeated (env: F8_ZENOH_LISTEN).",
+        )
+        parser.add_argument(
+            "--zenoh-shm-pool-bytes",
+            default=_env_int(self._defaults.bus.zenoh_shm_pool_bytes, "F8_ZENOH_SHM_POOL_BYTES"),
+            type=int,
+            help="Zenoh SHM pool size hint in bytes (env: F8_ZENOH_SHM_POOL_BYTES).",
+        )
         parser.add_argument(
             "--monitor-enabled",
             default=_env_bool(self._defaults.bus.monitor_enabled, "F8_MONITOR_ENABLED"),
@@ -324,11 +478,29 @@ class ServiceApp:
             window_ms=int(args.monitor_window_ms),
             gpu_enabled=bool(args.monitor_gpu_enabled),
         )
-        self.run(
-            service_id=service_id,
-            nats_url=str(args.nats_url).strip(),
-            monitor_overrides=monitor_overrides,
-        )
+        if str(args.bus_backend) != "nats" and nats_url_supplied:
+            warnings.warn(
+                "--nats-url/F8_NATS_URL is deprecated for non-NATS backends and will be ignored.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        self._cli_bus_backend = str(args.bus_backend)
+        self._cli_zenoh_config_path = str(args.zenoh_config or "").strip() or None
+        self._cli_zenoh_connect = _parse_tuple_arg(args.zenoh_connect)
+        self._cli_zenoh_listen = _parse_tuple_arg(args.zenoh_listen)
+        self._cli_zenoh_shm_pool_bytes = int(args.zenoh_shm_pool_bytes)
+        try:
+            self.run(
+                service_id=service_id,
+                nats_url=str(args.nats_url).strip(),
+                monitor_overrides=monitor_overrides,
+            )
+        finally:
+            self._cli_bus_backend = None
+            self._cli_zenoh_config_path = None
+            self._cli_zenoh_connect = None
+            self._cli_zenoh_listen = None
+            self._cli_zenoh_shm_pool_bytes = None
         return 0
 
 __all__ = [

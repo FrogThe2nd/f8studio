@@ -42,6 +42,7 @@ f8pydl_bench = "python scripts/bench_dl_baseline.py"
 
 [feature.sdk.pypi-dependencies]
 f8pysdk = { path = "packages/f8pysdk", editable = true }
+eclipse-zenoh = ">=1.9.0"
 
 [feature.sdk.tasks]
 update_describes = "python scripts/update_static_describes.py"

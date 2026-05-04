@@ -1,5 +1,12 @@
 from .async_runtime import AsyncRuntimeThread
-from .command_client import CommandGateway, CommandRequest, CommandResponse, NatsCommandGateway
+from .command_client import (
+    CommandGateway,
+    CommandRequest,
+    CommandResponse,
+    NatsCommandGateway,
+    RuntimeCommandGateway,
+    RuntimeCommandGatewayConfig,
+)
 from .facade_qt import BridgeFacadeContext
 from .json_codec import coerce_json_dict, coerce_json_value
 from .managed_service_inventory import ManagedServiceInventory, collect_managed_service_inventory
@@ -30,6 +37,7 @@ from .rungraph_deployer import (
     RungraphDeployRequest,
     RungraphDeployResult,
     RungraphGateway,
+    RuntimeRungraphGateway,
 )
 from .rungraph_deploy_flow import RungraphDeployFlow, pick_compiled
 from .runtime_graph_projection import (
@@ -79,6 +87,9 @@ __all__ = [
     "RungraphDeployRequest",
     "RungraphDeployResult",
     "RungraphGateway",
+    "RuntimeCommandGateway",
+    "RuntimeCommandGatewayConfig",
+    "RuntimeRungraphGateway",
     "RuntimeSessionControllerMixin",
     "ServiceLifecycleControllerMixin",
     "ServiceProcessConfig",

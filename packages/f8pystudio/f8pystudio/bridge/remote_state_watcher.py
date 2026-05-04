@@ -5,13 +5,16 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
+from f8pysdk.bus import BusBackend
 from f8pysdk.nats_naming import (
     ensure_token,
     kv_bucket_for_service,
     kv_key_node_state,
     parse_kv_key_node_state,
 )
+from f8pysdk.runtime_transport import RuntimeTransport
 from f8pysdk.transport import NatsTransport, NatsTransportConfig
+from f8pysdk.zenoh_transport import ZenohTransport, ZenohTransportConfig
 from f8pysdk.time_utils import now_ms
 from f8pysdk.codec import decode_obj
 
@@ -75,15 +78,23 @@ class RemoteStateWatcher:
         nats_url: str,
         studio_service_id: str,
         on_state: Callable[[str, str, str, Any, int, dict[str, Any]], Awaitable[None] | None],
+        bus_backend: BusBackend = "nats",
+        zenoh_config_path: str | None = None,
+        zenoh_connect: tuple[str, ...] = (),
+        zenoh_listen: tuple[str, ...] = (),
+        zenoh_shm_pool_bytes: int = 256 * 1024 * 1024,
     ) -> None:
         self._nats_url = str(nats_url or "").strip() or "nats://127.0.0.1:4222"
+        self._bus_backend = bus_backend
+        self._zenoh_config_path = str(zenoh_config_path).strip() if zenoh_config_path else None
+        self._zenoh_connect = tuple(str(item).strip() for item in zenoh_connect if str(item).strip())
+        self._zenoh_listen = tuple(str(item).strip() for item in zenoh_listen if str(item).strip())
+        self._zenoh_shm_pool_bytes = max(0, int(zenoh_shm_pool_bytes))
         self._studio_service_id = ensure_token(str(studio_service_id), label="studio_service_id")
         self._on_state = on_state
 
         # One shared transport for opening multiple KV buckets.
-        self._tr = NatsTransport(
-            NatsTransportConfig(url=self._nats_url, kv_bucket=kv_bucket_for_service(self._studio_service_id))
-        )
+        self._tr = self._build_transport()
         self._started = False
         self._watches: dict[tuple[str, str], Any] = {}  # (bucket, key_pattern) -> (watcher, task)
         self._targets: dict[tuple[str, str], WatchTarget] = {}
@@ -98,15 +109,33 @@ class RemoteStateWatcher:
         self._last_by_key: dict[tuple[str, str, str], tuple[int, Any]] = {}  # -> (ts_ms, last_value)
         self._callback_error_once: set[tuple[str, str, str, str]] = set()
 
+    def _build_transport(self) -> RuntimeTransport:
+        if self._bus_backend == "nats":
+            return NatsTransport(
+                NatsTransportConfig(url=self._nats_url, kv_bucket=kv_bucket_for_service(self._studio_service_id))
+            )
+        return ZenohTransport(
+            ZenohTransportConfig(
+                service_id=self._studio_service_id,
+                config_path=self._zenoh_config_path,
+                connect=self._zenoh_connect,
+                listen=self._zenoh_listen,
+                shm_pool_bytes=self._zenoh_shm_pool_bytes,
+            )
+        )
+
     @staticmethod
     async def _stop_watch_handle(watch: Any) -> None:
-        watcher, task = watch
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        await watcher.stop()
+        if isinstance(watch, tuple):
+            watcher, task = watch
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            await watcher.stop()
+            return
+        await watch.stop()
 
     async def start(self) -> None:
         if self._started:

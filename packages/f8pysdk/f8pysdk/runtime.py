@@ -16,7 +16,7 @@ class ServiceRuntimeConfig:
     Runtime facade for a service process.
 
     This bundles:
-    - `ServiceBus`: NATS+KV transport, routing, state cache
+    - `ServiceBus`: runtime transport, routing, state cache
     - `ServiceHost`: rungraph-driven node creation and registration
     - `RuntimeNodeRegistry`: node factory registry (optionally loaded from modules)
     """
@@ -40,6 +40,10 @@ class ServiceRuntimeConfig:
     @property
     def nats_url(self) -> str:
         return str(self.bus.nats_url)
+
+    @property
+    def bus_backend(self) -> str:
+        return str(self.bus.bus_backend)
 
     @property
     def cross_publish_policy(self) -> CrossPublishPolicy:

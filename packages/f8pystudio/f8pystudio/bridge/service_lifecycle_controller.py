@@ -6,15 +6,38 @@ from typing import Any
 
 from qtpy import QtCore
 
+from f8pysdk.bus import BusBackend
 from f8pysdk.nats_naming import ensure_token
 
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
 from .process_lifecycle import StartServiceRequest, StopServiceRequest
 from .service_endpoint_client import request_service_status, request_service_terminate, request_set_service_active
 from f8pystudio.bridge.process_manager import ServiceProcessConfig
+from f8pystudio.nodegraph.runtime_compiler import CompiledRuntimeGraphs
 
 
 class ServiceLifecycleControllerMixin:
+    def _runtime_bus_backend(self) -> BusBackend:
+        return "nats"
+
+    def _runtime_nats_url(self) -> str:
+        return "nats://127.0.0.1:4222"
+
+    def _runtime_zenoh_config_path(self) -> str | None:
+        return None
+
+    def _runtime_zenoh_connect(self) -> tuple[str, ...]:
+        return ()
+
+    def _runtime_zenoh_listen(self) -> tuple[str, ...]:
+        return ()
+
+    def _runtime_zenoh_shm_pool_bytes(self) -> int:
+        return 256 * 1024 * 1024
+
+    async def _ensure_requester(self) -> Any | None:
+        return await self._ensure_nc()
+
     def _stop_process_once_local(self, service_id: str) -> bool:
         sid = str(service_id or "").strip()
         if not sid:
@@ -141,10 +164,10 @@ class ServiceLifecycleControllerMixin:
             sid = ensure_token(str(service_id), label="service_id")
         except ValueError:
             return None
-        nc = await self._ensure_nc()
-        if nc is None:
+        requester = await self._ensure_requester()
+        if requester is None:
             return None
-        return await request_service_status(nc, service_id=sid, timeout_s=0.4)
+        return await request_service_status(requester, service_id=sid, timeout_s=0.4)
 
     def request_service_status(self, service_id: str) -> None:
         """
@@ -195,11 +218,11 @@ class ServiceLifecycleControllerMixin:
             sid = ensure_token(str(service_id), label="service_id")
         except ValueError:
             return False
-        nc = await self._ensure_nc()
-        if nc is None:
+        requester = await self._ensure_requester()
+        if requester is None:
             return False
         ok = await request_set_service_active(
-            nc,
+            requester,
             service_id=sid,
             active=bool(active),
             attempts=2,
@@ -237,11 +260,11 @@ class ServiceLifecycleControllerMixin:
         except ValueError:
             return False
 
-        nc = await self._ensure_nc()
-        if nc is None:
+        requester = await self._ensure_requester()
+        if requester is None:
             return False
         return await request_service_terminate(
-            nc,
+            requester,
             service_id=sid,
             attempts=2,
             timeout_s=0.4,
@@ -270,7 +293,16 @@ class ServiceLifecycleControllerMixin:
         try:
             self._process_gateway.start(
                 StartServiceRequest(
-                    config=ServiceProcessConfig(service_class=str(svc_class), service_id=sid, nats_url=self._cfg.nats_url),
+                    config=ServiceProcessConfig(
+                        service_class=str(svc_class),
+                        service_id=sid,
+                        bus_backend=self._runtime_bus_backend(),
+                        nats_url=self._runtime_nats_url(),
+                        zenoh_config_path=self._runtime_zenoh_config_path(),
+                        zenoh_connect=self._runtime_zenoh_connect(),
+                        zenoh_listen=self._runtime_zenoh_listen(),
+                        zenoh_shm_pool_bytes=self._runtime_zenoh_shm_pool_bytes(),
+                    ),
                     on_output=lambda _sid, line, _sid2=sid: self.service_output.emit(_sid2, str(line)),
                 )
             )
@@ -371,8 +403,8 @@ class ServiceLifecycleControllerMixin:
         self._submit_async(_do(), context=f"submit restart_service_and_deploy failed serviceId={sid}")
 
     async def _set_managed_active_async(self, active: bool) -> None:
-        nc = await self._ensure_nc()
-        if nc is None:
+        requester = await self._ensure_requester()
+        if requester is None:
             return
         service_ids = sorted({sid for sid in self._managed_service_ids if sid and sid != self.studio_service_id})
         if not service_ids:
@@ -380,7 +412,7 @@ class ServiceLifecycleControllerMixin:
 
         for sid in service_ids:
             ok = await request_set_service_active(
-                nc,
+                requester,
                 service_id=sid,
                 active=bool(active),
                 attempts=3,
@@ -390,4 +422,3 @@ class ServiceLifecycleControllerMixin:
             if not ok:
                 cmd = "activate" if bool(active) else "deactivate"
                 self._emit_log_line(f"lifecycle {cmd} failed serviceId={sid}")
-

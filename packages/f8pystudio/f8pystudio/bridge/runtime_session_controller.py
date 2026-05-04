@@ -5,7 +5,9 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from f8pysdk.bus import BusBackend
 from f8pysdk.codec import decode_obj, dump_json
+from f8pysdk.zenoh_naming import zenoh_studio_liveliness_key
 
 from .nats_lifecycle import (
     SINGLETON_GUARD_DIALOG_MESSAGE,
@@ -16,6 +18,7 @@ from .remote_state_sync import RemoteStateGatewayAdapter
 from .studio_runtime_flow import wait_for_studio_runtime_ready
 from f8pystudio.bridge.studio_service import PyStudioService, PyStudioServiceConfig
 from f8pystudio.bridge.remote_state_watcher import RemoteStateWatcher
+from f8pystudio.bridge.runtime_request import RuntimeTransportRequester
 from f8pystudio.contracts.ui_commands import UiCommand
 from f8pystudio.studio_specs.registry import shared_pystudio_registry
 
@@ -29,6 +32,49 @@ class PendingMonitorUpdate:
 
 
 class RuntimeSessionControllerMixin:
+    _cfg: Any = None
+
+    def _runtime_bus_backend(self) -> BusBackend:
+        cfg = self._cfg
+        if cfg is None:
+            return "nats"
+        text = str(cfg.bus_backend).strip().lower()
+        if text == "nats":
+            return "nats"
+        if text == "mem":
+            return "mem"
+        return "zenoh"
+
+    def _runtime_nats_url(self) -> str:
+        cfg = self._cfg
+        if cfg is None:
+            return str(self._nats_connection_manager.nats_url).strip() or "nats://127.0.0.1:4222"
+        return str(cfg.nats_url).strip() or "nats://127.0.0.1:4222"
+
+    def _runtime_zenoh_config_path(self) -> str | None:
+        cfg = self._cfg
+        if cfg is None:
+            return None
+        return str(cfg.zenoh_config_path).strip() if cfg.zenoh_config_path else None
+
+    def _runtime_zenoh_connect(self) -> tuple[str, ...]:
+        cfg = self._cfg
+        if cfg is None:
+            return ()
+        return tuple(str(item).strip() for item in cfg.zenoh_connect if str(item).strip())
+
+    def _runtime_zenoh_listen(self) -> tuple[str, ...]:
+        cfg = self._cfg
+        if cfg is None:
+            return ()
+        return tuple(str(item).strip() for item in cfg.zenoh_listen if str(item).strip())
+
+    def _runtime_zenoh_shm_pool_bytes(self) -> int:
+        cfg = self._cfg
+        if cfg is None:
+            return 256 * 1024 * 1024
+        return max(0, int(cfg.zenoh_shm_pool_bytes))
+
     async def _ensure_studio_runtime_async(self, *, timeout_s: float = 6.0) -> bool:
         """
         Best-effort wait for the in-process studio runtime (ServiceRuntime) to be ready.
@@ -113,7 +159,10 @@ class RuntimeSessionControllerMixin:
             self._monitor_ui_flush_task = None
 
     async def _run_startup_preflight_async(self) -> str | None:
-        nats_url = str(self._nats_connection_manager.nats_url).strip() or "nats://127.0.0.1:4222"
+        if self._runtime_bus_backend() != "nats":
+            return await self._run_zenoh_startup_preflight_async()
+
+        nats_url = self._runtime_nats_url()
         if self._owned_nats_server_pid is None:
             owned_pid = await ensure_nats_server_owned_pid(
                 nats_url,
@@ -139,9 +188,57 @@ class RuntimeSessionControllerMixin:
             return SINGLETON_GUARD_DIALOG_MESSAGE
         return None
 
+    async def _run_zenoh_startup_preflight_async(self) -> str | None:
+        try:
+            import zenoh  # type: ignore[import-not-found]
+        except ImportError as exc:
+            self._report_exception("import zenoh for singleton guard failed", exc)
+            return None
+
+        try:
+            cfg = self._cfg
+            if cfg is not None and cfg.zenoh_config_path:
+                config = zenoh.Config.from_file(str(cfg.zenoh_config_path))
+            else:
+                config = zenoh.Config()
+            if cfg is not None and cfg.zenoh_connect:
+                import json
+
+                config.insert_json5("connect/endpoints", json.dumps(list(cfg.zenoh_connect)))
+            if cfg is not None and cfg.zenoh_listen:
+                import json
+
+                config.insert_json5("listen/endpoints", json.dumps(list(cfg.zenoh_listen)))
+            session = await asyncio.to_thread(zenoh.open, config)
+        except Exception as exc:
+            self._report_exception("open zenoh for singleton guard failed", exc)
+            return None
+
+        key = zenoh_studio_liveliness_key(self.studio_service_id)
+        try:
+            replies = session.liveliness().get(key, timeout=0.2)
+            deadline = time.monotonic() + 0.25
+            while time.monotonic() < deadline:
+                reply = replies.try_recv()
+                if reply is None:
+                    await asyncio.sleep(0.01)
+                    continue
+                if reply.ok is not None:
+                    await asyncio.to_thread(session.close)
+                    return SINGLETON_GUARD_DIALOG_MESSAGE
+            self._zenoh_singleton_session = session
+            self._zenoh_singleton_token = session.liveliness().declare_token(key)
+        except Exception as exc:
+            self._report_exception("zenoh singleton guard failed", exc)
+            try:
+                await asyncio.to_thread(session.close)
+            except Exception as close_exc:
+                self._report_exception("close zenoh singleton session failed", close_exc)
+        return None
+
     async def _start_after_preflight_async(self) -> str | None:
-        nats_url = str(self._nats_connection_manager.nats_url).strip() or "nats://127.0.0.1:4222"
-        if self._owned_nats_server_pid is None:
+        nats_url = self._runtime_nats_url()
+        if self._runtime_bus_backend() == "nats" and self._owned_nats_server_pid is None:
             owned_pid = await ensure_nats_server_owned_pid(
                 nats_url,
                 emit_log=self._emit_log_line,
@@ -151,7 +248,15 @@ class RuntimeSessionControllerMixin:
                 self._owned_nats_server_pid = int(owned_pid)
 
         try:
-            cfg = PyStudioServiceConfig(nats_url=nats_url, studio_service_id=self.studio_service_id)
+            cfg = PyStudioServiceConfig(
+                bus_backend=self._runtime_bus_backend(),
+                nats_url=nats_url,
+                zenoh_config_path=self._runtime_zenoh_config_path(),
+                zenoh_connect=self._runtime_zenoh_connect(),
+                zenoh_listen=self._runtime_zenoh_listen(),
+                zenoh_shm_pool_bytes=self._runtime_zenoh_shm_pool_bytes(),
+                studio_service_id=self.studio_service_id,
+            )
             self._svc = PyStudioService(cfg, registry=shared_pystudio_registry())
             await self._svc.start(
                 on_ui_command=lambda cmd: self.ui_command.emit(cmd),
@@ -194,6 +299,11 @@ class RuntimeSessionControllerMixin:
                     nats_url=nats_url,
                     studio_service_id=self.studio_service_id,
                     on_state=_on_state,
+                    bus_backend=self._runtime_bus_backend(),
+                    zenoh_config_path=self._runtime_zenoh_config_path(),
+                    zenoh_connect=self._runtime_zenoh_connect(),
+                    zenoh_listen=self._runtime_zenoh_listen(),
+                    zenoh_shm_pool_bytes=self._runtime_zenoh_shm_pool_bytes(),
                 )
                 self._remote_state_gateway = RemoteStateGatewayAdapter(self._remote_state_watcher)
                 await self._remote_state_gateway.start()
@@ -202,12 +312,8 @@ class RuntimeSessionControllerMixin:
                 self._remote_state_watcher = None
                 self._remote_state_gateway = None
 
-        if self._nc is not None and self._monitor_sub is None:
-            async def _on_monitor_msg(msg: Any) -> None:
-                try:
-                    raw = bytes(msg.data or b"")
-                except (AttributeError, TypeError, ValueError):
-                    return
+        if self._monitor_sub is None:
+            async def _on_monitor_payload(raw: bytes) -> None:
                 if not raw:
                     return
                 try:
@@ -237,7 +343,24 @@ class RuntimeSessionControllerMixin:
                     )
 
             try:
-                self._monitor_sub = await self._nc.subscribe("svc.*.nodes.*.data.monitor", cb=_on_monitor_msg)
+                if self._runtime_bus_backend() == "nats":
+                    nc = await self._ensure_nc()
+
+                    async def _on_monitor_msg(msg: Any) -> None:
+                        try:
+                            raw = bytes(msg.data or b"")
+                        except (AttributeError, TypeError, ValueError):
+                            return
+                        await _on_monitor_payload(raw)
+
+                    self._monitor_sub = await nc.subscribe("svc.*.nodes.*.data.monitor", cb=_on_monitor_msg)
+                else:
+                    transport = await self._ensure_runtime_transport()
+
+                    async def _on_monitor_sample(_subject: str, payload: bytes) -> None:
+                        await _on_monitor_payload(bytes(payload))
+
+                    self._monitor_sub = await transport.subscribe("svc.*.nodes.*.data.monitor", cb=_on_monitor_sample)
             except Exception as exc:
                 self._report_exception("subscribe monitor stream failed", exc)
 
@@ -296,6 +419,14 @@ class RuntimeSessionControllerMixin:
         await self._nats_connection_manager.close(self._nc, context="close nats connection failed")
         self._nc = None
 
+        runtime_transport = self._runtime_transport
+        self._runtime_transport = None
+        if runtime_transport is not None:
+            try:
+                await runtime_transport.close()
+            except Exception as exc:
+                self._report_exception("close runtime transport failed", exc)
+
         owned_nats_pid = self._owned_nats_server_pid
         self._owned_nats_server_pid = None
         if owned_nats_pid is not None:
@@ -307,6 +438,21 @@ class RuntimeSessionControllerMixin:
             if not stopped:
                 self._emit_log_line(f"failed to stop studio-owned nats-server pid={owned_nats_pid}")
 
+        token = self._zenoh_singleton_token
+        self._zenoh_singleton_token = None
+        if token is not None:
+            try:
+                token.undeclare()
+            except Exception as exc:
+                self._report_exception("undeclare zenoh singleton token failed", exc)
+        session = self._zenoh_singleton_session
+        self._zenoh_singleton_session = None
+        if session is not None:
+            try:
+                await asyncio.to_thread(session.close)
+            except Exception as exc:
+                self._report_exception("close zenoh singleton session failed", exc)
+
     async def _ensure_nc(self) -> Any | None:
         """
         Ensure a NATS connection exists for command channel requests.
@@ -315,3 +461,18 @@ class RuntimeSessionControllerMixin:
             return self._nc
         self._nc = await self._nats_connection_manager.connect(context="ensure nats connection failed")
         return self._nc
+
+    async def _ensure_runtime_transport(self) -> Any:
+        transport = self._runtime_transport
+        if transport is not None:
+            return transport
+        transport = self._build_runtime_transport()
+        await transport.connect()
+        self._runtime_transport = transport
+        return transport
+
+    async def _ensure_requester(self) -> Any | None:
+        if self._runtime_bus_backend() == "nats":
+            return await self._ensure_nc()
+        transport = await self._ensure_runtime_transport()
+        return RuntimeTransportRequester(transport=transport)

@@ -6,19 +6,20 @@ from typing import Any
 
 from ...codec import decode_obj
 from ...nats_naming import kv_key_ready
+from ...runtime_transport import RuntimeTransport
 from ...time_utils import now_ms
-from ...transport import NatsTransport
 
 
 log = logging.getLogger(__name__)
 
 
 async def wait_service_ready(
-    tr: NatsTransport,
+    tr: RuntimeTransport,
     *,
     timeout_s: float = 6.0,
     min_ts_ms: int | None = None,
     max_age_ms: int | None = None,
+    bucket: str | None = None,
 ) -> None:
     """
     Wait until a service announces readiness.
@@ -46,7 +47,10 @@ async def wait_service_ready(
 
     key = kv_key_ready()
     try:
-        raw = await tr.kv_get(key)
+        if bucket is None:
+            raw = await tr.kv_get(key)
+        else:
+            raw = await tr.kv_get_in_bucket(str(bucket), key)
     except Exception:
         raw = None
     if raw:
@@ -72,13 +76,19 @@ async def wait_service_ready(
 
     watch = None
     try:
-        watch = await tr.kv_watch(key, cb=_on_kv)
+        if bucket is None:
+            watch = await tr.kv_watch(key, cb=_on_kv)
+        else:
+            watch = await tr.kv_watch_in_bucket(str(bucket), key, cb=_on_kv)
     except Exception:
         watch = None
 
     try:
         try:
-            raw2 = await tr.kv_get(key)
+            if bucket is None:
+                raw2 = await tr.kv_get(key)
+            else:
+                raw2 = await tr.kv_get_in_bucket(str(bucket), key)
         except Exception:
             raw2 = None
         if raw2:
@@ -91,18 +101,24 @@ async def wait_service_ready(
         await asyncio.wait_for(fut, timeout=float(timeout_s))
     finally:
         if watch is not None:
-            watcher, task = watch
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            except Exception as exc:
-                log.error("ready watch task stop failed key=%s", key, exc_info=exc)
-            try:
-                await watcher.stop()
-            except Exception as exc:
-                log.error("ready watcher stop failed key=%s", key, exc_info=exc)
+            if isinstance(watch, tuple):
+                watcher, task = watch
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                except Exception as exc:
+                    log.error("ready watch task stop failed key=%s", key, exc_info=exc)
+                try:
+                    await watcher.stop()
+                except Exception as exc:
+                    log.error("ready watcher stop failed key=%s", key, exc_info=exc)
+            else:
+                try:
+                    await watch.stop()
+                except Exception as exc:
+                    log.error("ready watch stop failed key=%s", key, exc_info=exc)
 
 
 __all__ = ["wait_service_ready"]
