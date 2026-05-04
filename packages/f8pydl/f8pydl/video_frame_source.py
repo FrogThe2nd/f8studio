@@ -6,7 +6,7 @@ from types import TracebackType
 from typing import Any, Literal
 
 from f8pysdk.bus import ServiceBus, ServiceBusConfig
-from f8pysdk.shm.video import VideoShmHeader, VideoShmReader
+from f8pysdk.shm.video import VIDEO_SHM_MAGIC, VIDEO_SHM_VERSION, VideoShmHeader, VideoShmReader
 from f8pysdk.video_transport import LatestVideoFrame, ZenohLatestVideoFrameTransport
 
 VideoSourceTransport = Literal["zenoh", "legacy_shm"]
@@ -173,6 +173,11 @@ class LatestVideoFrameSource:
         reader.wait_new_frame(timeout_ms=max(0, int(timeout_ms)))
         header, payload = reader.read_latest_frame()
         if header is None or payload is None:
+            current_header = reader.read_header()
+            if current_header is not None and (
+                int(current_header.magic) != VIDEO_SHM_MAGIC or int(current_header.version) != VIDEO_SHM_VERSION
+            ):
+                raise ValueError("video shm header is invalid")
             return None
         return self._packet_from_shm(shm_name=shm_name, header=header, payload=payload, dedupe=dedupe)
 

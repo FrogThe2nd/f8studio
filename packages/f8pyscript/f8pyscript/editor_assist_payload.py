@@ -55,16 +55,28 @@ class F8PyScriptContext:
         \"\"\"Read a fresh state value via runtime/state service path.\"\"\"
         ...
     def subscribe_video_shm(self, key: str, shm_name: str, *, decode: str = 'auto', use_event: bool = False) -> None:
-        \"\"\"Subscribe to a video shared-memory stream by key.\"\"\"
+        \"\"\"Subscribe to a legacy video shared-memory stream by key.\"\"\"
+        ...
+    def subscribe_video_latest(self, key: str, *, video_key: str = '', transport: str = 'zenoh', shm_name: str = '', decode: str = 'auto', use_event: bool = False) -> None:
+        \"\"\"Subscribe to a latest-frame video stream by key.\"\"\"
         ...
     def get_video_shm(self, key: str) -> dict[str, Any] | None:
+        \"\"\"Get latest cached legacy video packet for a subscription key.\"\"\"
+        ...
+    def get_video_latest(self, key: str) -> dict[str, Any] | None:
         \"\"\"Get latest cached video packet for a subscription key.\"\"\"
         ...
     def unsubscribe_video_shm(self, key: str) -> None:
-        \"\"\"Cancel one video shared-memory subscription by key.\"\"\"
+        \"\"\"Cancel one legacy video shared-memory subscription by key.\"\"\"
+        ...
+    def unsubscribe_video_latest(self, key: str) -> None:
+        \"\"\"Cancel one latest-frame video subscription by key.\"\"\"
         ...
     def list_video_shm_subscriptions(self) -> list[dict[str, Any]]:
-        \"\"\"List active video subscription metadata.\"\"\"
+        \"\"\"List active legacy video subscription metadata.\"\"\"
+        ...
+    def list_video_latest_subscriptions(self) -> list[dict[str, Any]]:
+        \"\"\"List active latest-frame video subscription metadata.\"\"\"
         ...
     async def exec_local(self, command: str, args: list[str] | tuple[str, ...] | None = None, *, timeout_ms: int | None = None, cwd: str | None = None, env: dict[str, Any] | None = None) -> dict[str, Any]:
         \"\"\"Execute a local process when `permission.local_exec_granted` is True.\"\"\"

@@ -4,6 +4,7 @@ import sys
 import unittest
 import uuid
 from types import MethodType
+from unittest.mock import patch
 
 import msgspec
 
@@ -18,9 +19,10 @@ from f8pysdk.specs import F8StateAccess, F8StateSpec, any_schema  # noqa: E402
 from f8pysdk.specs import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
 from f8pysdk.codec import dump_json  # noqa: E402
 from f8pysdk.host import ServiceHost, ServiceHostConfig  # noqa: E402
-from f8pysdk.shm.video import VideoShmWriter  # noqa: E402
+from f8pysdk.shm.video import VIDEO_FORMAT_BGRA32, VideoShmWriter  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 from f8pysdk.time_utils import now_ms  # noqa: E402
+from f8pysdk.video_transport import LatestVideoFrame, ZenohLatestVideoFrameTransport  # noqa: E402
 
 from f8pyscript.constants import SERVICE_CLASS  # noqa: E402
 from f8pyscript.main_script import build_app  # noqa: E402
@@ -49,6 +51,47 @@ def _service_node(*, code: str, state_fields: list[F8StateSpec] | None = None, s
         stateFields=list(state_fields if state_fields is not None else (spec.stateFields or [])),
         stateValues=merged_state,
     )
+
+
+class _FakeLatestVideoTransport:
+    def __init__(self, *, payload: bytes) -> None:
+        self._payload = bytes(payload)
+        self._delivered = False
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+    def publish_frame(
+        self,
+        *,
+        width: int,
+        height: int,
+        pitch: int,
+        payload: bytes | bytearray | memoryview,
+        fmt: int,
+        ts_ms: int | None = None,
+    ) -> None:
+        del width, height, pitch, payload, fmt, ts_ms
+        raise RuntimeError("fake transport is subscriber-only")
+
+    def poll_latest(self) -> LatestVideoFrame | None:
+        if self._delivered:
+            return None
+        self._delivered = True
+        return LatestVideoFrame(
+            width=2,
+            height=2,
+            pitch=8,
+            fmt=VIDEO_FORMAT_BGRA32,
+            frame_id=57,
+            ts_ms=4321,
+            payload=memoryview(self._payload),
+        )
+
+    def wait_latest(self, timeout_ms: int) -> LatestVideoFrame | None:
+        del timeout_ms
+        return self.poll_latest()
 
 
 class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
@@ -280,6 +323,62 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(int((out_result or {}).get("rawLen") or 0), len(payload))
         finally:
             writer.close(unlink=True)
+
+    async def test_video_latest_subscription_uses_zenoh_transport(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = create_pyscript_registry()
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        payload = bytes((i % 251 for i in range(16)))
+        opened: list[tuple[str, dict[str, object]]] = []
+
+        def _fake_open_subscriber(key_expr: str, **kwargs: object) -> _FakeLatestVideoTransport:
+            opened.append((str(key_expr), dict(kwargs)))
+            return _FakeLatestVideoTransport(payload=payload)
+
+        code = (
+            "def onStart(ctx):\n"
+            "    ctx.subscribe_video_latest('v', video_key='f8/test/pyscript/video', decode='none')\n"
+            "\n"
+            "def onCommand(ctx, name, args, meta=None):\n"
+            "    if name != 'video':\n"
+            "        return {'ok': False}\n"
+            "    pkt = ctx.get_video_latest('v')\n"
+            "    items = ctx.list_video_latest_subscriptions()\n"
+            "    if pkt is None:\n"
+            "        return {'ok': False, 'items': items}\n"
+            "    header = pkt.get('header') or {}\n"
+            "    meta = pkt.get('meta') or {}\n"
+            "    return {\n"
+            "        'ok': True,\n"
+            "        'frameId': int(header.get('frameId') or 0),\n"
+            "        'rawLen': len(pkt.get('raw') or b''),\n"
+            "        'transport': str(meta.get('transport') or ''),\n"
+            "        'videoKey': str(meta.get('videoKey') or ''),\n"
+            "        'itemTransport': str((items[0] if items else {}).get('transport') or ''),\n"
+            "    }\n"
+        )
+
+        with patch.object(ZenohLatestVideoFrameTransport, "open_subscriber", side_effect=_fake_open_subscriber):
+            graph = F8RuntimeGraph(graphId="g-video-latest", revision="r1", nodes=[_service_node(code="")], edges=[])
+            await bus.set_rungraph(graph)
+            node = bus.get_node("svcA")
+            assert isinstance(node, PythonScriptServiceNode)
+            await node.on_state("code", code, ts_ms=1)
+
+            await asyncio.sleep(0.1)
+            out = await node.on_command("video", {})
+            out_result = (out or {}).get("result") if isinstance(out, dict) else {}
+            self.assertIsInstance(out_result, dict)
+            self.assertTrue(bool((out_result or {}).get("ok")))
+            self.assertEqual(int((out_result or {}).get("frameId") or 0), 57)
+            self.assertEqual(int((out_result or {}).get("rawLen") or 0), len(payload))
+            self.assertEqual(str((out_result or {}).get("transport") or ""), "zenoh")
+            self.assertEqual(str((out_result or {}).get("videoKey") or ""), "f8/test/pyscript/video")
+            self.assertEqual(str((out_result or {}).get("itemTransport") or ""), "zenoh")
+            self.assertEqual(opened[0][0], "f8/test/pyscript/video")
+            await node.close()
 
     async def test_get_state_cached_sync_snapshot(self) -> None:
         harness = ServiceBusHarness()

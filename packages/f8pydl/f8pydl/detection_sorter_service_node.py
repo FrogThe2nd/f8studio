@@ -15,9 +15,6 @@ from f8pysdk.nodes import ServiceNode
 from f8pysdk.shm.video import (
     VIDEO_FORMAT_FLOW2_F16,
     VIDEO_FORMAT_SCALAR1_F32,
-    VIDEO_SHM_MAGIC,
-    VIDEO_SHM_VERSION,
-    VideoShmReader,
 )
 
 from .video_frame_source import LatestVideoFrameSource, VideoFrameSourceConfig
@@ -335,8 +332,6 @@ class DetectionSorterServiceNode(ServiceNode):
         self._cls_weights_regex: list[tuple[re.Pattern[str], float]] = []
         self._last_error = ""
         self._latest_detections: dict[str, Any] | None = None
-        self._score_reader: VideoShmReader | None = None
-        self._score_reader_name = ""
         self._score_source_config = VideoFrameSourceConfig.from_bus(None)
         self._score_source: LatestVideoFrameSource | None = None
 
@@ -462,41 +457,15 @@ class DetectionSorterServiceNode(ServiceNode):
         await self.emit("detections", output_payload, ts_ms=_payload_int(output_payload, "tsMs"))
 
     def _close_score_reader(self) -> None:
-        if self._score_reader is not None:
-            self._score_reader.close()
-            self._score_reader = None
-        self._score_reader_name = ""
         source = self._score_source
         self._score_source = None
         if source is not None:
             source.close()
 
     def _reset_score_source(self) -> None:
-        if self._score_reader is not None:
-            self._score_reader.close()
-            self._score_reader = None
-        self._score_reader_name = ""
         source = self._score_source
         if source is not None:
             source.reset()
-
-    def _ensure_score_reader(self) -> VideoShmReader:
-        score_shm_name = str(self._score_shm_name).strip()
-        if not score_shm_name:
-            raise ScoreShmUnavailableError("scoreShmName is empty", reason="not_ready")
-        if self._score_reader is not None and self._score_reader_name == score_shm_name:
-            return self._score_reader
-        self._close_score_reader()
-        reader = VideoShmReader(score_shm_name)
-        try:
-            reader.open(use_event=False)
-        except FileNotFoundError as exc:
-            raise ScoreShmUnavailableError(f"open pending: {type(exc).__name__}: {exc}", reason="not_ready") from exc
-        except OSError as exc:
-            raise ScoreShmUnavailableError(f"open failed: {type(exc).__name__}: {exc}", reason="invalid") from exc
-        self._score_reader = reader
-        self._score_reader_name = score_shm_name
-        return reader
 
     def _ensure_score_source(self) -> LatestVideoFrameSource:
         source = self._score_source
@@ -508,36 +477,38 @@ class DetectionSorterServiceNode(ServiceNode):
 
     def _read_latest_score_frame(self) -> tuple[ScoreFrameHeader, memoryview]:
         score_key = str(self._score_key or "").strip()
-        score_transport = str(self._score_transport or "").strip()
-        if score_key or score_transport == "zenoh":
-            source = self._ensure_score_source()
-            try:
-                frame = source.read_latest(
-                    video_transport=score_transport,
-                    video_key=score_key,
-                    shm_name=self._score_shm_name,
-                    timeout_ms=0,
-                    dedupe=False,
-                )
-            except (RuntimeError, OSError, ValueError) as exc:
-                raise ScoreShmUnavailableError(
-                    f"score source unavailable: {type(exc).__name__}: {exc}",
-                    reason="not_ready",
-                ) from exc
-            if frame is None:
-                raise ScoreShmUnavailableError("score source has no readable frame", reason="not_ready")
-            return frame, frame.payload
-
-        reader = self._ensure_score_reader()
-        header, payload = reader.read_latest_frame()
-        if header is None or payload is None:
-            current_header = reader.read_header()
-            if current_header is not None and (
-                int(current_header.magic) != VIDEO_SHM_MAGIC or int(current_header.version) != VIDEO_SHM_VERSION
-            ):
-                raise ScoreShmUnavailableError("score shm header is invalid", reason="invalid")
-            raise ScoreShmUnavailableError("score shm has no readable frame", reason="not_ready")
-        return header, payload
+        score_transport = str(self._score_transport or "").strip().lower()
+        score_shm_name = str(self._score_shm_name or "").strip()
+        if score_transport == "zenoh" and not score_key:
+            raise ScoreShmUnavailableError("scoreKey is empty", reason="not_ready")
+        if not score_key and not score_shm_name:
+            raise ScoreShmUnavailableError("scoreShmName is empty", reason="not_ready")
+        source = self._ensure_score_source()
+        try:
+            frame = source.read_latest(
+                video_transport=score_transport,
+                video_key=score_key,
+                shm_name=score_shm_name,
+                timeout_ms=0,
+                dedupe=False,
+            )
+        except FileNotFoundError as exc:
+            raise ScoreShmUnavailableError(f"open pending: {type(exc).__name__}: {exc}", reason="not_ready") from exc
+        except ValueError as exc:
+            message = str(exc).strip()
+            reason: ScoreShmUnavailableReason = "invalid" if "invalid" in message.lower() else "not_ready"
+            raise ScoreShmUnavailableError(
+                f"score source unavailable: {type(exc).__name__}: {exc}",
+                reason=reason,
+            ) from exc
+        except (RuntimeError, OSError) as exc:
+            raise ScoreShmUnavailableError(
+                f"score source unavailable: {type(exc).__name__}: {exc}",
+                reason="not_ready",
+            ) from exc
+        if frame is None:
+            raise ScoreShmUnavailableError("score source has no readable frame", reason="not_ready")
+        return frame, frame.payload
 
     def _sort_latest_detections(self) -> dict[str, Any] | None:
         if self._latest_detections is None:

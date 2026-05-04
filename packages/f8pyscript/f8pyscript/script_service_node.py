@@ -9,11 +9,18 @@ import time
 from dataclasses import dataclass, replace
 from typing import Any, Callable
 
+from f8pysdk.bus import ServiceBus
 from f8pysdk.capabilities import ClosableNode, CommandableNode
 from f8pysdk.codec import unwrap_json_value
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
-from f8pysdk.shm.video import VIDEO_FORMAT_BGRA32, VIDEO_FORMAT_FLOW2_F16, VideoShmHeader, VideoShmReader
+from f8pysdk.shm.video import VIDEO_FORMAT_BGRA32, VIDEO_FORMAT_FLOW2_F16
+from f8pysdk.video_transport import (
+    LatestVideoFrame,
+    LatestVideoFrameTransport,
+    LegacyShmLatestVideoFrameTransport,
+    ZenohLatestVideoFrameTransport,
+)
 
 from .script_runtime_values import (
     PyScriptStatesView,
@@ -22,6 +29,8 @@ from .script_runtime_values import (
 )
 
 logger = logging.getLogger(__name__)
+VIDEO_TRANSPORT_LEGACY_SHM = "legacy_shm"
+VIDEO_TRANSPORT_ZENOH = "zenoh"
 
 try:
     import numpy as np
@@ -49,6 +58,9 @@ DEFAULT_CODE = (
     "# - await ctx.set_state_async(field, value)\n"
     "# - ctx.emit(port, value)\n"
     "# - ctx.permission.local_exec_granted / ctx.permission.expires_ts_ms\n"
+    "# - ctx.subscribe_video_latest(key, video_key='f8/svc/.../data/video', decode='auto')\n"
+    "# - pkt = ctx.get_video_latest(key)\n"
+    "# - ctx.subscribe_video_shm(key, shm_name, decode='auto')  # legacy compatibility\n"
     "# - TypeGuard helpers are available from f8_dynamic_inputs\n"
     "#   - example: from f8_dynamic_inputs import is_port_in\n"
     "#   - optional: from f8_dynamic_inputs import *\n"
@@ -122,9 +134,11 @@ _SAFE_MODULES: set[str] = {
 class _VideoShmSubscription:
     key: str
     shm_name: str
+    video_transport: str
+    video_key: str
     decode_mode: str
     use_event: bool
-    reader: VideoShmReader | None = None
+    reader: LatestVideoFrameTransport | None = None
     task: asyncio.Task[object] | None = None
     latest_packet: dict[str, Any] | None = None
     last_frame_id: int = 0
@@ -188,14 +202,40 @@ class PyScriptServiceContext:
         return await self._node.get_state_value(str(field))
 
     def subscribe_video_shm(self, key: str, shm_name: str, *, decode: str = "auto", use_event: bool = False) -> None:
+        self.subscribe_video_latest(
+            key,
+            transport=VIDEO_TRANSPORT_LEGACY_SHM,
+            shm_name=shm_name,
+            decode=decode,
+            use_event=use_event,
+        )
+
+    def subscribe_video_latest(
+        self,
+        key: str,
+        *,
+        video_key: str = "",
+        transport: str = VIDEO_TRANSPORT_ZENOH,
+        shm_name: str = "",
+        decode: str = "auto",
+        use_event: bool = False,
+    ) -> None:
         key_name = str(key or "").strip()
+        video_key_text = str(video_key or "").strip()
         shm = str(shm_name or "").strip()
-        if not key_name or not shm:
+        video_transport = self._node._normalize_video_transport(transport, video_key=video_key_text, shm_name=shm)
+        if not key_name:
+            return
+        if video_transport == VIDEO_TRANSPORT_ZENOH and not video_key_text:
+            return
+        if video_transport == VIDEO_TRANSPORT_LEGACY_SHM and not shm:
             return
         self._node._unsubscribe_video_shm_sync(key_name)
         sub = _VideoShmSubscription(
             key=key_name,
             shm_name=shm,
+            video_transport=video_transport,
+            video_key=video_key_text,
             decode_mode=self._node._normalize_decode_mode(decode),
             use_event=bool(use_event),
         )
@@ -211,6 +251,9 @@ class PyScriptServiceContext:
         )
 
     def get_video_shm(self, key: str) -> dict[str, Any] | None:
+        return self.get_video_latest(key)
+
+    def get_video_latest(self, key: str) -> dict[str, Any] | None:
         key_name = str(key or "").strip()
         if not key_name:
             return None
@@ -220,9 +263,15 @@ class PyScriptServiceContext:
         return self._node._copy_packet_for_script(sub.latest_packet)
 
     def unsubscribe_video_shm(self, key: str) -> None:
+        self.unsubscribe_video_latest(key)
+
+    def unsubscribe_video_latest(self, key: str) -> None:
         self._node._unsubscribe_video_shm_sync(str(key or "").strip())
 
     def list_video_shm_subscriptions(self) -> list[dict[str, Any]]:
+        return self.list_video_latest_subscriptions()
+
+    def list_video_latest_subscriptions(self) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
         for key_name in sorted(self._node._video_subscriptions.keys()):
             sub = self._node._video_subscriptions.get(key_name)
@@ -231,6 +280,9 @@ class PyScriptServiceContext:
             items.append(
                 {
                     "key": sub.key,
+                    "transport": sub.video_transport,
+                    "videoTransport": sub.video_transport,
+                    "videoKey": sub.video_key,
                     "shmName": sub.shm_name,
                     "decodeMode": sub.decode_mode,
                     "hasPacket": sub.latest_packet is not None,
@@ -307,6 +359,10 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         self._tick_seq = 0
 
         self._video_subscriptions: dict[str, _VideoShmSubscription] = {}
+        self._zenoh_config_path: str | None = None
+        self._zenoh_connect: tuple[str, ...] = ()
+        self._zenoh_listen: tuple[str, ...] = ()
+        self._zenoh_shm_pool_bytes = 256 * 1024 * 1024
 
         self._local_exec_granted = False
         self._grant_session_id = ""
@@ -332,6 +388,15 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             self._shutdown_video_subscriptions_sync()
         except Exception as exc:
             logger.error("[%s:pyscript] __del__ video cleanup failed", self.node_id, exc_info=exc)
+
+    def attach(self, bus: Any) -> None:
+        super().attach(bus)
+        if isinstance(bus, ServiceBus):
+            cfg = bus.config
+            self._zenoh_config_path = cfg.zenoh_config_path
+            self._zenoh_connect = cfg.zenoh_connect
+            self._zenoh_listen = cfg.zenoh_listen
+            self._zenoh_shm_pool_bytes = cfg.zenoh_shm_pool_bytes
 
     @staticmethod
     def _now_ms() -> int:
@@ -369,15 +434,27 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         return "auto"
 
     @staticmethod
-    def _header_to_dict(header: VideoShmHeader) -> dict[str, int]:
+    def _normalize_video_transport(transport: Any, *, video_key: str, shm_name: str) -> str:
+        mode = str(transport or "").strip().lower()
+        if mode == VIDEO_TRANSPORT_ZENOH:
+            return VIDEO_TRANSPORT_ZENOH
+        if mode in (VIDEO_TRANSPORT_LEGACY_SHM, "shm"):
+            return VIDEO_TRANSPORT_LEGACY_SHM
+        if str(video_key or "").strip():
+            return VIDEO_TRANSPORT_ZENOH
+        _ = shm_name
+        return VIDEO_TRANSPORT_LEGACY_SHM
+
+    @staticmethod
+    def _header_to_dict(frame: LatestVideoFrame) -> dict[str, int]:
         return {
-            "frameId": int(header.frame_id),
-            "tsMs": int(header.ts_ms),
-            "width": int(header.width),
-            "height": int(header.height),
-            "pitch": int(header.pitch),
-            "fmt": int(header.fmt),
-            "notifySeq": int(header.notify_seq),
+            "frameId": int(frame.frame_id),
+            "tsMs": int(frame.ts_ms),
+            "width": int(frame.width),
+            "height": int(frame.height),
+            "pitch": int(frame.pitch),
+            "fmt": int(frame.fmt),
+            "notifySeq": 0,
         }
 
     @staticmethod
@@ -841,13 +918,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         if task is not None and not task.done():
             task.cancel()
             return True
-        reader = sub.reader
-        sub.reader = None
-        if reader is not None:
-            try:
-                reader.close()
-            except Exception as exc:
-                self._log_error_deduped("video_reader_close", "video reader close failed", exc)
+        self._close_video_sub_reader(sub)
         return True
 
     def _shutdown_video_subscriptions_sync(self) -> None:
@@ -867,15 +938,34 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             if task is not None and not task.done():
                 task.cancel()
                 tasks.append(task)
-            reader = sub.reader
-            sub.reader = None
-            if reader is not None:
-                try:
-                    reader.close()
-                except Exception as exc:
-                    self._log_error_deduped("video_reader_close", "video reader close failed", exc)
+            self._close_video_sub_reader(sub)
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+
+    def _close_video_sub_reader(self, sub: _VideoShmSubscription) -> None:
+        reader = sub.reader
+        sub.reader = None
+        if reader is None:
+            return
+        try:
+            reader.close()
+        except Exception as exc:
+            self._log_error_deduped(
+                f"video_reader_close:{sub.key}",
+                f"video reader close failed key={sub.key} transport={sub.video_transport}",
+                exc,
+            )
+
+    def _open_video_sub_reader(self, sub: _VideoShmSubscription) -> LatestVideoFrameTransport:
+        if sub.video_transport == VIDEO_TRANSPORT_ZENOH:
+            return ZenohLatestVideoFrameTransport.open_subscriber(
+                sub.video_key,
+                config_path=self._zenoh_config_path,
+                connect=self._zenoh_connect,
+                listen=self._zenoh_listen,
+                shm_pool_bytes=self._zenoh_shm_pool_bytes,
+            )
+        return LegacyShmLatestVideoFrameTransport.open_reader(sub.shm_name, use_event=bool(sub.use_event))
 
     async def _run_video_shm_subscription(self, key: str) -> None:
         sub_ref: _VideoShmSubscription | None = None
@@ -891,14 +981,15 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
 
                 if sub.reader is None:
                     try:
-                        reader = VideoShmReader(sub.shm_name)
-                        reader.open(use_event=bool(sub.use_event))
-                        sub.reader = reader
+                        sub.reader = self._open_video_sub_reader(sub)
                     except Exception as exc:
                         sub.error_count += 1
                         self._log_error_deduped(
                             f"video_open:{sub.key}",
-                            f"video shm open failed key={sub.key} shm={sub.shm_name}",
+                            (
+                                f"video latest open failed key={sub.key} transport={sub.video_transport} "
+                                f"videoKey={sub.video_key} shm={sub.shm_name}"
+                            ),
                             exc,
                         )
                         await asyncio.sleep(0.2)
@@ -906,72 +997,62 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
 
                 assert sub.reader is not None
                 try:
-                    has_new = bool(sub.reader.wait_new_frame(timeout_ms=20))
-                    if not has_new:
+                    frame = sub.reader.wait_latest(20)
+                    if frame is None:
                         await asyncio.sleep(0)
                         continue
 
-                    header, payload = sub.reader.read_latest_frame()
-                    if header is None or payload is None:
-                        await asyncio.sleep(0)
-                        continue
+                    try:
+                        frame_id = int(frame.frame_id)
+                        if frame_id <= 0:
+                            await asyncio.sleep(0)
+                            continue
+                        if frame_id == int(sub.last_frame_id) and sub.latest_packet is not None:
+                            await asyncio.sleep(0)
+                            continue
 
-                    frame_id = int(header.frame_id)
-                    if frame_id <= 0:
-                        await asyncio.sleep(0)
-                        continue
-                    if frame_id == int(sub.last_frame_id) and sub.latest_packet is not None:
-                        await asyncio.sleep(0)
-                        continue
+                        frame_bytes = int(frame.frame_bytes)
+                        if frame_bytes <= 0 or frame_bytes > len(frame.payload):
+                            await asyncio.sleep(0)
+                            continue
 
-                    frame_bytes = int(header.frame_bytes)
-                    if frame_bytes <= 0 or frame_bytes > int(header.payload_capacity):
-                        await asyncio.sleep(0)
-                        continue
-                    if frame_bytes > len(payload):
-                        await asyncio.sleep(0)
-                        continue
-
-                    raw = bytes(payload[:frame_bytes])
-                    header_dict = self._header_to_dict(header)
-                    decoded = self._decode_video_payload(header=header_dict, raw=raw, decode_mode=sub.decode_mode)
-                    sub.latest_packet = {
-                        "header": header_dict,
-                        "raw": raw,
-                        "decoded": decoded,
-                        "meta": {
-                            "key": sub.key,
-                            "shmName": sub.shm_name,
-                            "decodeMode": sub.decode_mode,
-                            "lastUpdateMs": self._now_ms(),
-                        },
-                    }
-                    sub.last_frame_id = frame_id
+                        raw = bytes(frame.payload[:frame_bytes])
+                        header_dict = self._header_to_dict(frame)
+                        decoded = self._decode_video_payload(header=header_dict, raw=raw, decode_mode=sub.decode_mode)
+                        sub.latest_packet = {
+                            "header": header_dict,
+                            "raw": raw,
+                            "decoded": decoded,
+                            "meta": {
+                                "key": sub.key,
+                                "transport": sub.video_transport,
+                                "videoTransport": sub.video_transport,
+                                "videoKey": sub.video_key,
+                                "shmName": sub.shm_name,
+                                "decodeMode": sub.decode_mode,
+                                "lastUpdateMs": self._now_ms(),
+                            },
+                        }
+                        sub.last_frame_id = frame_id
+                    finally:
+                        frame.release()
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
                     sub.error_count += 1
                     self._log_error_deduped(
                         f"video_read:{sub.key}",
-                        f"video shm read failed key={sub.key} shm={sub.shm_name}",
+                        (
+                            f"video latest read failed key={sub.key} transport={sub.video_transport} "
+                            f"videoKey={sub.video_key} shm={sub.shm_name}"
+                        ),
                         exc,
                     )
-                    reader = sub.reader
-                    sub.reader = None
-                    if reader is not None:
-                        try:
-                            reader.close()
-                        except Exception as close_exc:
-                            self._log_error_deduped("video_reader_close", "video reader close failed", close_exc)
+                    self._close_video_sub_reader(sub)
                     await asyncio.sleep(0.2)
         finally:
             if sub_ref is not None and sub_ref.reader is not None:
-                reader = sub_ref.reader
-                sub_ref.reader = None
-                try:
-                    reader.close()
-                except Exception as exc:
-                    self._log_error_deduped("video_reader_close", "video reader close failed", exc)
+                self._close_video_sub_reader(sub_ref)
 
     def _ensure_tick_task(self) -> None:
         if self._tick_task is not None and not self._tick_task.done():

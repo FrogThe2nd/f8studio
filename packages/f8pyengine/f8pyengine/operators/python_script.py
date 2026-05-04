@@ -20,11 +20,18 @@ from f8pysdk.specs import (
     editable_collection_edit_policy,
     string_schema,
 )
+from f8pysdk.bus import ServiceBus
 from f8pysdk.capabilities import ClosableNode
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.nodes import OperatorNode
 from f8pysdk.registry import Registry
-from f8pysdk.shm.video import VIDEO_FORMAT_BGRA32, VIDEO_FORMAT_FLOW2_F16, VideoShmHeader, VideoShmReader
+from f8pysdk.shm.video import VIDEO_FORMAT_BGRA32, VIDEO_FORMAT_FLOW2_F16
+from f8pysdk.video_transport import (
+    LatestVideoFrame,
+    LatestVideoFrameTransport,
+    LegacyShmLatestVideoFrameTransport,
+    ZenohLatestVideoFrameTransport,
+)
 
 from ..constants import SERVICE_CLASS
 from ._ports import exec_out_ports
@@ -44,15 +51,19 @@ from .script_utils.state_binding import PyEngineStatesView
 OPERATOR_CLASS = "f8.python_script"
 _REPEATING_ERROR_LOG_INTERVAL_MS = 2000
 logger = logging.getLogger(__name__)
+VIDEO_TRANSPORT_LEGACY_SHM = "legacy_shm"
+VIDEO_TRANSPORT_ZENOH = "zenoh"
 
 
 @dataclass
 class _VideoShmSubscription:
     key: str
     shm_name: str
+    video_transport: str
+    video_key: str
     decode_mode: str
     use_event: bool
-    reader: VideoShmReader | None = None
+    reader: LatestVideoFrameTransport | None = None
     task: asyncio.Task[object] | None = None
     latest_packet: dict[str, Any] | None = None
     last_frame_id: int = 0
@@ -121,15 +132,41 @@ class PyEngineContext:
         return await self._node.get_state_value(str(field))
 
     def subscribe_video_shm(self, key: str, shm_name: str, *, decode: str = "auto", use_event: bool = False) -> None:
+        self.subscribe_video_latest(
+            key,
+            transport=VIDEO_TRANSPORT_LEGACY_SHM,
+            shm_name=shm_name,
+            decode=decode,
+            use_event=use_event,
+        )
+
+    def subscribe_video_latest(
+        self,
+        key: str,
+        *,
+        video_key: str = "",
+        transport: str = VIDEO_TRANSPORT_ZENOH,
+        shm_name: str = "",
+        decode: str = "auto",
+        use_event: bool = False,
+    ) -> None:
         key_name = str(key or "").strip()
+        video_key_text = str(video_key or "").strip()
         shm = str(shm_name or "").strip()
-        if not key_name or not shm:
+        video_transport = self._node._normalize_video_transport(transport, video_key=video_key_text, shm_name=shm)
+        if not key_name:
+            return
+        if video_transport == VIDEO_TRANSPORT_ZENOH and not video_key_text:
+            return
+        if video_transport == VIDEO_TRANSPORT_LEGACY_SHM and not shm:
             return
         decode_mode = self._node._normalize_decode_mode(decode)
         self._node._unsubscribe_video_shm_sync(key_name)
         sub = _VideoShmSubscription(
             key=key_name,
             shm_name=shm,
+            video_transport=video_transport,
+            video_key=video_key_text,
             decode_mode=decode_mode,
             use_event=bool(use_event),
         )
@@ -145,6 +182,9 @@ class PyEngineContext:
         )
 
     def get_video_shm(self, key: str) -> dict[str, Any] | None:
+        return self.get_video_latest(key)
+
+    def get_video_latest(self, key: str) -> dict[str, Any] | None:
         key_name = str(key or "").strip()
         if not key_name:
             return None
@@ -154,9 +194,15 @@ class PyEngineContext:
         return self._node._copy_packet_for_script(sub.latest_packet)
 
     def unsubscribe_video_shm(self, key: str) -> None:
+        self.unsubscribe_video_latest(key)
+
+    def unsubscribe_video_latest(self, key: str) -> None:
         self._node._unsubscribe_video_shm_sync(str(key or "").strip())
 
     def list_video_shm_subscriptions(self) -> list[dict[str, Any]]:
+        return self.list_video_latest_subscriptions()
+
+    def list_video_latest_subscriptions(self) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
         for key_name in sorted(self._node._video_subscriptions.keys()):
             sub = self._node._video_subscriptions.get(key_name)
@@ -165,6 +211,9 @@ class PyEngineContext:
             items.append(
                 {
                     "key": sub.key,
+                    "transport": sub.video_transport,
+                    "videoTransport": sub.video_transport,
+                    "videoKey": sub.video_key,
                     "shmName": sub.shm_name,
                     "decodeMode": sub.decode_mode,
                     "hasPacket": sub.latest_packet is not None,
@@ -201,7 +250,12 @@ DEFAULT_CODE = (
     "# - State TypeGuard helpers are available from f8_dynamic_states\n"
     "#   - example: from f8_dynamic_states import is_state_inputMode\n"
     "#   - then: if is_state_inputMode(value, field): ...\n"
-    "# - Video SHM helpers:\n"
+    "# - Video latest-frame helpers:\n"
+    "#   - ctx.subscribe_video_latest(key, video_key='f8/svc/.../data/video', decode='auto')\n"
+    "#   - pkt = ctx.get_video_latest(key)\n"
+    "#   - ctx.unsubscribe_video_latest(key)\n"
+    "#   - ctx.list_video_latest_subscriptions()\n"
+    "# - Legacy video SHM compatibility helpers:\n"
     "#   - ctx.subscribe_video_shm(key, shm_name, decode='auto', use_event=False)\n"
     "#   - pkt = ctx.get_video_shm(key)\n"
     "#   - ctx.unsubscribe_video_shm(key)\n"
@@ -290,6 +344,10 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         self._pull_cache_outputs: dict[str, Any] = {}
         self._state_key_hint_logged = False
         self._video_subscriptions: dict[str, _VideoShmSubscription] = {}
+        self._zenoh_config_path: str | None = None
+        self._zenoh_connect: tuple[str, ...] = ()
+        self._zenoh_listen: tuple[str, ...] = ()
+        self._zenoh_shm_pool_bytes = 256 * 1024 * 1024
         self._data_out_port_set: set[str] = set()
         self._data_in_port_names: tuple[str, ...] = tuple(str(name) for name in self.data_in_ports)
         self._single_data_out_port: str | None = None
@@ -314,6 +372,12 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
 
     def attach(self, bus: Any) -> None:
         super().attach(bus)
+        if isinstance(bus, ServiceBus):
+            cfg = bus.config
+            self._zenoh_config_path = cfg.zenoh_config_path
+            self._zenoh_connect = cfg.zenoh_connect
+            self._zenoh_listen = cfg.zenoh_listen
+            self._zenoh_shm_pool_bytes = cfg.zenoh_shm_pool_bytes
         self._flush_pending_monitor_error()
 
     def __del__(self) -> None:
@@ -322,12 +386,12 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         try:
             if self._started and not self._closing:
                 self._invoke_hook_sync("onStop")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.error("[%s:python_script] __del__ onStop failed", self.node_id, exc_info=exc)
         try:
             self._shutdown_video_subscriptions_sync()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.error("[%s:python_script] __del__ video cleanup failed", self.node_id, exc_info=exc)
 
     async def close(self) -> None:
         if self._closing:
@@ -466,15 +530,27 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         return "auto"
 
     @staticmethod
-    def _header_to_dict(header: VideoShmHeader) -> dict[str, int]:
+    def _normalize_video_transport(transport: Any, *, video_key: str, shm_name: str) -> str:
+        mode = str(transport or "").strip().lower()
+        if mode == VIDEO_TRANSPORT_ZENOH:
+            return VIDEO_TRANSPORT_ZENOH
+        if mode in (VIDEO_TRANSPORT_LEGACY_SHM, "shm"):
+            return VIDEO_TRANSPORT_LEGACY_SHM
+        if str(video_key or "").strip():
+            return VIDEO_TRANSPORT_ZENOH
+        _ = shm_name
+        return VIDEO_TRANSPORT_LEGACY_SHM
+
+    @staticmethod
+    def _header_to_dict(frame: LatestVideoFrame) -> dict[str, int]:
         return {
-            "frameId": int(header.frame_id),
-            "tsMs": int(header.ts_ms),
-            "width": int(header.width),
-            "height": int(header.height),
-            "pitch": int(header.pitch),
-            "fmt": int(header.fmt),
-            "notifySeq": int(header.notify_seq),
+            "frameId": int(frame.frame_id),
+            "tsMs": int(frame.ts_ms),
+            "width": int(frame.width),
+            "height": int(frame.height),
+            "pitch": int(frame.pitch),
+            "fmt": int(frame.fmt),
+            "notifySeq": 0,
         }
 
     @staticmethod
@@ -564,24 +640,42 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         sub.last_error_sig = sig
         sub.last_error_ts_ms = now_ms
         logger.exception(
-            "[%s:python_script] video shm subscribe failed key=%s shm=%s stage=%s",
+            "[%s:python_script] video latest subscribe failed key=%s transport=%s video_key=%s shm=%s stage=%s",
             self.node_id,
             sub.key,
+            sub.video_transport,
+            sub.video_key,
             sub.shm_name,
             stage,
             exc_info=exc,
         )
 
-    @staticmethod
-    def _close_video_sub_reader(sub: _VideoShmSubscription) -> None:
+    def _close_video_sub_reader(self, sub: _VideoShmSubscription) -> None:
         reader = sub.reader
         sub.reader = None
         if reader is None:
             return
         try:
             reader.close()
-        except Exception:
-            return
+        except Exception as exc:
+            logger.error(
+                "[%s:python_script] video reader close failed key=%s transport=%s",
+                self.node_id,
+                sub.key,
+                sub.video_transport,
+                exc_info=exc,
+            )
+
+    def _open_video_sub_reader(self, sub: _VideoShmSubscription) -> LatestVideoFrameTransport:
+        if sub.video_transport == VIDEO_TRANSPORT_ZENOH:
+            return ZenohLatestVideoFrameTransport.open_subscriber(
+                sub.video_key,
+                config_path=self._zenoh_config_path,
+                connect=self._zenoh_connect,
+                listen=self._zenoh_listen,
+                shm_pool_bytes=self._zenoh_shm_pool_bytes,
+            )
+        return LegacyShmLatestVideoFrameTransport.open_reader(sub.shm_name, use_event=bool(sub.use_event))
 
     def _unsubscribe_video_shm_sync(self, key: str) -> bool:
         key_name = str(key or "").strip()
@@ -627,9 +721,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
 
             if sub.reader is None:
                 try:
-                    reader = VideoShmReader(sub.shm_name)
-                    reader.open(use_event=bool(sub.use_event))
-                    sub.reader = reader
+                    sub.reader = self._open_video_sub_reader(sub)
                 except Exception as exc:
                     self._log_video_sub_error(sub, "open", exc)
                     await asyncio.sleep(0.2)
@@ -637,53 +729,50 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
 
             assert sub.reader is not None
             try:
-                has_new = bool(sub.reader.wait_new_frame(timeout_ms=20))
-                if not has_new:
+                frame = sub.reader.wait_latest(20)
+                if frame is None:
                     await asyncio.sleep(0)
                     continue
+                try:
+                    frame_id = int(frame.frame_id)
+                    if frame_id <= 0:
+                        await asyncio.sleep(0)
+                        continue
+                    if frame_id == int(sub.last_frame_id) and sub.latest_packet is not None:
+                        await asyncio.sleep(0)
+                        continue
 
-                header, payload = sub.reader.read_latest_frame()
-                if header is None or payload is None:
-                    await asyncio.sleep(0)
-                    continue
+                    width = int(frame.width)
+                    height = int(frame.height)
+                    pitch = int(frame.pitch)
+                    frame_bytes = int(frame.frame_bytes)
+                    if width <= 0 or height <= 0 or pitch <= 0 or frame_bytes <= 0:
+                        await asyncio.sleep(0)
+                        continue
+                    if frame_bytes > len(frame.payload):
+                        await asyncio.sleep(0)
+                        continue
 
-                frame_id = int(header.frame_id)
-                if frame_id <= 0:
-                    await asyncio.sleep(0)
-                    continue
-                if frame_id == int(sub.last_frame_id) and sub.latest_packet is not None:
-                    await asyncio.sleep(0)
-                    continue
-
-                width = int(header.width)
-                height = int(header.height)
-                pitch = int(header.pitch)
-                frame_bytes = int(header.frame_bytes)
-                if width <= 0 or height <= 0 or pitch <= 0 or frame_bytes <= 0:
-                    await asyncio.sleep(0)
-                    continue
-                if frame_bytes > int(header.payload_capacity):
-                    await asyncio.sleep(0)
-                    continue
-                if frame_bytes > len(payload):
-                    await asyncio.sleep(0)
-                    continue
-
-                raw = bytes(payload[:frame_bytes])
-                header_dict = self._header_to_dict(header)
-                decoded = self._decode_video_payload(header=header_dict, raw=raw, decode_mode=sub.decode_mode)
-                sub.latest_packet = {
-                    "header": header_dict,
-                    "raw": raw,
-                    "decoded": decoded,
-                    "meta": {
-                        "key": sub.key,
-                        "shmName": sub.shm_name,
-                        "decodeMode": sub.decode_mode,
-                        "lastUpdateMs": self._now_ms(),
-                    },
-                }
-                sub.last_frame_id = frame_id
+                    raw = bytes(frame.payload[:frame_bytes])
+                    header_dict = self._header_to_dict(frame)
+                    decoded = self._decode_video_payload(header=header_dict, raw=raw, decode_mode=sub.decode_mode)
+                    sub.latest_packet = {
+                        "header": header_dict,
+                        "raw": raw,
+                        "decoded": decoded,
+                        "meta": {
+                            "key": sub.key,
+                            "transport": sub.video_transport,
+                            "videoTransport": sub.video_transport,
+                            "videoKey": sub.video_key,
+                            "shmName": sub.shm_name,
+                            "decodeMode": sub.decode_mode,
+                            "lastUpdateMs": self._now_ms(),
+                        },
+                    }
+                    sub.last_frame_id = frame_id
+                finally:
+                    frame.release()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
