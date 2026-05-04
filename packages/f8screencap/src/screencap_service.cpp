@@ -10,9 +10,11 @@
 
 #include "f8cppsdk/describe_schema.h"
 #include "f8cppsdk/f8_naming.h"
+#include "f8cppsdk/latest_video_frame_transport.h"
 #include "f8cppsdk/shm/video.h"
 #include "f8cppsdk/time_utils.h"
 #include "f8cppsdk/video_shared_memory_sink.h"
+#include "f8cppsdk/zenoh_naming.h"
 
 #if defined(_WIN32)
 #include "win32_capture_sources.h"
@@ -148,6 +150,9 @@ bool ScreenCapService::start() {
     return false;
   }
 
+  const auto runtime_backend =
+      f8::cppsdk::runtime_backend_config_with_legacy_nats_url(cfg_.runtime_backend, cfg_.nats_url);
+
   shm_ = std::make_shared<f8::cppsdk::VideoSharedMemorySink>();
   const auto shm_name = f8::cppsdk::shm::video_shm_name(cfg_.service_id);
   if (!shm_->initialize(shm_name, cfg_.video_shm_bytes, cfg_.video_shm_slots)) {
@@ -156,10 +161,26 @@ bool ScreenCapService::start() {
     return false;
   }
 
+  if (runtime_backend.bus_backend == f8::cppsdk::BusBackend::kZenoh) {
+    const std::string key = f8::cppsdk::zenoh_data_key(cfg_.service_id, cfg_.service_id, "video");
+    auto publisher = std::make_shared<f8::cppsdk::ZenohLatestVideoFramePublisher>();
+    if (publisher->open(runtime_backend, key)) {
+      zenoh_video_key_ = key;
+      zenoh_video_publisher_ = publisher;
+      shm_->set_frame_observer([publisher](const f8::cppsdk::VideoFrameView& frame) {
+        (void)publisher->publish_frame(frame);
+      });
+      spdlog::info("screencap zenoh video publisher enabled serviceId={} key={}", cfg_.service_id, key);
+    } else {
+      zenoh_video_key_.clear();
+      zenoh_video_publisher_.reset();
+      spdlog::warn("screencap zenoh video publisher unavailable serviceId={}, falling back to legacy SHM metadata",
+                   cfg_.service_id);
+    }
+  }
+
   f8::cppsdk::ServiceBus::Config bus_cfg;
   bus_cfg.service_id = cfg_.service_id;
-  const auto runtime_backend =
-      f8::cppsdk::runtime_backend_config_with_legacy_nats_url(cfg_.runtime_backend, cfg_.nats_url);
   bus_cfg.apply_runtime_backend(runtime_backend);
   bus_cfg.kv_memory_storage = true;
   bus_ = std::make_unique<f8::cppsdk::ServiceBus>(bus_cfg);
@@ -171,6 +192,14 @@ bool ScreenCapService::start() {
 
   if (!bus_->start()) {
     bus_.reset();
+    if (shm_) {
+      shm_->clear_frame_observer();
+    }
+    if (zenoh_video_publisher_) {
+      zenoh_video_publisher_->close();
+    }
+    zenoh_video_publisher_.reset();
+    zenoh_video_key_.clear();
     shm_.reset();
     return false;
   }
@@ -212,9 +241,21 @@ void ScreenCapService::stop() {
   if (bus_) {
     try {
       bus_->stop();
-    } catch (...) {}
+    } catch (const std::exception& exc) {
+      spdlog::warn("screencap service bus stop failed serviceId={}: {}", cfg_.service_id, exc.what());
+    } catch (...) {
+      spdlog::warn("screencap service bus stop failed serviceId={}: unknown error", cfg_.service_id);
+    }
   }
   bus_.reset();
+  if (shm_) {
+    shm_->clear_frame_observer();
+  }
+  if (zenoh_video_publisher_) {
+    zenoh_video_publisher_->close();
+  }
+  zenoh_video_publisher_.reset();
+  zenoh_video_key_.clear();
   shm_.reset();
 }
 
@@ -702,8 +743,10 @@ void ScreenCapService::publish_static_state() {
   set_if_changed("serviceClass", cfg_.service_class);
   set_if_changed("videoShmName", shm_ ? shm_->regionName() : "");
   set_if_changed("videoShmEvent", shm_ ? shm_->frameEventName() : "");
-  set_if_changed("videoTransport", "legacy_shm");
-  set_if_changed("videoKey", shm_ ? shm_->regionName() : "");
+  const bool use_zenoh_video =
+      zenoh_video_publisher_ && zenoh_video_publisher_->valid() && !zenoh_video_key_.empty();
+  set_if_changed("videoTransport", use_zenoh_video ? "zenoh" : "legacy_shm");
+  set_if_changed("videoKey", use_zenoh_video ? zenoh_video_key_ : (shm_ ? shm_->regionName() : ""));
   set_if_changed("videoFormat", "bgra32");
   set_if_changed("videoFrameSchemaVersion", 1);
 

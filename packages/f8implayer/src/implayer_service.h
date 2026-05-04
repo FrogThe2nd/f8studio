@@ -20,6 +20,7 @@
 #include "sdl_video_window.h"
 
 namespace f8::cppsdk {
+class ZenohLatestVideoFramePublisher;
 class VideoSharedMemorySink;
 }
 
@@ -128,6 +129,8 @@ class ImPlayerService final : public f8::cppsdk::LifecycleNode,
   std::unique_ptr<ImPlayerGui> gui_;
   std::unique_ptr<MpvPlayer> player_;
   std::shared_ptr<VideoSharedMemorySink> shm_;
+  std::shared_ptr<f8::cppsdk::ZenohLatestVideoFramePublisher> zenoh_video_publisher_;
+  std::string zenoh_video_key_;
 
   std::atomic<bool> openxr_mirror_window_{true};
   std::string openxr_mode_ = "off";

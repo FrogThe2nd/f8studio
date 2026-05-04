@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <unordered_set>
@@ -21,9 +22,11 @@
 
 #include "f8cppsdk/describe_schema.h"
 #include "f8cppsdk/f8_naming.h"
+#include "f8cppsdk/latest_video_frame_transport.h"
 #include "f8cppsdk/shm/video.h"
 #include "f8cppsdk/time_utils.h"
 #include "f8cppsdk/video_shared_memory_sink.h"
+#include "f8cppsdk/zenoh_naming.h"
 #include "implayer_gui.h"
 #include "mpv_player.h"
 #include "openxr_presenter.h"
@@ -548,12 +551,33 @@ bool ImPlayerService::start() {
     return false;
   }
 
+  const auto runtime_backend =
+      f8::cppsdk::runtime_backend_config_with_legacy_nats_url(cfg_.runtime_backend, cfg_.nats_url);
+
   shm_ = std::make_shared<VideoSharedMemorySink>();
   const auto shm_name = f8::cppsdk::shm::video_shm_name(cfg_.service_id);
   if (!shm_->initialize(shm_name, cfg_.video_shm_bytes, cfg_.video_shm_slots)) {
     spdlog::error("failed to initialize video shm sink name={} bytes={} slots={}", shm_name, cfg_.video_shm_bytes,
                   cfg_.video_shm_slots);
     return false;
+  }
+
+  if (runtime_backend.bus_backend == f8::cppsdk::BusBackend::kZenoh) {
+    const std::string key = f8::cppsdk::zenoh_data_key(cfg_.service_id, cfg_.service_id, "video");
+    auto publisher = std::make_shared<f8::cppsdk::ZenohLatestVideoFramePublisher>();
+    if (publisher->open(runtime_backend, key)) {
+      zenoh_video_key_ = key;
+      zenoh_video_publisher_ = publisher;
+      shm_->set_frame_observer([publisher](const f8::cppsdk::VideoFrameView& frame) {
+        (void)publisher->publish_frame(frame);
+      });
+      spdlog::info("implayer zenoh video publisher enabled serviceId={} key={}", cfg_.service_id, key);
+    } else {
+      zenoh_video_key_.clear();
+      zenoh_video_publisher_.reset();
+      spdlog::warn("implayer zenoh video publisher unavailable serviceId={}, falling back to legacy SHM metadata",
+                   cfg_.service_id);
+    }
   }
 
   SdlVideoWindow::Config wcfg;
@@ -664,8 +688,6 @@ bool ImPlayerService::start() {
   // deployments won't race against initialization.
   f8::cppsdk::ServiceBus::Config bus_cfg;
   bus_cfg.service_id = cfg_.service_id;
-  const auto runtime_backend =
-      f8::cppsdk::runtime_backend_config_with_legacy_nats_url(cfg_.runtime_backend, cfg_.nats_url);
   bus_cfg.apply_runtime_backend(runtime_backend);
   bus_cfg.kv_memory_storage = true;
   bus_ = std::make_unique<f8::cppsdk::ServiceBus>(bus_cfg);
@@ -676,6 +698,14 @@ bool ImPlayerService::start() {
   bus_->add_command_node(this, ImPlayerService::describe());
   if (!bus_->start()) {
     bus_.reset();
+    if (shm_) {
+      shm_->clear_frame_observer();
+    }
+    if (zenoh_video_publisher_) {
+      zenoh_video_publisher_->close();
+    }
+    zenoh_video_publisher_.reset();
+    zenoh_video_key_.clear();
     return false;
   }
 
@@ -704,7 +734,11 @@ void ImPlayerService::stop() {
   try {
     if (bus_)
       bus_->stop();
-  } catch (...) {}
+  } catch (const std::exception& exc) {
+    spdlog::warn("implayer service bus stop failed serviceId={}: {}", cfg_.service_id, exc.what());
+  } catch (...) {
+    spdlog::warn("implayer service bus stop failed serviceId={}: unknown error", cfg_.service_id);
+  }
   bus_.reset();
 
   if (openxr_)
@@ -720,6 +754,14 @@ void ImPlayerService::stop() {
   gui_.reset();
   player_.reset();
   window_.reset();
+  if (shm_) {
+    shm_->clear_frame_observer();
+  }
+  if (zenoh_video_publisher_) {
+    zenoh_video_publisher_->close();
+  }
+  zenoh_video_publisher_.reset();
+  zenoh_video_key_.clear();
   shm_.reset();
 }
 
@@ -2049,11 +2091,16 @@ bool ImPlayerService::cmd_seek(const nlohmann::json& args, std::string& err) {
       try {
         pos = std::stod(args["position"].get<std::string>());
         ok = true;
-      } catch (...) {}
+      } catch (const std::invalid_argument&) {
+        err = "invalid position";
+      } catch (const std::out_of_range&) {
+        err = "position out of range";
+      }
     }
   }
   if (!ok) {
-    err = "missing position";
+    if (err.empty())
+      err = "missing position";
     return false;
   }
   const PlaybackIntent intent = playback_intent();
@@ -2119,11 +2166,16 @@ bool ImPlayerService::cmd_set_volume(const nlohmann::json& args, std::string& er
       try {
         vol = std::stod(args["volume"].get<std::string>());
         ok = true;
-      } catch (...) {}
+      } catch (const std::invalid_argument&) {
+        err = "invalid volume";
+      } catch (const std::out_of_range&) {
+        err = "volume out of range";
+      }
     }
   }
   if (!ok) {
-    err = "missing volume";
+    if (err.empty())
+      err = "missing volume";
     return false;
   }
   vol = std::clamp(vol, 0.0, 1.0);
@@ -2212,8 +2264,10 @@ void ImPlayerService::publish_static_state() {
     want("serviceClass", cfg_.service_class);
     want("videoShmName", shm_->regionName());
     want("videoShmEvent", shm_->frameEventName());
-    want("videoTransport", "legacy_shm");
-    want("videoKey", shm_->regionName());
+    const bool use_zenoh_video =
+        zenoh_video_publisher_ && zenoh_video_publisher_->valid() && !zenoh_video_key_.empty();
+    want("videoTransport", use_zenoh_video ? "zenoh" : "legacy_shm");
+    want("videoKey", use_zenoh_video ? zenoh_video_key_ : shm_->regionName());
     want("videoFormat", "bgra32");
     want("videoFrameSchemaVersion", 1);
     want("loop", loop_);

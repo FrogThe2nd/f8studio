@@ -15,6 +15,7 @@
 #include "f8cppsdk/shm/video.h"
 
 namespace f8::cppsdk {
+class ZenohLatestVideoFramePublisher;
 class VideoSharedMemorySink;
 }
 
@@ -93,6 +94,8 @@ class ScreenCapService final : public f8::cppsdk::LifecycleNode,
 
   std::unique_ptr<f8::cppsdk::ServiceBus> bus_;
   std::shared_ptr<f8::cppsdk::VideoSharedMemorySink> shm_;
+  std::shared_ptr<f8::cppsdk::ZenohLatestVideoFramePublisher> zenoh_video_publisher_;
+  std::string zenoh_video_key_;
   std::unique_ptr<CaptureBackend> capture_;
 
   mutable std::mutex state_mu_;

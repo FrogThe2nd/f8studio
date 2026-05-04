@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <string>
+#include <utility>
 
 #include <spdlog/spdlog.h>
 
@@ -220,7 +221,35 @@ bool VideoSharedMemorySink::writeFrameWithFormat(const void* data, unsigned stri
   (void)futex_wake_all_u32(&hdr->notify_seq);
 #endif
 
+  FrameObserver observer;
+  {
+    std::lock_guard<std::mutex> lock(observer_mu_);
+    observer = frame_observer_;
+  }
+  if (observer) {
+    observer(VideoFrameView{
+        width_,
+        height_,
+        pitch_,
+        format_,
+        frame_id_,
+        hdr->ts_ms,
+        dst,
+        payload_bytes,
+    });
+  }
+
   return true;
+}
+
+void VideoSharedMemorySink::set_frame_observer(FrameObserver observer) {
+  std::lock_guard<std::mutex> lock(observer_mu_);
+  frame_observer_ = std::move(observer);
+}
+
+void VideoSharedMemorySink::clear_frame_observer() {
+  std::lock_guard<std::mutex> lock(observer_mu_);
+  frame_observer_ = nullptr;
 }
 
 bool VideoSharedMemorySink::configureDimensions(unsigned requested_width, unsigned requested_height, unsigned bytes_per_pixel) {

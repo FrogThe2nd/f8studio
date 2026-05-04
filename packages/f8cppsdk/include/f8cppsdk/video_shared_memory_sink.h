@@ -2,6 +2,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -13,8 +15,21 @@ constexpr std::uint32_t kVideoFormatBgra32 = 1;
 constexpr std::uint32_t kVideoFormatFlow2F16 = 2;
 constexpr std::uint32_t kVideoFormatScalar1F32 = 3;
 
+struct VideoFrameView {
+  unsigned width = 0;
+  unsigned height = 0;
+  unsigned pitch = 0;
+  std::uint32_t format = 0;
+  std::uint64_t frame_id = 0;
+  std::int64_t ts_ms = 0;
+  const std::byte* payload = nullptr;
+  std::size_t payload_bytes = 0;
+};
+
 class VideoSharedMemorySink {
  public:
+  using FrameObserver = std::function<void(const VideoFrameView&)>;
+
   VideoSharedMemorySink() = default;
   ~VideoSharedMemorySink();
 
@@ -26,6 +41,8 @@ class VideoSharedMemorySink {
   bool ensureConfigurationForFormat(unsigned width, unsigned height, std::uint32_t format, unsigned bytes_per_pixel);
   bool writeFrame(const void* data, unsigned stride_bytes);
   bool writeFrameWithFormat(const void* data, unsigned stride_bytes, std::uint32_t format);
+  void set_frame_observer(FrameObserver observer);
+  void clear_frame_observer();
 
   unsigned outputWidth() const { return width_; }
   unsigned outputHeight() const { return height_; }
@@ -55,6 +72,9 @@ class VideoSharedMemorySink {
   unsigned bytes_per_pixel_ = 4;
   std::uint32_t format_ = kVideoFormatBgra32;
   std::uint64_t frame_id_ = 0;
+
+  mutable std::mutex observer_mu_;
+  FrameObserver frame_observer_;
 };
 
 struct VideoSharedMemoryHeader {
