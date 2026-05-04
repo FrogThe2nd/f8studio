@@ -13,6 +13,7 @@
 #include <opencv2/core.hpp>
 
 #include "f8cppsdk/capabilities.h"
+#include "f8cppsdk/latest_video_frame_transport.h"
 #include "f8cppsdk/service_bus.h"
 #include "f8cppsdk/video_shared_memory_sink.h"
 
@@ -99,7 +100,10 @@ class VideoStabService final : public f8::cppsdk::LifecycleNode,
 
   // Input video SHM (BGRA32).
   std::string input_shm_name_;
+  std::string input_video_transport_ = "legacy_shm";
+  std::string input_video_key_;
   f8::cppsdk::VideoSharedMemoryReader input_video_;
+  std::unique_ptr<f8::cppsdk::ZenohLatestVideoFrameSubscriber> input_zenoh_video_;
   std::vector<std::byte> input_frame_bgra_;
   std::uint32_t input_last_notify_seq_ = 0;
   std::uint64_t input_last_frame_id_ = 0;
@@ -107,7 +111,10 @@ class VideoStabService final : public f8::cppsdk::LifecycleNode,
 
   // Output video SHM (BGRA32).
   std::string output_shm_name_;
+  std::string output_video_transport_ = "legacy_shm";
+  std::string output_video_key_;
   std::unique_ptr<f8::cppsdk::VideoSharedMemorySink> output_video_;
+  std::shared_ptr<f8::cppsdk::ZenohLatestVideoFramePublisher> output_zenoh_video_;
   bool output_initialized_ = false;
   std::int64_t output_last_open_attempt_ms_ = 0;
 
