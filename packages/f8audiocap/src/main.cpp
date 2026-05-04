@@ -14,6 +14,7 @@
 
 #include "audiocap_service.h"
 #include "f8cppsdk/describe_builtins.h"
+#include "f8cppsdk/runtime_cxxopts.h"
 #include "f8cppsdk/shm/sizing.h"
 
 namespace {
@@ -28,7 +29,6 @@ int main(int argc, char** argv) {
   cxxopts::Options options("f8audiocap_service", "F8 audio capture service (system mix / loopback)");
   options.add_options()("describe", "Print service spec JSON and exit")(
       "service-id", "Service instance id (required unless --describe)", cxxopts::value<std::string>()->default_value(""))(
-      "nats-url", "NATS server URL", cxxopts::value<std::string>()->default_value("nats://127.0.0.1:4222"))(
       "list-devices", "List available recording devices and exit")(
       "backend", "Backend (auto|sdl|wasapi)", cxxopts::value<std::string>()->default_value("auto"))(
       "device", "Recording device selector (index or substring match)", cxxopts::value<std::string>()->default_value(""))(
@@ -40,6 +40,7 @@ int main(int argc, char** argv) {
       "mode", "Mode (capture|silence|sine)", cxxopts::value<std::string>()->default_value("capture"))(
       "tone-hz", "Sine tone Hz (mode=sine)", cxxopts::value<double>()->default_value("440.0"))(
       "gain", "Output gain 0..1", cxxopts::value<double>()->default_value("0.1"))("help", "Show help");
+  f8::cppsdk::add_runtime_backend_options(options);
 
   auto result = options.parse(argc, argv);
   if (result.count("help")) {
@@ -91,9 +92,20 @@ int main(int argc, char** argv) {
     return 2;
   }
 
+  f8::cppsdk::RuntimeBackendConfig runtime_backend;
+  std::string runtime_error;
+  if (!f8::cppsdk::read_runtime_backend_options(result, runtime_backend, runtime_error)) {
+    std::cerr << runtime_error << "\n";
+    return 2;
+  }
+  if (runtime_backend.bus_backend != f8::cppsdk::BusBackend::kNats && result.count("nats-url") > 0) {
+    spdlog::warn("--nats-url is ignored unless --bus-backend nats");
+  }
+
   f8::audiocap::AudioCapService::Config cfg;
   cfg.service_id = service_id;
-  cfg.nats_url = result["nats-url"].as<std::string>();
+  cfg.runtime_backend = runtime_backend;
+  cfg.nats_url = runtime_backend.nats_url;
   cfg.audio_shm_bytes = result["shm-bytes"].as<std::size_t>();
   cfg.sample_rate = result["sample-rate"].as<std::uint32_t>();
   cfg.channels = result["channels"].as<std::uint16_t>();

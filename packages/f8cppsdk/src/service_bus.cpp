@@ -639,6 +639,14 @@ bool ServiceBus::start() {
   if (cfg_.service_name.empty()) {
     cfg_.service_name = cfg_.service_id;
   }
+  cfg_.apply_runtime_backend(cfg_.runtime_backend_config());
+  if (cfg_.bus_backend != BusBackend::kNats) {
+    spdlog::error(
+        "service_bus backend={} is configured for serviceId={}, but the C++ Zenoh/mem transport implementation is not "
+        "linked in this migration slice; start with --bus-backend nats to use the legacy C++ runtime.",
+        bus_backend_to_string(cfg_.bus_backend), cfg_.service_id);
+    return false;
+  }
   terminate_.store(false, std::memory_order_release);
   ready_.store(false, std::memory_order_release);
   if (!nats_.connect(cfg_.nats_url)) {
@@ -740,7 +748,8 @@ bool ServiceBus::start() {
   (void)kv_set_ready(kv_, cfg_.service_id, true, "start");
   ready_.store(true, std::memory_order_release);
   start_monitor_thread();
-  spdlog::info("service_bus started serviceId={} natsUrl={}", cfg_.service_id, cfg_.nats_url);
+  spdlog::info("service_bus started serviceId={} backend={} natsUrl={}", cfg_.service_id,
+               bus_backend_to_string(cfg_.bus_backend), cfg_.nats_url);
   return true;
 }
 

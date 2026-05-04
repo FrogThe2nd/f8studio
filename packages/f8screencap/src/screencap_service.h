@@ -38,7 +38,8 @@ class ScreenCapService final : public f8::cppsdk::LifecycleNode,
   struct Config {
     std::string service_id;
     std::string service_class = "f8.screencap";
-    std::string nats_url = "nats://127.0.0.1:4222";
+    f8::cppsdk::RuntimeBackendConfig runtime_backend;
+    std::string nats_url = f8::cppsdk::kDefaultNatsUrl;
 
     std::size_t video_shm_bytes = f8::cppsdk::shm::kDefaultVideoShmBytes;
     std::uint32_t video_shm_slots = f8::cppsdk::shm::kDefaultVideoShmSlots;

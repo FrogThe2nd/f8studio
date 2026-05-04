@@ -11,6 +11,7 @@
 #include <nlohmann/json.hpp>
 
 #include "f8cppsdk/describe_builtins.h"
+#include "f8cppsdk/runtime_cxxopts.h"
 #include "implayer_service.h"
 
 namespace {
@@ -35,7 +36,6 @@ extern "C" SDL_AppResult SDLCALL SDL_AppInit(void** appstate, int argc, char* ar
   options.add_options()("describe", "Print service spec JSON and exit")(
       "service-id", "Service instance id (required unless --describe)",
       cxxopts::value<std::string>()->default_value(""))(
-      "nats-url", "NATS server URL", cxxopts::value<std::string>()->default_value("nats://127.0.0.1:4222"))(
       "media", "Open media URL/path on startup", cxxopts::value<std::string>()->default_value(""))(
       "openxr", "Shorthand for --openxr-mode=on",
       cxxopts::value<bool>()->default_value("false")->implicit_value("true"))(
@@ -43,6 +43,7 @@ extern "C" SDL_AppResult SDLCALL SDL_AppInit(void** appstate, int argc, char* ar
       cxxopts::value<std::string>()->default_value("off"))(
       "openxr-mirror", "Keep SDL mirror window when using --openxr",
       cxxopts::value<bool>()->default_value("true")->implicit_value("true"))("help", "Show help");
+  f8::cppsdk::add_runtime_backend_options(options);
 
   auto result = options.parse(argc, argv);
   if (result.count("help")) {
@@ -63,9 +64,20 @@ extern "C" SDL_AppResult SDLCALL SDL_AppInit(void** appstate, int argc, char* ar
     return SDL_APP_FAILURE;
   }
 
+  f8::cppsdk::RuntimeBackendConfig runtime_backend;
+  std::string runtime_error;
+  if (!f8::cppsdk::read_runtime_backend_options(result, runtime_backend, runtime_error)) {
+    std::cerr << runtime_error << "\n";
+    return SDL_APP_FAILURE;
+  }
+  if (runtime_backend.bus_backend != f8::cppsdk::BusBackend::kNats && result.count("nats-url") > 0) {
+    spdlog::warn("--nats-url is ignored unless --bus-backend nats");
+  }
+
   f8::implayer::ImPlayerService::Config cfg;
   cfg.service_id = service_id;
-  cfg.nats_url = result["nats-url"].as<std::string>();
+  cfg.runtime_backend = runtime_backend;
+  cfg.nats_url = runtime_backend.nats_url;
   cfg.initial_media_url = result["media"].as<std::string>();
   cfg.openxr_mirror_window = result["openxr-mirror"].as<bool>();
   cfg.openxr_mode = result["openxr-mode"].as<std::string>();

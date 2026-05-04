@@ -43,7 +43,8 @@ class VideoStabService final : public f8::cppsdk::LifecycleNode,
   struct Config {
     std::string service_id;
     std::string service_class = "f8.cvkit.videostab";
-    std::string nats_url = "nats://127.0.0.1:4222";
+    f8::cppsdk::RuntimeBackendConfig runtime_backend;
+    std::string nats_url = f8::cppsdk::kDefaultNatsUrl;
   };
 
   explicit VideoStabService(Config cfg);

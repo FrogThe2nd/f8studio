@@ -23,7 +23,8 @@ class DemoService final : public f8::cppsdk::LifecycleNode,
   struct Config {
     std::string service_id;
     std::string service_class = "f8.sdk_demo";
-    std::string nats_url = "nats://127.0.0.1:4222";
+    f8::cppsdk::RuntimeBackendConfig runtime_backend;
+    std::string nats_url = f8::cppsdk::kDefaultNatsUrl;
   };
 
   explicit DemoService(Config cfg);
@@ -70,4 +71,3 @@ class DemoService final : public f8::cppsdk::LifecycleNode,
 };
 
 }  // namespace f8::sdk_demo
-

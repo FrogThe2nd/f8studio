@@ -13,6 +13,7 @@
 #include <mutex>
 #include <thread>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -20,6 +21,7 @@
 #include "f8cppsdk/capabilities.h"
 #include "f8cppsdk/main_thread_queue.h"
 #include "f8cppsdk/rungraph_routes.h"
+#include "f8cppsdk/runtime_backend.h"
 #include "f8cppsdk/kv_store.h"
 #include "f8cppsdk/nats_client.h"
 #include "f8cppsdk/service_control_plane.h"
@@ -52,7 +54,12 @@ class ServiceBus final : public ServiceControlHandler {
 
   struct Config {
     std::string service_id;
-    std::string nats_url = "nats://127.0.0.1:4222";
+    BusBackend bus_backend = BusBackend::kZenoh;
+    std::string nats_url = kDefaultNatsUrl;
+    std::string zenoh_config_path;
+    std::vector<std::string> zenoh_connect;
+    std::vector<std::string> zenoh_listen;
+    std::uint64_t zenoh_shm_pool_bytes = kDefaultZenohShmPoolBytes;
     bool kv_memory_storage = true;
     std::string service_name;
     std::string service_class;
@@ -62,6 +69,26 @@ class ServiceBus final : public ServiceControlHandler {
     std::int64_t monitor_interval_ms = 1000;
     std::int64_t monitor_window_ms = 30000;
     bool monitor_gpu_enabled = true;
+
+    void apply_runtime_backend(const RuntimeBackendConfig& runtime_backend) {
+      bus_backend = runtime_backend.bus_backend;
+      nats_url = runtime_backend.nats_url;
+      zenoh_config_path = runtime_backend.zenoh_config_path;
+      zenoh_connect = runtime_backend.zenoh_connect;
+      zenoh_listen = runtime_backend.zenoh_listen;
+      zenoh_shm_pool_bytes = runtime_backend.zenoh_shm_pool_bytes;
+    }
+
+    RuntimeBackendConfig runtime_backend_config() const {
+      RuntimeBackendConfig runtime_backend;
+      runtime_backend.bus_backend = bus_backend;
+      runtime_backend.nats_url = nats_url;
+      runtime_backend.zenoh_config_path = zenoh_config_path;
+      runtime_backend.zenoh_connect = zenoh_connect;
+      runtime_backend.zenoh_listen = zenoh_listen;
+      runtime_backend.zenoh_shm_pool_bytes = zenoh_shm_pool_bytes;
+      return normalize_runtime_backend_config(std::move(runtime_backend));
+    }
   };
 
   explicit ServiceBus(Config cfg);

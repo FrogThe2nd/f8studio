@@ -4,6 +4,7 @@ add_library(f8cppsdk
   src/kv_store.cpp
   src/service_control_plane.cpp
   src/service_bus.cpp
+  src/runtime_backend.cpp
   src/state_kv.cpp
   src/data_bus.cpp
   src/msg_codec.cpp
@@ -49,6 +50,34 @@ add_dependencies(f8cppsdk f8cppsdk_codegen_protocol_models)
 find_package(cnats REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(spdlog REQUIRED)
+
+set(_f8_zenoh_link_targets "")
+if(F8_WITH_ZENOH)
+  find_package(zenohcxx CONFIG QUIET)
+  find_package(zenohc CONFIG QUIET)
+  set(_f8_zenoh_have_cxx FALSE)
+  set(_f8_zenoh_have_c FALSE)
+  if(TARGET zenohcxx::zenohcxx)
+    set(_f8_zenoh_have_cxx TRUE)
+    list(APPEND _f8_zenoh_link_targets zenohcxx::zenohcxx)
+  endif()
+  if(TARGET zenohc::zenohc)
+    set(_f8_zenoh_have_c TRUE)
+    list(APPEND _f8_zenoh_link_targets zenohc::zenohc)
+  elseif(TARGET zenohc::lib)
+    set(_f8_zenoh_have_c TRUE)
+    list(APPEND _f8_zenoh_link_targets zenohc::lib)
+  endif()
+  if(_f8_zenoh_have_cxx AND _f8_zenoh_have_c)
+    target_compile_definitions(f8cppsdk PUBLIC F8_WITH_ZENOH=1)
+    target_link_libraries(f8cppsdk PUBLIC ${_f8_zenoh_link_targets})
+  else()
+    message(WARNING "F8_WITH_ZENOH=ON but zenohcxx/zenohc CMake packages were not found; building C++ Zenoh stubs only.")
+    target_compile_definitions(f8cppsdk PUBLIC F8_WITH_ZENOH=0)
+  endif()
+else()
+  target_compile_definitions(f8cppsdk PUBLIC F8_WITH_ZENOH=0)
+endif()
 
 target_link_libraries(f8cppsdk
   PUBLIC
