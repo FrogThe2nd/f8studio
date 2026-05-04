@@ -5,6 +5,8 @@ add_library(f8cppsdk
   src/service_control_plane.cpp
   src/service_bus.cpp
   src/runtime_backend.cpp
+  src/zenoh_naming.cpp
+  src/zenoh_transport.cpp
   src/state_kv.cpp
   src/data_bus.cpp
   src/msg_codec.cpp
