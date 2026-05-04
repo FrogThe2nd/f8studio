@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <mutex>
 #include <optional>
@@ -12,6 +13,7 @@
 #include <opencv2/core.hpp>
 
 #include "f8cppsdk/capabilities.h"
+#include "f8cppsdk/latest_video_frame_transport.h"
 #include "f8cppsdk/service_bus.h"
 #include "f8cppsdk/video_shared_memory_sink.h"
 
@@ -58,7 +60,14 @@ class TemplateMatchService final : public f8::cppsdk::LifecycleNode,
   void publish_error_if_changed(const json& value, const std::string& source, const json& meta);
   void emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms);
   void set_template_png_b64(const std::string& b64, const json& meta);
+  void set_video_transport(const std::string& transport, const json& meta);
+  void set_video_key(const std::string& key, const json& meta);
+  bool use_zenoh_video_input() const;
   bool ensure_video_open();
+  bool ensure_zenoh_video_open();
+  bool copy_latest_video_frame(std::vector<std::byte>& out_payload, f8::cppsdk::VideoSharedMemoryHeader& out_header,
+                               bool changed_only, std::uint64_t last_frame_id,
+                               std::chrono::milliseconds timeout);
   void detect_once();
 
   Config cfg_;
@@ -89,7 +98,11 @@ class TemplateMatchService final : public f8::cppsdk::LifecycleNode,
 
   // Video input (BGRA32 SHM).
   std::string shm_name_override_;
+  std::string video_transport_state_;
+  std::string video_key_state_;
   f8::cppsdk::VideoSharedMemoryReader video_;
+  f8::cppsdk::ZenohLatestVideoFrameSubscriber zenoh_video_;
+  std::string zenoh_video_open_key_;
   std::vector<std::byte> frame_bgra_;
   cv::Mat frame_gray_;
   cv::Mat roi_gray_;

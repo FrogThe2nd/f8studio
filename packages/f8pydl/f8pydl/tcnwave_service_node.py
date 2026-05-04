@@ -12,10 +12,11 @@ from typing import Any, Literal
 from f8pysdk.codec import coerce_bool, coerce_float, coerce_int, coerce_str
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
-from f8pysdk.shm.video import VideoShmReader
+from f8pysdk.shm.video import VIDEO_FORMAT_BGRA32
 
 from .model_config import ModelSpec, ModelTask, build_model_index, build_model_index_with_errors, load_model_spec
 from .onnx_runtime import OnnxTemporalWaveRuntime
+from .video_frame_source import LatestVideoFrameSource, VideoFrameSourceConfig
 from .weights_downloader import ensure_onnx_file, onnx_file_matches_sha256
 
 _VR_FOCUS_TOP = 0.20
@@ -294,11 +295,12 @@ class OnnxTcnWaveServiceNode(ServiceNode):
         self._output_bias = 0.0
         self._use_vr_focus_crop = False
         self._shm_name = ""
+        self._video_transport = ""
+        self._video_key = ""
         self._auto_download_weights = True
         self._download_retry_at_monotonic = 0.0
 
-        self._shm: VideoShmReader | None = None
-        self._shm_open_name = ""
+        self._video_source: LatestVideoFrameSource | None = None
 
         self._runtime: OnnxTemporalWaveRuntime | None = None
         self._runtime_yaml: Path | None = None
@@ -319,6 +321,7 @@ class OnnxTcnWaveServiceNode(ServiceNode):
 
     def attach(self, bus: Any) -> None:
         super().attach(bus)
+        self._video_source = LatestVideoFrameSource(config=VideoFrameSourceConfig.from_bus(bus))
         loop = asyncio.get_running_loop()
         loop.create_task(self._ensure_config_loaded(), name=f"f8dl-tcn:init:{self.node_id}")
         self._task = loop.create_task(self._loop(), name=f"f8dl-tcn:loop:{self.node_id}")
@@ -329,7 +332,7 @@ class OnnxTcnWaveServiceNode(ServiceNode):
         if t is not None:
             t.cancel()
             await asyncio.gather(t, return_exceptions=True)
-        self._close_shm()
+        self._close_video_source()
         self._window.clear()
         self._sequence_buffer = None
         self._aggregator.reset()
@@ -401,7 +404,19 @@ class OnnxTcnWaveServiceNode(ServiceNode):
 
         if name == "shmName":
             self._shm_name = coerce_str(await self.get_state_value("shmName"), default=self._shm_name)
-            await self._maybe_reopen_shm()
+            self._reset_video_source()
+            return
+
+        if name == "videoTransport":
+            self._video_transport = coerce_str(
+                await self.get_state_value("videoTransport"), default=self._video_transport
+            )
+            self._reset_video_source()
+            return
+
+        if name == "videoKey":
+            self._video_key = coerce_str(await self.get_state_value("videoKey"), default=self._video_key)
+            self._reset_video_source()
             return
 
         if name == "autoDownloadWeights":
@@ -449,7 +464,16 @@ class OnnxTcnWaveServiceNode(ServiceNode):
             await self.get_state_value("autoDownloadWeights"),
             default=bool(self._initial_state.get("autoDownloadWeights", True)),
         )
-        self._shm_name = coerce_str(await self.get_state_value("shmName"), default=str(self._initial_state.get("shmName") or ""))
+        self._shm_name = coerce_str(
+            await self.get_state_value("shmName"), default=str(self._initial_state.get("shmName") or "")
+        )
+        self._video_transport = coerce_str(
+            await self.get_state_value("videoTransport"),
+            default=str(self._initial_state.get("videoTransport") or ""),
+        )
+        self._video_key = coerce_str(
+            await self.get_state_value("videoKey"), default=str(self._initial_state.get("videoKey") or "")
+        )
         self._config_loaded = True
         await self._publish_model_index()
 
@@ -548,11 +572,10 @@ class OnnxTcnWaveServiceNode(ServiceNode):
         if self._model_index_warning:
             await self._set_last_error(self._model_index_warning)
 
-    async def _maybe_reopen_shm(self) -> None:
-        want = self._resolve_shm_name()
-        if want == self._shm_open_name:
-            return
-        self._close_shm()
+    def _reset_video_source(self) -> None:
+        source = self._video_source
+        if source is not None:
+            source.reset()
         self._window.clear()
         self._sequence_buffer = None
         self._aggregator.reset()
@@ -567,21 +590,25 @@ class OnnxTcnWaveServiceNode(ServiceNode):
             return shm_name
         return ""
 
-    def _close_shm(self) -> None:
-        if self._shm is not None:
-            try:
-                self._shm.close()
-            except Exception:
-                self._shm = None
-        self._shm = None
-        self._shm_open_name = ""
+    def _resolve_video_transport(self) -> str:
+        return str(self._video_transport or "").strip()
 
-    def _open_shm(self, shm_name: str) -> None:
-        self._close_shm()
-        shm = VideoShmReader(shm_name)
-        shm.open(use_event=True)
-        self._shm = shm
-        self._shm_open_name = shm_name
+    def _resolve_video_key(self) -> str:
+        return str(self._video_key or "").strip()
+
+    def _close_video_source(self) -> None:
+        source = self._video_source
+        self._video_source = None
+        if source is not None:
+            source.close()
+
+    def _ensure_video_source(self) -> LatestVideoFrameSource:
+        source = self._video_source
+        if source is not None:
+            return source
+        source = LatestVideoFrameSource(config=VideoFrameSourceConfig.from_bus(self._bus))
+        self._video_source = source
+        return source
 
     def _resolve_model_yaml(self) -> Path:
         if self._model_yaml_path:
@@ -716,96 +743,111 @@ class OnnxTcnWaveServiceNode(ServiceNode):
                     await asyncio.sleep(0.1)
                     continue
 
+                source = self._ensure_video_source()
+                video_key = self._resolve_video_key()
                 shm_name = self._resolve_shm_name()
-                if not shm_name:
+                if not video_key and not shm_name:
                     await self._handle_missing_shm_name(now_ms=int(time.time() * 1000))
                     await asyncio.sleep(0.05)
                     continue
 
-                if self._shm is None:
-                    try:
-                        self._open_shm(shm_name)
-                    except Exception as exc:
-                        await self._record_exception(where="open_shm", exc=exc)
-                        await asyncio.sleep(0.1)
-                        continue
-
                 assert self._runtime is not None
-                assert self._shm is not None
                 t0 = time.perf_counter()
-                self._shm.wait_new_frame(timeout_ms=10)
-                header, payload = self._shm.read_latest_bgra()
-                if header is None or payload is None:
+                try:
+                    frame = source.read_latest(
+                        video_transport=self._resolve_video_transport(),
+                        video_key=video_key,
+                        shm_name=shm_name,
+                        timeout_ms=10,
+                    )
+                except Exception as exc:
+                    await self._record_exception(where="open_video_source", exc=exc)
+                    await asyncio.sleep(0.1)
+                    continue
+                if frame is None:
+                    continue
+                if int(frame.fmt) != VIDEO_FORMAT_BGRA32:
+                    frame.release()
+                    await self._set_last_error(
+                        f"input video format must be BGRA32(fmt={VIDEO_FORMAT_BGRA32}), got fmt={int(frame.fmt)}"
+                    )
+                    await asyncio.sleep(0.05)
                     continue
 
-                frame_id_seen = int(header.frame_id)
+                frame_id_seen = int(frame.frame_id)
                 if self._last_processed_frame_id is not None and frame_id_seen == int(self._last_processed_frame_id):
                     self._dup_skipped_since_last_processed += 1
+                    frame.release()
                     continue
                 self._dup_skipped_since_last_processed = 0
 
-                width = int(header.width)
-                height = int(header.height)
-                pitch = int(header.pitch)
+                width = int(frame.width)
+                height = int(frame.height)
+                pitch = int(frame.pitch)
                 if width <= 0 or height <= 0 or pitch <= 0:
+                    frame.release()
                     continue
                 frame_bytes = int(pitch) * int(height)
-                if len(payload) < frame_bytes:
+                if len(frame.payload) < frame_bytes:
+                    frame.release()
                     continue
 
                 self._last_processed_frame_id = frame_id_seen
                 self._new_frame_counter += 1
 
-                buf = np.frombuffer(payload, dtype=np.uint8)
-                rows = buf.reshape((height, pitch))
-                bgra = rows[:, : width * 4].reshape((height, width, 4))
-                frame_bgr = bgra[:, :, 0:3]
-                if self._use_vr_focus_crop and int(frame_bgr.shape[1]) > 1:
-                    frame_bgr = apply_vr_focus_crop(frame_bgr)
+                try:
+                    buf = np.frombuffer(frame.payload, dtype=np.uint8)
+                    rows = buf.reshape((height, pitch))
+                    bgra = rows[:, : width * 4].reshape((height, width, 4))
+                    frame_bgr = bgra[:, :, 0:3]
+                    if self._use_vr_focus_crop and int(frame_bgr.shape[1]) > 1:
+                        frame_bgr = apply_vr_focus_crop(frame_bgr)
 
-                prepared = self._runtime.prepare_frame(frame_bgr)
-                self._window.append(prepared)
-                frame_index = self._aggregator.register_frame(frame_id=frame_id_seen, ts_ms=int(header.ts_ms))
+                    prepared = self._runtime.prepare_frame(frame_bgr)
+                    self._window.append(prepared)
+                    frame_index = self._aggregator.register_frame(frame_id=frame_id_seen, ts_ms=int(frame.ts_ms))
 
-                if len(self._window) < int(self._runtime.sequence_length):
-                    await self._set_last_error(
-                        f"warming up temporal window: {len(self._window)}/{self._runtime.sequence_length}"
+                    if len(self._window) < int(self._runtime.sequence_length):
+                        await self._set_last_error(
+                            f"warming up temporal window: {len(self._window)}/{self._runtime.sequence_length}"
+                        )
+                        continue
+
+                    do_infer = self._last_infer_frame_id is None or (
+                        int(self._new_frame_counter) % int(self._infer_every_n)
+                    ) == 0
+                    if not do_infer:
+                        continue
+
+                    sequence_buffer = self._sequence_buffer
+                    if sequence_buffer is None:
+                        sequence_buffer = np.empty(
+                            (
+                                int(self._runtime.sequence_length),
+                                int(self._runtime.channels),
+                                int(self._runtime.input_height),
+                                int(self._runtime.input_width),
+                            ),
+                            dtype=np.float32,
+                        )
+                        self._sequence_buffer = sequence_buffer
+                    for sequence_index, prepared_frame in enumerate(self._window):
+                        sequence_buffer[sequence_index] = prepared_frame
+                    sequence = sequence_buffer
+                    t_infer0 = time.perf_counter()
+                    values_np = self._runtime.infer_sequence(sequence)
+                    values = self._to_float_list(values_np.tolist())
+                    output_length = self._aggregator.apply_window(window_end_index=frame_index, values=values)
+                    ready = self._aggregator.pop_ready(
+                        latest_window_end_index=frame_index,
+                        output_length=output_length,
                     )
-                    continue
+                    for item in ready:
+                        await self.emit("predictedChange", float(item.value), ts_ms=int(item.ts_ms))
 
-                do_infer = self._last_infer_frame_id is None or (
-                    int(self._new_frame_counter) % int(self._infer_every_n)
-                ) == 0
-                if not do_infer:
-                    continue
-
-                sequence_buffer = self._sequence_buffer
-                if sequence_buffer is None:
-                    sequence_buffer = np.empty(
-                        (
-                            int(self._runtime.sequence_length),
-                            int(self._runtime.channels),
-                            int(self._runtime.input_height),
-                            int(self._runtime.input_width),
-                        ),
-                        dtype=np.float32,
-                    )
-                    self._sequence_buffer = sequence_buffer
-                for sequence_index, frame in enumerate(self._window):
-                    sequence_buffer[sequence_index] = frame
-                sequence = sequence_buffer
-                t_infer0 = time.perf_counter()
-                values_np = self._runtime.infer_sequence(sequence)
-                values = self._to_float_list(values_np.tolist())
-                output_length = self._aggregator.apply_window(window_end_index=frame_index, values=values)
-                ready = self._aggregator.pop_ready(
-                    latest_window_end_index=frame_index,
-                    output_length=output_length,
-                )
-                for item in ready:
-                    await self.emit("predictedChange", float(item.value), ts_ms=int(item.ts_ms))
-
-                t_infer1 = time.perf_counter()
+                    t_infer1 = time.perf_counter()
+                finally:
+                    frame.release()
                 self._last_infer_frame_id = frame_id_seen
                 if self._runtime_warning:
                     await self._set_last_error(self._runtime_warning)

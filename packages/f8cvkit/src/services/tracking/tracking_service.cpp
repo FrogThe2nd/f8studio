@@ -643,6 +643,8 @@ bool TrackingService::start() {
 
   publish_state_if_changed("serviceClass", cfg_.service_class, "init", json::object());
   publish_state_if_changed("shmName", "", "init", json::object());
+  publish_state_if_changed("videoTransport", "", "init", json::object());
+  publish_state_if_changed("videoKey", "", "init", json::object());
   publish_state_if_changed("initSelect", init_select_state_, "init", json::object());
   publish_state_if_changed("trackerKind", tracker_kind_state_, "init", json::object());
   publish_state_if_changed("modelDir", model_dir_state_, "init", json::object());
@@ -656,6 +658,8 @@ bool TrackingService::start() {
   publish_error_if_changed("", "init", json::object());
 
   video_.close();
+  zenoh_video_.close();
+  zenoh_video_open_key_.clear();
   frame_bgra_.clear();
   frame_bgr_.release();
   last_header_.reset();
@@ -774,6 +778,14 @@ void TrackingService::on_state(const std::string& node_id, const std::string& fi
     return;
   if (field == "shmName" && value.is_string()) {
     set_shm_name(value.get<std::string>(), meta);
+    return;
+  }
+  if (field == "videoTransport" && value.is_string()) {
+    set_video_transport(value.get<std::string>(), meta);
+    return;
+  }
+  if (field == "videoKey" && value.is_string()) {
+    set_video_key(value.get<std::string>(), meta);
     return;
   }
   if (field == "initSelect" && value.is_string()) {
@@ -920,6 +932,51 @@ void TrackingService::set_shm_name(const std::string& shm_name, const json& meta
   frame_bgr_.release();
 }
 
+void TrackingService::set_video_transport(const std::string& transport, const json& meta) {
+  std::string normalized = service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(transport));
+  if (normalized != "zenoh" && normalized != "legacy_shm" && normalized != "shm") {
+    normalized.clear();
+  }
+  if (normalized == "shm") {
+    normalized = "legacy_shm";
+  }
+  if (normalized == video_transport_state_) {
+    publish_state_if_changed("videoTransport", video_transport_state_, "state", meta);
+    return;
+  }
+  video_transport_state_ = normalized;
+  publish_state_if_changed("videoTransport", video_transport_state_, "state", meta);
+  video_.close();
+  zenoh_video_.close();
+  zenoh_video_open_key_.clear();
+  last_video_open_attempt_ms_ = 0;
+  last_frame_id_ = 0;
+  last_notify_seq_ = 0;
+  last_processed_frame_ts_ms_ = 0;
+  next_tracking_due_ts_ms_ = 0.0;
+  frame_bgra_.clear();
+  frame_bgr_.release();
+}
+
+void TrackingService::set_video_key(const std::string& key, const json& meta) {
+  const std::string s = service_runtime::trim_copy(key);
+  if (s == video_key_state_) {
+    publish_state_if_changed("videoKey", video_key_state_, "state", meta);
+    return;
+  }
+  video_key_state_ = s;
+  publish_state_if_changed("videoKey", video_key_state_, "state", meta);
+  zenoh_video_.close();
+  zenoh_video_open_key_.clear();
+  last_video_open_attempt_ms_ = 0;
+  last_frame_id_ = 0;
+  last_notify_seq_ = 0;
+  last_processed_frame_ts_ms_ = 0;
+  next_tracking_due_ts_ms_ = 0.0;
+  frame_bgra_.clear();
+  frame_bgr_.release();
+}
+
 void TrackingService::set_init_select(const std::string& mode, const json& meta) {
   std::string normalized;
   bool ok = false;
@@ -973,6 +1030,10 @@ void TrackingService::set_max_tracking_fps(double fps, const json& meta) {
 }
 
 bool TrackingService::ensure_video_open() {
+  if (use_zenoh_video_input()) {
+    return ensure_zenoh_video_open();
+  }
+
   f8::cppsdk::VideoSharedMemoryHeader hdr{};
   if (video_.readHeader(hdr)) {
     return true;
@@ -1001,6 +1062,89 @@ bool TrackingService::ensure_video_open() {
   return true;
 }
 
+bool TrackingService::use_zenoh_video_input() const {
+  const std::string transport =
+      service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(video_transport_state_));
+  if (transport == "zenoh") {
+    return !service_runtime::trim_copy(video_key_state_).empty();
+  }
+  if (transport == "legacy_shm" || transport == "shm") {
+    return false;
+  }
+  return !service_runtime::trim_copy(video_key_state_).empty();
+}
+
+bool TrackingService::ensure_zenoh_video_open() {
+  const std::string key = service_runtime::trim_copy(video_key_state_);
+  if (key.empty()) {
+    publish_error_if_changed("missing videoKey", "runtime", json::object());
+    return false;
+  }
+  if (zenoh_video_.valid() && zenoh_video_open_key_ == key) {
+    return true;
+  }
+
+  const std::int64_t now = f8::cppsdk::now_ms();
+  if (last_video_open_attempt_ms_ > 0 && (now - last_video_open_attempt_ms_) < 1000) {
+    return false;
+  }
+  last_video_open_attempt_ms_ = now;
+
+  zenoh_video_.close();
+  zenoh_video_open_key_.clear();
+  const auto runtime_backend =
+      f8::cppsdk::runtime_backend_config_with_legacy_nats_url(cfg_.runtime_backend, cfg_.nats_url);
+  if (!zenoh_video_.open(runtime_backend, key)) {
+    publish_error_if_changed("zenoh video open failed: " + key, "runtime", json::object());
+    return false;
+  }
+  zenoh_video_open_key_ = key;
+  last_processed_frame_ts_ms_ = 0;
+  next_tracking_due_ts_ms_ = 0.0;
+  publish_error_if_changed("", "runtime", json::object());
+  return true;
+}
+
+bool TrackingService::copy_latest_video_frame(std::vector<std::byte>& out_payload,
+                                              f8::cppsdk::VideoSharedMemoryHeader& out_header, bool changed_only,
+                                              std::uint64_t last_frame_id, std::chrono::milliseconds timeout) {
+  if (use_zenoh_video_input()) {
+    if (!ensure_zenoh_video_open()) {
+      return false;
+    }
+    auto frame = zenoh_video_.wait_latest(timeout);
+    if (!frame.has_value()) {
+      return false;
+    }
+    if (changed_only && frame->frame_id == last_frame_id) {
+      return false;
+    }
+    out_header = f8::cppsdk::VideoSharedMemoryHeader{};
+    out_header.magic = 0;
+    out_header.version = f8::cppsdk::kZenohVideoFrameSchemaVersion;
+    out_header.slot_count = 1;
+    out_header.width = frame->width;
+    out_header.height = frame->height;
+    out_header.pitch = frame->pitch;
+    out_header.format = frame->format;
+    out_header.frame_id = frame->frame_id;
+    out_header.ts_ms = frame->ts_ms;
+    out_header.active_slot = 0;
+    out_header.payload_capacity = static_cast<std::uint32_t>(frame->payload.size());
+    out_header.notify_seq = static_cast<std::uint32_t>(frame->frame_id & 0xFFFFFFFFu);
+    out_payload = std::move(frame->payload);
+    return true;
+  }
+
+  if (!ensure_video_open()) {
+    return false;
+  }
+  if (changed_only) {
+    return video_.copyLatestFrameIfChanged(out_payload, out_header, last_frame_id);
+  }
+  return video_.copyLatestFrame(out_payload, out_header);
+}
+
 void TrackingService::apply_init_box_if_any() {
   if (stop_tracking_cooldown_until_ms_.load(std::memory_order_acquire) > f8::cppsdk::now_ms()) {
     std::lock_guard<std::mutex> lock(tracking_mu_);
@@ -1019,11 +1163,8 @@ void TrackingService::apply_init_box_if_any() {
     pending_init_boxes_.clear();
   }
 
-  if (!ensure_video_open())
-    return;
-
   f8::cppsdk::VideoSharedMemoryHeader hdr{};
-  if (!video_.copyLatestFrame(frame_bgra_, hdr)) {
+  if (!copy_latest_video_frame(frame_bgra_, hdr, false, 0, std::chrono::milliseconds(20))) {
     publish_error_if_changed("failed to read video frame for init", "runtime", json::object());
     return;
   }
@@ -1132,18 +1273,8 @@ void TrackingService::process_frame_once() {
     bbox = bbox_;
     active_tracker_kind = active_tracker_kind_state_;
   }
-  if (!ensure_video_open()) {
-    return;
-  }
-
-  std::uint32_t observed_notify_seq = last_notify_seq_;
-  if (!video_.waitNewFrame(last_notify_seq_, 20, &observed_notify_seq)) {
-    return;
-  }
-  last_notify_seq_ = observed_notify_seq;
-
   f8::cppsdk::VideoSharedMemoryHeader hdr{};
-  if (!video_.peekLatestHeader(hdr)) {
+  if (!copy_latest_video_frame(frame_bgra_, hdr, true, last_frame_id_, std::chrono::milliseconds(20))) {
     return;
   }
   if (hdr.frame_id == 0 || hdr.frame_id == last_frame_id_) {
@@ -1163,12 +1294,6 @@ void TrackingService::process_frame_once() {
     }
   }
 
-  if (!video_.copyLatestFrameIfChanged(frame_bgra_, hdr, last_frame_id_)) {
-    return;
-  }
-  if (hdr.frame_id == 0 || hdr.frame_id == last_frame_id_) {
-    return;
-  }
   last_frame_id_ = hdr.frame_id;
   last_header_ = hdr;
   last_processed_frame_ts_ms_ = hdr.ts_ms > 0 ? hdr.ts_ms : f8::cppsdk::now_ms();
@@ -1332,6 +1457,10 @@ json TrackingService::describe() {
   service["stateFields"] = json::array({
       state_field("shmName", schema_string(), "rw", "Video SHM", "Optional SHM name override (e.g. shm.xxx.video).",
                   true),
+      state_field("videoTransport", schema_string_enum({"", "zenoh", "legacy_shm"}), "rw", "Video Transport",
+                  "Video input transport backend. Use zenoh with videoKey; legacy_shm keeps old shmName input.",
+                  false),
+      state_field("videoKey", schema_string(), "rw", "Video Key", "Zenoh latest-frame key for video input.", true),
       state_field("initSelect",
                   schema_string_enum({"first_box", "closest_center", "largest_area", "highest_score"}, "closest_center"), "rw",
                   "Init Select", "Init bbox selection strategy: first_box | closest_center | largest_area | highest_score.", true),

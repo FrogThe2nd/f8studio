@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <mutex>
@@ -15,6 +16,7 @@
 #include <opencv2/tracking.hpp>
 
 #include "f8cppsdk/capabilities.h"
+#include "f8cppsdk/latest_video_frame_transport.h"
 #include "f8cppsdk/service_bus.h"
 #include "f8cppsdk/video_shared_memory_sink.h"
 
@@ -87,11 +89,18 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
   void publish_error_if_changed(const json& value, const std::string& source, const json& meta);
   void emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms);
   void set_shm_name(const std::string& shm_name, const json& meta);
+  void set_video_transport(const std::string& transport, const json& meta);
+  void set_video_key(const std::string& key, const json& meta);
   void set_init_select(const std::string& mode, const json& meta);
   void set_tracker_kind(const std::string& kind, const json& meta);
   void set_model_dir(const std::string& model_dir, const json& meta);
   void set_max_tracking_fps(double fps, const json& meta);
+  bool use_zenoh_video_input() const;
   bool ensure_video_open();
+  bool ensure_zenoh_video_open();
+  bool copy_latest_video_frame(std::vector<std::byte>& out_payload, f8::cppsdk::VideoSharedMemoryHeader& out_header,
+                               bool changed_only, std::uint64_t last_frame_id,
+                               std::chrono::milliseconds timeout);
   void apply_init_box_if_any();
   void process_frame_once();
   void set_tracking(bool tracking, const json& meta);
@@ -111,7 +120,11 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
 
   // Video input (BGRA32 SHM).
   std::string shm_name_override_;
+  std::string video_transport_state_;
+  std::string video_key_state_;
   f8::cppsdk::VideoSharedMemoryReader video_;
+  f8::cppsdk::ZenohLatestVideoFrameSubscriber zenoh_video_;
+  std::string zenoh_video_open_key_;
   std::vector<std::byte> frame_bgra_;
   cv::Mat frame_bgr_;
   std::optional<f8::cppsdk::VideoSharedMemoryHeader> last_header_;

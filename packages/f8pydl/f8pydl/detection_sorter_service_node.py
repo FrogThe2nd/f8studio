@@ -5,7 +5,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 import numpy as np
 
@@ -17,9 +17,10 @@ from f8pysdk.shm.video import (
     VIDEO_FORMAT_SCALAR1_F32,
     VIDEO_SHM_MAGIC,
     VIDEO_SHM_VERSION,
-    VideoShmHeader,
     VideoShmReader,
 )
+
+from .video_frame_source import LatestVideoFrameSource, VideoFrameSourceConfig
 
 SortDirection = Literal["asc", "desc"]
 ScoreAggregation = Literal["mean", "max", "sum", "median"]
@@ -36,6 +37,13 @@ class ScoreShmUnavailableError(RuntimeError):
     def __init__(self, message: str, *, reason: ScoreShmUnavailableReason) -> None:
         super().__init__(message)
         self.reason = reason
+
+
+class ScoreFrameHeader(Protocol):
+    width: int
+    height: int
+    pitch: int
+    fmt: int
 
 
 def _coerce_sort_direction(value: Any, *, default: SortDirection = "desc") -> SortDirection:
@@ -135,7 +143,7 @@ def _combined_cls_weight(
     return float(weight)
 
 
-def decode_score_map_from_frame(*, header: VideoShmHeader, payload: memoryview) -> np.ndarray:
+def decode_score_map_from_frame(*, header: ScoreFrameHeader, payload: memoryview) -> np.ndarray:
     width = int(header.width)
     height = int(header.height)
     pitch = int(header.pitch)
@@ -319,6 +327,8 @@ class DetectionSorterServiceNode(ServiceNode):
         self._active = True
         self._config_loaded = False
         self._score_shm_name = ""
+        self._score_transport = ""
+        self._score_key = ""
         self._sort_direction: SortDirection = "desc"
         self._score_aggregation: ScoreAggregation = "mean"
         self._cls_weights_exact: dict[str, float] = {}
@@ -327,6 +337,16 @@ class DetectionSorterServiceNode(ServiceNode):
         self._latest_detections: dict[str, Any] | None = None
         self._score_reader: VideoShmReader | None = None
         self._score_reader_name = ""
+        self._score_source_config = VideoFrameSourceConfig.from_bus(None)
+        self._score_source: LatestVideoFrameSource | None = None
+
+    def attach(self, bus: Any) -> None:
+        super().attach(bus)
+        self._score_source_config = VideoFrameSourceConfig.from_bus(bus)
+        self._score_source = LatestVideoFrameSource(config=self._score_source_config)
+
+    async def close(self) -> None:
+        self._close_score_reader()
 
     async def on_lifecycle(self, active: bool, meta: dict[str, Any]) -> None:
         del meta
@@ -345,6 +365,8 @@ class DetectionSorterServiceNode(ServiceNode):
         if self._config_loaded:
             return
         self._score_shm_name = coerce_str(self._read_initial_or_cached_state("scoreShmName", ""))
+        self._score_transport = coerce_str(self._read_initial_or_cached_state("scoreTransport", ""))
+        self._score_key = coerce_str(self._read_initial_or_cached_state("scoreKey", ""))
         self._sort_direction = _coerce_sort_direction(self._read_initial_or_cached_state("sortDirection", "desc"))
         self._score_aggregation = _coerce_score_aggregation(self._read_initial_or_cached_state("scoreAggregation", "mean"))
         cls_weights_text = coerce_str(self._read_initial_or_cached_state("clsWeights", "{}"), default="{}")
@@ -366,6 +388,13 @@ class DetectionSorterServiceNode(ServiceNode):
             return aggregation
         if name == "scoreShmName":
             return coerce_str(value)
+        if name == "scoreTransport":
+            text = coerce_str(value).lower()
+            if text not in ("", "zenoh", "legacy_shm"):
+                raise ValueError("invalid scoreTransport (expected zenoh or legacy_shm)")
+            return text
+        if name == "scoreKey":
+            return coerce_str(value)
         if name == "clsWeights":
             text = coerce_str(value, default="{}")
             _ = _parse_cls_weights_json(text)
@@ -379,6 +408,14 @@ class DetectionSorterServiceNode(ServiceNode):
         if name == "scoreShmName":
             self._score_shm_name = coerce_str(value, default=self._score_shm_name)
             self._close_score_reader()
+            return
+        if name == "scoreTransport":
+            self._score_transport = coerce_str(value, default=self._score_transport)
+            self._reset_score_source()
+            return
+        if name == "scoreKey":
+            self._score_key = coerce_str(value, default=self._score_key)
+            self._reset_score_source()
             return
         if name == "sortDirection":
             self._sort_direction = _coerce_sort_direction(value, default=self._sort_direction)
@@ -429,6 +466,19 @@ class DetectionSorterServiceNode(ServiceNode):
             self._score_reader.close()
             self._score_reader = None
         self._score_reader_name = ""
+        source = self._score_source
+        self._score_source = None
+        if source is not None:
+            source.close()
+
+    def _reset_score_source(self) -> None:
+        if self._score_reader is not None:
+            self._score_reader.close()
+            self._score_reader = None
+        self._score_reader_name = ""
+        source = self._score_source
+        if source is not None:
+            source.reset()
 
     def _ensure_score_reader(self) -> VideoShmReader:
         score_shm_name = str(self._score_shm_name).strip()
@@ -448,12 +498,36 @@ class DetectionSorterServiceNode(ServiceNode):
         self._score_reader_name = score_shm_name
         return reader
 
-    def _sort_latest_detections(self) -> dict[str, Any] | None:
-        if self._latest_detections is None:
-            return None
-        detections_value = self._latest_detections.get("detections")
-        if not isinstance(detections_value, list) or not detections_value:
-            return None
+    def _ensure_score_source(self) -> LatestVideoFrameSource:
+        source = self._score_source
+        if source is not None:
+            return source
+        source = LatestVideoFrameSource(config=self._score_source_config)
+        self._score_source = source
+        return source
+
+    def _read_latest_score_frame(self) -> tuple[ScoreFrameHeader, memoryview]:
+        score_key = str(self._score_key or "").strip()
+        score_transport = str(self._score_transport or "").strip()
+        if score_key or score_transport == "zenoh":
+            source = self._ensure_score_source()
+            try:
+                frame = source.read_latest(
+                    video_transport=score_transport,
+                    video_key=score_key,
+                    shm_name=self._score_shm_name,
+                    timeout_ms=0,
+                    dedupe=False,
+                )
+            except (RuntimeError, OSError, ValueError) as exc:
+                raise ScoreShmUnavailableError(
+                    f"score source unavailable: {type(exc).__name__}: {exc}",
+                    reason="not_ready",
+                ) from exc
+            if frame is None:
+                raise ScoreShmUnavailableError("score source has no readable frame", reason="not_ready")
+            return frame, frame.payload
+
         reader = self._ensure_score_reader()
         header, payload = reader.read_latest_frame()
         if header is None or payload is None:
@@ -463,6 +537,15 @@ class DetectionSorterServiceNode(ServiceNode):
             ):
                 raise ScoreShmUnavailableError("score shm header is invalid", reason="invalid")
             raise ScoreShmUnavailableError("score shm has no readable frame", reason="not_ready")
+        return header, payload
+
+    def _sort_latest_detections(self) -> dict[str, Any] | None:
+        if self._latest_detections is None:
+            return None
+        detections_value = self._latest_detections.get("detections")
+        if not isinstance(detections_value, list) or not detections_value:
+            return None
+        header, payload = self._read_latest_score_frame()
         try:
             try:
                 score_map = decode_score_map_from_frame(header=header, payload=payload)

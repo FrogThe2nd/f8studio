@@ -23,6 +23,10 @@ from .zenoh_naming import (
 log = logging.getLogger(__name__)
 
 
+def _is_zenoh_channel_drained(exc: BaseException) -> bool:
+    return "channel is empty and closed" in str(exc).strip().lower()
+
+
 @dataclass(frozen=True)
 class ZenohTransportConfig:
     service_id: str
@@ -123,6 +127,11 @@ class ZenohTransport:
         if self._config.listen:
             config.insert_json5("listen/endpoints", json.dumps(list(self._config.listen)))
         config.insert_json5("transport/shared_memory/enabled", "true")
+        if self._config.shm_pool_bytes > 0:
+            try:
+                config.insert_json5("transport/shared_memory/pool_size", json.dumps(self._config.shm_pool_bytes))
+            except zenoh_module.ZError as exc:
+                log.debug("zenoh config does not expose shared-memory pool_size", exc_info=exc)
         return config
 
     async def close(self) -> None:
@@ -366,7 +375,12 @@ class ZenohTransport:
     async def _recv_reply(self, replies: Any, *, timeout_s: float) -> Any | None:
         deadline = time.monotonic() + max(0.001, float(timeout_s))
         while time.monotonic() < deadline:
-            reply = replies.try_recv()
+            try:
+                reply = replies.try_recv()
+            except Exception as exc:
+                if _is_zenoh_channel_drained(exc):
+                    return None
+                raise
             if reply is not None:
                 return reply
             await asyncio.sleep(0.001)

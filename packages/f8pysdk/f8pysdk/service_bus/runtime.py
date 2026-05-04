@@ -379,6 +379,10 @@ class ServiceBus:
         return self._service_class
 
     @property
+    def config(self) -> ServiceBusConfig:
+        return self._config
+
+    @property
     def bus_backend(self) -> str:
         return self._bus_backend
 
