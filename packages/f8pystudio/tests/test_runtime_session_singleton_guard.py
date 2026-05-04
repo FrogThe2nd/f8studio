@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import sys
+from types import SimpleNamespace
 
 from f8pystudio.bridge.nats_lifecycle import NatsSingletonGuardResult, SINGLETON_GUARD_DIALOG_MESSAGE
 from f8pystudio.bridge.runtime_session_controller import RuntimeSessionControllerMixin
@@ -63,3 +65,63 @@ def test_runtime_session_returns_block_message_when_singleton_detected(monkeypat
     assert controller._nc is None
     assert ensured_urls == ["nats://127.0.0.1:4222"]
     assert result == SINGLETON_GUARD_DIALOG_MESSAGE
+
+
+def test_zenoh_singleton_guard_allows_start_when_liveliness_query_drains(monkeypatch) -> None:
+    class _FakeZError(Exception):
+        pass
+
+    class _FakeConfig:
+        pass
+
+    class _FakeReplies:
+        def try_recv(self):
+            raise _FakeZError("channel is empty and closed")
+
+    class _FakeLiveliness:
+        def __init__(self) -> None:
+            self.token = object()
+
+        def get(self, key: str, *, timeout: float):
+            assert key == "f8/live/studio/studio"
+            assert timeout == 0.2
+            return _FakeReplies()
+
+        def declare_token(self, key: str):
+            assert key == "f8/live/studio/studio"
+            return self.token
+
+    class _FakeSession:
+        def __init__(self) -> None:
+            self.liveliness_api = _FakeLiveliness()
+            self.closed = False
+
+        def liveliness(self) -> _FakeLiveliness:
+            return self.liveliness_api
+
+        def close(self) -> None:
+            self.closed = True
+
+    fake_session = _FakeSession()
+    fake_zenoh = SimpleNamespace(Config=_FakeConfig, ZError=_FakeZError, open=lambda _config: fake_session)
+    monkeypatch.setitem(sys.modules, "zenoh", fake_zenoh)
+
+    controller = _Controller()
+    controller._cfg = SimpleNamespace(
+        bus_backend="zenoh",
+        nats_url="nats://127.0.0.1:4222",
+        zenoh_config_path=None,
+        zenoh_connect=(),
+        zenoh_listen=(),
+        zenoh_shm_pool_bytes=256 * 1024 * 1024,
+    )
+    controller._zenoh_singleton_session = None
+    controller._zenoh_singleton_token = None
+
+    result = asyncio.run(controller._run_zenoh_startup_preflight_async())
+
+    assert result is None
+    assert controller.reported == []
+    assert controller._zenoh_singleton_session is fake_session
+    assert controller._zenoh_singleton_token is fake_session.liveliness_api.token
+    assert fake_session.closed is False

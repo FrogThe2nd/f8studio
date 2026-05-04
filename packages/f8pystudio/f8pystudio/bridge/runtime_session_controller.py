@@ -25,6 +25,10 @@ from f8pystudio.studio_specs.registry import shared_pystudio_registry
 _MONITOR_UI_EMIT_INTERVAL_S = 1.0
 
 
+def _is_zenoh_reply_channel_drained(exc: BaseException) -> bool:
+    return "channel is empty and closed" in str(exc).strip().lower()
+
+
 @dataclass(frozen=True)
 class PendingMonitorUpdate:
     payload: dict[str, Any]
@@ -219,7 +223,12 @@ class RuntimeSessionControllerMixin:
             replies = session.liveliness().get(key, timeout=0.2)
             deadline = time.monotonic() + 0.25
             while time.monotonic() < deadline:
-                reply = replies.try_recv()
+                try:
+                    reply = replies.try_recv()
+                except zenoh.ZError as exc:  # type: ignore[attr-defined]
+                    if _is_zenoh_reply_channel_drained(exc):
+                        break
+                    raise
                 if reply is None:
                     await asyncio.sleep(0.01)
                     continue
