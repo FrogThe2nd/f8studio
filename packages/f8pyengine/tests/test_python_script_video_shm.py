@@ -81,6 +81,14 @@ class _FakeLatestVideoTransport:
 
 
 class PythonScriptVideoShmTests(unittest.IsolatedAsyncioTestCase):
+    async def test_video_transport_normalization_is_zenoh_first(self) -> None:
+        normalize = PythonScriptRuntimeNode._normalize_video_transport
+
+        self.assertEqual(normalize("", video_key="", shm_name=""), "zenoh")
+        self.assertEqual(normalize("", video_key="f8/test/video", shm_name=""), "zenoh")
+        self.assertEqual(normalize("bad", video_key="", shm_name="shm.video"), "legacy_shm")
+        self.assertEqual(normalize("legacy_shm", video_key="f8/test/video", shm_name=""), "legacy_shm")
+
     async def test_subscribe_video_latest_zenoh_uses_latest_transport(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")

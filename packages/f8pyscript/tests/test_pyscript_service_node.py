@@ -380,6 +380,14 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(opened[0][0], "f8/test/pyscript/video")
             await node.close()
 
+    async def test_video_transport_normalization_is_zenoh_first(self) -> None:
+        normalize = PythonScriptServiceNode._normalize_video_transport
+
+        self.assertEqual(normalize("", video_key="", shm_name=""), "zenoh")
+        self.assertEqual(normalize("", video_key="f8/test/pyscript/video", shm_name=""), "zenoh")
+        self.assertEqual(normalize("bad", video_key="", shm_name="shm.video"), "legacy_shm")
+        self.assertEqual(normalize("legacy_shm", video_key="f8/test/pyscript/video", shm_name=""), "legacy_shm")
+
     async def test_get_state_cached_sync_snapshot(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")

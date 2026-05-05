@@ -442,8 +442,9 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             return VIDEO_TRANSPORT_LEGACY_SHM
         if str(video_key or "").strip():
             return VIDEO_TRANSPORT_ZENOH
-        _ = shm_name
-        return VIDEO_TRANSPORT_LEGACY_SHM
+        if str(shm_name or "").strip():
+            return VIDEO_TRANSPORT_LEGACY_SHM
+        return VIDEO_TRANSPORT_ZENOH
 
     @staticmethod
     def _header_to_dict(frame: LatestVideoFrame) -> dict[str, int]:
