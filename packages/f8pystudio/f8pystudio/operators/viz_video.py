@@ -579,36 +579,40 @@ class VizVideoRuntimeNode(OperatorNode):
         scalar_key = str(self._scalar_key or "").strip()
         if not scalar_key and self._scalar_transport == "zenoh":
             scalar_key = _default_video_zenoh_key(self._service_id, "scalar")
+        payload: dict[str, object] = {
+            "serviceId": str(self._service_id or "").strip(),
+            "videoTransport": str(self._video_transport or "zenoh"),
+            "videoKey": video_key,
+            "videoFormat": str(self._video_format or "bgra32"),
+            "throttleMs": int(self._throttle_ms),
+            "flowTransport": str(self._flow_transport or "zenoh"),
+            "flowKey": flow_key,
+            "flowDisplayMode": str(self._flow_display_mode or "off"),
+            "flowMagScale": float(self._flow_mag_scale),
+            "flowStride": int(self._flow_stride),
+            "scaleMode": str(self._scale_mode or "native"),
+            "scalarTransport": str(self._scalar_transport or "zenoh"),
+            "scalarKey": scalar_key,
+            "scalarDisplayMode": self._normalize_scalar_display_mode(self._scalar_display_mode),
+            "scalarColormap": self._normalize_scalar_colormap(self._scalar_colormap),
+            "scalarRangeMode": self._normalize_scalar_range_mode(self._scalar_range_mode),
+            "scalarMin": float(self._scalar_min),
+            "scalarMax": float(self._scalar_max),
+            "scalarAutoPercentileLo": float(self._scalar_auto_percentile_lo),
+            "scalarAutoPercentileHi": float(self._scalar_auto_percentile_hi),
+            "scalarInvert": bool(self._scalar_invert),
+            "scalarNanMode": self._normalize_scalar_nan_mode(self._scalar_nan_mode),
+        }
+        if self._video_transport == "legacy_shm":
+            payload["shmName"] = shm_name
+        if self._flow_transport == "legacy_shm":
+            payload["flowShmName"] = flow_shm_name
+        if self._scalar_transport == "legacy_shm":
+            payload["scalarShmName"] = scalar_shm_name
         emit_ui_command(
             self.node_id,
             "viz.video.set",
-            {
-                "shmName": shm_name,
-                "serviceId": str(self._service_id or "").strip(),
-                "videoTransport": str(self._video_transport or "zenoh"),
-                "videoKey": video_key,
-                "videoFormat": str(self._video_format or "bgra32"),
-                "throttleMs": int(self._throttle_ms),
-                "flowTransport": str(self._flow_transport or "zenoh"),
-                "flowKey": flow_key,
-                "flowShmName": flow_shm_name,
-                "flowDisplayMode": str(self._flow_display_mode or "off"),
-                "flowMagScale": float(self._flow_mag_scale),
-                "flowStride": int(self._flow_stride),
-                "scaleMode": str(self._scale_mode or "native"),
-                "scalarTransport": str(self._scalar_transport or "zenoh"),
-                "scalarKey": scalar_key,
-                "scalarShmName": scalar_shm_name,
-                "scalarDisplayMode": self._normalize_scalar_display_mode(self._scalar_display_mode),
-                "scalarColormap": self._normalize_scalar_colormap(self._scalar_colormap),
-                "scalarRangeMode": self._normalize_scalar_range_mode(self._scalar_range_mode),
-                "scalarMin": float(self._scalar_min),
-                "scalarMax": float(self._scalar_max),
-                "scalarAutoPercentileLo": float(self._scalar_auto_percentile_lo),
-                "scalarAutoPercentileHi": float(self._scalar_auto_percentile_hi),
-                "scalarInvert": bool(self._scalar_invert),
-                "scalarNanMode": self._normalize_scalar_nan_mode(self._scalar_nan_mode),
-            },
+            payload,
             ts_ms=int(now_ms),
         )
 

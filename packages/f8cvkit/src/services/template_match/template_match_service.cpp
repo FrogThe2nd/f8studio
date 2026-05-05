@@ -153,6 +153,19 @@ EncodedImage encode_image_b64(const cv::Mat& bgr, std::string format, int qualit
   return out;
 }
 
+json video_source_metadata(bool use_zenoh, const std::string& video_key, const std::string& shm_name,
+                           std::uint32_t width, std::uint32_t height) {
+  json source = json::object({{"width", width},
+                              {"height", height},
+                              {"videoTransport", use_zenoh ? "zenoh" : "legacy_shm"}});
+  if (use_zenoh) {
+    source["videoKey"] = video_key;
+  } else {
+    source["shmName"] = shm_name;
+  }
+  return source;
+}
+
 }  // namespace
 
 TemplateMatchService::TemplateMatchService(Config cfg) : cfg_(std::move(cfg)) {}
@@ -882,11 +895,8 @@ bool TemplateMatchService::on_command(const std::string& call, const json& args,
 
     result["frameId"] = hdr.frame_id;
     result["tsMs"] = hdr.ts_ms;
-    result["source"] = json::object({{"width", hdr.width},
-                                     {"height", hdr.height},
-                                     {"shmName", shm_name},
-                                     {"videoTransport", use_zenoh_video_input() ? "zenoh" : "legacy_shm"},
-                                     {"videoKey", video_key_state_}});
+    result["source"] = video_source_metadata(use_zenoh_video_input(), video_key_state_, shm_name, hdr.width,
+                                             hdr.height);
     result["image"] = json::object({{"b64", enc.b64},
                                     {"format", enc.format},
                                     {"width", enc.width},

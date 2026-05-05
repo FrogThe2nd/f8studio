@@ -490,33 +490,31 @@ class VizTrackRuntimeNode(StudioVizRuntimeNodeBase):
                 hist.append(item)
             out_tracks.append({"id": int(tid), "history": hist})
 
-        emit_ui_command(
-            self.node_id,
-            "viz.track.set",
-            {
-                "width": int(self._width or 0),
-                "height": int(self._height or 0),
-                "historyMs": int(self._history_ms),
-                "historyFrames": int(self._history_frames),
-                "throttleMs": int(self._throttle_ms),
-                "tracks": out_tracks,
-                "flow": self._flow_payload if self._flow_payload is not None else None,
-                "flowArrowScale": float(self._flow_arrow_scale),
-                "flowArrowMinMag": float(self._flow_arrow_min_mag),
-                "flowArrowMaxCount": int(self._flow_arrow_max_count),
-                "showDenseFlow": bool(self._show_dense_flow),
-                "showSparseFlow": bool(self._show_sparse_flow),
-                "flowTransport": str(self._flow_transport or "zenoh"),
-                "flowKey": str(self._flow_key or "").strip(),
-                "flowShmName": str(self._flow_shm_name or "").strip(),
-                "denseFlowMode": str(self._dense_flow_mode),
-                "nowMs": int(now_ms),
-                "videoTransport": str(self._video_transport or "zenoh"),
-                "videoKey": str(self._video_key or "").strip(),
-                "videoShmName": str(self._video_shm_name or "").strip(),
-            },
-            ts_ms=int(now_ms),
-        )
+        payload: dict[str, Any] = {
+            "width": int(self._width or 0),
+            "height": int(self._height or 0),
+            "historyMs": int(self._history_ms),
+            "historyFrames": int(self._history_frames),
+            "throttleMs": int(self._throttle_ms),
+            "tracks": out_tracks,
+            "flow": self._flow_payload if self._flow_payload is not None else None,
+            "flowArrowScale": float(self._flow_arrow_scale),
+            "flowArrowMinMag": float(self._flow_arrow_min_mag),
+            "flowArrowMaxCount": int(self._flow_arrow_max_count),
+            "showDenseFlow": bool(self._show_dense_flow),
+            "showSparseFlow": bool(self._show_sparse_flow),
+            "flowTransport": str(self._flow_transport or "zenoh"),
+            "flowKey": str(self._flow_key or "").strip(),
+            "denseFlowMode": str(self._dense_flow_mode),
+            "nowMs": int(now_ms),
+            "videoTransport": str(self._video_transport or "zenoh"),
+            "videoKey": str(self._video_key or "").strip(),
+        }
+        if self._flow_transport == "legacy_shm":
+            payload["flowShmName"] = str(self._flow_shm_name or "").strip()
+        if self._video_transport == "legacy_shm":
+            payload["videoShmName"] = str(self._video_shm_name or "").strip()
+        emit_ui_command(self.node_id, "viz.track.set", payload, ts_ms=int(now_ms))
 
         self._last_refresh_ms = int(now_ms)
         self._dirty = False

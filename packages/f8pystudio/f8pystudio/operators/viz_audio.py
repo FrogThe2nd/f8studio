@@ -236,18 +236,20 @@ class VizAudioRuntimeNode(OperatorNode):
         audio_key = str(self._audio_key or "").strip()
         if not audio_key and self._audio_transport == "zenoh":
             audio_key = _default_audio_zenoh_key(self._service_id)
+        payload: dict[str, object] = {
+            "serviceId": str(self._service_id or "").strip(),
+            "audioTransport": str(self._audio_transport or "zenoh"),
+            "audioKey": audio_key,
+            "throttleMs": int(self._throttle_ms),
+            "historyMs": int(self._history_ms),
+            "channel": int(self._channel),
+        }
+        if self._audio_transport == "legacy_shm":
+            payload["shmName"] = shm_name
         emit_ui_command(
             self.node_id,
             "viz.audio.set",
-            {
-                "shmName": shm_name,
-                "serviceId": str(self._service_id or "").strip(),
-                "audioTransport": str(self._audio_transport or "zenoh"),
-                "audioKey": audio_key,
-                "throttleMs": int(self._throttle_ms),
-                "historyMs": int(self._history_ms),
-                "channel": int(self._channel),
-            },
+            payload,
             ts_ms=int(now_ms),
         )
 

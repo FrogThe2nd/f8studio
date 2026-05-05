@@ -336,6 +336,7 @@ class ZenohTransport::Impl final {
             }
           },
           []() {});
+      std::this_thread::sleep_for(kSubscriptionSettle);
       return std::make_unique<ZenohQueryableHandle>(std::move(queryable));
     } catch (const std::exception& exc) {
       spdlog::error("zenoh serve failed subject={}: {}", subject, exc.what());
@@ -541,11 +542,13 @@ class ZenohTransport::Impl final {
         zenoh::KeyExpr(std::string("f8/svc/") + service_id_ + "/state/**"),
         [this](zenoh::Query& query) { reply_to_kv_query(query); }, []() {});
     internal_queryables_.push_back(std::make_unique<ZenohQueryableHandle>(std::move(state_queryable)));
+    std::this_thread::sleep_for(kSubscriptionSettle);
 
     auto kv_queryable = session_->declare_queryable(
         zenoh::KeyExpr(std::string("f8/svc/") + service_id_ + "/kv/**"),
         [this](zenoh::Query& query) { reply_to_kv_query(query); }, []() {});
     internal_queryables_.push_back(std::make_unique<ZenohQueryableHandle>(std::move(kv_queryable)));
+    std::this_thread::sleep_for(kSubscriptionSettle);
 #endif
   }
 

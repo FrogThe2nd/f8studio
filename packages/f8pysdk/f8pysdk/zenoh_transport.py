@@ -227,6 +227,7 @@ class ZenohTransport:
         )
         handle = _ZenohServeHandle(declaration, task)
         self._serve_handles.append(handle)
+        await asyncio.sleep(_SUBSCRIPTION_SETTLE_S)
         return handle
 
     async def kv_put(self, key: str, value: bytes) -> None:
@@ -315,6 +316,7 @@ class ZenohTransport:
             self._pump_kv_queryable(declaration, key_expr=key_expr),
             name=f"zenoh_kv_queryable:{key_expr}",
         )
+        await asyncio.sleep(_SUBSCRIPTION_SETTLE_S)
         return _ZenohServeHandle(declaration, task)
 
     async def _pump_subscriber(

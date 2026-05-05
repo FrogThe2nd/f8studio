@@ -54,20 +54,20 @@ class VizVideoOperatorTests(unittest.IsolatedAsyncioTestCase):
             await runtime._push_config_async(now_ms=123)
 
         payload = dict(emit.call_args.args[2])
-        assert payload["shmName"] == ""
         assert payload["videoTransport"] == "zenoh"
         assert payload["videoKey"] == zenoh_data_key("svc_scalar", node_id="svc_scalar", port_id="video")
+        assert "shmName" not in payload
         assert payload["throttleMs"] == 17
-        assert payload["flowShmName"] == "shm.flow"
         assert payload["flowTransport"] == "zenoh"
         assert payload["flowKey"] == "f8/test/flow"
+        assert "flowShmName" not in payload
         assert payload["flowDisplayMode"] == "hsv"
         assert payload["flowMagScale"] == 5.0
         assert payload["flowStride"] == 9
         assert payload["scaleMode"] == "fit"
-        assert payload["scalarShmName"] == "shm.scalar"
         assert payload["scalarTransport"] == "zenoh"
         assert payload["scalarKey"] == "f8/test/scalar"
+        assert "scalarShmName" not in payload
         assert payload["scalarDisplayMode"] == "colormap"
         assert payload["scalarColormap"] == "viridis"
         assert payload["scalarRangeMode"] == "manual"
@@ -93,6 +93,27 @@ class VizVideoOperatorTests(unittest.IsolatedAsyncioTestCase):
         assert payload["scalarColormap"] == "turbo"
         assert payload["scalarRangeMode"] == "auto"
         assert payload["scalarNanMode"] == "transparent"
+
+    async def test_push_config_keeps_legacy_shm_fields_when_selected(self) -> None:
+        runtime = _build_runtime()
+        runtime._service_id = "svc_legacy"
+        runtime._video_transport = "legacy_shm"
+        runtime._shm_name = "shm.video"
+        runtime._flow_transport = "legacy_shm"
+        runtime._flow_shm_name = "shm.flow"
+        runtime._scalar_transport = "legacy_shm"
+        runtime._scalar_shm_name = "shm.scalar"
+
+        with patch("f8pystudio.operators.viz_video.emit_ui_command") as emit:
+            await runtime._push_config_async(now_ms=123)
+
+        payload = dict(emit.call_args.args[2])
+        assert payload["videoTransport"] == "legacy_shm"
+        assert payload["shmName"] == "shm.video"
+        assert payload["flowTransport"] == "legacy_shm"
+        assert payload["flowShmName"] == "shm.flow"
+        assert payload["scalarTransport"] == "legacy_shm"
+        assert payload["scalarShmName"] == "shm.scalar"
 
 
 if __name__ == "__main__":
