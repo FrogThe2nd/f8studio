@@ -41,7 +41,7 @@ class RuntimeSessionControllerMixin:
     def _runtime_bus_backend(self) -> BusBackend:
         cfg = self._cfg
         if cfg is None:
-            return "nats"
+            return "zenoh"
         text = str(cfg.bus_backend).strip().lower()
         if text == "nats":
             return "nats"

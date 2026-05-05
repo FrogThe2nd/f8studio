@@ -78,7 +78,7 @@ class RemoteStateWatcher:
         nats_url: str,
         studio_service_id: str,
         on_state: Callable[[str, str, str, Any, int, dict[str, Any]], Awaitable[None] | None],
-        bus_backend: BusBackend = "nats",
+        bus_backend: BusBackend = "zenoh",
         zenoh_config_path: str | None = None,
         zenoh_connect: tuple[str, ...] = (),
         zenoh_listen: tuple[str, ...] = (),

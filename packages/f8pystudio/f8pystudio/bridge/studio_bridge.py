@@ -88,7 +88,7 @@ class PyStudioServiceBridgeConfig:
 class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleControllerMixin, DeployStateControllerMixin, RemoteCommandControllerMixin, QtCore.QObject):
     """
     Orchestrate:
-    - singleton studio presence (NATS micro ping/info)
+    - singleton studio presence (Zenoh liveliness by default; NATS micro for explicit NATS fallback)
     - start service processes
     - deploy per-service rungraphs
     - monitor remote state via Studio-side KV watches (UI reflection)
@@ -444,7 +444,6 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
                 self._process_gateway.stop(StopServiceRequest(service_id=sid))
             except Exception as exc:
                 self._report_exception(f"stop service process failed serviceId={sid}", exc)
-
 
 
 

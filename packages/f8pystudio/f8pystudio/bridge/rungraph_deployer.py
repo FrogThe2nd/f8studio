@@ -26,7 +26,7 @@ class RungraphDeployConfig:
     nats_url: str
     ready_timeout_s: float = 6.0
     request_timeout_s: float = 2.0
-    bus_backend: BusBackend = "nats"
+    bus_backend: BusBackend = "zenoh"
     client_service_id: str = "studio"
     zenoh_config_path: str | None = None
     zenoh_connect: tuple[str, ...] = ()

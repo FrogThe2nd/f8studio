@@ -58,6 +58,7 @@ def test_runtime_session_returns_block_message_when_singleton_detected(monkeypat
     )
 
     controller = _Controller()
+    controller._cfg = SimpleNamespace(bus_backend="nats", nats_url="nats://127.0.0.1:4222")
 
     result = asyncio.run(controller._start_async())
 
@@ -65,6 +66,12 @@ def test_runtime_session_returns_block_message_when_singleton_detected(monkeypat
     assert controller._nc is None
     assert ensured_urls == ["nats://127.0.0.1:4222"]
     assert result == SINGLETON_GUARD_DIALOG_MESSAGE
+
+
+def test_runtime_session_defaults_to_zenoh_backend() -> None:
+    controller = _Controller()
+
+    assert controller._runtime_bus_backend() == "zenoh"
 
 
 def test_zenoh_singleton_guard_allows_start_when_liveliness_query_drains(monkeypatch) -> None:
