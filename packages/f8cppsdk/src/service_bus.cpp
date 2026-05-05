@@ -1268,7 +1268,10 @@ void ServiceBus::stop() {
           kv.second->stop_watch();
           kv.second->close();
         }
+      } catch (const std::exception& exc) {
+        spdlog::warn("peer KV stop failed serviceId={} peer={}: {}", cfg_.service_id, kv.first, exc.what());
       } catch (...) {
+        spdlog::warn("peer KV stop failed serviceId={} peer={}: unknown error", cfg_.service_id, kv.first);
       }
     }
     peer_kv_by_service_id_.clear();
@@ -1384,7 +1387,10 @@ void ServiceBus::set_active_local(bool active, const json& meta, const std::stri
   for (const auto& n : nodes) {
     try {
       if (n) n->on_lifecycle(active, meta);
+    } catch (const std::exception& exc) {
+      spdlog::warn("lifecycle callback failed serviceId={}: {}", cfg_.service_id, exc.what());
     } catch (...) {
+      spdlog::warn("lifecycle callback failed serviceId={}: unknown error", cfg_.service_id);
       continue;
     }
   }
@@ -1716,6 +1722,10 @@ bool ServiceBus::on_set_state(const std::string& node_id, const std::string& fie
   std::string node_id_s;
   try {
     node_id_s = ensure_token(node_id, "node_id");
+  } catch (const std::exception& exc) {
+    error_code = "INVALID_ARGS";
+    error_message = std::string("invalid nodeId: ") + exc.what();
+    return false;
   } catch (...) {
     error_code = "INVALID_ARGS";
     error_message = "invalid nodeId";
@@ -1775,9 +1785,17 @@ bool ServiceBus::on_set_state(const std::string& node_id, const std::string& fie
       if (n->on_set_state(node_id, field, value, meta, error_code, error_message)) {
         return true;
       }
-    } catch (...) {
+    } catch (const std::exception& exc) {
+      spdlog::error("on_set_state callback failed serviceId={} nodeId={} field={}: {}", cfg_.service_id, node_id,
+                    field, exc.what());
       error_code = "INTERNAL_ERROR";
-      error_message = "on_set_state threw";
+      error_message = exc.what();
+      return false;
+    } catch (...) {
+      spdlog::error("on_set_state callback failed serviceId={} nodeId={} field={}: unknown error", cfg_.service_id,
+                    node_id, field);
+      error_code = "INTERNAL_ERROR";
+      error_message = "on_set_state threw unknown error";
       return false;
     }
   }
@@ -1868,10 +1886,17 @@ bool ServiceBus::dispatch_command_call(const std::string& call, const json& args
       if (n->on_command(call, args, meta, result, error_code, error_message)) {
         return true;
       }
-    } catch (...) {
+    } catch (const std::exception& exc) {
+      spdlog::error("on_command callback failed serviceId={} call={}: {}", cfg_.service_id, call, exc.what());
       error_code = "INTERNAL_ERROR";
-      error_message = "on_command threw";
-      monitor_record_error("INTERNAL_ERROR", "on_command threw");
+      error_message = exc.what();
+      monitor_record_error("INTERNAL_ERROR", std::string("on_command threw: ") + exc.what());
+      return false;
+    } catch (...) {
+      spdlog::error("on_command callback failed serviceId={} call={}: unknown error", cfg_.service_id, call);
+      error_code = "INTERNAL_ERROR";
+      error_message = "on_command threw unknown error";
+      monitor_record_error("INTERNAL_ERROR", "on_command threw unknown error");
       return false;
     }
   }
