@@ -5,10 +5,12 @@
 #include <array>
 #include <cctype>
 #include <chrono>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
@@ -31,6 +33,7 @@
 #include "mpv_player.h"
 #include "openxr_presenter.h"
 #include "sdl_video_window.h"
+#include "video_frame_sink.h"
 
 #if defined(_WIN32)
 #define F8_POPEN _popen
@@ -52,6 +55,92 @@ using f8::cppsdk::describe::schema_string_enum;
 using f8::cppsdk::describe::state_field;
 
 namespace {
+
+class ShmVideoFrameSink final : public VideoFrameSink {
+ public:
+  explicit ShmVideoFrameSink(std::shared_ptr<VideoSharedMemorySink> sink) : sink_(std::move(sink)) {}
+
+  bool ensureConfiguration(unsigned width, unsigned height) override {
+    return sink_ && sink_->ensureConfiguration(width, height);
+  }
+
+  bool writeFrame(const void* data, unsigned stride_bytes) override {
+    return sink_ && sink_->writeFrame(data, stride_bytes);
+  }
+
+  unsigned outputWidth() const override { return sink_ ? sink_->outputWidth() : 0; }
+  unsigned outputHeight() const override { return sink_ ? sink_->outputHeight() : 0; }
+  unsigned outputPitch() const override { return sink_ ? sink_->outputPitch() : 0; }
+  std::uint64_t frameId() const override { return sink_ ? sink_->frameId() : 0; }
+
+ private:
+  std::shared_ptr<VideoSharedMemorySink> sink_;
+};
+
+class ZenohVideoFrameSink final : public VideoFrameSink {
+ public:
+  explicit ZenohVideoFrameSink(std::shared_ptr<f8::cppsdk::ZenohLatestVideoFramePublisher> publisher)
+      : publisher_(std::move(publisher)) {}
+
+  bool ensureConfiguration(unsigned width, unsigned height) override {
+    if (width == 0 || height == 0) {
+      return false;
+    }
+    width_ = width;
+    height_ = height;
+    pitch_ = width * 4u;
+    return true;
+  }
+
+  bool writeFrame(const void* data, unsigned stride_bytes) override {
+    if (!publisher_ || !publisher_->valid() || !data || width_ == 0 || height_ == 0 || pitch_ == 0) {
+      return false;
+    }
+    if (stride_bytes < pitch_) {
+      return false;
+    }
+
+    const std::byte* payload = static_cast<const std::byte*>(data);
+    std::size_t payload_bytes = static_cast<std::size_t>(pitch_) * static_cast<std::size_t>(height_);
+    if (stride_bytes != pitch_) {
+      scratch_.assign(payload_bytes, std::byte{0});
+      for (unsigned y = 0; y < height_; ++y) {
+        std::memcpy(scratch_.data() + static_cast<std::size_t>(y) * pitch_,
+                    payload + static_cast<std::size_t>(y) * stride_bytes, pitch_);
+      }
+      payload = scratch_.data();
+      payload_bytes = scratch_.size();
+    }
+
+    f8::cppsdk::VideoFrameView frame;
+    frame.width = width_;
+    frame.height = height_;
+    frame.pitch = pitch_;
+    frame.format = f8::cppsdk::kVideoFormatBgra32;
+    frame.frame_id = frame_id_ + 1;
+    frame.ts_ms = f8::cppsdk::now_ms();
+    frame.payload = payload;
+    frame.payload_bytes = payload_bytes;
+    if (!publisher_->publish_frame(frame)) {
+      return false;
+    }
+    frame_id_ = frame.frame_id;
+    return true;
+  }
+
+  unsigned outputWidth() const override { return width_; }
+  unsigned outputHeight() const override { return height_; }
+  unsigned outputPitch() const override { return pitch_; }
+  std::uint64_t frameId() const override { return frame_id_; }
+
+ private:
+  std::shared_ptr<f8::cppsdk::ZenohLatestVideoFramePublisher> publisher_;
+  unsigned width_ = 0;
+  unsigned height_ = 0;
+  unsigned pitch_ = 0;
+  std::uint64_t frame_id_ = 0;
+  std::vector<std::byte> scratch_;
+};
 
 std::string new_video_id() {
   static std::atomic<std::uint64_t> g_seq{0};
@@ -554,13 +643,19 @@ bool ImPlayerService::start() {
   const auto runtime_backend =
       f8::cppsdk::runtime_backend_config_with_legacy_nats_url(cfg_.runtime_backend, cfg_.nats_url);
 
-  shm_ = std::make_shared<VideoSharedMemorySink>();
-  const auto shm_name = f8::cppsdk::shm::video_shm_name(cfg_.service_id);
-  if (!shm_->initialize(shm_name, cfg_.video_shm_bytes, cfg_.video_shm_slots)) {
-    spdlog::error("failed to initialize video shm sink name={} bytes={} slots={}", shm_name, cfg_.video_shm_bytes,
-                  cfg_.video_shm_slots);
-    return false;
-  }
+  auto initialize_legacy_shm_sink = [this]() -> bool {
+    shm_ = std::make_shared<VideoSharedMemorySink>();
+    const auto shm_name = f8::cppsdk::shm::video_shm_name(cfg_.service_id);
+    if (!shm_->initialize(shm_name, cfg_.video_shm_bytes, cfg_.video_shm_slots)) {
+      spdlog::error("failed to initialize video shm sink name={} bytes={} slots={}", shm_name, cfg_.video_shm_bytes,
+                    cfg_.video_shm_slots);
+      shm_.reset();
+      frame_sink_.reset();
+      return false;
+    }
+    frame_sink_ = std::make_shared<ShmVideoFrameSink>(shm_);
+    return true;
+  };
 
   if (runtime_backend.bus_backend == f8::cppsdk::BusBackend::kZenoh) {
     const std::string key = f8::cppsdk::zenoh_data_key(cfg_.service_id, cfg_.service_id, "video");
@@ -568,16 +663,19 @@ bool ImPlayerService::start() {
     if (publisher->open(runtime_backend, key)) {
       zenoh_video_key_ = key;
       zenoh_video_publisher_ = publisher;
-      shm_->set_frame_observer([publisher](const f8::cppsdk::VideoFrameView& frame) {
-        (void)publisher->publish_frame(frame);
-      });
+      frame_sink_ = std::make_shared<ZenohVideoFrameSink>(publisher);
       spdlog::info("implayer zenoh video publisher enabled serviceId={} key={}", cfg_.service_id, key);
     } else {
       zenoh_video_key_.clear();
       zenoh_video_publisher_.reset();
-      spdlog::warn("implayer zenoh video publisher unavailable serviceId={}, falling back to legacy SHM metadata",
+      spdlog::warn("implayer zenoh video publisher unavailable serviceId={}, falling back to legacy SHM",
                    cfg_.service_id);
+      if (!initialize_legacy_shm_sink()) {
+        return false;
+      }
     }
+  } else if (!initialize_legacy_shm_sink()) {
+    return false;
   }
 
   SdlVideoWindow::Config wcfg;
@@ -669,7 +767,7 @@ bool ImPlayerService::start() {
     spdlog::error("mpv init failed: unknown error");
     return false;
   }
-  player_->setSharedMemorySink(shm_);
+  player_->setVideoFrameSink(frame_sink_);
   if (!player_->initializeGl()) {
     spdlog::error("failed to initialize mpv GL render context");
     return false;
@@ -698,14 +796,13 @@ bool ImPlayerService::start() {
   bus_->add_command_node(this, ImPlayerService::describe());
   if (!bus_->start()) {
     bus_.reset();
-    if (shm_) {
-      shm_->clear_frame_observer();
-    }
     if (zenoh_video_publisher_) {
       zenoh_video_publisher_->close();
     }
     zenoh_video_publisher_.reset();
     zenoh_video_key_.clear();
+    frame_sink_.reset();
+    shm_.reset();
     return false;
   }
 
@@ -754,14 +851,12 @@ void ImPlayerService::stop() {
   gui_.reset();
   player_.reset();
   window_.reset();
-  if (shm_) {
-    shm_->clear_frame_observer();
-  }
   if (zenoh_video_publisher_) {
     zenoh_video_publisher_->close();
   }
   zenoh_video_publisher_.reset();
   zenoh_video_key_.clear();
+  frame_sink_.reset();
   shm_.reset();
 }
 
@@ -2247,8 +2342,6 @@ bool ImPlayerService::apply_auth_options_locked(std::string& err) {
 }
 
 void ImPlayerService::publish_static_state() {
-  if (!shm_)
-    return;
   const json meta = json{{"via", "startup"}};
 
   std::vector<std::pair<std::string, json>> updates;
@@ -2262,12 +2355,12 @@ void ImPlayerService::publish_static_state() {
       updates.emplace_back(field, v);
     };
     want("serviceClass", cfg_.service_class);
-    want("videoShmName", shm_->regionName());
-    want("videoShmEvent", shm_->frameEventName());
+    want("videoShmName", shm_ ? shm_->regionName() : "");
+    want("videoShmEvent", shm_ ? shm_->frameEventName() : "");
     const bool use_zenoh_video =
         zenoh_video_publisher_ && zenoh_video_publisher_->valid() && !zenoh_video_key_.empty();
     want("videoTransport", use_zenoh_video ? "zenoh" : "legacy_shm");
-    want("videoKey", use_zenoh_video ? zenoh_video_key_ : shm_->regionName());
+    want("videoKey", use_zenoh_video ? zenoh_video_key_ : (shm_ ? shm_->regionName() : ""));
     want("videoFormat", "bgra32");
     want("videoFrameSchemaVersion", 1);
     want("loop", loop_);
@@ -2326,10 +2419,10 @@ void ImPlayerService::publish_dynamic_state() {
     want("decodedWidth", static_cast<std::int64_t>(decoded_w));
     want("decodedHeight", static_cast<std::int64_t>(decoded_h));
 
-    if (shm_) {
-      want("videoWidth", shm_->outputWidth());
-      want("videoHeight", shm_->outputHeight());
-      want("videoPitch", shm_->outputPitch());
+    if (frame_sink_) {
+      want("videoWidth", frame_sink_->outputWidth());
+      want("videoHeight", frame_sink_->outputHeight());
+      want("videoPitch", frame_sink_->outputPitch());
     }
   }
 

@@ -17,16 +17,12 @@ extern "C" {
 #include <mpv/render_gl.h>
 }
 
-namespace f8::cppsdk {
-class VideoSharedMemorySink;
-}
-
 namespace f8::implayer {
 
-using VideoSharedMemorySink = ::f8::cppsdk::VideoSharedMemorySink;
+class VideoFrameSink;
 
- class MpvPlayer {
-  public:
+class MpvPlayer {
+ public:
   enum class ShmViewMode {
     FullFrame = 0,
     SbsLeft = 1,
@@ -97,7 +93,7 @@ using VideoSharedMemorySink = ::f8::cppsdk::VideoSharedMemorySink;
   bool setCookiesFile(const std::string& cookies_file);
   void resetVideoOutput();
   void resetPlaybackState();
-  void setSharedMemorySink(std::shared_ptr<VideoSharedMemorySink> sink);
+  void setVideoFrameSink(std::shared_ptr<VideoFrameSink> sink);
   void setVideoShmMaxSize(std::uint32_t max_width, std::uint32_t max_height);
   void setVideoShmMaxFps(double max_fps);
   void setShmViewMode(ShmViewMode mode);
@@ -133,7 +129,7 @@ using VideoSharedMemorySink = ::f8::cppsdk::VideoSharedMemorySink;
   void notifyEofReachedOnce();
   void handleVideoReconfig();
   std::pair<unsigned, unsigned> targetDimensions(unsigned width, unsigned height) const;
-  std::shared_ptr<VideoSharedMemorySink> sharedSink() const;
+  std::shared_ptr<VideoFrameSink> sharedSink() const;
   bool ensureVideoTargets(unsigned width, unsigned height);
   bool ensureDownsampleTargets(unsigned width, unsigned height);
   bool ensureReadbackPbos(std::size_t bytes);
@@ -166,7 +162,7 @@ using VideoSharedMemorySink = ::f8::cppsdk::VideoSharedMemorySink;
   bool eventNotified_ = false;
 
   mutable std::mutex sinkMutex_;
-  std::shared_ptr<VideoSharedMemorySink> sink_;
+  std::shared_ptr<VideoFrameSink> sink_;
 
   // SHM rate-limiter state (render thread).
   mutable std::mutex shmRateMutex_;

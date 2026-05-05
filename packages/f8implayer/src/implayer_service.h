@@ -29,6 +29,7 @@ namespace f8::implayer {
 class MpvPlayer;
 class ImPlayerGui;
 class OpenXrPresenter;
+class VideoFrameSink;
 using VideoSharedMemorySink = ::f8::cppsdk::VideoSharedMemorySink;
 
 class ImPlayerService final : public f8::cppsdk::LifecycleNode,
@@ -128,6 +129,7 @@ class ImPlayerService final : public f8::cppsdk::LifecycleNode,
   std::unique_ptr<OpenXrPresenter> openxr_;
   std::unique_ptr<ImPlayerGui> gui_;
   std::unique_ptr<MpvPlayer> player_;
+  std::shared_ptr<VideoFrameSink> frame_sink_;
   std::shared_ptr<VideoSharedMemorySink> shm_;
   std::shared_ptr<f8::cppsdk::ZenohLatestVideoFramePublisher> zenoh_video_publisher_;
   std::string zenoh_video_key_;

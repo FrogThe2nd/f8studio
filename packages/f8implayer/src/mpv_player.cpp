@@ -14,7 +14,7 @@
 #include <spdlog/spdlog.h>
 
 #include "gl_loader.h"
-#include "f8cppsdk/video_shared_memory_sink.h"
+#include "video_frame_sink.h"
 
 namespace f8::implayer {
 
@@ -356,7 +356,7 @@ bool MpvPlayer::setCookiesFile(const std::string& cookies_file) {
   return true;
 }
 
-void MpvPlayer::setSharedMemorySink(std::shared_ptr<VideoSharedMemorySink> sink) {
+void MpvPlayer::setVideoFrameSink(std::shared_ptr<VideoFrameSink> sink) {
   std::lock_guard<std::mutex> lock(sinkMutex_);
   sink_ = std::move(sink);
 }
@@ -780,7 +780,7 @@ std::pair<unsigned, unsigned> MpvPlayer::targetDimensions(unsigned width, unsign
   return {static_cast<unsigned>(out_w), static_cast<unsigned>(out_h)};
 }
 
-std::shared_ptr<VideoSharedMemorySink> MpvPlayer::sharedSink() const {
+std::shared_ptr<VideoFrameSink> MpvPlayer::sharedSink() const {
   std::lock_guard<std::mutex> lock(sinkMutex_);
   return sink_;
 }
