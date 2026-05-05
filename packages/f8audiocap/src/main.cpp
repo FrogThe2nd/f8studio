@@ -41,6 +41,7 @@ int main(int argc, char** argv) {
       "tone-hz", "Sine tone Hz (mode=sine)", cxxopts::value<double>()->default_value("440.0"))(
       "gain", "Output gain 0..1", cxxopts::value<double>()->default_value("0.1"))("help", "Show help");
   f8::cppsdk::add_runtime_backend_options(options);
+  f8::cppsdk::add_audio_transport_backend_option(options);
 
   auto result = options.parse(argc, argv);
   if (result.count("help")) {
@@ -101,11 +102,17 @@ int main(int argc, char** argv) {
   if (f8::cppsdk::should_warn_ignored_nats_url(result, runtime_backend)) {
     spdlog::warn("--nats-url is ignored unless --bus-backend nats");
   }
+  f8::cppsdk::AudioTransportBackend audio_backend = f8::cppsdk::AudioTransportBackend::kAuto;
+  if (!f8::cppsdk::read_audio_transport_backend_option(result, audio_backend, runtime_error)) {
+    std::cerr << runtime_error << "\n";
+    return 2;
+  }
 
   f8::audiocap::AudioCapService::Config cfg;
   cfg.service_id = service_id;
   cfg.runtime_backend = runtime_backend;
   cfg.nats_url = runtime_backend.nats_url;
+  cfg.audio_backend = audio_backend;
   cfg.audio_shm_bytes = result["shm-bytes"].as<std::size_t>();
   cfg.sample_rate = result["sample-rate"].as<std::uint32_t>();
   cfg.channels = result["channels"].as<std::uint16_t>();

@@ -22,6 +22,12 @@ enum class VideoTransportBackend {
   kLegacyShm,
 };
 
+enum class AudioTransportBackend {
+  kAuto,
+  kZenoh,
+  kLegacyShm,
+};
+
 struct RuntimeBackendConfig {
   BusBackend bus_backend = BusBackend::kZenoh;
   std::string nats_url = kDefaultNatsUrl;
@@ -35,6 +41,8 @@ std::string bus_backend_to_string(BusBackend backend);
 bool parse_bus_backend(std::string_view value, BusBackend& backend);
 std::string video_transport_backend_to_string(VideoTransportBackend backend);
 bool parse_video_transport_backend(std::string_view value, VideoTransportBackend& backend);
+std::string audio_transport_backend_to_string(AudioTransportBackend backend);
+bool parse_audio_transport_backend(std::string_view value, AudioTransportBackend& backend);
 std::string trim_runtime_string(std::string_view value);
 std::vector<std::string> normalize_endpoint_list(const std::vector<std::string>& values);
 std::vector<std::string> parse_endpoint_list(std::string_view value);
@@ -43,5 +51,6 @@ RuntimeBackendConfig runtime_backend_config_with_legacy_nats_url(RuntimeBackendC
                                                                 std::string_view legacy_nats_url);
 RuntimeBackendConfig runtime_backend_config_from_env();
 VideoTransportBackend video_transport_backend_from_env();
+AudioTransportBackend audio_transport_backend_from_env();
 
 }  // namespace f8::cppsdk

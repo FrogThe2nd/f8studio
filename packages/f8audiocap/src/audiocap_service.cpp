@@ -157,7 +157,11 @@ bool AudioCapService::start() {
 
   zenoh_audio_seq_.store(0, std::memory_order_relaxed);
   zenoh_audio_frame_index_.store(0, std::memory_order_relaxed);
-  if (runtime_backend.bus_backend == f8::cppsdk::BusBackend::kZenoh) {
+  const bool use_zenoh_audio =
+      cfg_.audio_backend == f8::cppsdk::AudioTransportBackend::kZenoh ||
+      (cfg_.audio_backend == f8::cppsdk::AudioTransportBackend::kAuto &&
+       runtime_backend.bus_backend == f8::cppsdk::BusBackend::kZenoh);
+  if (use_zenoh_audio) {
     const std::string key = f8::cppsdk::zenoh_data_key(cfg_.service_id, cfg_.service_id, "audio");
     auto publisher = std::make_shared<f8::cppsdk::ZenohLatestAudioChunkPublisher>();
     if (publisher->open(runtime_backend, key)) {
@@ -215,8 +219,9 @@ bool AudioCapService::start() {
       publish_dynamic_state();
       running_.store(true, std::memory_order_release);
       stop_requested_.store(false, std::memory_order_release);
-      spdlog::info("audiocap started serviceId={} backend={} natsUrl={}", cfg_.service_id,
-                   f8::cppsdk::bus_backend_to_string(runtime_backend.bus_backend), runtime_backend.nats_url);
+      spdlog::info("audiocap started serviceId={} backend={} audioBackend={} natsUrl={}", cfg_.service_id,
+                   f8::cppsdk::bus_backend_to_string(runtime_backend.bus_backend),
+                   f8::cppsdk::audio_transport_backend_to_string(cfg_.audio_backend), runtime_backend.nats_url);
       return true;
     }
 
@@ -250,8 +255,9 @@ bool AudioCapService::start() {
 
   running_.store(true, std::memory_order_release);
   stop_requested_.store(false, std::memory_order_release);
-  spdlog::info("audiocap started serviceId={} backend={} natsUrl={}", cfg_.service_id,
-               f8::cppsdk::bus_backend_to_string(runtime_backend.bus_backend), runtime_backend.nats_url);
+  spdlog::info("audiocap started serviceId={} backend={} audioBackend={} natsUrl={}", cfg_.service_id,
+               f8::cppsdk::bus_backend_to_string(runtime_backend.bus_backend),
+               f8::cppsdk::audio_transport_backend_to_string(cfg_.audio_backend), runtime_backend.nats_url);
   return true;
 }
 

@@ -1,5 +1,7 @@
 #include "f8cppsdk/latest_audio_chunk_transport.h"
 
+#include "zenoh_config_internal.h"
+
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
@@ -235,15 +237,7 @@ class ZenohLatestAudioChunkPublisher::Impl final {
       if (!normalized.zenoh_listen.empty()) {
         zenoh_config.insert_json5("listen/endpoints", json_array_for_endpoints(normalized.zenoh_listen));
       }
-      zenoh_config.insert_json5("transport/shared_memory/enabled", "true");
-      if (normalized.zenoh_shm_pool_bytes > 0) {
-        try {
-          zenoh_config.insert_json5("transport/shared_memory/pool_size",
-                                    std::to_string(normalized.zenoh_shm_pool_bytes));
-        } catch (const std::exception& exc) {
-          spdlog::debug("zenoh C++ config does not expose shared-memory pool_size: {}", exc.what());
-        }
-      }
+      zenoh_internal::apply_shared_memory_config(zenoh_config, normalized.zenoh_shm_pool_bytes, key);
 
       session_ = std::make_unique<zenoh::Session>(zenoh::Session::open(std::move(zenoh_config)));
       key_expr_ = key;
@@ -375,15 +369,7 @@ class ZenohLatestAudioChunkSubscriber::Impl final {
       if (!normalized.zenoh_listen.empty()) {
         zenoh_config.insert_json5("listen/endpoints", json_array_for_endpoints(normalized.zenoh_listen));
       }
-      zenoh_config.insert_json5("transport/shared_memory/enabled", "true");
-      if (normalized.zenoh_shm_pool_bytes > 0) {
-        try {
-          zenoh_config.insert_json5("transport/shared_memory/pool_size",
-                                    std::to_string(normalized.zenoh_shm_pool_bytes));
-        } catch (const std::exception& exc) {
-          spdlog::debug("zenoh C++ config does not expose shared-memory pool_size: {}", exc.what());
-        }
-      }
+      zenoh_internal::apply_shared_memory_config(zenoh_config, normalized.zenoh_shm_pool_bytes, key);
 
       session_ = std::make_unique<zenoh::Session>(zenoh::Session::open(std::move(zenoh_config)));
       key_expr_ = key;
