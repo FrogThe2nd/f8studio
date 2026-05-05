@@ -122,6 +122,7 @@ bool DenseOptflowService::start() {
   input_zenoh_video_.reset();
   frame_bgra_.clear();
   flow_payload_.clear();
+  flow_output_frame_id_ = 0;
   last_notify_seq_ = 0;
   last_frame_id_ = 0;
   last_video_open_attempt_ms_ = 0;
@@ -153,9 +154,7 @@ bool DenseOptflowService::start() {
       flow_transport_ = "zenoh";
       flow_key_ = key;
       flow_zenoh_publisher_ = publisher;
-      flow_sink_.set_frame_observer([publisher](const f8::cppsdk::VideoFrameView& frame) {
-        (void)publisher->publish_frame(frame);
-      });
+      flow_sink_.clear_frame_observer();
       spdlog::info("dense_optflow zenoh flow publisher enabled serviceId={} key={}", cfg_.service_id, key);
     } else {
       flow_sink_.clear_frame_observer();
@@ -611,52 +610,87 @@ void DenseOptflowService::process_frame_once() {
 
   cv::Mat flow = flow_compute_;
 
-  std::string shm_name = service_runtime::trim_copy(flow_shm_name_);
-  if (shm_name.empty()) {
-    shm_name = "shm." + cfg_.service_id + ".flow";
-    flow_shm_name_ = shm_name;
-    publish_state_if_changed("flowShmName", flow_shm_name_, "runtime", json::object());
-  }
-  if (flow_sink_.regionName() != shm_name) {
-    if (!flow_sink_.initialize(shm_name, f8::cppsdk::shm::kDefaultVideoShmBytes, f8::cppsdk::shm::kDefaultVideoShmSlots)) {
+  const bool publish_zenoh_flow =
+      flow_transport_ == "zenoh" && flow_zenoh_publisher_ && flow_zenoh_publisher_->valid();
+
+  auto pack_flow_payload = [this, &flow](std::size_t flow_pitch) {
+    const std::size_t flow_bytes = flow_pitch * static_cast<std::size_t>(flow.rows);
+    if (flow_payload_.size() != flow_bytes) {
+      flow_payload_.assign(flow_bytes, std::byte{0});
+    }
+    for (int y = 0; y < flow.rows; ++y) {
+      std::byte* row = flow_payload_.data() + static_cast<std::size_t>(y) * flow_pitch;
+      for (int x = 0; x < flow.cols; ++x) {
+        const cv::Point2f d = flow.at<cv::Point2f>(y, x);
+        const std::uint16_t hu = float32_to_half(d.x);
+        const std::uint16_t hv = float32_to_half(d.y);
+        std::byte* px = row + static_cast<std::size_t>(x) * 4u;
+        px[0] = static_cast<std::byte>(hu & 0xFFu);
+        px[1] = static_cast<std::byte>((hu >> 8) & 0xFFu);
+        px[2] = static_cast<std::byte>(hv & 0xFFu);
+        px[3] = static_cast<std::byte>((hv >> 8) & 0xFFu);
+      }
+    }
+  };
+
+  if (publish_zenoh_flow) {
+    const std::size_t flow_pitch = static_cast<std::size_t>(flow.cols) * 4u;
+    pack_flow_payload(flow_pitch);
+
+    f8::cppsdk::VideoFrameView frame;
+    frame.width = static_cast<unsigned>(flow.cols);
+    frame.height = static_cast<unsigned>(flow.rows);
+    frame.pitch = static_cast<unsigned>(flow_pitch);
+    frame.format = f8::cppsdk::kVideoFormatFlow2F16;
+    frame.frame_id = ++flow_output_frame_id_;
+    frame.ts_ms = f8::cppsdk::now_ms();
+    frame.payload = flow_payload_.data();
+    frame.payload_bytes = flow_payload_.size();
+    if (!flow_zenoh_publisher_->publish_frame(frame)) {
       ++monitor_fail_frames_;
-      publish_error_if_changed("flow shm init failed: " + shm_name, "runtime", json::object());
+      publish_error_if_changed("flow zenoh publish failed: " + flow_key_, "runtime", json::object());
       gray_.copyTo(prev_gray_);
       return;
     }
-  }
-  if (!flow_sink_.ensureConfigurationForFormat(static_cast<unsigned>(flow.cols), static_cast<unsigned>(flow.rows),
-                                               f8::cppsdk::kVideoFormatFlow2F16, 4)) {
-    ++monitor_fail_frames_;
-    publish_error_if_changed("flow shm ensureConfiguration failed", "runtime", json::object());
-    gray_.copyTo(prev_gray_);
-    return;
-  }
-
-  const std::size_t flow_pitch = static_cast<std::size_t>(flow_sink_.outputPitch());
-  const std::size_t flow_bytes = flow_pitch * static_cast<std::size_t>(flow.rows);
-  if (flow_payload_.size() != flow_bytes) {
-    flow_payload_.assign(flow_bytes, std::byte{0});
-  }
-  for (int y = 0; y < flow.rows; ++y) {
-    std::byte* row = flow_payload_.data() + static_cast<std::size_t>(y) * flow_pitch;
-    for (int x = 0; x < flow.cols; ++x) {
-      const cv::Point2f d = flow.at<cv::Point2f>(y, x);
-      const std::uint16_t hu = float32_to_half(d.x);
-      const std::uint16_t hv = float32_to_half(d.y);
-      std::byte* px = row + static_cast<std::size_t>(x) * 4u;
-      px[0] = static_cast<std::byte>(hu & 0xFFu);
-      px[1] = static_cast<std::byte>((hu >> 8) & 0xFFu);
-      px[2] = static_cast<std::byte>(hv & 0xFFu);
-      px[3] = static_cast<std::byte>((hv >> 8) & 0xFFu);
+  } else {
+    std::string shm_name = service_runtime::trim_copy(flow_shm_name_);
+    if (shm_name.empty()) {
+      shm_name = "shm." + cfg_.service_id + ".flow";
+      flow_shm_name_ = shm_name;
+      publish_state_if_changed("flowShmName", flow_shm_name_, "runtime", json::object());
     }
-  }
+    if (flow_sink_.regionName() != shm_name) {
+      if (!flow_sink_.initialize(shm_name, f8::cppsdk::shm::kDefaultVideoShmBytes, f8::cppsdk::shm::kDefaultVideoShmSlots)) {
+        ++monitor_fail_frames_;
+        publish_error_if_changed("flow shm init failed: " + shm_name, "runtime", json::object());
+        gray_.copyTo(prev_gray_);
+        return;
+      }
+    }
+    if (!flow_sink_.ensureConfigurationForFormat(static_cast<unsigned>(flow.cols), static_cast<unsigned>(flow.rows),
+                                                 f8::cppsdk::kVideoFormatFlow2F16, 4)) {
+      ++monitor_fail_frames_;
+      publish_error_if_changed("flow shm ensureConfiguration failed", "runtime", json::object());
+      gray_.copyTo(prev_gray_);
+      return;
+    }
+    if (flow_sink_.outputWidth() != static_cast<unsigned>(flow.cols) ||
+        flow_sink_.outputHeight() != static_cast<unsigned>(flow.rows)) {
+      ++monitor_fail_frames_;
+      publish_error_if_changed("flow shm capacity too small for requested frame dimensions", "runtime", json::object());
+      gray_.copyTo(prev_gray_);
+      return;
+    }
+    const std::size_t flow_pitch = static_cast<std::size_t>(flow_sink_.outputPitch());
+    pack_flow_payload(flow_pitch);
 
-  if (!flow_sink_.writeFrameWithFormat(flow_payload_.data(), static_cast<unsigned>(flow_pitch), f8::cppsdk::kVideoFormatFlow2F16)) {
-    ++monitor_fail_frames_;
-    publish_error_if_changed("flow shm write failed", "runtime", json::object());
-    gray_.copyTo(prev_gray_);
-    return;
+    if (!flow_sink_.writeFrameWithFormat(flow_payload_.data(), static_cast<unsigned>(flow_pitch),
+                                         f8::cppsdk::kVideoFormatFlow2F16)) {
+      ++monitor_fail_frames_;
+      publish_error_if_changed("flow shm write failed", "runtime", json::object());
+      gray_.copyTo(prev_gray_);
+      return;
+    }
   }
 
   publish_state_if_changed("flowShmFormat", flow_shm_format_, "runtime", json::object());

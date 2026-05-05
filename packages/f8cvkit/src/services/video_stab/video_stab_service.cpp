@@ -157,6 +157,7 @@ bool VideoStabService::start() {
   input_zenoh_video_.reset();
   output_video_transport_ = "legacy_shm";
   output_video_key_.clear();
+  output_frame_id_ = 0;
   output_initialized_ = false;
   has_prev_gray_ = false;
   prev_gray_.release();
@@ -682,6 +683,16 @@ bool VideoStabService::ensure_output_open() {
   if (output_initialized_)
     return true;
 
+  if (output_video_transport_ == "zenoh" && output_zenoh_video_ && output_zenoh_video_->valid()) {
+    output_initialized_ = true;
+    publish_state_if_changed("videoTransport", output_video_transport_, "runtime", json::object());
+    publish_state_if_changed("videoKey", output_video_key_, "runtime", json::object());
+    publish_state_if_changed("videoFormat", "bgra32", "runtime", json::object());
+    publish_state_if_changed("videoFrameSchemaVersion", 1, "runtime", json::object());
+    publish_error_if_changed("", "runtime", json::object());
+    return true;
+  }
+
   const std::int64_t now = f8::cppsdk::now_ms();
   if (output_last_open_attempt_ms_ > 0 && (now - output_last_open_attempt_ms_) < 1000) {
     return false;
@@ -695,12 +706,7 @@ bool VideoStabService::ensure_output_open() {
     publish_error_if_changed("output shm init failed: " + output_shm_name_, "runtime", json::object());
     return false;
   }
-  if (output_zenoh_video_ && output_zenoh_video_->valid()) {
-    auto publisher = output_zenoh_video_;
-    output_video_->set_frame_observer([publisher](const f8::cppsdk::VideoFrameView& frame) {
-      (void)publisher->publish_frame(frame);
-    });
-  }
+  output_video_->clear_frame_observer();
 
   output_initialized_ = true;
   publish_state_if_changed("videoTransport", output_video_transport_, "runtime", json::object());
@@ -978,16 +984,33 @@ void VideoStabService::process_frame_once() {
     has_prev_gray_ = true;
   }
 
-  if (!output_video_ || !output_video_->ensureConfiguration(hdr.width, hdr.height)) {
-    ++monitor_fail_frames_;
-    publish_error_if_changed("output shm ensureConfiguration failed", "runtime", json::object());
-    return;
-  }
+  if (output_video_transport_ == "zenoh" && output_zenoh_video_ && output_zenoh_video_->valid()) {
+    f8::cppsdk::VideoFrameView frame;
+    frame.width = hdr.width;
+    frame.height = hdr.height;
+    frame.pitch = static_cast<unsigned>(stabilized.step[0]);
+    frame.format = f8::cppsdk::kVideoFormatBgra32;
+    frame.frame_id = ++output_frame_id_;
+    frame.ts_ms = f8::cppsdk::now_ms();
+    frame.payload = reinterpret_cast<const std::byte*>(stabilized.data);
+    frame.payload_bytes = stabilized.step[0] * static_cast<std::size_t>(stabilized.rows);
+    if (!output_zenoh_video_->publish_frame(frame)) {
+      ++monitor_fail_frames_;
+      publish_error_if_changed("output zenoh publish failed: " + output_video_key_, "runtime", json::object());
+      return;
+    }
+  } else {
+    if (!output_video_ || !output_video_->ensureConfiguration(hdr.width, hdr.height)) {
+      ++monitor_fail_frames_;
+      publish_error_if_changed("output shm ensureConfiguration failed", "runtime", json::object());
+      return;
+    }
 
-  if (!output_video_->writeFrame(stabilized.data, static_cast<unsigned>(stabilized.step[0]))) {
-    ++monitor_fail_frames_;
-    publish_error_if_changed("output shm writeFrame failed", "runtime", json::object());
-    return;
+    if (!output_video_->writeFrame(stabilized.data, static_cast<unsigned>(stabilized.step[0]))) {
+      ++monitor_fail_frames_;
+      publish_error_if_changed("output shm writeFrame failed", "runtime", json::object());
+      return;
+    }
   }
   publish_state_if_changed("videoTransport", output_video_transport_, "runtime", json::object());
   publish_state_if_changed("videoKey", output_video_key_, "runtime", json::object());

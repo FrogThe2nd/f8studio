@@ -109,6 +109,7 @@ bool FlowMetricService::start() {
   last_flow_open_attempt_ms_ = 0;
   frame_counter_ = 0;
   scalar_payload_.clear();
+  scalar_output_frame_id_ = 0;
   flow_u_.release();
   flow_v_.release();
   du_dx_.release();
@@ -134,9 +135,7 @@ bool FlowMetricService::start() {
       scalar_transport_ = "zenoh";
       scalar_key_ = key;
       scalar_zenoh_publisher_ = publisher;
-      scalar_sink_.set_frame_observer([publisher](const f8::cppsdk::VideoFrameView& frame) {
-        (void)publisher->publish_frame(frame);
-      });
+      scalar_sink_.clear_frame_observer();
       spdlog::info("flow_metric zenoh scalar publisher enabled serviceId={} key={}", cfg_.service_id, key);
     } else {
       scalar_sink_.clear_frame_observer();
@@ -638,39 +637,74 @@ void FlowMetricService::process_frame_once() {
     return;
   }
 
-  std::string shm_name = service_runtime::trim_copy(scalar_shm_name_);
-  if (shm_name.empty()) {
-    shm_name = "shm." + cfg_.service_id + ".scalar";
-    scalar_shm_name_ = shm_name;
-    publish_state_if_changed("scalarShmName", scalar_shm_name_, "runtime", json::object());
-  }
-  if (scalar_sink_.regionName() != shm_name) {
-    if (!scalar_sink_.initialize(shm_name, f8::cppsdk::shm::kDefaultVideoShmBytes, f8::cppsdk::shm::kDefaultVideoShmSlots)) {
+  const bool publish_zenoh_scalar =
+      scalar_transport_ == "zenoh" && scalar_zenoh_publisher_ && scalar_zenoh_publisher_->valid();
+
+  auto pack_scalar_payload = [this, width, height](std::size_t scalar_pitch) {
+    const std::size_t scalar_bytes = scalar_pitch * static_cast<std::size_t>(height);
+    scalar_payload_.assign(scalar_bytes, std::byte{0});
+    for (int y = 0; y < height; ++y) {
+      const float* src = metric_output_.ptr<float>(y);
+      std::byte* dst = scalar_payload_.data() + static_cast<std::size_t>(y) * scalar_pitch;
+      std::memcpy(dst, src, static_cast<std::size_t>(width) * sizeof(float));
+    }
+  };
+
+  if (publish_zenoh_scalar) {
+    const std::size_t scalar_pitch = static_cast<std::size_t>(width) * sizeof(float);
+    pack_scalar_payload(scalar_pitch);
+
+    f8::cppsdk::VideoFrameView frame;
+    frame.width = static_cast<unsigned>(width);
+    frame.height = static_cast<unsigned>(height);
+    frame.pitch = static_cast<unsigned>(scalar_pitch);
+    frame.format = f8::cppsdk::kVideoFormatScalar1F32;
+    frame.frame_id = ++scalar_output_frame_id_;
+    frame.ts_ms = f8::cppsdk::now_ms();
+    frame.payload = scalar_payload_.data();
+    frame.payload_bytes = scalar_payload_.size();
+    if (!scalar_zenoh_publisher_->publish_frame(frame)) {
       ++monitor_fail_frames_;
-      publish_error_if_changed("scalar shm init failed: " + shm_name, "runtime", json::object());
+      publish_error_if_changed("scalar zenoh publish failed: " + scalar_key_, "runtime", json::object());
       return;
     }
-  }
-  if (!scalar_sink_.ensureConfigurationForFormat(static_cast<unsigned>(width), static_cast<unsigned>(height),
-                                                 f8::cppsdk::kVideoFormatScalar1F32, 4)) {
-    ++monitor_fail_frames_;
-    publish_error_if_changed("scalar shm ensureConfiguration failed", "runtime", json::object());
-    return;
-  }
+  } else {
+    std::string shm_name = service_runtime::trim_copy(scalar_shm_name_);
+    if (shm_name.empty()) {
+      shm_name = "shm." + cfg_.service_id + ".scalar";
+      scalar_shm_name_ = shm_name;
+      publish_state_if_changed("scalarShmName", scalar_shm_name_, "runtime", json::object());
+    }
+    if (scalar_sink_.regionName() != shm_name) {
+      if (!scalar_sink_.initialize(shm_name, f8::cppsdk::shm::kDefaultVideoShmBytes,
+                                   f8::cppsdk::shm::kDefaultVideoShmSlots)) {
+        ++monitor_fail_frames_;
+        publish_error_if_changed("scalar shm init failed: " + shm_name, "runtime", json::object());
+        return;
+      }
+    }
+    if (!scalar_sink_.ensureConfigurationForFormat(static_cast<unsigned>(width), static_cast<unsigned>(height),
+                                                   f8::cppsdk::kVideoFormatScalar1F32, 4)) {
+      ++monitor_fail_frames_;
+      publish_error_if_changed("scalar shm ensureConfiguration failed", "runtime", json::object());
+      return;
+    }
+    if (scalar_sink_.outputWidth() != static_cast<unsigned>(width) ||
+        scalar_sink_.outputHeight() != static_cast<unsigned>(height)) {
+      ++monitor_fail_frames_;
+      publish_error_if_changed("scalar shm capacity too small for requested frame dimensions", "runtime",
+                               json::object());
+      return;
+    }
+    const std::size_t scalar_pitch = static_cast<std::size_t>(scalar_sink_.outputPitch());
+    pack_scalar_payload(scalar_pitch);
 
-  const std::size_t scalar_pitch = static_cast<std::size_t>(scalar_sink_.outputPitch());
-  const std::size_t scalar_bytes = scalar_pitch * static_cast<std::size_t>(height);
-  scalar_payload_.assign(scalar_bytes, std::byte{0});
-  for (int y = 0; y < height; ++y) {
-    const float* src = metric_output_.ptr<float>(y);
-    std::byte* dst = scalar_payload_.data() + static_cast<std::size_t>(y) * scalar_pitch;
-    std::memcpy(dst, src, static_cast<std::size_t>(width) * sizeof(float));
-  }
-  if (!scalar_sink_.writeFrameWithFormat(scalar_payload_.data(), static_cast<unsigned>(scalar_pitch),
-                                         f8::cppsdk::kVideoFormatScalar1F32)) {
-    ++monitor_fail_frames_;
-    publish_error_if_changed("scalar shm write failed", "runtime", json::object());
-    return;
+    if (!scalar_sink_.writeFrameWithFormat(scalar_payload_.data(), static_cast<unsigned>(scalar_pitch),
+                                           f8::cppsdk::kVideoFormatScalar1F32)) {
+      ++monitor_fail_frames_;
+      publish_error_if_changed("scalar shm write failed", "runtime", json::object());
+      return;
+    }
   }
 
   publish_state_if_changed("metricMode", metric_mode_state_, "runtime", json::object());

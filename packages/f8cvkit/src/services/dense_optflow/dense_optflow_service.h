@@ -88,6 +88,7 @@ class DenseOptflowService final : public f8::cppsdk::LifecycleNode,
   std::shared_ptr<f8::cppsdk::ZenohLatestVideoFramePublisher> flow_zenoh_publisher_;
   std::vector<std::byte> frame_bgra_;
   std::vector<std::byte> flow_payload_;
+  std::uint64_t flow_output_frame_id_ = 0;
   std::uint32_t last_notify_seq_ = 0;
   std::uint64_t last_frame_id_ = 0;
   std::int64_t last_video_open_attempt_ms_ = 0;

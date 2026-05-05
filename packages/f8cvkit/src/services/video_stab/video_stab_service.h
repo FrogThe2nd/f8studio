@@ -115,6 +115,7 @@ class VideoStabService final : public f8::cppsdk::LifecycleNode,
   std::string output_video_key_;
   std::unique_ptr<f8::cppsdk::VideoSharedMemorySink> output_video_;
   std::shared_ptr<f8::cppsdk::ZenohLatestVideoFramePublisher> output_zenoh_video_;
+  std::uint64_t output_frame_id_ = 0;
   bool output_initialized_ = false;
   std::int64_t output_last_open_attempt_ms_ = 0;
 

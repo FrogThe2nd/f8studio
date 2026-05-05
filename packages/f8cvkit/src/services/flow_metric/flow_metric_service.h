@@ -99,6 +99,7 @@ class FlowMetricService final : public f8::cppsdk::LifecycleNode,
   f8::cppsdk::VideoSharedMemorySink scalar_sink_;
   std::shared_ptr<f8::cppsdk::ZenohLatestVideoFramePublisher> scalar_zenoh_publisher_;
   std::vector<std::byte> scalar_payload_;
+  std::uint64_t scalar_output_frame_id_ = 0;
 
   // Temporary compute buffers.
   cv::Mat flow_u_;
