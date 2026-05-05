@@ -5,6 +5,7 @@
 #include <cstring>
 #include <limits>
 #include <utility>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 #include <opencv2/imgproc.hpp>
@@ -291,11 +292,12 @@ void FlowMetricService::on_state(const std::string& node_id, const std::string& 
   }
 
   if (field == "inputFlowTransport" && value.is_string()) {
-    const std::string next =
+    std::string next =
         service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(value.get<std::string>()));
-    if (next != "legacy_shm" && next != "zenoh") {
-      publish_error_if_changed("invalid inputFlowTransport: " + next, "state", meta);
-      return;
+    if (next == "shm") {
+      next = "legacy_shm";
+    } else if (next != "legacy_shm" && next != "zenoh") {
+      next = "zenoh";
     }
     {
       std::lock_guard<std::mutex> lock(io_mu_);
@@ -733,8 +735,10 @@ json FlowMetricService::describe() {
   service["stateFields"] = json::array({
       state_field("inputFlowShmName", schema_string(), "rw", "Input Flow SHM",
                   "Input flow SHM name (format flow2_f16, e.g. shm.xxx.flow).", true),
-      state_field("inputFlowTransport", schema_string_enum({"legacy_shm", "zenoh"}), "rw", "Input Flow Transport",
-                  "Input flow frame transport backend.", false),
+      state_field("inputFlowTransport", schema_string_enum(std::vector<std::string>{"zenoh", "legacy_shm"}, "zenoh"),
+                  "rw", "Input Flow Transport",
+                  "Input flow frame transport backend. Zenoh is default; legacy_shm keeps old inputFlowShmName.",
+                  false),
       state_field("inputFlowKey", schema_string(), "rw", "Input Flow Key", "Input flow frame transport key.", true),
       state_field("computeEveryNFrames", schema_integer(1, 1, 120), "rw", "Compute Every N Frames",
                   "Compute selected flow metric once per N new flow frames.", false),
@@ -744,8 +748,10 @@ json FlowMetricService::describe() {
                   "Scale factor applied to computed metric values before output.", false),
       state_field("scalarShmName", schema_string(), "ro", "Scalar SHM Name", "Output SHM name for scalar metric field.",
                   true),
-      state_field("scalarTransport", schema_string_enum({"legacy_shm", "zenoh"}), "ro", "Scalar Transport",
-                  "Output scalar frame transport backend.", false),
+      state_field("scalarTransport", schema_string_enum(std::vector<std::string>{"zenoh", "legacy_shm"}, "zenoh"),
+                  "ro", "Scalar Transport",
+                  "Output scalar frame transport backend. Zenoh is default; legacy_shm keeps old scalarShmName.",
+                  false),
       state_field("scalarKey", schema_string(), "ro", "Scalar Key", "Output scalar frame transport key.", true),
       state_field("scalarShmFormat", schema_string(), "ro", "Scalar SHM Format",
                   "Output payload format. Fixed to scalar1_f32.", false),

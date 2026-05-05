@@ -398,11 +398,12 @@ void VideoStabService::on_state(const std::string& node_id, const std::string& f
     return;
   }
   if (field == "inputVideoTransport" && value.is_string()) {
-    const std::string next =
+    std::string next =
         service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(value.get<std::string>()));
-    if (next != "legacy_shm" && next != "zenoh") {
-      publish_error_if_changed("invalid inputVideoTransport: " + next, "state", meta);
-      return;
+    if (next == "shm") {
+      next = "legacy_shm";
+    } else if (next != "legacy_shm" && next != "zenoh") {
+      next = "zenoh";
     }
     {
       std::lock_guard<std::mutex> lock(io_mu_);
@@ -1110,13 +1111,15 @@ json VideoStabService::describe() {
   service["stateFields"] = json::array({
       state_field("inputShmName", schema_string(), "rw", "Input Video SHM", "Input SHM name (e.g. shm.xxx.video).",
                   true),
-      state_field("inputVideoTransport", schema_string_enum({"legacy_shm", "zenoh"}), "rw", "Input Video Transport",
-                  "Input video frame transport backend.", false),
+      state_field("inputVideoTransport", schema_string_enum(std::vector<std::string>{"zenoh", "legacy_shm"}, "zenoh"),
+                  "rw", "Input Video Transport",
+                  "Input video frame transport backend. Zenoh is default; legacy_shm keeps old inputShmName.", false),
       state_field("inputVideoKey", schema_string(), "rw", "Input Video Key", "Input video frame transport key.", true),
       state_field("outputShmName", schema_string(), "ro", "Output Video SHM",
                   "Output SHM name generated from serviceId.", true),
-      state_field("videoTransport", schema_string_enum({"legacy_shm", "zenoh"}), "ro", "Video Transport",
-                  "Output video frame transport backend.", false),
+      state_field("videoTransport", schema_string_enum(std::vector<std::string>{"zenoh", "legacy_shm"}, "zenoh"), "ro",
+                  "Video Transport",
+                  "Output video frame transport backend. Zenoh is default; legacy_shm keeps old outputShmName.", false),
       state_field("videoKey", schema_string(), "ro", "Video Key", "Output video frame transport key.", true),
       state_field("videoFormat", schema_string_enum({"bgra32"}), "ro", "Video Format", "Output video payload format.",
                   false),

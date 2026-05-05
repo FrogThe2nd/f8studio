@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstring>
 #include <utility>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 #include <opencv2/imgproc.hpp>
@@ -312,11 +313,12 @@ void DenseOptflowService::on_state(const std::string& node_id, const std::string
   }
 
   if (field == "inputVideoTransport" && value.is_string()) {
-    const std::string next =
+    std::string next =
         service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(value.get<std::string>()));
-    if (next != "legacy_shm" && next != "zenoh") {
-      publish_error_if_changed("invalid inputVideoTransport: " + next, "state", meta);
-      return;
+    if (next == "shm") {
+      next = "legacy_shm";
+    } else if (next != "legacy_shm" && next != "zenoh") {
+      next = "zenoh";
     }
     {
       std::lock_guard<std::mutex> lock(flow_mu_);
@@ -724,14 +726,16 @@ json DenseOptflowService::describe() {
   service["tags"] = json::array({"cv", "optical_flow", "flow_field"});
   service["stateFields"] = json::array({
       state_field("inputShmName", schema_string(), "rw", "Input Video SHM", "Input SHM name (e.g. shm.xxx.video).", true),
-      state_field("inputVideoTransport", schema_string_enum({"legacy_shm", "zenoh"}), "rw", "Input Video Transport",
-                  "Input video frame transport backend.", false),
+      state_field("inputVideoTransport", schema_string_enum(std::vector<std::string>{"zenoh", "legacy_shm"}, "zenoh"),
+                  "rw", "Input Video Transport",
+                  "Input video frame transport backend. Zenoh is default; legacy_shm keeps old inputShmName.", false),
       state_field("inputVideoKey", schema_string(), "rw", "Input Video Key", "Input video frame transport key.", true),
       state_field("computeEveryNFrames", schema_integer(2, 1, 120), "rw", "Compute Every N Frames",
                   "Compute flow once per N new frames.", false),
       state_field("flowShmName", schema_string(), "ro", "Flow SHM Name", "Output SHM name for UV flow field.", true),
-      state_field("flowTransport", schema_string_enum({"legacy_shm", "zenoh"}), "ro", "Flow Transport",
-                  "Output flow frame transport backend.", false),
+      state_field("flowTransport", schema_string_enum(std::vector<std::string>{"zenoh", "legacy_shm"}, "zenoh"), "ro",
+                  "Flow Transport",
+                  "Output flow frame transport backend. Zenoh is default; legacy_shm keeps old flowShmName.", false),
       state_field("flowKey", schema_string(), "ro", "Flow Key", "Output flow frame transport key.", true),
       state_field("flowShmFormat", schema_string(), "ro", "Flow SHM Format", "Flow payload format. Fixed to flow2_f16.", false),
       state_field("flowFrameSchemaVersion", schema_integer(1, 1, 1), "ro", "Flow Frame Schema",
