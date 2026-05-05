@@ -1,10 +1,12 @@
 #include "f8cppsdk/latest_audio_chunk_transport.h"
 
+#include <chrono>
 #include <condition_variable>
 #include <cstring>
 #include <limits>
 #include <mutex>
 #include <optional>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -17,6 +19,8 @@
 
 namespace f8::cppsdk {
 namespace {
+
+constexpr std::chrono::milliseconds kSubscriptionSettle{10};
 
 void set_error(std::string* error_message, std::string value) {
   if (error_message != nullptr) {
@@ -409,6 +413,7 @@ class ZenohLatestAudioChunkSubscriber::Impl final {
             }
           },
           []() {});
+      std::this_thread::sleep_for(kSubscriptionSettle);
       return true;
     } catch (const std::exception& exc) {
       spdlog::error("zenoh audio subscriber open failed key={}: {}", key, exc.what());

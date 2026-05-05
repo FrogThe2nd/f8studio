@@ -12,6 +12,7 @@ from typing import Any, Protocol
 from .shm.video import VideoShmReader, VideoShmWriter
 
 log = logging.getLogger(__name__)
+_SUBSCRIPTION_SETTLE_S = 0.01
 
 ZENOH_VIDEO_FRAME_MAGIC = 0xF85A1001
 ZENOH_VIDEO_FRAME_SCHEMA_VERSION = 1
@@ -361,6 +362,7 @@ class ZenohLatestVideoFrameTransport:
             transport._on_sample(sample)
 
         transport._subscriber = session.declare_subscriber(str(key_expr), _on_sample)
+        time.sleep(_SUBSCRIPTION_SETTLE_S)
         return transport
 
     @classmethod
@@ -386,6 +388,7 @@ class ZenohLatestVideoFrameTransport:
 
         transport._subscriber = session.declare_subscriber(str(key_expr), _on_sample)
         transport._publisher = _declare_zenoh_latest_publisher(session, key_expr)
+        time.sleep(_SUBSCRIPTION_SETTLE_S)
         return transport
 
     def close(self) -> None:

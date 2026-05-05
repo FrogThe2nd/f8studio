@@ -12,6 +12,7 @@ from typing import Any, Protocol
 from .shm.audio import AudioShmReader, SAMPLE_FORMAT_F32LE
 
 log = logging.getLogger(__name__)
+_SUBSCRIPTION_SETTLE_S = 0.01
 
 ZENOH_AUDIO_CHUNK_MAGIC = 0xF85A2001
 ZENOH_AUDIO_CHUNK_SCHEMA_VERSION = 1
@@ -309,6 +310,7 @@ class ZenohLatestAudioChunkTransport:
             transport._on_sample(sample)
 
         transport._subscriber = session.declare_subscriber(str(key_expr), _on_sample)
+        time.sleep(_SUBSCRIPTION_SETTLE_S)
         return transport
 
     def close(self) -> None:

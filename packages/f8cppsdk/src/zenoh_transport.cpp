@@ -3,10 +3,12 @@
 #include "f8cppsdk/f8_naming.h"
 #include "f8cppsdk/zenoh_naming.h"
 
+#include <chrono>
 #include <condition_variable>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -20,6 +22,8 @@
 
 namespace f8::cppsdk {
 namespace {
+
+constexpr std::chrono::milliseconds kSubscriptionSettle{10};
 
 #if F8_WITH_ZENOH
 RuntimeBytes payload_to_bytes(const zenoh::Bytes& payload) {
@@ -219,6 +223,7 @@ class ZenohTransport::Impl final {
             }
           },
           []() {});
+      std::this_thread::sleep_for(kSubscriptionSettle);
       return std::make_unique<ZenohSubscriberHandle>(std::move(subscriber));
     } catch (const std::exception& exc) {
       spdlog::error("zenoh subscribe failed subject={}: {}", subject, exc.what());
@@ -481,6 +486,7 @@ class ZenohTransport::Impl final {
             }
           },
           []() {});
+      std::this_thread::sleep_for(kSubscriptionSettle);
       return std::make_unique<ZenohSubscriberHandle>(std::move(subscriber));
     } catch (const std::exception& exc) {
       spdlog::error("zenoh kv_watch_in_bucket failed bucket={} pattern={}: {}", bucket, pattern, exc.what());
