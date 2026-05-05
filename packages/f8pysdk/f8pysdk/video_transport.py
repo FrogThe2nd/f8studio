@@ -298,13 +298,21 @@ def decode_zenoh_video_frame(raw: bytes | bytearray | memoryview) -> LatestVideo
 
 
 class ZenohLatestVideoFrameTransport:
-    def __init__(self, *, key_expr: str, session: Any, subscriber: Any | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        key_expr: str,
+        session: Any,
+        subscriber: Any | None = None,
+        publisher: Any | None = None,
+    ) -> None:
         key = str(key_expr or "").strip()
         if not key:
             raise ValueError("key_expr must be non-empty")
         self.key_expr = key
         self._session = session
         self._subscriber = subscriber
+        self._publisher = publisher
         self._closed = False
         self._frame_id = 0
         self._cv = threading.Condition()
@@ -328,7 +336,8 @@ class ZenohLatestVideoFrameTransport:
             listen=listen,
             shm_pool_bytes=shm_pool_bytes,
         )
-        return cls(key_expr=key_expr, session=session)
+        publisher = _declare_zenoh_latest_publisher(session, key_expr)
+        return cls(key_expr=key_expr, session=session, publisher=publisher)
 
     @classmethod
     def open_subscriber(
@@ -376,6 +385,7 @@ class ZenohLatestVideoFrameTransport:
             transport._on_sample(sample)
 
         transport._subscriber = session.declare_subscriber(str(key_expr), _on_sample)
+        transport._publisher = _declare_zenoh_latest_publisher(session, key_expr)
         return transport
 
     def close(self) -> None:
@@ -385,6 +395,13 @@ class ZenohLatestVideoFrameTransport:
             self._closed = True
             self._latest_raw = None
             self._cv.notify_all()
+        publisher = self._publisher
+        self._publisher = None
+        if publisher is not None:
+            try:
+                publisher.undeclare()
+            except (RuntimeError, OSError) as exc:
+                log.debug("zenoh video publisher undeclare failed key=%s", self.key_expr, exc_info=exc)
         subscriber = self._subscriber
         self._subscriber = None
         if subscriber is not None:
@@ -427,9 +444,14 @@ class ZenohLatestVideoFrameTransport:
             import zenoh  # type: ignore[import-not-found]
         except ImportError as exc:
             raise RuntimeError("Zenoh video transport requires the `eclipse-zenoh` Python package") from exc
+        publisher = self._publisher
+        if publisher is not None:
+            publisher.put(raw, encoding=zenoh.Encoding.APPLICATION_OCTET_STREAM)
+            return
         session.put(
             self.key_expr,
             raw,
+            encoding=zenoh.Encoding.APPLICATION_OCTET_STREAM,
             congestion_control=zenoh.CongestionControl.DROP,
             priority=zenoh.Priority.REAL_TIME,
             express=True,
@@ -505,6 +527,21 @@ def _open_zenoh_session(
         except zenoh.ZError as exc:
             log.debug("zenoh Python config does not expose shared-memory pool_size", exc_info=exc)
     return zenoh.open(config)
+
+
+def _declare_zenoh_latest_publisher(session: Any, key_expr: str) -> Any:
+    try:
+        import zenoh  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise RuntimeError("Zenoh video transport requires the `eclipse-zenoh` Python package") from exc
+    return session.declare_publisher(
+        str(key_expr),
+        encoding=zenoh.Encoding.APPLICATION_OCTET_STREAM,
+        congestion_control=zenoh.CongestionControl.DROP,
+        priority=zenoh.Priority.REAL_TIME,
+        express=True,
+        reliability=zenoh.Reliability.BEST_EFFORT,
+    )
 
 
 __all__ = [

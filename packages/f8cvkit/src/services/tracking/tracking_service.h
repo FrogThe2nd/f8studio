@@ -118,7 +118,7 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
   std::mutex state_mu_;
   std::unordered_map<std::string, json> published_state_;
 
-  // Video input (BGRA32 SHM).
+  // Video input (Zenoh latest-frame by default, legacy SHM fallback).
   std::string shm_name_override_;
   std::string video_transport_state_;
   std::string video_key_state_;

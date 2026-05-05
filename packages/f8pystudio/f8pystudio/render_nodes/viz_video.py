@@ -19,6 +19,19 @@ from f8pystudio.contracts.ui_commands import UiCommand
 
 _STATE_UI_UPDATE = "uiUpdate"
 _WIDGET_NAME = "__videoshm"
+_TRANSPORT_LEGACY_SHM = "legacy_shm"
+_TRANSPORT_ZENOH = "zenoh"
+
+
+def _normalize_frame_transport(value: object, *, zenoh_key: str, shm_name: str) -> str:
+    transport = str(value or "").strip().lower()
+    if transport in (_TRANSPORT_LEGACY_SHM, _TRANSPORT_ZENOH):
+        return transport
+    if str(zenoh_key or "").strip():
+        return _TRANSPORT_ZENOH
+    if str(shm_name or "").strip():
+        return _TRANSPORT_LEGACY_SHM
+    return _TRANSPORT_ZENOH
 
 
 def _hsv_to_rgb_u8(h: np.ndarray, s: np.ndarray, v: np.ndarray) -> np.ndarray:
@@ -197,12 +210,12 @@ class _VideoShmPane(QtWidgets.QWidget):
         self._flow_reader: LatestVideoFrameTransport | None = None
         self._scalar_reader: LatestVideoFrameTransport | None = None
         self._video_shm_name = ""
-        self._video_transport = "legacy_shm"
+        self._video_transport = _TRANSPORT_ZENOH
         self._video_key = ""
-        self._flow_transport = "legacy_shm"
+        self._flow_transport = _TRANSPORT_ZENOH
         self._flow_key = ""
         self._flow_shm_name = ""
-        self._scalar_transport = "legacy_shm"
+        self._scalar_transport = _TRANSPORT_ZENOH
         self._scalar_key = ""
         self._scalar_shm_name = ""
         self._flow_display_mode = "off"
@@ -240,16 +253,16 @@ class _VideoShmPane(QtWidgets.QWidget):
         self,
         *,
         shm_name: str,
-        video_transport: str,
+        video_transport: object,
         video_key: str,
         throttle_ms: int,
-        flow_transport: str,
+        flow_transport: object,
         flow_key: str,
         flow_shm_name: str,
         flow_display_mode: str,
         flow_mag_scale: float,
         flow_stride: int,
-        scalar_transport: str,
+        scalar_transport: object,
         scalar_key: str,
         scalar_shm_name: str,
         scalar_display_mode: str,
@@ -264,20 +277,26 @@ class _VideoShmPane(QtWidgets.QWidget):
         scale_mode: str,
     ) -> None:
         next_video = str(shm_name or "").strip()
-        next_video_transport = str(video_transport or "legacy_shm").strip().lower()
-        if next_video_transport not in ("legacy_shm", "zenoh"):
-            next_video_transport = "legacy_shm"
         next_video_key = str(video_key or "").strip()
-        next_flow_transport = str(flow_transport or "legacy_shm").strip().lower()
-        if next_flow_transport not in ("legacy_shm", "zenoh"):
-            next_flow_transport = "legacy_shm"
+        next_video_transport = _normalize_frame_transport(
+            video_transport,
+            zenoh_key=next_video_key,
+            shm_name=next_video,
+        )
         next_flow_key = str(flow_key or "").strip()
         next_flow = str(flow_shm_name or "").strip()
-        next_scalar_transport = str(scalar_transport or "legacy_shm").strip().lower()
-        if next_scalar_transport not in ("legacy_shm", "zenoh"):
-            next_scalar_transport = "legacy_shm"
+        next_flow_transport = _normalize_frame_transport(
+            flow_transport,
+            zenoh_key=next_flow_key,
+            shm_name=next_flow,
+        )
         next_scalar_key = str(scalar_key or "").strip()
         next_scalar = str(scalar_shm_name or "").strip()
+        next_scalar_transport = _normalize_frame_transport(
+            scalar_transport,
+            zenoh_key=next_scalar_key,
+            shm_name=next_scalar,
+        )
         next_mode = str(flow_display_mode or "off").strip().lower()
         if next_mode not in ("off", "hsv", "arrows"):
             next_mode = "off"
@@ -375,9 +394,15 @@ class _VideoShmPane(QtWidgets.QWidget):
         self._scalar_reader = None
 
     def _sync_timer_with_update_state(self) -> None:
-        has_video_source = bool(self._video_key) if self._video_transport == "zenoh" else bool(self._video_shm_name)
-        has_flow_source = bool(self._flow_key) if self._flow_transport == "zenoh" else bool(self._flow_shm_name)
-        has_scalar_source = bool(self._scalar_key) if self._scalar_transport == "zenoh" else bool(self._scalar_shm_name)
+        has_video_source = (
+            bool(self._video_key) if self._video_transport == _TRANSPORT_ZENOH else bool(self._video_shm_name)
+        )
+        has_flow_source = (
+            bool(self._flow_key) if self._flow_transport == _TRANSPORT_ZENOH else bool(self._flow_shm_name)
+        )
+        has_scalar_source = (
+            bool(self._scalar_key) if self._scalar_transport == _TRANSPORT_ZENOH else bool(self._scalar_shm_name)
+        )
         has_source = has_video_source or has_flow_source or has_scalar_source
         if self.update_enabled() and has_source:
             if not self._timer.isActive():
@@ -389,7 +414,7 @@ class _VideoShmPane(QtWidgets.QWidget):
     def _ensure_video_reader(self) -> bool:
         if self._video_reader is not None:
             return True
-        if self._video_transport == "zenoh":
+        if self._video_transport == _TRANSPORT_ZENOH:
             if not self._video_key:
                 return False
             try:
@@ -410,7 +435,7 @@ class _VideoShmPane(QtWidgets.QWidget):
     def _ensure_flow_reader(self) -> bool:
         if self._flow_reader is not None:
             return True
-        if self._flow_transport == "zenoh":
+        if self._flow_transport == _TRANSPORT_ZENOH:
             if not self._flow_key:
                 return False
             try:
@@ -431,7 +456,7 @@ class _VideoShmPane(QtWidgets.QWidget):
     def _ensure_scalar_reader(self) -> bool:
         if self._scalar_reader is not None:
             return True
-        if self._scalar_transport == "zenoh":
+        if self._scalar_transport == _TRANSPORT_ZENOH:
             if not self._scalar_key:
                 return False
             try:
@@ -707,16 +732,16 @@ class _VideoShmWidget(NodeBaseWidget):
         self,
         *,
         shm_name: str,
-        video_transport: str,
+        video_transport: object,
         video_key: str,
         throttle_ms: int,
-        flow_transport: str,
+        flow_transport: object,
         flow_key: str,
         flow_shm_name: str,
         flow_display_mode: str,
         flow_mag_scale: float,
         flow_stride: int,
-        scalar_transport: str,
+        scalar_transport: object,
         scalar_key: str,
         scalar_shm_name: str,
         scalar_display_mode: str,
@@ -810,16 +835,16 @@ class VizVideoRenderNode(F8StudioOperatorBaseNode):
         try:
             payload = dict(cmd.payload or {})
             shm_name = str(payload.get("shmName") or "").strip()
-            video_transport = str(payload.get("videoTransport") or "legacy_shm").strip().lower()
+            video_transport = payload.get("videoTransport")
             video_key = str(payload.get("videoKey") or "").strip()
             throttle_ms = int(payload.get("throttleMs") or 33)
-            flow_transport = str(payload.get("flowTransport") or "legacy_shm").strip().lower()
+            flow_transport = payload.get("flowTransport")
             flow_key = str(payload.get("flowKey") or "").strip()
             flow_shm_name = str(payload.get("flowShmName") or "").strip()
             flow_display_mode = str(payload.get("flowDisplayMode") or "off").strip().lower()
             flow_mag_scale = float(payload.get("flowMagScale") or 20.0)
             flow_stride = int(payload.get("flowStride") or 12)
-            scalar_transport = str(payload.get("scalarTransport") or "legacy_shm").strip().lower()
+            scalar_transport = payload.get("scalarTransport")
             scalar_key = str(payload.get("scalarKey") or "").strip()
             scalar_shm_name = str(payload.get("scalarShmName") or "").strip()
             scalar_display_mode = str(payload.get("scalarDisplayMode") or "off").strip().lower()

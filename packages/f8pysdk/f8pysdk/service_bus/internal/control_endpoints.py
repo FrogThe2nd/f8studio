@@ -32,8 +32,9 @@ class ZenohServiceControlEndpointServer:
     """
     Backend-neutral control endpoint server using RuntimeTransport request/serve.
 
-    It reuses the canonical request handlers from `ServiceBusMicroEndpoints` so
-    NATS micro and Zenoh queryables preserve identical wire payload semantics.
+    It reuses the canonical request handlers from the NATS fallback endpoint
+    owner so NATS micro and Zenoh queryables preserve identical wire payload
+    semantics.
     """
 
     def __init__(self, bus: Any) -> None:

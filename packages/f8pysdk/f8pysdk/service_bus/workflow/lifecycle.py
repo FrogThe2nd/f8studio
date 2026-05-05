@@ -19,19 +19,19 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-async def _ensure_micro_endpoints_started(bus: "ServiceBus") -> None:
-    if bus._micro_endpoints is not None:
+async def _ensure_control_endpoints_started(bus: "ServiceBus") -> None:
+    if bus._control_endpoints is not None:
         return
     endpoints = create_service_control_endpoint_server(bus)
-    bus._micro_endpoints = endpoints
+    bus._control_endpoints = endpoints
     await endpoints.start()
 
 
-async def _stop_micro_endpoints(bus: "ServiceBus") -> None:
-    endpoints = bus._micro_endpoints
+async def _stop_control_endpoints(bus: "ServiceBus") -> None:
+    endpoints = bus._control_endpoints
     if endpoints is not None:
         await endpoints.stop()
-    bus._micro_endpoints = None
+    bus._control_endpoints = None
 
 
 async def set_active(
@@ -58,8 +58,8 @@ async def start(bus: "ServiceBus") -> None:
         await bus._monitor_collector.start()
     # Clear any stale ready flag from a previous run as early as possible.
     await announce_ready(bus, False, reason="starting")
-    if bus._micro_endpoints is None:
-        await _ensure_micro_endpoints_started(bus)
+    if bus._control_endpoints is None:
+        await _ensure_control_endpoints_started(bus)
     # Ensure lifecycle state always exists in KV, even when no service code writes it explicitly.
     await apply_active(
         bus,
@@ -77,7 +77,7 @@ async def stop(bus: "ServiceBus") -> None:
     await notify_before_stop(bus)
     await announce_ready(bus, False, reason="stop")
 
-    await _stop_micro_endpoints(bus)
+    await _stop_control_endpoints(bus)
     await bus.data_router.stop()
     await bus.state_router.stop()
     bus.state_store.clear_cache()

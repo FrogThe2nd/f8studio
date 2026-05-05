@@ -85,7 +85,10 @@ def cmd_channel_subject(service_id: str) -> str:
 
 def svc_endpoint_subject(service_id: str, endpoint: str) -> str:
     """
-    Built-in lifecycle/control endpoints (typically backed by NATS micro).
+    Compatibility subject for built-in lifecycle/control endpoints.
+
+    Zenoh backends map this subject onto `f8/svc/{serviceId}/endpoint/{endpoint}`;
+    the NATS backend uses it directly for NATS micro endpoints.
     """
     service_id = ensure_token(service_id, label="service_id")
     endpoint = ensure_token(str(endpoint), label="endpoint")

@@ -3,10 +3,13 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass
 
+import pytest
+
 from f8pysdk.audio_transport import (
     ZENOH_AUDIO_CHUNK_MAGIC,
     ZENOH_AUDIO_CHUNK_SCHEMA_VERSION,
     ZenohLatestAudioChunkTransport,
+    _declare_zenoh_latest_publisher,
     decode_zenoh_audio_chunk,
     encode_zenoh_audio_chunk,
 )
@@ -16,6 +19,17 @@ from f8pysdk.shm.audio import SAMPLE_FORMAT_F32LE
 class _Session:
     def close(self) -> None:
         return
+
+
+class _PublisherSession:
+    def __init__(self) -> None:
+        self.key_expr = ""
+        self.options: dict[str, object] = {}
+
+    def declare_publisher(self, key_expr: str, **options: object) -> object:
+        self.key_expr = str(key_expr)
+        self.options = dict(options)
+        return object()
 
 
 @dataclass(frozen=True)
@@ -58,6 +72,21 @@ def test_zenoh_audio_chunk_roundtrip() -> None:
         assert chunk.payload_copy() == payload
     finally:
         chunk.release()
+
+
+def test_zenoh_audio_declared_publisher_uses_latest_chunk_qos() -> None:
+    zenoh = pytest.importorskip("zenoh")
+    session = _PublisherSession()
+
+    publisher = _declare_zenoh_latest_publisher(session, "f8/test/audio/qos")
+
+    assert publisher is not None
+    assert session.key_expr == "f8/test/audio/qos"
+    assert session.options["encoding"] == zenoh.Encoding.APPLICATION_OCTET_STREAM
+    assert session.options["congestion_control"] == zenoh.CongestionControl.DROP
+    assert session.options["priority"] == zenoh.Priority.REAL_TIME
+    assert session.options["express"] is True
+    assert session.options["reliability"] == zenoh.Reliability.BEST_EFFORT
 
 
 def test_zenoh_audio_subscriber_keeps_latest_chunk_only() -> None:

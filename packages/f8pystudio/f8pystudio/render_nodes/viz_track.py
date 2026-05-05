@@ -24,6 +24,19 @@ import pyqtgraph as pg  # type: ignore[import-not-found]
 
 _STATE_UI_UPDATE = "uiUpdate"
 _WIDGET_NAME = "__trackviz"
+_TRANSPORT_LEGACY_SHM = "legacy_shm"
+_TRANSPORT_ZENOH = "zenoh"
+
+
+def _normalize_frame_transport(value: object, *, zenoh_key: str, shm_name: str) -> str:
+    transport = str(value or "").strip().lower()
+    if transport in (_TRANSPORT_LEGACY_SHM, _TRANSPORT_ZENOH):
+        return transport
+    if str(zenoh_key or "").strip():
+        return _TRANSPORT_ZENOH
+    if str(shm_name or "").strip():
+        return _TRANSPORT_LEGACY_SHM
+    return _TRANSPORT_ZENOH
 
 
 def _color_for_id(track_id: int) -> tuple[int, int, int]:
@@ -394,12 +407,12 @@ class _TrackVizPane(QtWidgets.QWidget):
         self._pending = None
         self._last_wh: tuple[int, int] | None = None
         self._scene_size: tuple[int, int] | None = None
-        self._video_transport = "legacy_shm"
+        self._video_transport = _TRANSPORT_ZENOH
         self._video_key = ""
         self._video_shm_name = ""
         self._video_shm_throttle_ms = 33
         self._video_reader: LatestVideoFrameTransport | None = None
-        self._flow_transport = "legacy_shm"
+        self._flow_transport = _TRANSPORT_ZENOH
         self._flow_key = ""
         self._flow_reader: LatestVideoFrameTransport | None = None
         self._video_frame_id = 0
@@ -447,9 +460,9 @@ class _TrackVizPane(QtWidgets.QWidget):
         except (AttributeError, TypeError, ValueError):
             video_shm_name = ""
         try:
-            video_transport = str(payload.get("videoTransport") or "legacy_shm").strip().lower()
+            video_transport = payload.get("videoTransport")
         except (AttributeError, TypeError, ValueError):
-            video_transport = "legacy_shm"
+            video_transport = ""
         try:
             video_key = str(payload.get("videoKey") or "").strip()
         except (AttributeError, TypeError, ValueError):
@@ -459,9 +472,9 @@ class _TrackVizPane(QtWidgets.QWidget):
         except (AttributeError, TypeError, ValueError):
             flow_shm_name = ""
         try:
-            flow_transport = str(payload.get("flowTransport") or "legacy_shm").strip().lower()
+            flow_transport = payload.get("flowTransport")
         except (AttributeError, TypeError, ValueError):
-            flow_transport = "legacy_shm"
+            flow_transport = ""
         try:
             flow_key = str(payload.get("flowKey") or "").strip()
         except (AttributeError, TypeError, ValueError):
@@ -520,11 +533,11 @@ class _TrackVizPane(QtWidgets.QWidget):
         self,
         *,
         shm_name: str,
-        video_transport: str,
+        video_transport: object,
         video_key: str,
         throttle_ms: int,
         flow_shm_name: str,
-        flow_transport: str,
+        flow_transport: object,
         flow_key: str,
         show_dense_flow: bool,
         show_sparse_flow: bool,
@@ -536,10 +549,12 @@ class _TrackVizPane(QtWidgets.QWidget):
             self._video_timer.setInterval(self._video_shm_throttle_ms)
 
         next_name = str(shm_name or "").strip()
-        next_video_transport = str(video_transport or "legacy_shm").strip().lower()
-        if next_video_transport not in ("legacy_shm", "zenoh"):
-            next_video_transport = "legacy_shm"
         next_video_key = str(video_key or "").strip()
+        next_video_transport = _normalize_frame_transport(
+            video_transport,
+            zenoh_key=next_video_key,
+            shm_name=next_name,
+        )
         if (
             next_name != self._video_shm_name
             or next_video_transport != self._video_transport
@@ -551,10 +566,12 @@ class _TrackVizPane(QtWidgets.QWidget):
             self._reset_video_reader()
 
         next_flow_name = str(flow_shm_name or "").strip()
-        next_flow_transport = str(flow_transport or "legacy_shm").strip().lower()
-        if next_flow_transport not in ("legacy_shm", "zenoh"):
-            next_flow_transport = "legacy_shm"
         next_flow_key = str(flow_key or "").strip()
+        next_flow_transport = _normalize_frame_transport(
+            flow_transport,
+            zenoh_key=next_flow_key,
+            shm_name=next_flow_name,
+        )
         if (
             next_flow_name != self._flow_shm_name
             or next_flow_transport != self._flow_transport
@@ -572,8 +589,12 @@ class _TrackVizPane(QtWidgets.QWidget):
         self._sync_video_timer_with_update_state()
 
     def _sync_video_timer_with_update_state(self) -> None:
-        has_video_input = bool(self._video_key) if self._video_transport == "zenoh" else bool(self._video_shm_name)
-        has_flow_input = bool(self._flow_key) if self._flow_transport == "zenoh" else bool(self._flow_shm_name)
+        has_video_input = (
+            bool(self._video_key) if self._video_transport == _TRANSPORT_ZENOH else bool(self._video_shm_name)
+        )
+        has_flow_input = (
+            bool(self._flow_key) if self._flow_transport == _TRANSPORT_ZENOH else bool(self._flow_shm_name)
+        )
         has_input = has_video_input or (self._show_dense_flow and has_flow_input)
         if has_input and self.update_enabled():
             if not self._video_timer.isActive():
@@ -635,7 +656,7 @@ class _TrackVizPane(QtWidgets.QWidget):
         if self._video_reader is not None:
             return True
         try:
-            if self._video_transport == "zenoh":
+            if self._video_transport == _TRANSPORT_ZENOH:
                 if not self._video_key:
                     return False
                 reader: LatestVideoFrameTransport = ZenohLatestVideoFrameTransport.open_subscriber(self._video_key)
@@ -653,7 +674,7 @@ class _TrackVizPane(QtWidgets.QWidget):
         if self._flow_reader is not None:
             return True
         try:
-            if self._flow_transport == "zenoh":
+            if self._flow_transport == _TRANSPORT_ZENOH:
                 if not self._flow_key:
                     return False
                 reader: LatestVideoFrameTransport = ZenohLatestVideoFrameTransport.open_subscriber(self._flow_key)
@@ -726,7 +747,9 @@ class _TrackVizPane(QtWidgets.QWidget):
                 finally:
                     frame.release()
 
-        has_flow_input = bool(self._flow_key) if self._flow_transport == "zenoh" else bool(self._flow_shm_name)
+        has_flow_input = (
+            bool(self._flow_key) if self._flow_transport == _TRANSPORT_ZENOH else bool(self._flow_shm_name)
+        )
         if not self._show_dense_flow or not has_flow_input:
             return
 

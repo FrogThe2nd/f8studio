@@ -183,6 +183,10 @@ bool TemplateMatchService::start() {
     return false;
   }
 
+  shm_name_override_.clear();
+  video_transport_state_ = runtime_backend.bus_backend == f8::cppsdk::BusBackend::kZenoh ? "zenoh" : "legacy_shm";
+  video_key_state_.clear();
+
   publish_state_if_changed("serviceClass", cfg_.service_class, "init", json::object());
   publish_state_if_changed("templateImagePngB64", "", "init", json::object());
   publish_state_if_changed("matchThreshold", match_threshold_, "init", json::object());
@@ -191,7 +195,7 @@ bool TemplateMatchService::start() {
   publish_state_if_changed("searchRoiPaddingPx", search_roi_padding_px_, "init", json::object());
   publish_state_if_changed("pyramidScale", pyramid_scale_, "init", json::object());
   publish_state_if_changed("shmName", "", "init", json::object());
-  publish_state_if_changed("videoTransport", "", "init", json::object());
+  publish_state_if_changed("videoTransport", video_transport_state_, "init", json::object());
   publish_state_if_changed("videoKey", "", "init", json::object());
   publish_error_if_changed("", "init", json::object());
 
@@ -209,7 +213,6 @@ bool TemplateMatchService::start() {
   has_last_detection_ = false;
   last_detection_bbox_ = cv::Rect();
 
-  shm_name_override_.clear();
   video_.close();
   zenoh_video_.close();
   zenoh_video_open_key_.clear();
@@ -292,12 +295,18 @@ void TemplateMatchService::on_state(const std::string& node_id, const std::strin
   if (field == "shmName" && value.is_string()) {
     {
       std::lock_guard<std::mutex> lock(video_mu_);
-      shm_name_override_ = value.get<std::string>();
+      shm_name_override_ = service_runtime::trim_copy(value.get<std::string>());
+      if (!shm_name_override_.empty()) {
+        video_transport_state_ = "legacy_shm";
+        zenoh_video_.close();
+        zenoh_video_open_key_.clear();
+      }
       video_.close();
       last_video_open_attempt_ms_ = 0;
       last_notify_seq_ = 0;
     }
     publish_state_if_changed("shmName", shm_name_override_, "state", meta);
+    publish_state_if_changed("videoTransport", video_transport_state_, "state", meta);
     return;
   }
   if (field == "videoTransport" && value.is_string()) {
@@ -429,11 +438,10 @@ void TemplateMatchService::set_template_png_b64(const std::string& b64, const js
 
 void TemplateMatchService::set_video_transport(const std::string& transport, const json& meta) {
   std::string normalized = service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(transport));
-  if (normalized != "zenoh" && normalized != "legacy_shm" && normalized != "shm") {
-    normalized.clear();
-  }
   if (normalized == "shm") {
     normalized = "legacy_shm";
+  } else if (normalized != "zenoh" && normalized != "legacy_shm") {
+    normalized = "zenoh";
   }
   std::lock_guard<std::mutex> lock(video_mu_);
   if (normalized == video_transport_state_) {
@@ -505,7 +513,7 @@ bool TemplateMatchService::use_zenoh_video_input() const {
   const std::string transport =
       service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(video_transport_state_));
   if (transport == "zenoh") {
-    return !service_runtime::trim_copy(video_key_state_).empty();
+    return true;
   }
   if (transport == "legacy_shm" || transport == "shm") {
     return false;
@@ -935,8 +943,8 @@ json TemplateMatchService::describe() {
                   "Optional downscale factor for faster coarse template matching.", false),
       state_field("shmName", schema_string(), "rw", "Video SHM", "Optional SHM name override (e.g. shm.xxx.video).",
                   true),
-      state_field("videoTransport", schema_string_enum({"", "zenoh", "legacy_shm"}), "rw", "Video Transport",
-                  "Video input transport backend. Use zenoh with videoKey; legacy_shm keeps old shmName input.",
+      state_field("videoTransport", schema_string_enum({"zenoh", "legacy_shm"}), "rw", "Video Transport",
+                  "Video input transport backend. Zenoh is default; legacy_shm keeps old shmName input.",
                   false),
       state_field("videoKey", schema_string(), "rw", "Video Key", "Zenoh latest-frame key for video input.", true),
   });

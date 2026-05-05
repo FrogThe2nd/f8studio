@@ -22,6 +22,19 @@ from f8pystudio.contracts.ui_commands import UiCommand
 
 _STATE_UI_UPDATE = "uiUpdate"
 _WIDGET_NAME = "__audioshm"
+_TRANSPORT_LEGACY_SHM = "legacy_shm"
+_TRANSPORT_ZENOH = "zenoh"
+
+
+def _normalize_audio_transport(value: object, *, audio_key: str, shm_name: str) -> str:
+    transport = str(value or "").strip().lower()
+    if transport in (_TRANSPORT_LEGACY_SHM, _TRANSPORT_ZENOH):
+        return transport
+    if str(audio_key or "").strip():
+        return _TRANSPORT_ZENOH
+    if str(shm_name or "").strip():
+        return _TRANSPORT_LEGACY_SHM
+    return _TRANSPORT_ZENOH
 
 
 class _AudioShmPane(QtWidgets.QWidget):
@@ -103,7 +116,7 @@ class _AudioShmPane(QtWidgets.QWidget):
         self._timer.setInterval(20)
 
         self._reader: LatestAudioChunkTransport | None = None
-        self._audio_transport = "legacy_shm"
+        self._audio_transport = _TRANSPORT_ZENOH
         self._audio_key = ""
         self._shm_name = ""
         self._last_seq = 0
@@ -129,7 +142,7 @@ class _AudioShmPane(QtWidgets.QWidget):
         self,
         *,
         shm_name: str,
-        audio_transport: str,
+        audio_transport: object,
         audio_key: str,
         throttle_ms: int,
         history_ms: int,
@@ -137,9 +150,7 @@ class _AudioShmPane(QtWidgets.QWidget):
     ) -> None:
         shm_name = str(shm_name or "").strip()
         audio_key = str(audio_key or "").strip()
-        audio_transport = str(audio_transport or "legacy_shm").strip().lower()
-        if audio_transport not in ("legacy_shm", "zenoh"):
-            audio_transport = "legacy_shm"
+        audio_transport = _normalize_audio_transport(audio_transport, audio_key=audio_key, shm_name=shm_name)
         self._history_ms = max(20, int(history_ms))
         self._channel = max(0, int(channel))
         throttle_ms = max(0, int(throttle_ms))
@@ -172,7 +183,7 @@ class _AudioShmPane(QtWidgets.QWidget):
         self._last_seq = 0
 
     def _sync_timer_with_update_state(self) -> None:
-        has_source = bool(self._audio_key) if self._audio_transport == "zenoh" else bool(self._shm_name)
+        has_source = bool(self._audio_key) if self._audio_transport == _TRANSPORT_ZENOH else bool(self._shm_name)
         if self.update_enabled() and has_source:
             if not self._timer.isActive():
                 self._timer.start()
@@ -184,7 +195,7 @@ class _AudioShmPane(QtWidgets.QWidget):
         if self._reader is not None:
             return True
         try:
-            if self._audio_transport == "zenoh":
+            if self._audio_transport == _TRANSPORT_ZENOH:
                 if not self._audio_key:
                     return False
                 r: LatestAudioChunkTransport = ZenohLatestAudioChunkTransport.open_subscriber(self._audio_key)
@@ -301,7 +312,7 @@ class _AudioShmWidget(NodeBaseWidget):
         self,
         *,
         shm_name: str,
-        audio_transport: str,
+        audio_transport: object,
         audio_key: str,
         throttle_ms: int,
         history_ms: int,
@@ -373,7 +384,7 @@ class VizAudioRenderNode(F8StudioOperatorBaseNode):
         try:
             payload = dict(cmd.payload or {})
             shm_name = str(payload.get("shmName") or "").strip()
-            audio_transport = str(payload.get("audioTransport") or "legacy_shm").strip().lower()
+            audio_transport = payload.get("audioTransport")
             audio_key = str(payload.get("audioKey") or "").strip()
             throttle_ms = int(payload.get("throttleMs") or 20)
             history_ms = int(payload.get("historyMs") or 250)

@@ -88,6 +88,7 @@ zenoh::Session::PutOptions realtime_drop_options() {
   zenoh::Session::PutOptions options = zenoh::Session::PutOptions::create_default();
   options.congestion_control = Z_CONGESTION_CONTROL_DROP;
   options.priority = Z_PRIORITY_REAL_TIME;
+  options.reliability = Z_RELIABILITY_BEST_EFFORT;
   options.is_express = true;
   return options;
 }

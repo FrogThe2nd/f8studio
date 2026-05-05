@@ -618,6 +618,11 @@ bool TrackingService::start() {
   }
 
   shm_name_override_.clear();
+  const bool use_zenoh_default =
+      service_runtime::trim_copy(cfg_.shm_name).empty() &&
+      runtime_backend.bus_backend == f8::cppsdk::BusBackend::kZenoh;
+  video_transport_state_ = use_zenoh_default ? "zenoh" : "legacy_shm";
+  video_key_state_.clear();
   init_select_mode_ = TrackingInitSelectMode::ClosestCenter;
   init_select_state_ = "closest_center";
   tracker_kind_ = TrackerKind::Csrt;
@@ -643,7 +648,7 @@ bool TrackingService::start() {
 
   publish_state_if_changed("serviceClass", cfg_.service_class, "init", json::object());
   publish_state_if_changed("shmName", "", "init", json::object());
-  publish_state_if_changed("videoTransport", "", "init", json::object());
+  publish_state_if_changed("videoTransport", video_transport_state_, "init", json::object());
   publish_state_if_changed("videoKey", "", "init", json::object());
   publish_state_if_changed("initSelect", init_select_state_, "init", json::object());
   publish_state_if_changed("trackerKind", tracker_kind_state_, "init", json::object());
@@ -921,7 +926,13 @@ void TrackingService::set_shm_name(const std::string& shm_name, const json& meta
     return;
   }
   shm_name_override_ = s;
+  if (!shm_name_override_.empty()) {
+    video_transport_state_ = "legacy_shm";
+    zenoh_video_.close();
+    zenoh_video_open_key_.clear();
+  }
   publish_state_if_changed("shmName", shm_name_override_, "state", meta);
+  publish_state_if_changed("videoTransport", video_transport_state_, "state", meta);
   video_.close();
   last_video_open_attempt_ms_ = 0;
   last_frame_id_ = 0;
@@ -934,11 +945,10 @@ void TrackingService::set_shm_name(const std::string& shm_name, const json& meta
 
 void TrackingService::set_video_transport(const std::string& transport, const json& meta) {
   std::string normalized = service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(transport));
-  if (normalized != "zenoh" && normalized != "legacy_shm" && normalized != "shm") {
-    normalized.clear();
-  }
   if (normalized == "shm") {
     normalized = "legacy_shm";
+  } else if (normalized != "zenoh" && normalized != "legacy_shm") {
+    normalized = "zenoh";
   }
   if (normalized == video_transport_state_) {
     publish_state_if_changed("videoTransport", video_transport_state_, "state", meta);
@@ -1066,7 +1076,7 @@ bool TrackingService::use_zenoh_video_input() const {
   const std::string transport =
       service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(video_transport_state_));
   if (transport == "zenoh") {
-    return !service_runtime::trim_copy(video_key_state_).empty();
+    return true;
   }
   if (transport == "legacy_shm" || transport == "shm") {
     return false;
@@ -1457,8 +1467,8 @@ json TrackingService::describe() {
   service["stateFields"] = json::array({
       state_field("shmName", schema_string(), "rw", "Video SHM", "Optional SHM name override (e.g. shm.xxx.video).",
                   true),
-      state_field("videoTransport", schema_string_enum({"", "zenoh", "legacy_shm"}), "rw", "Video Transport",
-                  "Video input transport backend. Use zenoh with videoKey; legacy_shm keeps old shmName input.",
+      state_field("videoTransport", schema_string_enum({"zenoh", "legacy_shm"}), "rw", "Video Transport",
+                  "Video input transport backend. Zenoh is default; legacy_shm keeps old shmName input.",
                   false),
       state_field("videoKey", schema_string(), "rw", "Video Key", "Zenoh latest-frame key for video input.", true),
       state_field("initSelect",

@@ -164,10 +164,10 @@ class ServiceBus:
     """
     Service bus (clean, protocol-first).
 
-    - Shared NATS connection (pub/sub + JetStream KV).
-    - Rungraph updates are applied via micro endpoints.
+    - Shared RuntimeTransport connection (Zenoh by default; NATS and mem are explicit backends).
+    - Rungraph, lifecycle, and command requests are applied via backend-neutral control endpoints.
     - Builds intra/cross routing tables for data edges.
-    - Provides a shared state KV API for nodes.
+    - Provides a latest-value state API backed by service-owned KV/state snapshots.
     - Local data delivery is configured explicitly as buffered or callback.
     - Pull-based consumers may trigger intra-service computation via `compute_output(...)`.
     """
@@ -239,7 +239,7 @@ class ServiceBus:
 
         self._rungraph_key = kv_key_rungraph()
         self._ready_key = kv_key_ready()
-        self._micro_endpoints: ServiceControlEndpointServer | None = None
+        self._control_endpoints: ServiceControlEndpointServer | None = None
         self._component_factory = component_factory if component_factory is not None else DefaultServiceBusComponentFactory()
 
         self._data_router = self._component_factory.create_data_router(

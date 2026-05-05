@@ -9,6 +9,7 @@ from f8pysdk.shm import VIDEO_FORMAT_BGRA32
 from f8pysdk.video_transport import (
     LegacyShmLatestVideoFrameTransport,
     ZenohLatestVideoFrameTransport,
+    _declare_zenoh_latest_publisher,
     decode_zenoh_video_frame,
     encode_zenoh_video_frame,
 )
@@ -132,6 +133,32 @@ def test_zenoh_video_frame_codec_roundtrip() -> None:
         assert frame.payload_bytes() == payload
     finally:
         frame.release()
+
+
+class _PublisherSession:
+    def __init__(self) -> None:
+        self.key_expr = ""
+        self.options: dict[str, object] = {}
+
+    def declare_publisher(self, key_expr: str, **options: object) -> object:
+        self.key_expr = str(key_expr)
+        self.options = dict(options)
+        return object()
+
+
+def test_zenoh_video_declared_publisher_uses_latest_frame_qos() -> None:
+    zenoh = pytest.importorskip("zenoh")
+    session = _PublisherSession()
+
+    publisher = _declare_zenoh_latest_publisher(session, "f8/test/video/qos")
+
+    assert publisher is not None
+    assert session.key_expr == "f8/test/video/qos"
+    assert session.options["encoding"] == zenoh.Encoding.APPLICATION_OCTET_STREAM
+    assert session.options["congestion_control"] == zenoh.CongestionControl.DROP
+    assert session.options["priority"] == zenoh.Priority.REAL_TIME
+    assert session.options["express"] is True
+    assert session.options["reliability"] == zenoh.Reliability.BEST_EFFORT
 
 
 def test_zenoh_latest_video_frame_transport_skips_to_latest() -> None:

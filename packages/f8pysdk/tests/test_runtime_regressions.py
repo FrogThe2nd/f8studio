@@ -264,11 +264,11 @@ class RuntimeRegressionTests(unittest.IsolatedAsyncioTestCase):
     async def test_service_bus_is_not_restartable_after_stop(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        with patch("f8pysdk.service_bus.workflow.lifecycle._ensure_micro_endpoints_started") as ensure_micro:
+        with patch("f8pysdk.service_bus.workflow.lifecycle._ensure_control_endpoints_started") as ensure_control:
             async def _noop(_bus: object) -> None:
                 return None
 
-            ensure_micro.side_effect = _noop
+            ensure_control.side_effect = _noop
             await bus.start()
         await bus.stop()
 
@@ -299,11 +299,11 @@ class RuntimeRegressionTests(unittest.IsolatedAsyncioTestCase):
         bus.register_rungraph_hook(rungraph_hook)
         bus.register_service_hook(service_hook)
 
-        with patch("f8pysdk.service_bus.workflow.lifecycle._ensure_micro_endpoints_started") as ensure_micro:
+        with patch("f8pysdk.service_bus.workflow.lifecycle._ensure_control_endpoints_started") as ensure_control:
             async def _noop(_bus: object) -> None:
                 return None
 
-            ensure_micro.side_effect = _noop
+            ensure_control.side_effect = _noop
             await bus.start()
         await bus.stop()
 

@@ -22,6 +22,11 @@ The long-term plan is tracked in `packages/f8pysdk/SDK_REFACTOR_PLAN.md`.
 - `workflow/`: rungraph apply, lifecycle transitions, cross-state synchronization
 - `internal/`: non-public typed command/data/runtime infrastructure helpers
 
+The runtime is Zenoh-first through the explicit `RuntimeTransport` protocol.
+NATS remains as an explicit compatibility backend. State is service-owned:
+each service keeps its latest local state snapshot, exposes it through the
+transport KV/query facade, and publishes state update samples for watchers.
+
 Slice D notes:
 
 - `data/router.py` is now the canonical owner for:
@@ -34,7 +39,7 @@ Slice D notes:
 - `state/store.py` is now the canonical owner for:
   - local state cache
   - per-node state access map
-  - KV-backed state read path
+  - RuntimeTransport-backed state read path
 - `state/router.py` is now the canonical owner for:
   - intra-service state-edge fanout tables
   - cross-service state bindings
@@ -74,14 +79,14 @@ Slice D notes:
 
 1. caller invokes `publish_state_external(...)` or `publish_state_runtime(...)`
 2. `state/pipeline.publish_state(...)` validates access and value
-3. state is persisted to KV
+3. state is persisted through the RuntimeTransport state facade
 4. local delivery runs immediately for same-process writes
    runtime propagation controls are carried by typed `StatePublishOptions`, not magic `meta` flags
 5. local delivery triggers:
    - hidden command dispatch for hidden command input fields
    - `node.on_state(...)` for normal state fields
    - intra-service state-edge fanout
-6. cross-service state propagation is handled separately by remote KV watch in `workflow/cross_state.py`
+6. cross-service state propagation is handled separately by remote state/KV watch in `workflow/cross_state.py`
 
 ### Command Invoke Chain
 
@@ -92,8 +97,9 @@ There are still two command entry adapters, but they now share one `CommandGatew
    - `dispatch_command_input(...)`
    - argument normalization via `map_command_args(...)`
    - `execute_command(...)`
-2. micro request/reply adapter
-   - NATS micro `cmd` endpoint
+2. request/reply control endpoint adapter
+   - Zenoh queryable `cmd` endpoint by default
+   - NATS micro `cmd` endpoint for explicit NATS fallback
    - request decode / argument validation
    - `execute_command(...)` / `CommandGateway.invoke(...)`
    - direct reply payload
@@ -118,7 +124,7 @@ Current command note:
 - hidden command-state input remains the graph command adapter
 - declared commands accept scalar/list/dict on both hidden-state and request/reply command paths
 - undeclared commands on request/reply paths require object-shaped args because there is no param schema to map positional values
-- micro `_cmd` is reply-first and no longer performs hidden output writeback
+- request/reply `cmd` is reply-first and no longer performs hidden output writeback
 - hidden output writeback failure is logged once and does not fail the command itself
 
 ### Data Emit/Pull Chain
@@ -141,7 +147,7 @@ Current command note:
 2. routing tables and state-access maps are rebuilt
 3. `DataRouter.replace_routes(...)` swaps the live data-side route state
 4. `StateRouter.replace_intra_state_routes(...)` swaps the live state-side route state
-5. rungraph `stateValues` are materialized into KV
+5. rungraph `stateValues` are materialized into the service-owned state facade
 6. builtin identity state is seeded
 7. rungraph hooks execute
 8. cross-state watches sync remote values through `StateRouter`
@@ -193,5 +199,5 @@ Explicit internal boundary introduced during public API cleanup:
 - internal publish controls live in `state.options`
 - legacy compatibility shells have been removed; imports should point at
   explicit owner modules such as `data.emit`, `data.router`, `data.flow`,
-  `internal.micro`, `state.options`, `state.pipeline`, `state.router`, and
+  `internal.control_endpoints`, `internal.micro`, `state.options`, `state.pipeline`, `state.router`, and
   `state.store`

@@ -242,12 +242,12 @@ class LifecycleBootstrapTests(unittest.IsolatedAsyncioTestCase):
     async def test_start_seeds_active_state(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        with patch("f8pysdk.service_bus.workflow.lifecycle._ensure_micro_endpoints_started") as ensure_micro:
+        with patch("f8pysdk.service_bus.workflow.lifecycle._ensure_control_endpoints_started") as ensure_control:
 
             async def _noop(_bus: object) -> None:
                 return None
 
-            ensure_micro.side_effect = _noop
+            ensure_control.side_effect = _noop
             await bus.start()
         state = await bus.get_state("svcA", "active")
         await bus.stop()
@@ -257,12 +257,12 @@ class LifecycleBootstrapTests(unittest.IsolatedAsyncioTestCase):
     async def test_seeded_active_state_origin_runtime(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        with patch("f8pysdk.service_bus.workflow.lifecycle._ensure_micro_endpoints_started") as ensure_micro:
+        with patch("f8pysdk.service_bus.workflow.lifecycle._ensure_control_endpoints_started") as ensure_control:
 
             async def _noop(_bus: object) -> None:
                 return None
 
-            ensure_micro.side_effect = _noop
+            ensure_control.side_effect = _noop
             await bus.start()
         key = kv_key_node_state(node_id="svcA", field="active")
         raw = await bus._transport.kv_get(key)

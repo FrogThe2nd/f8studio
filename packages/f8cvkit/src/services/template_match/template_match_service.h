@@ -96,7 +96,7 @@ class TemplateMatchService final : public f8::cppsdk::LifecycleNode,
   bool has_last_detection_ = false;
   cv::Rect last_detection_bbox_;
 
-  // Video input (BGRA32 SHM).
+  // Video input (Zenoh latest-frame by default, legacy SHM fallback).
   std::string shm_name_override_;
   std::string video_transport_state_;
   std::string video_key_state_;
