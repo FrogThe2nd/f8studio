@@ -100,6 +100,22 @@ def test_runtime_session_defaults_to_zenoh_backend() -> None:
     assert controller._runtime_bus_backend() == "zenoh"
 
 
+def test_runtime_session_mem_preflight_skips_zenoh(monkeypatch) -> None:
+    class _FakeZenoh:
+        @staticmethod
+        def open(_config):
+            raise AssertionError("mem preflight must not open zenoh")
+
+    monkeypatch.setitem(sys.modules, "zenoh", _FakeZenoh)
+    controller = _Controller()
+    controller._cfg = SimpleNamespace(bus_backend="mem", nats_url="nats://127.0.0.1:4222")
+
+    result = asyncio.run(controller._run_startup_preflight_async())
+
+    assert result is None
+    assert controller.reported == []
+
+
 def test_zenoh_singleton_guard_allows_start_when_liveliness_query_drains(monkeypatch) -> None:
     class _FakeZError(Exception):
         pass

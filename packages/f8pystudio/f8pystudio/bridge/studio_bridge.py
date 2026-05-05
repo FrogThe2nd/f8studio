@@ -202,6 +202,10 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
                     kv_bucket=kv_bucket_for_service(self.studio_service_id),
                 )
             )
+        if self._cfg.bus_backend == "mem":
+            from f8pysdk.testing import InMemoryCluster, InMemoryTransport
+
+            return InMemoryTransport(cluster=InMemoryCluster(), kv_bucket=kv_bucket_for_service(self.studio_service_id))
         return ZenohTransport(
             ZenohTransportConfig(
                 service_id=self.studio_service_id,
@@ -434,7 +438,6 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
                 self._process_gateway.stop(StopServiceRequest(service_id=sid))
             except Exception as exc:
                 self._report_exception(f"stop service process failed serviceId={sid}", exc)
-
 
 
 

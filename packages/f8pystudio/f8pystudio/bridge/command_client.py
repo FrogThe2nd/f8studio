@@ -6,7 +6,7 @@ from typing import Any, Protocol
 import msgspec
 from f8pysdk.bus import BusBackend
 from f8pysdk.specs import F8CommandInvokeReply
-from f8pysdk.nats_naming import cmd_channel_subject, ensure_token, new_id
+from f8pysdk.nats_naming import cmd_channel_subject, ensure_token, kv_bucket_for_service, new_id
 from f8pysdk.runtime_transport import RuntimeTransport
 from f8pysdk.transport import NatsTransport, NatsTransportConfig
 from f8pysdk.zenoh_transport import ZenohTransport, ZenohTransportConfig
@@ -50,13 +50,18 @@ class RuntimeCommandGatewayConfig:
 
 def _build_runtime_transport(config: RuntimeCommandGatewayConfig) -> RuntimeTransport:
     if config.bus_backend == "nats":
-        from f8pysdk.nats_naming import kv_bucket_for_service
-
         return NatsTransport(
             NatsTransportConfig(
                 url=str(config.nats_url),
                 kv_bucket=kv_bucket_for_service(str(config.client_service_id)),
             )
+        )
+    if config.bus_backend == "mem":
+        from f8pysdk.testing import InMemoryCluster, InMemoryTransport
+
+        return InMemoryTransport(
+            cluster=InMemoryCluster(),
+            kv_bucket=kv_bucket_for_service(str(config.client_service_id)),
         )
     return ZenohTransport(
         ZenohTransportConfig(

@@ -190,8 +190,11 @@ class RuntimeSessionControllerMixin:
             self._monitor_ui_flush_task = None
 
     async def _run_startup_preflight_async(self) -> str | None:
-        if self._runtime_bus_backend() != "nats":
+        backend = self._runtime_bus_backend()
+        if backend == "zenoh":
             return await self._run_zenoh_startup_preflight_async()
+        if backend != "nats":
+            return None
 
         nats_url = self._runtime_nats_url()
         if self._owned_nats_server_pid is None:
@@ -261,7 +264,7 @@ class RuntimeSessionControllerMixin:
         return None
 
     async def _start_zenoh_service_liveliness_watch_async(self) -> None:
-        if self._runtime_bus_backend() == "nats":
+        if self._runtime_bus_backend() != "zenoh":
             return
         if self._zenoh_service_liveliness_sub is not None:
             return

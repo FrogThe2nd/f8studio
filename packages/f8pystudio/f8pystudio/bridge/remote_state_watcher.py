@@ -114,6 +114,13 @@ class RemoteStateWatcher:
             return NatsTransport(
                 NatsTransportConfig(url=self._nats_url, kv_bucket=kv_bucket_for_service(self._studio_service_id))
             )
+        if self._bus_backend == "mem":
+            from f8pysdk.testing import InMemoryCluster, InMemoryTransport
+
+            return InMemoryTransport(
+                cluster=InMemoryCluster(),
+                kv_bucket=kv_bucket_for_service(self._studio_service_id),
+            )
         return ZenohTransport(
             ZenohTransportConfig(
                 service_id=self._studio_service_id,

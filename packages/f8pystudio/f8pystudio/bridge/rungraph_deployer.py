@@ -125,6 +125,13 @@ class RuntimeRungraphGateway:
             return NatsTransport(
                 NatsTransportConfig(url=str(self.config.nats_url), kv_bucket=kv_bucket_for_service(service_id))
             )
+        if self.config.bus_backend == "mem":
+            from f8pysdk.testing import InMemoryCluster, InMemoryTransport
+
+            return InMemoryTransport(
+                cluster=InMemoryCluster(),
+                kv_bucket=kv_bucket_for_service(str(self.config.client_service_id)),
+            )
         return ZenohTransport(
             ZenohTransportConfig(
                 service_id=str(self.config.client_service_id),
