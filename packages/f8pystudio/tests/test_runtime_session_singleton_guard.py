@@ -5,7 +5,10 @@ import sys
 from types import SimpleNamespace
 
 from f8pystudio.bridge.nats_lifecycle import NatsSingletonGuardResult, SINGLETON_GUARD_DIALOG_MESSAGE
-from f8pystudio.bridge.runtime_session_controller import RuntimeSessionControllerMixin
+from f8pystudio.bridge.runtime_session_controller import (
+    RuntimeSessionControllerMixin,
+    _service_id_from_zenoh_liveliness_key,
+)
 
 
 class _FakeConnectionManager:
@@ -33,9 +36,14 @@ class _Controller(RuntimeSessionControllerMixin):
         self._remote_state_gateway = None
         self._monitor_sub = None
         self._watch_targets_cache = None
+        self._zenoh_service_liveliness_session = None
+        self._zenoh_service_liveliness_sub = None
         self._managed_active = True
         self.logged: list[str] = []
         self.reported: list[str] = []
+        self.alive_updates: list[tuple[str, bool]] = []
+        self.active_updates: list[tuple[str, bool | None]] = []
+        self.status_requests: list[str] = []
         self.studio_service_id = "studio"
 
     def _emit_log_line(self, line: str) -> None:
@@ -43,6 +51,24 @@ class _Controller(RuntimeSessionControllerMixin):
 
     def _report_exception(self, context: str, exc: BaseException) -> None:
         self.reported.append(f"{context}:{type(exc).__name__}")
+
+    def _cache_service_alive(self, service_id: str, alive: bool) -> None:
+        self.alive_updates.append((str(service_id), bool(alive)))
+
+    def _cache_service_active(self, service_id: str, active: bool | None) -> None:
+        self.active_updates.append((str(service_id), active))
+
+    def request_service_status(self, service_id: str) -> None:
+        self.status_requests.append(str(service_id))
+
+
+def test_zenoh_liveliness_key_extracts_service_id() -> None:
+    assert _service_id_from_zenoh_liveliness_key("f8/live/svc/engine") == "engine"
+    assert _service_id_from_zenoh_liveliness_key("/f8/live/svc/detector/") == "detector"
+    assert _service_id_from_zenoh_liveliness_key("f8/live/studio/studio") is None
+    assert _service_id_from_zenoh_liveliness_key("f8/live/svc/") is None
+    assert _service_id_from_zenoh_liveliness_key("f8/live/svc/bad/path") is None
+
 
 def test_runtime_session_returns_block_message_when_singleton_detected(monkeypatch) -> None:
     ensured_urls: list[str] = []
@@ -132,3 +158,75 @@ def test_zenoh_singleton_guard_allows_start_when_liveliness_query_drains(monkeyp
     assert controller._zenoh_singleton_session is fake_session
     assert controller._zenoh_singleton_token is fake_session.liveliness_api.token
     assert fake_session.closed is False
+
+
+def test_zenoh_service_liveliness_watch_updates_alive_cache(monkeypatch) -> None:
+    class _FakeSampleKind:
+        PUT = "put"
+        DELETE = "delete"
+
+    class _FakeConfig:
+        pass
+
+    class _FakeSample:
+        def __init__(self, key_expr: str, kind: str) -> None:
+            self.key_expr = key_expr
+            self.kind = kind
+
+    class _FakeSubscriber:
+        def __init__(self) -> None:
+            self.undeclared = False
+
+        def undeclare(self) -> None:
+            self.undeclared = True
+
+    class _FakeLiveliness:
+        def __init__(self) -> None:
+            self.subscriber = _FakeSubscriber()
+            self.callback = None
+
+        def declare_subscriber(self, key_expr: str, callback, *, history: bool):
+            assert key_expr == "f8/live/svc/**"
+            assert history is True
+            self.callback = callback
+            return self.subscriber
+
+    class _FakeSession:
+        def __init__(self) -> None:
+            self.liveliness_api = _FakeLiveliness()
+
+        def liveliness(self) -> _FakeLiveliness:
+            return self.liveliness_api
+
+    fake_session = _FakeSession()
+    fake_zenoh = SimpleNamespace(Config=_FakeConfig, SampleKind=_FakeSampleKind, open=lambda _config: fake_session)
+    monkeypatch.setitem(sys.modules, "zenoh", fake_zenoh)
+
+    async def _run() -> _Controller:
+        controller = _Controller()
+        controller._cfg = SimpleNamespace(
+            bus_backend="zenoh",
+            nats_url="nats://127.0.0.1:4222",
+            zenoh_config_path=None,
+            zenoh_connect=(),
+            zenoh_listen=(),
+            zenoh_shm_pool_bytes=256 * 1024 * 1024,
+        )
+        controller._zenoh_singleton_session = fake_session
+        await controller._start_zenoh_service_liveliness_watch_async()
+
+        callback = fake_session.liveliness_api.callback
+        assert callback is not None
+        callback(_FakeSample("f8/live/svc/engine", _FakeSampleKind.PUT))
+        await asyncio.sleep(0)
+        callback(_FakeSample("f8/live/svc/engine", _FakeSampleKind.DELETE))
+        await asyncio.sleep(0)
+        return controller
+
+    controller = asyncio.run(_run())
+
+    assert controller._zenoh_service_liveliness_sub is fake_session.liveliness_api.subscriber
+    assert controller.alive_updates == [("engine", True), ("engine", False)]
+    assert controller.status_requests == ["engine"]
+    assert controller.active_updates == [("engine", None)]
+    assert controller.reported == []

@@ -23,10 +23,21 @@ from f8pystudio.contracts.ui_commands import UiCommand
 from f8pystudio.studio_specs.registry import shared_pystudio_registry
 
 _MONITOR_UI_EMIT_INTERVAL_S = 1.0
+_ZENOH_SERVICE_LIVELINESS_PREFIX = "f8/live/svc/"
 
 
 def _is_zenoh_reply_channel_drained(exc: BaseException) -> bool:
     return "channel is empty and closed" in str(exc).strip().lower()
+
+
+def _service_id_from_zenoh_liveliness_key(key: str) -> str | None:
+    text = str(key or "").strip("/")
+    if not text.startswith(_ZENOH_SERVICE_LIVELINESS_PREFIX):
+        return None
+    service_id = text[len(_ZENOH_SERVICE_LIVELINESS_PREFIX) :].strip("/")
+    if not service_id or "/" in service_id:
+        return None
+    return service_id
 
 
 @dataclass(frozen=True)
@@ -78,6 +89,22 @@ class RuntimeSessionControllerMixin:
         if cfg is None:
             return 256 * 1024 * 1024
         return max(0, int(cfg.zenoh_shm_pool_bytes))
+
+    def _build_zenoh_session_config(self, zenoh_module: Any) -> Any:
+        cfg = self._cfg
+        if cfg is not None and cfg.zenoh_config_path:
+            config = zenoh_module.Config.from_file(str(cfg.zenoh_config_path))
+        else:
+            config = zenoh_module.Config()
+        if cfg is not None and cfg.zenoh_connect:
+            import json
+
+            config.insert_json5("connect/endpoints", json.dumps(list(cfg.zenoh_connect)))
+        if cfg is not None and cfg.zenoh_listen:
+            import json
+
+            config.insert_json5("listen/endpoints", json.dumps(list(cfg.zenoh_listen)))
+        return config
 
     async def _ensure_studio_runtime_async(self, *, timeout_s: float = 6.0) -> bool:
         """
@@ -200,19 +227,7 @@ class RuntimeSessionControllerMixin:
             return None
 
         try:
-            cfg = self._cfg
-            if cfg is not None and cfg.zenoh_config_path:
-                config = zenoh.Config.from_file(str(cfg.zenoh_config_path))
-            else:
-                config = zenoh.Config()
-            if cfg is not None and cfg.zenoh_connect:
-                import json
-
-                config.insert_json5("connect/endpoints", json.dumps(list(cfg.zenoh_connect)))
-            if cfg is not None and cfg.zenoh_listen:
-                import json
-
-                config.insert_json5("listen/endpoints", json.dumps(list(cfg.zenoh_listen)))
+            config = self._build_zenoh_session_config(zenoh)
             session = await asyncio.to_thread(zenoh.open, config)
         except Exception as exc:
             self._report_exception("open zenoh for singleton guard failed", exc)
@@ -244,6 +259,67 @@ class RuntimeSessionControllerMixin:
             except Exception as close_exc:
                 self._report_exception("close zenoh singleton session failed", close_exc)
         return None
+
+    async def _start_zenoh_service_liveliness_watch_async(self) -> None:
+        if self._runtime_bus_backend() == "nats":
+            return
+        if self._zenoh_service_liveliness_sub is not None:
+            return
+        try:
+            import zenoh  # type: ignore[import-not-found]
+        except ImportError as exc:
+            self._report_exception("import zenoh for service liveliness watch failed", exc)
+            return
+
+        owns_session = False
+        session = self._zenoh_singleton_session
+        if session is None:
+            try:
+                config = self._build_zenoh_session_config(zenoh)
+                session = await asyncio.to_thread(zenoh.open, config)
+                owns_session = True
+            except Exception as exc:
+                self._report_exception("open zenoh for service liveliness watch failed", exc)
+                return
+
+        loop = asyncio.get_running_loop()
+
+        def _on_sample(sample: Any) -> None:
+            try:
+                service_id = _service_id_from_zenoh_liveliness_key(str(sample.key_expr))
+                if service_id is None:
+                    return
+                if sample.kind == zenoh.SampleKind.PUT:
+                    loop.call_soon_threadsafe(self._on_zenoh_service_liveliness, service_id, True)
+                    return
+                if sample.kind == zenoh.SampleKind.DELETE:
+                    loop.call_soon_threadsafe(self._on_zenoh_service_liveliness, service_id, False)
+            except Exception as exc:
+                loop.call_soon_threadsafe(self._report_exception, "zenoh service liveliness sample failed", exc)
+
+        try:
+            self._zenoh_service_liveliness_sub = session.liveliness().declare_subscriber(
+                f"{_ZENOH_SERVICE_LIVELINESS_PREFIX}**",
+                _on_sample,
+                history=True,
+            )
+            if owns_session:
+                self._zenoh_service_liveliness_session = session
+        except Exception as exc:
+            self._report_exception("declare zenoh service liveliness watch failed", exc)
+            if owns_session:
+                try:
+                    await asyncio.to_thread(session.close)
+                except Exception as close_exc:
+                    self._report_exception("close zenoh service liveliness session failed", close_exc)
+
+    def _on_zenoh_service_liveliness(self, service_id: str, alive: bool) -> None:
+        self._cache_service_alive(str(service_id), bool(alive))
+        if alive:
+            self.request_service_status(str(service_id))
+            return
+        self._cache_service_active(str(service_id), None)
+        self._monitor_center.update_service_status(service_id=str(service_id), ready=False)
 
     async def _start_after_preflight_async(self) -> str | None:
         nats_url = self._runtime_nats_url()
@@ -320,6 +396,11 @@ class RuntimeSessionControllerMixin:
                 self._report_exception("start remote state watcher failed", exc)
                 self._remote_state_watcher = None
                 self._remote_state_gateway = None
+
+        try:
+            await self._start_zenoh_service_liveliness_watch_async()
+        except Exception as exc:
+            self._report_exception("start zenoh service liveliness watch failed", exc)
 
         if self._monitor_sub is None:
             async def _on_monitor_payload(raw: bytes) -> None:
@@ -400,6 +481,20 @@ class RuntimeSessionControllerMixin:
             except Exception as exc:
                 self._report_exception("unsubscribe monitor stream failed", exc)
         self._monitor_sub = None
+        liveliness_sub = self._zenoh_service_liveliness_sub
+        self._zenoh_service_liveliness_sub = None
+        if liveliness_sub is not None:
+            try:
+                liveliness_sub.undeclare()
+            except Exception as exc:
+                self._report_exception("undeclare zenoh service liveliness watch failed", exc)
+        liveliness_session = self._zenoh_service_liveliness_session
+        self._zenoh_service_liveliness_session = None
+        if liveliness_session is not None:
+            try:
+                await asyncio.to_thread(liveliness_session.close)
+            except Exception as exc:
+                self._report_exception("close zenoh service liveliness session failed", exc)
         try:
             if self._remote_state_gateway is not None:
                 await self._remote_state_gateway.stop()

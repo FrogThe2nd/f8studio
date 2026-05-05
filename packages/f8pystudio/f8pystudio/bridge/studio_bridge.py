@@ -138,6 +138,8 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
         self._runtime_transport: RuntimeTransport | None = None
         self._zenoh_singleton_session: Any = None
         self._zenoh_singleton_token: Any = None
+        self._zenoh_service_liveliness_session: Any = None
+        self._zenoh_service_liveliness_sub: Any = None
         self._owned_nats_server_pid: int | None = None
         self._pending_remote_command_cbs: dict[str, Callable[[dict[str, Any] | None, str | None], None]] = {}
         self._async_started: bool = False
@@ -432,7 +434,6 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
                 self._process_gateway.stop(StopServiceRequest(service_id=sid))
             except Exception as exc:
                 self._report_exception(f"stop service process failed serviceId={sid}", exc)
-
 
 
 
