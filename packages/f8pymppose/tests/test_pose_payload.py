@@ -53,6 +53,11 @@ class _FakeNode:
 
 
 class PosePayloadTests(unittest.TestCase):
+    def test_video_transport_defaults_to_zenoh(self) -> None:
+        self.assertEqual(MediaPipePoseServiceNode._coerce_video_transport(""), "zenoh")
+        self.assertEqual(MediaPipePoseServiceNode._coerce_video_transport("bad"), "zenoh")
+        self.assertEqual(MediaPipePoseServiceNode._coerce_video_transport("legacy_shm"), "legacy_shm")
+
     def test_should_run_inference_every_n(self) -> None:
         self.assertTrue(should_run_inference(None, 100, 3))
         self.assertFalse(should_run_inference(100, 102, 3))

@@ -92,6 +92,21 @@ class VideoFramePacket:
         self.release()
 
 
+def select_video_source_transport(*, video_transport: str, video_key: str, shm_name: str) -> VideoSourceTransport:
+    transport = str(video_transport or "").strip().lower()
+    key = str(video_key or "").strip()
+    shm = str(shm_name or "").strip()
+    if transport == "zenoh":
+        return "zenoh"
+    if transport in ("legacy_shm", "shm"):
+        return "legacy_shm"
+    if key:
+        return "zenoh"
+    if shm:
+        return "legacy_shm"
+    return "zenoh"
+
+
 class LatestVideoFrameSource:
     def __init__(self, *, config: VideoFrameSourceConfig) -> None:
         self._config = config
@@ -125,18 +140,7 @@ class LatestVideoFrameSource:
 
     @staticmethod
     def _select_transport(*, video_transport: str, video_key: str, shm_name: str) -> VideoSourceTransport:
-        transport = str(video_transport or "").strip().lower()
-        key = str(video_key or "").strip()
-        if transport == "zenoh":
-            if key:
-                return "zenoh"
-            return "legacy_shm"
-        if transport in ("legacy_shm", "shm"):
-            return "legacy_shm"
-        if key:
-            return "zenoh"
-        _ = shm_name
-        return "legacy_shm"
+        return select_video_source_transport(video_transport=video_transport, video_key=video_key, shm_name=shm_name)
 
     def _read_zenoh_latest(self, *, video_key: str, timeout_ms: int, dedupe: bool) -> VideoFramePacket | None:
         if not video_key:

@@ -109,7 +109,7 @@ def _state_fields() -> list[F8StateSpec]:
             name="videoTransport",
             label="Video Transport",
             description="Video input transport backend. Use zenoh with videoKey; legacy_shm keeps old shmName input.",
-            valueSchema=string_schema(default="legacy_shm", enum=["legacy_shm", "zenoh"]),
+            valueSchema=string_schema(default="zenoh", enum=["zenoh", "legacy_shm"]),
             access=F8StateAccess.rw,
             required=True,
             showOnNode=True,

@@ -108,7 +108,7 @@ class MediaPipePoseServiceNode(ServiceNode):
             video_transport = coerce_str(
                 await self.get_state_value("videoTransport"), default=self._video_transport
             ).strip().lower()
-            self._video_transport = video_transport if video_transport in ("legacy_shm", "zenoh") else "legacy_shm"
+            self._video_transport = video_transport if video_transport in ("legacy_shm", "zenoh") else "zenoh"
             self._config = replace(self._config, video_transport=self._video_transport)
             await self._maybe_reopen_video_input()
             return
@@ -200,7 +200,7 @@ class MediaPipePoseServiceNode(ServiceNode):
                 state_or_default(
                     await self.get_state_value("videoTransport"),
                     self._initial_state.get("videoTransport"),
-                    default="legacy_shm",
+                    default="zenoh",
                 )
             ),
             video_key=coerce_str(
@@ -284,10 +284,10 @@ class MediaPipePoseServiceNode(ServiceNode):
 
     @staticmethod
     def _coerce_video_transport(value: Any) -> str:
-        text = coerce_str(value, default="legacy_shm").strip().lower()
-        if text == "zenoh":
-            return "zenoh"
-        return "legacy_shm"
+        text = coerce_str(value, default="zenoh").strip().lower()
+        if text in ("legacy_shm", "shm"):
+            return "legacy_shm"
+        return "zenoh"
 
     async def _set_last_error(self, message: str) -> None:
         normalized = str(message or "")
@@ -360,11 +360,12 @@ class MediaPipePoseServiceNode(ServiceNode):
         return str(self._video_key or "").strip()
 
     def _selected_video_transport(self) -> str:
-        if str(self._video_transport or "").strip().lower() == "zenoh":
-            return "zenoh"
+        normalized = str(self._video_transport or "").strip().lower()
+        if normalized in ("legacy_shm", "shm"):
+            return "legacy_shm"
         if self._resolve_video_key():
             return "zenoh"
-        return "legacy_shm"
+        return "zenoh"
 
     def _close_video_input(self) -> None:
         try:

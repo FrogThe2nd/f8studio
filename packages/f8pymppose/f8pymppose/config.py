@@ -49,7 +49,7 @@ def state_or_default(state_value: Any, initial_value: Any, *, default: Any) -> A
 @dataclass(frozen=True)
 class PoseServiceConfig:
     shm_name: str = ""
-    video_transport: str = "legacy_shm"
+    video_transport: str = "zenoh"
     video_key: str = ""
     infer_every_n: int = DEFAULT_INFER_EVERY_N
     model_complexity: ModelComplexity = DEFAULT_MODEL_COMPLEXITY

@@ -247,7 +247,7 @@ class OnnxOptflowServiceNode(ServiceNode):
         self._video_source: LatestVideoFrameSource | None = None
         self._bus_backend = "zenoh"
 
-        self._flow_shm_name = f"shm.{self.node_id}.flow"
+        self._flow_shm_name = ""
         self._flow_shm_format = "flow2_f16"
         self._flow_transport = ""
         self._flow_key = zenoh_data_key(self.node_id, node_id=self.node_id, port_id="flow")
@@ -602,6 +602,9 @@ class OnnxOptflowServiceNode(ServiceNode):
     def _resolve_input_video_key(self) -> str:
         return str(self._input_video_key or "").strip()
 
+    def _legacy_flow_shm_name(self) -> str:
+        return f"shm.{self.node_id}.flow"
+
     def _should_publish_zenoh_flow(self) -> bool:
         transport = str(self._flow_transport or "").strip().lower()
         if transport == "zenoh":
@@ -613,10 +616,15 @@ class OnnxOptflowServiceNode(ServiceNode):
     async def _publish_flow_transport_state(self) -> None:
         if self._should_publish_zenoh_flow():
             self._flow_transport = "zenoh"
+            self._flow_shm_name = ""
+            await self.set_state("flowShmName", "")
             await self.set_state("flowTransport", "zenoh")
             await self.set_state("flowKey", self._flow_key)
             return
         self._flow_transport = "legacy_shm"
+        if not self._flow_shm_name:
+            self._flow_shm_name = self._legacy_flow_shm_name()
+        await self.set_state("flowShmName", self._flow_shm_name)
         await self.set_state("flowTransport", "legacy_shm")
         await self.set_state("flowKey", "")
 
@@ -761,6 +769,8 @@ class OnnxOptflowServiceNode(ServiceNode):
         self._flow_writer_pitch = 0
 
     def _ensure_flow_writer(self, *, width: int, height: int, pitch: int) -> None:
+        if not self._flow_shm_name:
+            self._flow_shm_name = self._legacy_flow_shm_name()
         if self._flow_writer is not None:
             if (
                 int(self._flow_writer_width) == int(width)
@@ -915,25 +925,29 @@ class OnnxOptflowServiceNode(ServiceNode):
                     flow_pitch, flow_payload = pack_flow2_f16_payload(flow)
                 finally:
                     frame.release()
-                self._ensure_flow_writer(width=width, height=height, pitch=flow_pitch)
-                assert self._flow_writer is not None
-                self._flow_writer.write_frame(
-                    width=width,
-                    height=height,
-                    pitch=flow_pitch,
-                    payload=flow_payload,
-                    fmt=VIDEO_FORMAT_FLOW2_F16,
-                )
-                try:
-                    self._publish_flow_zenoh(
+                if self._should_publish_zenoh_flow():
+                    try:
+                        self._publish_flow_zenoh(
+                            width=width,
+                            height=height,
+                            pitch=flow_pitch,
+                            payload=flow_payload,
+                            ts_ms=int(frame.ts_ms),
+                        )
+                    except Exception as exc:
+                        await self._record_exception(where="publish_flow_zenoh", exc=exc)
+                        await asyncio.sleep(0.1)
+                        continue
+                else:
+                    self._ensure_flow_writer(width=width, height=height, pitch=flow_pitch)
+                    assert self._flow_writer is not None
+                    self._flow_writer.write_frame(
                         width=width,
                         height=height,
                         pitch=flow_pitch,
                         payload=flow_payload,
-                        ts_ms=int(frame.ts_ms),
+                        fmt=VIDEO_FORMAT_FLOW2_F16,
                     )
-                except Exception as exc:
-                    await self._record_exception(where="publish_flow_zenoh", exc=exc)
                 t_infer1 = time.perf_counter()
                 if self._runtime_warning:
                     await self._set_last_error(self._runtime_warning)
