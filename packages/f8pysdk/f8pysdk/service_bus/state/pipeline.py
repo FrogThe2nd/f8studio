@@ -81,6 +81,14 @@ def coerce_state_value(value: Any) -> Any:
     return value
 
 
+def _is_runtime_builtin_service_state(bus: "ServiceBus", *, node_id: str, field: str, ctx: StateWriteContext) -> bool:
+    if str(node_id) != str(bus.service_id):
+        return False
+    if str(field) not in ("active", "svcId"):
+        return False
+    return ctx.origin in (StateWriteOrigin.runtime, StateWriteOrigin.system)
+
+
 def _build_state_payload(update: _StateUpdate) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "value": update.value,
@@ -233,6 +241,9 @@ async def validate_state_update(
     node_id_s = str(node_id)
     field_s = str(field)
     node = bus._nodes.get(node_id_s)
+
+    if _is_runtime_builtin_service_state(bus, node_id=node_id_s, field=field_s, ctx=ctx):
+        return value
 
     access = bus.state_store.access_for(node_id=node_id_s, field=field_s)
     # If we have an applied graph, unknown fields are rejected.
