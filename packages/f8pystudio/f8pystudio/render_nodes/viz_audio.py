@@ -28,12 +28,11 @@ _TRANSPORT_ZENOH = "zenoh"
 
 def _normalize_audio_transport(value: object, *, audio_key: str, shm_name: str) -> str:
     transport = str(value or "").strip().lower()
+    _ = shm_name
     if transport in (_TRANSPORT_LEGACY_SHM, _TRANSPORT_ZENOH):
         return transport
     if str(audio_key or "").strip():
         return _TRANSPORT_ZENOH
-    if str(shm_name or "").strip():
-        return _TRANSPORT_LEGACY_SHM
     return _TRANSPORT_ZENOH
 
 

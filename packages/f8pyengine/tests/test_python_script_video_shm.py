@@ -86,7 +86,7 @@ class PythonScriptVideoShmTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(normalize("", video_key="", shm_name=""), "zenoh")
         self.assertEqual(normalize("", video_key="f8/test/video", shm_name=""), "zenoh")
-        self.assertEqual(normalize("bad", video_key="", shm_name="shm.video"), "legacy_shm")
+        self.assertEqual(normalize("bad", video_key="", shm_name="shm.video"), "zenoh")
         self.assertEqual(normalize("legacy_shm", video_key="f8/test/video", shm_name=""), "legacy_shm")
 
     async def test_subscribe_video_latest_zenoh_uses_latest_transport(self) -> None:

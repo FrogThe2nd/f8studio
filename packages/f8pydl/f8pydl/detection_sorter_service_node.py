@@ -17,7 +17,7 @@ from f8pysdk.shm.video import (
     VIDEO_FORMAT_SCALAR1_F32,
 )
 
-from .video_frame_source import LatestVideoFrameSource, VideoFrameSourceConfig
+from .video_frame_source import LatestVideoFrameSource, VideoFrameSourceConfig, select_video_source_transport
 
 SortDirection = Literal["asc", "desc"]
 ScoreAggregation = Literal["mean", "max", "sum", "median"]
@@ -479,9 +479,14 @@ class DetectionSorterServiceNode(ServiceNode):
         score_key = str(self._score_key or "").strip()
         score_transport = str(self._score_transport or "").strip().lower()
         score_shm_name = str(self._score_shm_name or "").strip()
-        if score_transport == "zenoh" and not score_key:
+        selected_transport = select_video_source_transport(
+            video_transport=score_transport,
+            video_key=score_key,
+            shm_name=score_shm_name,
+        )
+        if selected_transport == "zenoh" and not score_key:
             raise ScoreSourceUnavailableError("scoreKey is empty", reason="not_ready")
-        if not score_key and not score_shm_name:
+        if selected_transport == "legacy_shm" and not score_shm_name:
             raise ScoreSourceUnavailableError("scoreShmName is empty", reason="not_ready")
         source = self._ensure_score_source()
         try:

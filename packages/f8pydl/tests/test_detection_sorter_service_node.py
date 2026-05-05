@@ -366,7 +366,7 @@ class DetectionSorterServiceNodeTests(unittest.IsolatedAsyncioTestCase):
             )
         )
         try:
-            bus = _BusStub({"scoreShmName": shm_name})
+            bus = _BusStub({"scoreTransport": "legacy_shm", "scoreShmName": shm_name})
             node = DetectionSorterServiceNode(node_id="sorterA", node=SimpleNamespace(stateFields=[]), initial_state=None)
             node.attach(bus)
             payload = _make_detection_payload(
@@ -390,7 +390,7 @@ class DetectionSorterServiceNodeTests(unittest.IsolatedAsyncioTestCase):
     async def test_service_node_inactive_does_not_emit(self) -> None:
         shm_name, writer = _write_scalar_frame(np.ones((2, 2), dtype=np.float32))
         try:
-            bus = _BusStub({"scoreShmName": shm_name})
+            bus = _BusStub({"scoreTransport": "legacy_shm", "scoreShmName": shm_name})
             node = DetectionSorterServiceNode(node_id="sorterInactive", node=SimpleNamespace(stateFields=[]), initial_state=None)
             node.attach(bus)
             await node.on_lifecycle(False, {})
@@ -415,7 +415,7 @@ class DetectionSorterServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         flow[2:4, 2:4, 1] = 4.0
         shm_name, writer = _write_flow_frame(flow)
         try:
-            bus = _BusStub({"scoreShmName": shm_name})
+            bus = _BusStub({"scoreTransport": "legacy_shm", "scoreShmName": shm_name})
             node = DetectionSorterServiceNode(node_id="sorterB", node=SimpleNamespace(stateFields=[]), initial_state=None)
             node.attach(bus)
             payload = _make_detection_payload(
@@ -446,7 +446,7 @@ class DetectionSorterServiceNodeTests(unittest.IsolatedAsyncioTestCase):
             )
         )
         try:
-            bus = _BusStub({"scoreShmName": shm_name})
+            bus = _BusStub({"scoreTransport": "legacy_shm", "scoreShmName": shm_name})
             node = DetectionSorterServiceNode(node_id="sorterC", node=SimpleNamespace(stateFields=[]), initial_state=None)
             node.attach(bus)
             payload = _make_detection_payload(
@@ -472,7 +472,7 @@ class DetectionSorterServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         try:
             bgra = np.zeros((2, 2, 4), dtype=np.uint8)
             writer.write_frame(width=2, height=2, pitch=8, payload=bgra.tobytes(order="C"), fmt=VIDEO_FORMAT_BGRA32)
-            bus = _BusStub({"scoreShmName": writer.shm_name})
+            bus = _BusStub({"scoreTransport": "legacy_shm", "scoreShmName": writer.shm_name})
             node = DetectionSorterServiceNode(node_id="sorterD", node=SimpleNamespace(stateFields=[]), initial_state=None)
             node.attach(bus)
             payload = _make_detection_payload([{"cls": "x", "score": 0.8, "bbox": [0, 0, 2, 2]}], frame_id=1, width=2, height=2)
@@ -490,7 +490,7 @@ class DetectionSorterServiceNodeTests(unittest.IsolatedAsyncioTestCase):
     async def test_service_node_emits_even_when_frame_id_differs(self) -> None:
         shm_name, writer = _write_scalar_frame(np.ones((2, 2), dtype=np.float32))
         try:
-            bus = _BusStub({"scoreShmName": shm_name})
+            bus = _BusStub({"scoreTransport": "legacy_shm", "scoreShmName": shm_name})
             node = DetectionSorterServiceNode(node_id="sorterE", node=SimpleNamespace(stateFields=[]), initial_state=None)
             node.attach(bus)
             payload = _make_detection_payload([{"cls": "x", "score": 0.8, "bbox": [0, 0, 2, 2]}], frame_id=10, width=2, height=2)
@@ -504,7 +504,7 @@ class DetectionSorterServiceNodeTests(unittest.IsolatedAsyncioTestCase):
             writer.close(unlink=True)
 
     async def test_service_node_shm_unavailable_pass_through(self) -> None:
-        bus = _BusStub({"scoreShmName": "shm.this.does.not.exist"})
+        bus = _BusStub({"scoreTransport": "legacy_shm", "scoreShmName": "shm.this.does.not.exist"})
         node = DetectionSorterServiceNode(node_id="sorterF", node=SimpleNamespace(stateFields=[]), initial_state=None)
         node.attach(bus)
         payload = _make_detection_payload(
@@ -528,7 +528,7 @@ class DetectionSorterServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         writer = VideoShmWriter(_unique_shm_name("test.pending"), size=1 << 20)
         writer.open()
         try:
-            bus = _BusStub({"scoreShmName": writer.shm_name})
+            bus = _BusStub({"scoreTransport": "legacy_shm", "scoreShmName": writer.shm_name})
             node = DetectionSorterServiceNode(node_id="sorterG", node=SimpleNamespace(stateFields=[]), initial_state=None)
             node.attach(bus)
             payload = _make_detection_payload(
@@ -556,7 +556,7 @@ class DetectionSorterServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         writer.open()
         try:
             writer.buf[0:4] = b"\x00\x00\x00\x00"
-            bus = _BusStub({"scoreShmName": writer.shm_name})
+            bus = _BusStub({"scoreTransport": "legacy_shm", "scoreShmName": writer.shm_name})
             node = DetectionSorterServiceNode(node_id="sorterH", node=SimpleNamespace(stateFields=[]), initial_state=None)
             node.attach(bus)
             payload = _make_detection_payload(

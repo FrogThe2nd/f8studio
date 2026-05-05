@@ -926,17 +926,13 @@ void TrackingService::set_shm_name(const std::string& shm_name, const json& meta
     return;
   }
   shm_name_override_ = s;
-  if (!shm_name_override_.empty()) {
-    video_transport_state_ = "legacy_shm";
-    zenoh_video_.close();
-    zenoh_video_open_key_.clear();
+  if (video_transport_state_ == "legacy_shm") {
+    video_.close();
+    last_video_open_attempt_ms_ = 0;
+    last_notify_seq_ = 0;
   }
   publish_state_if_changed("shmName", shm_name_override_, "state", meta);
-  publish_state_if_changed("videoTransport", video_transport_state_, "state", meta);
-  video_.close();
-  last_video_open_attempt_ms_ = 0;
   last_frame_id_ = 0;
-  last_notify_seq_ = 0;
   last_processed_frame_ts_ms_ = 0;
   next_tracking_due_ts_ms_ = 0.0;
   frame_bgra_.clear();

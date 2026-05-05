@@ -214,8 +214,6 @@ class AudioCoreFeatureServiceNode(ServiceNode):
             return "legacy_shm"
         if str(self._audio_key or "").strip():
             return "zenoh"
-        if str(self._audio_shm_name or "").strip():
-            return "legacy_shm"
         return "zenoh"
 
     @staticmethod

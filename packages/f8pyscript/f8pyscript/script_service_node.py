@@ -452,14 +452,13 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
     @staticmethod
     def _normalize_video_transport(transport: Any, *, video_key: str, shm_name: str) -> str:
         mode = str(transport or "").strip().lower()
+        _ = shm_name
         if mode == VIDEO_TRANSPORT_ZENOH:
             return VIDEO_TRANSPORT_ZENOH
         if mode in (VIDEO_TRANSPORT_LEGACY_SHM, "shm"):
             return VIDEO_TRANSPORT_LEGACY_SHM
         if str(video_key or "").strip():
             return VIDEO_TRANSPORT_ZENOH
-        if str(shm_name or "").strip():
-            return VIDEO_TRANSPORT_LEGACY_SHM
         return VIDEO_TRANSPORT_ZENOH
 
     @staticmethod

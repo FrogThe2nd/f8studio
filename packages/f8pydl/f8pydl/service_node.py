@@ -17,7 +17,12 @@ from f8pysdk.shm.video import VIDEO_FORMAT_BGRA32
 from .constants import CLASSIFICATION_SCHEMA_VERSION, DETECTION_SCHEMA_VERSION
 from .model_config import ModelSpec, ModelTask, build_model_index, build_model_index_with_errors, load_model_spec
 from .onnx_runtime import OnnxClassifierRuntime, OnnxYoloDetectorRuntime, OnnxYowoTemporalDetectorRuntime
-from .video_frame_source import LatestVideoFrameSource, VideoFrameSourceConfig, video_source_metadata
+from .video_frame_source import (
+    LatestVideoFrameSource,
+    VideoFrameSourceConfig,
+    select_video_source_transport,
+    video_source_metadata,
+)
 from .vision_utils import clamp_xyxy
 from .weights_downloader import ensure_onnx_file, onnx_file_matches_sha256
 
@@ -825,7 +830,14 @@ class OnnxVisionServiceNode(ServiceNode):
                 video_key = self._resolve_video_key()
                 shm_name = self._resolve_shm_name()
                 video_transport = self._resolve_video_transport()
-                if not video_key and not shm_name:
+                selected_transport = select_video_source_transport(
+                    video_transport=video_transport,
+                    video_key=video_key,
+                    shm_name=shm_name,
+                )
+                if (selected_transport == "zenoh" and not video_key) or (
+                    selected_transport == "legacy_shm" and not shm_name
+                ):
                     await asyncio.sleep(0.05)
                     continue
 

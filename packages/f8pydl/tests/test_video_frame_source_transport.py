@@ -19,7 +19,7 @@ def test_select_video_source_transport_is_zenoh_first() -> None:
 
 
 def test_select_video_source_transport_keeps_legacy_compatibility() -> None:
-    assert select_video_source_transport(video_transport="", video_key="", shm_name="shm.video") == "legacy_shm"
+    assert select_video_source_transport(video_transport="", video_key="", shm_name="shm.video") == "zenoh"
     assert select_video_source_transport(video_transport="legacy_shm", video_key="f8/svc/player/nodes/player/data/video", shm_name="") == "legacy_shm"
     assert select_video_source_transport(video_transport="shm", video_key="", shm_name="shm.video") == "legacy_shm"
 

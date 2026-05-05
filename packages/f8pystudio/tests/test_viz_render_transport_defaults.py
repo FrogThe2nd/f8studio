@@ -13,7 +13,7 @@ def test_audio_render_transport_defaults_to_zenoh() -> None:
 
 def test_audio_render_transport_preserves_explicit_legacy_fallback() -> None:
     assert _normalize_audio_transport("legacy_shm", audio_key="f8/test/audio", shm_name="shm.audio") == "legacy_shm"
-    assert _normalize_audio_transport("", audio_key="", shm_name="shm.audio") == "legacy_shm"
+    assert _normalize_audio_transport("", audio_key="", shm_name="shm.audio") == "zenoh"
 
 
 def test_video_render_transport_defaults_to_zenoh() -> None:
@@ -24,10 +24,10 @@ def test_video_render_transport_defaults_to_zenoh() -> None:
 
 def test_video_render_transport_preserves_explicit_legacy_fallback() -> None:
     assert normalize_video_transport("legacy_shm", zenoh_key="f8/test/video", shm_name="shm.video") == "legacy_shm"
-    assert normalize_video_transport("", zenoh_key="", shm_name="shm.video") == "legacy_shm"
+    assert normalize_video_transport("", zenoh_key="", shm_name="shm.video") == "zenoh"
 
 
 def test_track_render_transport_matches_video_render_default_policy() -> None:
     assert normalize_track_transport("", zenoh_key="", shm_name="") == "zenoh"
     assert normalize_track_transport("", zenoh_key="f8/svc/camera/nodes/camera/data/video", shm_name="") == "zenoh"
-    assert normalize_track_transport("", zenoh_key="", shm_name="shm.video") == "legacy_shm"
+    assert normalize_track_transport("", zenoh_key="", shm_name="shm.video") == "zenoh"

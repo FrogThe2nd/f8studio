@@ -266,29 +266,23 @@ void FlowMetricService::on_state(const std::string& node_id, const std::string& 
         return;
       }
       input_flow_shm_name_ = next;
-      input_flow_transport_ = "legacy_shm";
-      input_flow_key_ = next;
-      flow_reader_.close();
-      if (input_zenoh_flow_) {
-        input_zenoh_flow_->close();
+      if (input_flow_transport_ == "legacy_shm") {
+        flow_reader_.close();
+        last_flow_open_attempt_ms_ = 0;
+        last_notify_seq_ = 0;
+        last_frame_id_ = 0;
+        frame_counter_ = 0;
+        flow_payload_.clear();
+        flow_u_.release();
+        flow_v_.release();
+        du_dx_.release();
+        du_dy_.release();
+        dv_dx_.release();
+        dv_dy_.release();
+        metric_output_.release();
       }
-      input_zenoh_flow_.reset();
-      last_flow_open_attempt_ms_ = 0;
-      last_notify_seq_ = 0;
-      last_frame_id_ = 0;
-      frame_counter_ = 0;
-      flow_payload_.clear();
-      flow_u_.release();
-      flow_v_.release();
-      du_dx_.release();
-      du_dy_.release();
-      dv_dx_.release();
-      dv_dy_.release();
-      metric_output_.release();
     }
     publish_state_if_changed("inputFlowShmName", input_flow_shm_name_, "state", meta);
-    publish_state_if_changed("inputFlowTransport", input_flow_transport_, "state", meta);
-    publish_state_if_changed("inputFlowKey", input_flow_key_, "state", meta);
     return;
   }
 

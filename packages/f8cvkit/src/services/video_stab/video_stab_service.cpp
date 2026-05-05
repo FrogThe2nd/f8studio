@@ -333,25 +333,24 @@ void VideoStabService::set_input_shm_name(const std::string& shm_name, const jso
     return;
   }
 
+  bool reset_input = false;
   {
     std::lock_guard<std::mutex> lock(io_mu_);
     input_shm_name_ = trimmed;
-    input_video_transport_ = "legacy_shm";
-    input_video_key_ = trimmed;
-    input_video_.close();
-    if (input_zenoh_video_) {
-      input_zenoh_video_->close();
+    if (input_video_transport_ == "legacy_shm") {
+      reset_input = true;
+      input_video_.close();
+      input_last_open_attempt_ms_ = 0;
+      input_last_notify_seq_ = 0;
+      input_last_frame_id_ = 0;
+      input_frame_bgra_.clear();
     }
-    input_zenoh_video_.reset();
-    input_last_open_attempt_ms_ = 0;
-    input_last_notify_seq_ = 0;
-    input_last_frame_id_ = 0;
   }
 
-  reset_stabilizer_internal(meta, "input_shm_changed");
+  if (reset_input) {
+    reset_stabilizer_internal(meta, "input_shm_changed");
+  }
   publish_state_if_changed("inputShmName", input_shm_name_, "state", meta);
-  publish_state_if_changed("inputVideoTransport", input_video_transport_, "state", meta);
-  publish_state_if_changed("inputVideoKey", input_video_key_, "state", meta);
 }
 
 void VideoStabService::set_motion_model(const std::string& model, const json& meta) {

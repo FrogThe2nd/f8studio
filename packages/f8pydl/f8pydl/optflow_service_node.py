@@ -19,7 +19,12 @@ from f8pysdk.zenoh_naming import zenoh_data_key
 
 from .model_config import ModelSpec, ModelTask, build_model_index, build_model_index_with_errors, load_model_spec
 from .onnx_runtime import OnnxNeuFlowRuntime
-from .video_frame_source import LatestVideoFrameSource, VideoFrameSourceConfig, video_source_metadata
+from .video_frame_source import (
+    LatestVideoFrameSource,
+    VideoFrameSourceConfig,
+    select_video_source_transport,
+    video_source_metadata,
+)
 from .weights_downloader import ensure_onnx_file, onnx_file_matches_sha256
 
 
@@ -838,7 +843,17 @@ class OnnxOptflowServiceNode(ServiceNode):
                 input_video_key = self._resolve_input_video_key()
                 input_shm_name = self._resolve_input_shm_name()
                 input_video_transport = self._resolve_input_video_transport()
-                if not input_video_key and not input_shm_name:
+                selected_transport = select_video_source_transport(
+                    video_transport=input_video_transport,
+                    video_key=input_video_key,
+                    shm_name=input_shm_name,
+                )
+                if selected_transport == "zenoh" and not input_video_key:
+                    await self._set_last_error("missing inputVideoKey")
+                    await asyncio.sleep(0.05)
+                    continue
+                if selected_transport == "legacy_shm" and not input_shm_name:
+                    await self._set_last_error("missing inputShmName")
                     await asyncio.sleep(0.05)
                     continue
 

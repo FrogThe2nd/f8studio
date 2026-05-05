@@ -389,7 +389,7 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(normalize("", video_key="", shm_name=""), "zenoh")
         self.assertEqual(normalize("", video_key="f8/test/pyscript/video", shm_name=""), "zenoh")
-        self.assertEqual(normalize("bad", video_key="", shm_name="shm.video"), "legacy_shm")
+        self.assertEqual(normalize("bad", video_key="", shm_name="shm.video"), "zenoh")
         self.assertEqual(normalize("legacy_shm", video_key="f8/test/pyscript/video", shm_name=""), "legacy_shm")
 
     async def test_get_state_cached_sync_snapshot(self) -> None:

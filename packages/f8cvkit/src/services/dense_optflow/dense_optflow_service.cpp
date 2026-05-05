@@ -286,30 +286,24 @@ void DenseOptflowService::on_state(const std::string& node_id, const std::string
         return;
       }
       input_shm_name_ = next;
-      input_video_transport_ = "legacy_shm";
-      input_video_key_ = next;
-      video_.close();
-      if (input_zenoh_video_) {
-        input_zenoh_video_->close();
+      if (input_video_transport_ == "legacy_shm") {
+        video_.close();
+        last_video_open_attempt_ms_ = 0;
+        last_notify_seq_ = 0;
+        last_frame_id_ = 0;
+        frame_counter_ = 0;
+        frame_bgra_.clear();
+        prev_gray_.release();
+        gray_.release();
+        prev_compute_.release();
+        gray_compute_.release();
+        flow_compute_.release();
+        has_prev_gray_ = false;
+        prev_width_ = 0;
+        prev_height_ = 0;
       }
-      input_zenoh_video_.reset();
-      last_video_open_attempt_ms_ = 0;
-      last_notify_seq_ = 0;
-      last_frame_id_ = 0;
-      frame_counter_ = 0;
-      frame_bgra_.clear();
-      prev_gray_.release();
-      gray_.release();
-      prev_compute_.release();
-      gray_compute_.release();
-      flow_compute_.release();
-      has_prev_gray_ = false;
-      prev_width_ = 0;
-      prev_height_ = 0;
     }
     publish_state_if_changed("inputShmName", input_shm_name_, "state", meta);
-    publish_state_if_changed("inputVideoTransport", input_video_transport_, "state", meta);
-    publish_state_if_changed("inputVideoKey", input_video_key_, "state", meta);
     return;
   }
 

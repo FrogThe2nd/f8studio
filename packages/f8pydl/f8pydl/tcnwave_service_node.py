@@ -764,7 +764,14 @@ class OnnxTcnWaveServiceNode(ServiceNode):
                 video_key = self._resolve_video_key()
                 shm_name = self._resolve_shm_name()
                 video_transport = self._resolve_video_transport()
-                if not video_key and not shm_name:
+                selected_transport = select_video_source_transport(
+                    video_transport=video_transport,
+                    video_key=video_key,
+                    shm_name=shm_name,
+                )
+                if (selected_transport == "zenoh" and not video_key) or (
+                    selected_transport == "legacy_shm" and not shm_name
+                ):
                     await self._handle_missing_video_input(
                         video_transport=video_transport,
                         video_key=video_key,

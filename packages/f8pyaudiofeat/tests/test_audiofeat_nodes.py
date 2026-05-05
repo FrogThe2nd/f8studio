@@ -89,8 +89,14 @@ class _FakeBus:
 class AudioFeatNodeTests(unittest.TestCase):
     def test_audio_transport_defaults_to_zenoh(self) -> None:
         node = AudioCoreFeatureServiceNode(node_id="audio_core", node=_NodeStub(stateFields=[]), initial_state={})
+        legacy_named_node = AudioCoreFeatureServiceNode(
+            node_id="audio_core",
+            node=_NodeStub(stateFields=[]),
+            initial_state={"audioShmName": "shm.audio"},
+        )
 
         self.assertEqual(node._selected_audio_transport(), "zenoh")
+        self.assertEqual(legacy_named_node._selected_audio_transport(), "zenoh")
         self.assertEqual(AudioCoreFeatureServiceNode._coerce_audio_transport(""), "zenoh")
         self.assertEqual(AudioCoreFeatureServiceNode._coerce_audio_transport("bad"), "zenoh")
         self.assertEqual(AudioCoreFeatureServiceNode._coerce_audio_transport("legacy_shm"), "legacy_shm")

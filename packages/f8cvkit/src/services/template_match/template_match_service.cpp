@@ -310,17 +310,13 @@ void TemplateMatchService::on_state(const std::string& node_id, const std::strin
     {
       std::lock_guard<std::mutex> lock(video_mu_);
       shm_name_override_ = service_runtime::trim_copy(value.get<std::string>());
-      if (!shm_name_override_.empty()) {
-        video_transport_state_ = "legacy_shm";
-        zenoh_video_.close();
-        zenoh_video_open_key_.clear();
+      if (video_transport_state_ == "legacy_shm") {
+        video_.close();
+        last_video_open_attempt_ms_ = 0;
+        last_notify_seq_ = 0;
       }
-      video_.close();
-      last_video_open_attempt_ms_ = 0;
-      last_notify_seq_ = 0;
     }
     publish_state_if_changed("shmName", shm_name_override_, "state", meta);
-    publish_state_if_changed("videoTransport", video_transport_state_, "state", meta);
     return;
   }
   if (field == "videoTransport" && value.is_string()) {
