@@ -10,7 +10,7 @@
 #include <spdlog/spdlog.h>
 
 #include "f8cppsdk/time_utils.h"
-#include "f8cppsdk/video_shared_memory_sink.h"
+#include "capture_frame_sink.h"
 #include "x11_capture_sources.h"
 
 #if defined(__linux__) && !defined(_WIN32)
@@ -87,7 +87,7 @@ std::uint8_t scale_to_u8(std::uint32_t v, int bits) {
 
 }  // namespace
 
-LinuxX11Capture::LinuxX11Capture(std::string service_id, std::shared_ptr<f8::cppsdk::VideoSharedMemorySink> sink)
+LinuxX11Capture::LinuxX11Capture(std::string service_id, std::shared_ptr<CaptureFrameSink> sink)
     : service_id_(std::move(service_id)), sink_(std::move(sink)) {}
 
 LinuxX11Capture::~LinuxX11Capture() { close_capture(); }
@@ -164,7 +164,7 @@ void LinuxX11Capture::close_capture() {
 bool LinuxX11Capture::open_capture(std::string& err) {
   err.clear();
   if (!sink_) {
-    err = "sink not set";
+    err = "video sink not set";
     return false;
   }
 
@@ -272,7 +272,7 @@ bool LinuxX11Capture::open_capture(std::string& err) {
   const int out_w = want_scale ? scale_w : src_w;
   const int out_h = want_scale ? scale_h : src_h;
   if (!sink_->ensureConfiguration(static_cast<unsigned>(out_w), static_cast<unsigned>(out_h))) {
-    err = "shm ensureConfiguration failed";
+    err = "video sink ensureConfiguration failed";
     return false;
   }
 
@@ -486,7 +486,7 @@ void LinuxX11Capture::pump_capture() {
   }
 
   if (!sink_->writeFrame(frame_data, static_cast<unsigned>(frame_stride))) {
-    set_error("shm writeFrame failed");
+    set_error("video sink writeFrame failed");
     return;
   }
 

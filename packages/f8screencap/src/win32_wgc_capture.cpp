@@ -23,7 +23,7 @@
 #include <spdlog/spdlog.h>
 
 #include "f8cppsdk/time_utils.h"
-#include "f8cppsdk/video_shared_memory_sink.h"
+#include "capture_frame_sink.h"
 #include "win32_capture_sources.h"
 
 namespace f8::screencap {
@@ -144,7 +144,7 @@ struct Win32WgcRuntime final {
   bool have_crop = false;
 };
 
-Win32WgcCapture::Win32WgcCapture(std::string service_id, std::shared_ptr<f8::cppsdk::VideoSharedMemorySink> sink)
+Win32WgcCapture::Win32WgcCapture(std::string service_id, std::shared_ptr<CaptureFrameSink> sink)
     : service_id_(std::move(service_id)), sink_(std::move(sink)) {
   winrt::init_apartment(winrt::apartment_type::multi_threaded);
 }
@@ -236,7 +236,7 @@ bool Win32WgcCapture::open_capture(std::string& err) {
     return false;
   }
   if (!sink_) {
-    err = "video shm sink not initialized";
+    err = "video sink not initialized";
     return false;
   }
 
@@ -347,7 +347,7 @@ bool Win32WgcCapture::open_capture(std::string& err) {
     return false;
   }
   if (!sink_->ensureConfiguration(static_cast<unsigned>(req_w), static_cast<unsigned>(req_h))) {
-    err = "failed to configure shm dimensions (capacity too small?)";
+    err = "failed to configure video sink dimensions";
     return false;
   }
   const int out_w = static_cast<int>(sink_->outputWidth());
@@ -521,7 +521,7 @@ void Win32WgcCapture::pump_capture() {
   unmap();
 
   if (!sink_->writeFrame(out_bgra_.data(), static_cast<unsigned>(out_stride))) {
-    set_error("shm writeFrame failed");
+    set_error("video sink writeFrame failed");
     return;
   }
 
@@ -586,7 +586,7 @@ void Win32WgcCapture::scale_bgra_bilinear(const std::uint8_t* src, int src_w, in
 
 namespace f8::screencap {
 
-Win32WgcCapture::Win32WgcCapture(std::string, std::shared_ptr<f8::cppsdk::VideoSharedMemorySink>) {}
+Win32WgcCapture::Win32WgcCapture(std::string, std::shared_ptr<CaptureFrameSink>) {}
 Win32WgcCapture::~Win32WgcCapture() = default;
 void Win32WgcCapture::configure(std::string, double, int, std::string, std::string, std::string) {}
 void Win32WgcCapture::restart() {}

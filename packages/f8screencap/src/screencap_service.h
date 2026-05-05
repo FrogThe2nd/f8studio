@@ -21,6 +21,7 @@ class VideoSharedMemorySink;
 
 namespace f8::screencap {
 
+class CaptureFrameSink;
 class Win32WgcCapture;
 class LinuxX11Capture;
 
@@ -93,6 +94,7 @@ class ScreenCapService final : public f8::cppsdk::LifecycleNode,
   std::atomic<bool> armed_{false};
 
   std::unique_ptr<f8::cppsdk::ServiceBus> bus_;
+  std::shared_ptr<CaptureFrameSink> frame_sink_;
   std::shared_ptr<f8::cppsdk::VideoSharedMemorySink> shm_;
   std::shared_ptr<f8::cppsdk::ZenohLatestVideoFramePublisher> zenoh_video_publisher_;
   std::string zenoh_video_key_;
