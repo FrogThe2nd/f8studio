@@ -47,7 +47,7 @@ pixi run -e onnx f8pydl_classifier
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `shmName` | `rw` | `true` | `true` | `string / default=` | Video SHM mapping name (e.g. shm.implayer.video). |
+| `shmName` | `rw` | `false` | `false` | `string / default=` | Legacy SHM mapping name used only when videoTransport=legacy_shm. |
 | `videoTransport` | `rw` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Video input transport backend. Use zenoh with videoKey; legacy_shm keeps old shmName input. |
 | `videoKey` | `rw` | `true` | `true` | `string / default=` | Zenoh latest-frame key for video input. |
 | `weightsDir` | `rw` | `true` | `true` | `string / default=services/f8/dl/weights` | Directory containing *.yaml + *.onnx model files. Reset to the default relative path when exporting publish JSON. |
@@ -65,7 +65,7 @@ pixi run -e onnx f8pydl_classifier
 
 ### Key Fields That Matter
 
-- `shmName` (Video SHM, `rw`): Video SHM mapping name (e.g. shm.implayer.video). Schema: `string / default=`.
+- `shmName` (Legacy Video SHM, `rw`): Legacy SHM mapping name used only when videoTransport=legacy_shm. Schema: `string / default=`.
 - `videoTransport` (Video Transport, `rw`): Video input transport backend. Use zenoh with videoKey; legacy_shm keeps old shmName input. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
 - `videoKey` (Video Key, `rw`): Zenoh latest-frame key for video input. Schema: `string / default=`.
 - `weightsDir` (Weights Dir, `rw`): Directory containing *.yaml + *.onnx model files. Reset to the default relative path when exporting publish JSON. Schema: `string / default=services/f8/dl/weights`.

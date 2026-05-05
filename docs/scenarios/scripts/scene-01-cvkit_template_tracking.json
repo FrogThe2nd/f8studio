@@ -2103,8 +2103,8 @@
             },
             {
               "name": "shmName",
-              "label": "Video SHM",
-              "description": "Optional SHM name override (e.g. shm.xxx.video).",
+              "label": "Legacy Video SHM",
+              "description": "Legacy SHM name used only when videoTransport=legacy_shm.",
               "valueSchema": {
                 "title": null,
                 "description": null,
@@ -2122,7 +2122,7 @@
               "access": "rw",
               "required": false,
               "uiControl": null,
-              "showOnNode": true
+              "showOnNode": false
             },
             {
               "name": "active",
@@ -2744,7 +2744,9 @@
           "templateImagePngB64": "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",
           "matchThreshold": 0.5,
           "matchingIntervalMs": 200,
-          "shmName": "shm.player.video",
+          "shmName": "",
+          "videoTransport": "zenoh",
+          "videoKey": "f8/svc/player/nodes/player/data/video",
           "active": false,
           "svcId": "HnT2"
         }
@@ -2796,8 +2798,8 @@
           "stateFields": [
             {
               "name": "shmName",
-              "label": "Video SHM",
-              "description": "Optional SHM name override (e.g. shm.xxx.video).",
+              "label": "Legacy Video SHM",
+              "description": "Legacy SHM name used only when videoTransport=legacy_shm.",
               "valueSchema": {
                 "title": null,
                 "description": null,
@@ -2815,7 +2817,7 @@
               "access": "rw",
               "required": false,
               "uiControl": null,
-              "showOnNode": true
+              "showOnNode": false
             },
             {
               "name": "initSelect",
@@ -3259,7 +3261,9 @@
           }
         },
         "custom": {
-          "shmName": "shm.player.video",
+          "shmName": "",
+          "videoTransport": "zenoh",
+          "videoKey": "f8/svc/player/nodes/player/data/video",
           "initSelect": "closest_center",
           "isTracking": true,
           "isNotTracking": false,
@@ -3409,8 +3413,8 @@
             },
             {
               "name": "videoShmName",
-              "label": "Video SHM Name",
-              "description": "Optional BGRA Video SHM mapping name used as Track Viz background.",
+              "label": "Legacy Video SHM",
+              "description": "Legacy BGRA Video SHM mapping name used only when videoTransport=legacy_shm.",
               "valueSchema": {
                 "title": null,
                 "description": null,
@@ -3428,7 +3432,7 @@
               "access": "rw",
               "required": false,
               "uiControl": null,
-              "showOnNode": true
+              "showOnNode": false
             },
             {
               "name": "flowArrowScale",
@@ -3594,7 +3598,9 @@
           "throttleMs": 50,
           "historyMs": 500,
           "historyFrames": 10,
-          "videoShmName": "shm.player.video",
+          "videoTransport": "zenoh",
+          "videoKey": "f8/svc/player/nodes/player/data/video",
+          "videoShmName": "",
           "flowArrowScale": 1.0,
           "flowArrowMinMag": 0.0,
           "flowArrowMaxCount": 2000,
@@ -4145,8 +4151,8 @@
             },
             {
               "name": "videoShmName",
-              "label": "Video SHM",
-              "description": "Shared memory region name.",
+              "label": "Legacy Video SHM",
+              "description": "Legacy shared memory region name when the legacy_shm fallback is active.",
               "valueSchema": {
                 "title": null,
                 "description": null,
@@ -4164,7 +4170,7 @@
               "access": "ro",
               "required": false,
               "uiControl": null,
-              "showOnNode": true
+              "showOnNode": false
             },
             {
               "name": "videoShmEvent",
@@ -4694,8 +4700,10 @@
           "volume": 1.0,
           "playing": true,
           "duration": 723.4894333333334,
-          "videoShmName": "shm.player.video",
-          "videoShmEvent": "shm.player.video_evt",
+          "videoShmName": "",
+          "videoShmEvent": "",
+          "videoTransport": "zenoh",
+          "videoKey": "f8/svc/player/nodes/player/data/video",
           "videoShmMaxWidth": 1000,
           "videoShmMaxHeight": 1000,
           "videoShmMaxFps": 40.0,

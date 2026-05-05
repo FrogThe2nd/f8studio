@@ -1109,14 +1109,14 @@ json VideoStabService::describe() {
   service["tags"] = json::array({"cv", "stabilization", "video"});
 
   service["stateFields"] = json::array({
-      state_field("inputShmName", schema_string(), "rw", "Input Video SHM", "Input SHM name (e.g. shm.xxx.video).",
-                  true),
+      state_field("inputShmName", schema_string(), "rw", "Legacy Input SHM",
+                  "Legacy input SHM name used only when inputVideoTransport=legacy_shm.", false),
       state_field("inputVideoTransport", schema_string_enum(std::vector<std::string>{"zenoh", "legacy_shm"}, "zenoh"),
                   "rw", "Input Video Transport",
                   "Input video frame transport backend. Zenoh is default; legacy_shm keeps old inputShmName.", false),
       state_field("inputVideoKey", schema_string(), "rw", "Input Video Key", "Input video frame transport key.", true),
-      state_field("outputShmName", schema_string(), "ro", "Output Video SHM",
-                  "Output SHM name generated from serviceId.", true),
+      state_field("outputShmName", schema_string(), "ro", "Legacy Output SHM",
+                  "Legacy output SHM name used only when videoTransport=legacy_shm.", false),
       state_field("videoTransport", schema_string_enum(std::vector<std::string>{"zenoh", "legacy_shm"}, "zenoh"), "ro",
                   "Video Transport",
                   "Output video frame transport backend. Zenoh is default; legacy_shm keeps old outputShmName.", false),

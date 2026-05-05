@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <utility>
+#include <vector>
 
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
@@ -941,16 +942,17 @@ json TemplateMatchService::describe() {
                   "If >0, search around the previous detection with this padding.", false),
       state_field("pyramidScale", schema_number(1.0, 0.25, 1.0), "rw", "Pyramid Scale",
                   "Optional downscale factor for faster coarse template matching.", false),
-      state_field("shmName", schema_string(), "rw", "Video SHM", "Optional SHM name override (e.g. shm.xxx.video).",
-                  true),
-      state_field("videoTransport", schema_string_enum({"zenoh", "legacy_shm"}), "rw", "Video Transport",
+      state_field("shmName", schema_string(), "rw", "Legacy Video SHM",
+                  "Legacy SHM name used only when videoTransport=legacy_shm.", false),
+      state_field("videoTransport", schema_string_enum(std::vector<std::string>{"zenoh", "legacy_shm"}, "zenoh"),
+                  "rw", "Video Transport",
                   "Video input transport backend. Zenoh is default; legacy_shm keeps old shmName input.",
                   false),
       state_field("videoKey", schema_string(), "rw", "Video Key", "Zenoh latest-frame key for video input.", true),
   });
   service["commands"] = json::array({
       json{{"name", "captureTemplateFrame"},
-           {"description", "Capture current SHM frame as an encoded image (base64)."},
+           {"description", "Capture current video frame as an encoded image (base64)."},
            {"required", true},
            {"showOnNode", true},
            {"params", json::array({

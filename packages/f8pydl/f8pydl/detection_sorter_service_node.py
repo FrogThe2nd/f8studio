@@ -21,17 +21,17 @@ from .video_frame_source import LatestVideoFrameSource, VideoFrameSourceConfig
 
 SortDirection = Literal["asc", "desc"]
 ScoreAggregation = Literal["mean", "max", "sum", "median"]
-ScoreShmUnavailableReason = Literal["not_ready", "invalid"]
+ScoreSourceUnavailableReason = Literal["not_ready", "invalid"]
 
 logger = logging.getLogger(__name__)
 
 _CLS_WEIGHTS_REGEX_PREFIX = "re:"
 
 
-class ScoreShmUnavailableError(RuntimeError):
-    """Raised when score SHM is missing/unreadable/unsupported for sorting."""
+class ScoreSourceUnavailableError(RuntimeError):
+    """Raised when the selected score-map source is missing, unreadable, or unsupported."""
 
-    def __init__(self, message: str, *, reason: ScoreShmUnavailableReason) -> None:
+    def __init__(self, message: str, *, reason: ScoreSourceUnavailableReason) -> None:
         super().__init__(message)
         self.reason = reason
 
@@ -437,11 +437,11 @@ class DetectionSorterServiceNode(ServiceNode):
         self._latest_detections = incoming_payload
         try:
             output_payload = self._sort_latest_detections()
-        except ScoreShmUnavailableError as exc:
+        except ScoreSourceUnavailableError as exc:
             if exc.reason == "not_ready":
                 await self._set_last_error("")
             else:
-                await self._set_last_error(self._format_shm_unavailable_error(exc))
+                await self._set_last_error(self._format_score_source_unavailable_error(exc))
             await self.emit("detections", incoming_payload, ts_ms=_payload_int(incoming_payload, "tsMs"))
             return
         except Exception as exc:
@@ -480,9 +480,9 @@ class DetectionSorterServiceNode(ServiceNode):
         score_transport = str(self._score_transport or "").strip().lower()
         score_shm_name = str(self._score_shm_name or "").strip()
         if score_transport == "zenoh" and not score_key:
-            raise ScoreShmUnavailableError("scoreKey is empty", reason="not_ready")
+            raise ScoreSourceUnavailableError("scoreKey is empty", reason="not_ready")
         if not score_key and not score_shm_name:
-            raise ScoreShmUnavailableError("scoreShmName is empty", reason="not_ready")
+            raise ScoreSourceUnavailableError("scoreShmName is empty", reason="not_ready")
         source = self._ensure_score_source()
         try:
             frame = source.read_latest(
@@ -493,21 +493,21 @@ class DetectionSorterServiceNode(ServiceNode):
                 dedupe=False,
             )
         except FileNotFoundError as exc:
-            raise ScoreShmUnavailableError(f"open pending: {type(exc).__name__}: {exc}", reason="not_ready") from exc
+            raise ScoreSourceUnavailableError(f"open pending: {type(exc).__name__}: {exc}", reason="not_ready") from exc
         except ValueError as exc:
             message = str(exc).strip()
-            reason: ScoreShmUnavailableReason = "invalid" if "invalid" in message.lower() else "not_ready"
-            raise ScoreShmUnavailableError(
+            reason: ScoreSourceUnavailableReason = "invalid" if "invalid" in message.lower() else "not_ready"
+            raise ScoreSourceUnavailableError(
                 f"score source unavailable: {type(exc).__name__}: {exc}",
                 reason=reason,
             ) from exc
         except (RuntimeError, OSError) as exc:
-            raise ScoreShmUnavailableError(
+            raise ScoreSourceUnavailableError(
                 f"score source unavailable: {type(exc).__name__}: {exc}",
                 reason="not_ready",
             ) from exc
         if frame is None:
-            raise ScoreShmUnavailableError("score source has no readable frame", reason="not_ready")
+            raise ScoreSourceUnavailableError("score source has no readable frame", reason="not_ready")
         return frame, frame.payload
 
     def _sort_latest_detections(self) -> dict[str, Any] | None:
@@ -521,7 +521,7 @@ class DetectionSorterServiceNode(ServiceNode):
             try:
                 score_map = decode_score_map_from_frame(header=header, payload=payload)
             except ValueError as exc:
-                raise ScoreShmUnavailableError(str(exc), reason="invalid") from exc
+                raise ScoreSourceUnavailableError(str(exc), reason="invalid") from exc
             return sort_detection_payload(
                 self._latest_detections,
                 score_map=score_map,
@@ -539,13 +539,13 @@ class DetectionSorterServiceNode(ServiceNode):
         self._cls_weights_regex = regex
 
     @staticmethod
-    def _format_shm_unavailable_error(exc: ScoreShmUnavailableError) -> str:
+    def _format_score_source_unavailable_error(exc: ScoreSourceUnavailableError) -> str:
         details = str(exc).strip()
         if not details:
-            return "score SHM unavailable"
+            return "score source unavailable"
         if len(details) > 200:
             details = details[:200] + "..."
-        return f"score SHM unavailable: {details}"
+        return f"score source unavailable: {details}"
 
     async def _set_last_error(self, message: str) -> None:
         normalized = str(message or "")

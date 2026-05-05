@@ -48,7 +48,7 @@ pixi run -e onnx f8pydl_detsorter
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
 | `clsWeights` | `rw` | `true` | `false` | `string / default={}` | JSON map of detection cls -> weight multiplier applied to score-map metric. Keys without a prefix are exact cls matches. Keys with 're:' prefix are Python regex patterns matched via fullmatch(). All matching rules are multiplied together. Unspecified classes default to weight 1.0. Example: {"person": 2.0, "car": 0.7, "re:^dog_.*$": 1.3} |
-| `scoreShmName` | `rw` | `true` | `true` | `string / default=` | Score-map SHM name (supports scalar1_f32 and flow2_f16). |
+| `scoreShmName` | `rw` | `false` | `false` | `string / default=` | Legacy score-map SHM name used only when scoreTransport=legacy_shm. |
 | `scoreTransport` | `rw` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Score-map transport backend. Use zenoh for latest-frame score maps; legacy_shm keeps old SHM input. |
 | `scoreKey` | `rw` | `true` | `true` | `string / default=` | Zenoh latest-frame key for scalar/flow score-map input. |
 | `sortDirection` | `rw` | `true` | `true` | `string / enum[desc, asc] / default=desc` | Prefer larger scores first (desc) or smaller scores first (asc). |
@@ -59,7 +59,7 @@ pixi run -e onnx f8pydl_detsorter
 ### Key Fields That Matter
 
 - `clsWeights` (Class Weights, `rw`): JSON map of detection cls -> weight multiplier applied to score-map metric. Keys without a prefix are exact cls matches. Keys with 're:' prefix are Python regex patterns matched via fullmatch(). All matching rules are multiplied together. Unspecified classes default to weight 1.0. Example: {"person": 2.0, "car": 0.7, "re:^dog_.*$": 1.3} Schema: `string / default={}`.
-- `scoreShmName` (Score SHM, `rw`): Score-map SHM name (supports scalar1_f32 and flow2_f16). Schema: `string / default=`.
+- `scoreShmName` (Legacy Score SHM, `rw`): Legacy score-map SHM name used only when scoreTransport=legacy_shm. Schema: `string / default=`.
 - `scoreTransport` (Score Transport, `rw`): Score-map transport backend. Use zenoh for latest-frame score maps; legacy_shm keeps old SHM input. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
 - `scoreKey` (Score Key, `rw`): Zenoh latest-frame key for scalar/flow score-map input. Schema: `string / default=`.
 - `sortDirection` (Sort Direction, `rw`): Prefer larger scores first (desc) or smaller scores first (asc). Schema: `string / enum[desc, asc] / default=desc`.

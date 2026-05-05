@@ -2448,7 +2448,7 @@ json ImPlayerService::describe() {
   service["serviceClass"] = "f8.implayer";
   service["label"] = "IM Player";
   service["version"] = "0.0.1";
-  service["description"] = "C++ MPV-based player service with shared-memory video output.";
+  service["description"] = "C++ MPV-based player service with Zenoh latest-frame video output.";
   service["stateFields"] = json::array({
       state_field("loop", schema_boolean(), "rw", "Loop", "Repeat playlist when reaching EOF.", false),
       state_field("mediaUrl", schema_string(), "rw", "Media URL",
@@ -2460,11 +2460,12 @@ json ImPlayerService::describe() {
       state_field("volume", schema_number(1.0, 0.0, 1.0), "rw", "Volume", "", true, "slider"),
       state_field("playing", schema_boolean(), "ro", "Playing", "Playback state.", false),
       state_field("duration", schema_number(), "ro", "Duration", "Duration (seconds).", true),
-      state_field("videoShmName", schema_string(), "ro", "Video SHM", "Shared memory region name.", true),
+      state_field("videoShmName", schema_string(), "ro", "Legacy Video SHM",
+                  "Legacy shared memory region name when the legacy_shm fallback is active.", false),
       state_field("videoShmEvent", schema_string(), "ro", "Video Event", "Optional named event to signal new frames.",
                   false),
-      state_field("videoTransport", schema_string_enum({"legacy_shm", "zenoh"}), "ro", "Video Transport",
-                  "Frame transport backend.", true),
+      state_field("videoTransport", schema_string_enum(std::vector<std::string>{"zenoh", "legacy_shm"}, "zenoh"), "ro",
+                  "Video Transport", "Frame transport backend.", false),
       state_field("videoKey", schema_string(), "ro", "Video Key", "Transport-specific video stream key.", true),
       state_field("videoFormat", schema_string_enum({"bgra32", "bgr24", "flow2_f16", "scalar1_f32"}), "ro",
                   "Video Format", "Frame payload format.", false),

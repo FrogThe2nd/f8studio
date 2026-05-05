@@ -47,7 +47,7 @@ pixi run -e onnx f8pydl_tcnwave
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `shmName` | `rw` | `true` | `true` | `string / default=` | Video SHM mapping name (e.g. shm.implayer.video). |
+| `shmName` | `rw` | `false` | `false` | `string / default=` | Legacy SHM mapping name used only when videoTransport=legacy_shm. |
 | `videoTransport` | `rw` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Video input transport backend. Use zenoh with videoKey; legacy_shm keeps old shmName input. |
 | `videoKey` | `rw` | `true` | `true` | `string / default=` | Zenoh latest-frame key for video input. |
 | `weightsDir` | `rw` | `true` | `true` | `string / default=services/f8/dl/weights` | Directory containing *.yaml + *.onnx model files. Reset to the default relative path when exporting publish JSON. |
@@ -61,13 +61,13 @@ pixi run -e onnx f8pydl_tcnwave
 | `ortActiveProviders` | `ro` | `true` | `false` | `string / default=` | JSON list of active ONNX Runtime providers for this session. |
 | `outputScale` | `rw` | `true` | `false` | `number / default=10.0` | Denormalization scale applied to raw model output values. |
 | `outputBias` | `rw` | `true` | `false` | `number / default=0.0` | Denormalization bias applied after outputScale. |
-| `useVrFocusCrop` | `rw` | `true` | `false` | `boolean / default=False` | Apply focus crop before inference. This assumes SHM already provides the target eye view and crops top 20% + left/right 10%. |
+| `useVrFocusCrop` | `rw` | `true` | `false` | `boolean / default=False` | Apply focus crop before inference. This assumes the selected video input already provides the target eye view and crops top 20% + left/right 10%. |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
 ### Key Fields That Matter
 
-- `shmName` (Video SHM, `rw`): Video SHM mapping name (e.g. shm.implayer.video). Schema: `string / default=`.
+- `shmName` (Legacy Video SHM, `rw`): Legacy SHM mapping name used only when videoTransport=legacy_shm. Schema: `string / default=`.
 - `videoTransport` (Video Transport, `rw`): Video input transport backend. Use zenoh with videoKey; legacy_shm keeps old shmName input. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
 - `videoKey` (Video Key, `rw`): Zenoh latest-frame key for video input. Schema: `string / default=`.
 - `weightsDir` (Weights Dir, `rw`): Directory containing *.yaml + *.onnx model files. Reset to the default relative path when exporting publish JSON. Schema: `string / default=services/f8/dl/weights`.

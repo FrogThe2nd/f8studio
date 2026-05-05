@@ -733,8 +733,8 @@ json FlowMetricService::describe() {
   service["rendererClass"] = "default_svc";
   service["tags"] = json::array({"cv", "optical_flow", "flow_metric", "scalar_field"});
   service["stateFields"] = json::array({
-      state_field("inputFlowShmName", schema_string(), "rw", "Input Flow SHM",
-                  "Input flow SHM name (format flow2_f16, e.g. shm.xxx.flow).", true),
+      state_field("inputFlowShmName", schema_string(), "rw", "Legacy Input Flow SHM",
+                  "Legacy input flow SHM name used only when inputFlowTransport=legacy_shm.", false),
       state_field("inputFlowTransport", schema_string_enum(std::vector<std::string>{"zenoh", "legacy_shm"}, "zenoh"),
                   "rw", "Input Flow Transport",
                   "Input flow frame transport backend. Zenoh is default; legacy_shm keeps old inputFlowShmName.",
@@ -746,8 +746,8 @@ json FlowMetricService::describe() {
                   "Metric Mode", "Flow metric mode: divergence | magnitude | curl | strain.", false),
       state_field("metricScale", schema_number(1.0, -1000.0, 1000.0), "rw", "Metric Scale",
                   "Scale factor applied to computed metric values before output.", false),
-      state_field("scalarShmName", schema_string(), "ro", "Scalar SHM Name", "Output SHM name for scalar metric field.",
-                  true),
+      state_field("scalarShmName", schema_string(), "ro", "Legacy Scalar SHM",
+                  "Legacy output SHM name used only when scalarTransport=legacy_shm.", false),
       state_field("scalarTransport", schema_string_enum(std::vector<std::string>{"zenoh", "legacy_shm"}, "zenoh"),
                   "ro", "Scalar Transport",
                   "Output scalar frame transport backend. Zenoh is default; legacy_shm keeps old scalarShmName.",

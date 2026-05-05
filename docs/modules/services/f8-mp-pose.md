@@ -47,9 +47,9 @@ pixi run -e mediapipe f8pymppose
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `shmName` | `rw` | `true` | `true` | `string / default=` | Video SHM mapping name (e.g. shm.implayer.video). |
-| `videoTransport` | `rw` | `true` | `true` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Video input transport backend. Use zenoh with videoKey; legacy_shm keeps old shmName input. |
-| `videoKey` | `rw` | `true` | `true` | `string / default=` | Transport-specific video stream key. |
+| `shmName` | `rw` | `false` | `false` | `string / default=` | Legacy SHM mapping name used only when videoTransport=legacy_shm. |
+| `videoTransport` | `rw` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Video input transport backend. Use zenoh with videoKey; legacy_shm keeps old shmName input. |
+| `videoKey` | `rw` | `true` | `true` | `string / default=` | Zenoh latest-frame key for video input. |
 | `inferEveryN` | `rw` | `true` | `false` | `integer / default=1` | Run pose inference every N frames (>=1). |
 | `modelComplexity` | `rw` | `true` | `false` | `string / enum[lite, full, heavy] / default=full` | MediaPipe pose model variant. |
 | `minDetectionConfidence` | `rw` | `true` | `false` | `number / default=0.5` | Minimum confidence threshold for pose detection. |
@@ -61,9 +61,9 @@ pixi run -e mediapipe f8pymppose
 
 ### Key Fields That Matter
 
-- `shmName` (Video SHM, `rw`): Video SHM mapping name (e.g. shm.implayer.video). Schema: `string / default=`.
+- `shmName` (Legacy Video SHM, `rw`): Legacy SHM mapping name used only when videoTransport=legacy_shm. Schema: `string / default=`.
 - `videoTransport` (Video Transport, `rw`): Video input transport backend. Use zenoh with videoKey; legacy_shm keeps old shmName input. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
-- `videoKey` (Video Key, `rw`): Transport-specific video stream key. Schema: `string / default=`.
+- `videoKey` (Video Key, `rw`): Zenoh latest-frame key for video input. Schema: `string / default=`.
 - `inferEveryN` (Infer Every N Frames, `rw`): Run pose inference every N frames (>=1). Schema: `integer / default=1`.
 - `modelComplexity` (Model Complexity, `rw`): MediaPipe pose model variant. Schema: `string / enum[lite, full, heavy] / default=full`.
 - `minDetectionConfidence` (Min Detection Confidence, `rw`): Minimum confidence threshold for pose detection. Schema: `number / default=0.5`.

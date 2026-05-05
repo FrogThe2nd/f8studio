@@ -6,7 +6,7 @@ No description.
 - Service class: `f8.audiocap`
 - Version: `0.0.1`
 - Source directory: `f8/audiocap`
-- Tags: `audio`, `capture`, `shm`
+- Tags: `audio`, `capture`, `zenoh`
 
 ## When to Use
 
@@ -47,8 +47,8 @@ linux/f8audiocap_service
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `audioShmName` | `ro` | `true` | `true` | `string` | Name of the audio shared memory segment |
-| `audioTransport` | `ro` | `true` | `true` | `string / enum[legacy_shm, zenoh]` | Audio transport backend. Zenoh is the default runtime data path; legacy_shm keeps audioShmName. |
+| `audioShmName` | `ro` | `true` | `false` | `string` | Legacy shared memory segment name when the legacy_shm fallback is active. |
+| `audioTransport` | `ro` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Audio transport backend. Zenoh is the default runtime data path; legacy_shm keeps audioShmName. |
 | `audioKey` | `ro` | `true` | `true` | `string` | Transport-specific audio stream key |
 | `audioDevice` | `ro` | `true` | `false` | `string` | Name of the audio capture device in use |
 | `audioSampleRate` | `ro` | `true` | `false` | `integer` | Sample rate of the audio capture device |
@@ -65,8 +65,8 @@ linux/f8audiocap_service
 
 ### Key Fields That Matter
 
-- `audioShmName` (Audio SHM, `ro`): Name of the audio shared memory segment Schema: `string`.
-- `audioTransport` (Audio Transport, `ro`): Audio transport backend. Zenoh is the default runtime data path; legacy_shm keeps audioShmName. Schema: `string / enum[legacy_shm, zenoh]`.
+- `audioShmName` (Legacy Audio SHM, `ro`): Legacy shared memory segment name when the legacy_shm fallback is active. Schema: `string`.
+- `audioTransport` (Audio Transport, `ro`): Audio transport backend. Zenoh is the default runtime data path; legacy_shm keeps audioShmName. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
 - `audioKey` (Audio Key, `ro`): Transport-specific audio stream key Schema: `string`.
 - `audioDevice` (Audio Device, `ro`): Name of the audio capture device in use Schema: `string`.
 - `audioSampleRate` (Audio Sample Rate, `ro`): Sample rate of the audio capture device Schema: `integer`.

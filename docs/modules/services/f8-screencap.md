@@ -6,7 +6,7 @@ No description.
 - Service class: `f8.screencap`
 - Version: `0.0.1`
 - Source directory: `f8/screencap`
-- Tags: `video`, `capture`, `shm`
+- Tags: `video`, `capture`, `zenoh`
 
 ## When to Use
 
@@ -47,9 +47,9 @@ linux/f8screencap_service
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `videoShmName` | `ro` | `true` | `true` | `string` | Shared memory region name |
+| `videoShmName` | `ro` | `true` | `false` | `string` | Legacy shared memory region name when the legacy_shm fallback is active. |
 | `videoShmEvent` | `ro` | `true` | `false` | `string` | Shared memory event name |
-| `videoTransport` | `ro` | `true` | `true` | `string / enum[legacy_shm, zenoh]` | Frame transport backend |
+| `videoTransport` | `ro` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Frame transport backend |
 | `videoKey` | `ro` | `true` | `true` | `string` | Transport-specific video stream key |
 | `videoFormat` | `ro` | `true` | `false` | `string / enum[bgra32, bgr24, flow2_f16, scalar1_f32]` | Frame payload format |
 | `videoFrameSchemaVersion` | `ro` | `true` | `false` | `integer` | Frame schema version |
@@ -69,9 +69,9 @@ linux/f8screencap_service
 
 ### Key Fields That Matter
 
-- `videoShmName` (Video SHM, `ro`): Shared memory region name Schema: `string`.
+- `videoShmName` (Legacy Video SHM, `ro`): Legacy shared memory region name when the legacy_shm fallback is active. Schema: `string`.
 - `videoShmEvent` (Video Event, `ro`): Shared memory event name Schema: `string`.
-- `videoTransport` (Video Transport, `ro`): Frame transport backend Schema: `string / enum[legacy_shm, zenoh]`.
+- `videoTransport` (Video Transport, `ro`): Frame transport backend Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
 - `videoKey` (Video Key, `ro`): Transport-specific video stream key Schema: `string`.
 - `videoFormat` (Video Format, `ro`): Frame payload format Schema: `string / enum[bgra32, bgr24, flow2_f16, scalar1_f32]`.
 - `videoFrameSchemaVersion` (Video Schema, `ro`): Frame schema version Schema: `integer`.

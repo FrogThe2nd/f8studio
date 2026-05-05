@@ -1465,9 +1465,10 @@ json TrackingService::describe() {
   service["rendererClass"] = "default_svc";
   service["tags"] = json::array({"cv", "tracking"});
   service["stateFields"] = json::array({
-      state_field("shmName", schema_string(), "rw", "Video SHM", "Optional SHM name override (e.g. shm.xxx.video).",
-                  true),
-      state_field("videoTransport", schema_string_enum({"zenoh", "legacy_shm"}), "rw", "Video Transport",
+      state_field("shmName", schema_string(), "rw", "Legacy Video SHM",
+                  "Legacy SHM name used only when videoTransport=legacy_shm.", false),
+      state_field("videoTransport", schema_string_enum(std::vector<std::string>{"zenoh", "legacy_shm"}, "zenoh"),
+                  "rw", "Video Transport",
                   "Video input transport backend. Zenoh is default; legacy_shm keeps old shmName input.",
                   false),
       state_field("videoKey", schema_string(), "rw", "Video Key", "Zenoh latest-frame key for video input.", true),

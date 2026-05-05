@@ -113,12 +113,12 @@ def _detection_sorter_state_fields() -> list[F8StateSpec]:
         ),
         F8StateSpec(
             name="scoreShmName",
-            label="Score SHM",
-            description="Score-map SHM name (supports scalar1_f32 and flow2_f16).",
+            label="Legacy Score SHM",
+            description="Legacy score-map SHM name used only when scoreTransport=legacy_shm.",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
-            required=True,
-            showOnNode=True,
+            required=False,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="scoreTransport",
@@ -168,12 +168,12 @@ def _common_state_fields(
     fields = [
         F8StateSpec(
             name="shmName",
-            label="Video SHM",
-            description="Video SHM mapping name (e.g. shm.implayer.video).",
+            label="Legacy Video SHM",
+            description="Legacy SHM mapping name used only when videoTransport=legacy_shm.",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
-            required=True,
-            showOnNode=True,
+            required=False,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="videoTransport",
@@ -360,12 +360,12 @@ def _optflow_state_fields() -> list[F8StateSpec]:
     return [
         F8StateSpec(
             name="inputShmName",
-            label="Input Video SHM",
-            description="Input SHM name (e.g. shm.xxx.video).",
+            label="Legacy Input SHM",
+            description="Legacy input SHM name used only when inputVideoTransport=legacy_shm.",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
-            required=True,
-            showOnNode=True,
+            required=False,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="inputVideoTransport",
@@ -471,12 +471,12 @@ def _optflow_state_fields() -> list[F8StateSpec]:
         ),
         F8StateSpec(
             name="flowShmName",
-            label="Flow SHM Name",
-            description="Output flow SHM name.",
+            label="Legacy Flow SHM",
+            description="Legacy output flow SHM name used only when flowTransport=legacy_shm.",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.ro,
-            required=True,
-            showOnNode=True,
+            required=False,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="flowTransport",
@@ -542,7 +542,7 @@ def _tcn_wave_state_fields() -> list[F8StateSpec]:
             label="VR Focus Crop",
             description=(
                 "Apply focus crop before inference. "
-                "This assumes SHM already provides the target eye view and crops top 20% + left/right 10%."
+                "This assumes the selected video input already provides the target eye view and crops top 20% + left/right 10%."
             ),
             valueSchema=boolean_schema(default=False),
             access=F8StateAccess.rw,

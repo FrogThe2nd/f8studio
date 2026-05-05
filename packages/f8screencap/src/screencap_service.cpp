@@ -953,12 +953,13 @@ json ScreenCapService::describe() {
   service["label"] = "Screen Capture";
   service["version"] = "0.0.1";
   service["rendererClass"] = "default_svc";
-  service["tags"] = json::array({"video", "capture", "shm"});
+  service["tags"] = json::array({"video", "capture", "zenoh"});
   service["stateFields"] = json::array({
-      state_field("videoShmName", schema_string(), "ro", "Video SHM", "Shared memory region name", true),
+      state_field("videoShmName", schema_string(), "ro", "Legacy Video SHM",
+                  "Legacy shared memory region name when the legacy_shm fallback is active.", false),
       state_field("videoShmEvent", schema_string(), "ro", "Video Event", "Shared memory event name", false),
-      state_field("videoTransport", schema_string_enum({"legacy_shm", "zenoh"}), "ro", "Video Transport",
-                  "Frame transport backend", true),
+      state_field("videoTransport", schema_string_enum(std::vector<std::string>{"zenoh", "legacy_shm"}, "zenoh"), "ro",
+                  "Video Transport", "Frame transport backend", false),
       state_field("videoKey", schema_string(), "ro", "Video Key", "Transport-specific video stream key", true),
       state_field("videoFormat", schema_string_enum({"bgra32", "bgr24", "flow2_f16", "scalar1_f32"}), "ro",
                   "Video Format", "Frame payload format", false),

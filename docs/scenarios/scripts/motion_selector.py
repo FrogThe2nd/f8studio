@@ -1,10 +1,12 @@
-# Motion-first selector for f8.python_script (Video SHM flow edition)
+# Motion-first selector for f8.python_script (Zenoh latest-frame flow edition)
 #
 # Inputs:
 #   - detections: f8visionDetections/1
 #
 # State:
-#   - flowShm: dense flow SHM name (format flow2_f16)
+#   - flowKey: dense flow Zenoh latest-frame key (format flow2_f16)
+#   - flowTransport: zenoh by default; legacy_shm keeps old flowShm fallback
+#   - flowShm: optional legacy dense flow SHM name
 #
 # Output:
 #   - selected: f8visionDetections/1 (single best detection)
@@ -148,26 +150,49 @@ def _select(detections_payload, flow_packet):
     return _build_single_detection_payload(detections_payload, best_det, best_score)
 
 
-def _update_flow_subscription(ctx, flow_shm_name):
-    if not isinstance(flow_shm_name, str):
+def _update_flow_subscription(ctx, flow_transport, flow_key, flow_shm_name):
+    transport = str(flow_transport or "zenoh").strip().lower()
+    if transport in ("legacy_shm", "shm"):
+        if not isinstance(flow_shm_name, str):
+            return
+        name = flow_shm_name.strip()
+        if not name:
+            return
+        ctx["locals"]["flowShm"] = name
+        ctx["subscribe_video_shm"]("flow", name, decode="auto", use_event=False)
         return
-    name = flow_shm_name.strip()
-    if not name:
+
+    if not isinstance(flow_key, str):
         return
-    ctx["locals"]["flowShm"] = name
-    ctx["subscribe_video_shm"]("flow", name, decode="auto", use_event=False)
+    key = flow_key.strip()
+    if not key:
+        return
+    ctx["locals"]["flowKey"] = key
+    ctx["subscribe_video_latest"]("flow", video_key=key, decode="auto")
 
 
 async def onStart(ctx):
     ctx["locals"]["latest_detections"] = None
     ctx["locals"]["last_emit_ts_ms"] = 0
+    flow_transport = await ctx["get_state"]("flowTransport")
+    flow_key = await ctx["get_state"]("flowKey")
     flow_shm = await ctx["get_state"]("flowShm")
-    _update_flow_subscription(ctx, flow_shm)
+    _update_flow_subscription(ctx, flow_transport, flow_key, flow_shm)
 
 
 def onState(ctx, field, value, tsMs=None):
-    if str(field or "") == "flowShm":
-        _update_flow_subscription(ctx, value)
+    if str(field or "") in ("flowTransport", "flowKey", "flowShm"):
+        flow_transport = ctx["locals"].get("flowTransport", "zenoh")
+        flow_key = ctx["locals"].get("flowKey", "")
+        flow_shm = ctx["locals"].get("flowShm", "")
+        if str(field or "") == "flowTransport":
+            flow_transport = value
+            ctx["locals"]["flowTransport"] = value
+        elif str(field or "") == "flowKey":
+            flow_key = value
+        else:
+            flow_shm = value
+        _update_flow_subscription(ctx, flow_transport, flow_key, flow_shm)
 
 
 def _handle(ctx, inputs):
@@ -176,7 +201,7 @@ def _handle(ctx, inputs):
         ctx["locals"]["latest_detections"] = detections_payload
 
     latest_detections = ctx["locals"].get("latest_detections")
-    flow_packet = ctx["get_video_shm"]("flow")
+    flow_packet = ctx["get_video_latest"]("flow")
     selected = _select(latest_detections, flow_packet)
     if selected is None:
         return None

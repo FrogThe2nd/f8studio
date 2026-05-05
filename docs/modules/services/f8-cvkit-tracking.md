@@ -47,8 +47,8 @@ No description.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `shmName` | `rw` | `true` | `true` | `string` | Optional SHM name override (e.g. shm.xxx.video). |
-| `videoTransport` | `rw` | `true` | `false` | `string / enum[zenoh, legacy_shm]` | Video input transport backend. Zenoh is default; legacy_shm keeps old shmName input. |
+| `shmName` | `rw` | `true` | `false` | `string` | Legacy SHM name used only when videoTransport=legacy_shm. |
+| `videoTransport` | `rw` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Video input transport backend. Zenoh is default; legacy_shm keeps old shmName input. |
 | `videoKey` | `rw` | `true` | `true` | `string` | Zenoh latest-frame key for video input. |
 | `initSelect` | `rw` | `true` | `true` | `string / enum[first_box, closest_center, largest_area, highest_score] / default=closest_center` | Init bbox selection strategy: first_box \| closest_center \| largest_area \| highest_score. |
 | `trackerKind` | `rw` | `true` | `true` | `string / enum[csrt, kcf, mil, nano, vit] / default=csrt` | OpenCV tracker backend: csrt \| kcf \| mil \| nano \| vit. |
@@ -63,8 +63,8 @@ No description.
 
 ### Key Fields That Matter
 
-- `shmName` (Video SHM, `rw`): Optional SHM name override (e.g. shm.xxx.video). Schema: `string`.
-- `videoTransport` (Video Transport, `rw`): Video input transport backend. Zenoh is default; legacy_shm keeps old shmName input. Schema: `string / enum[zenoh, legacy_shm]`.
+- `shmName` (Legacy Video SHM, `rw`): Legacy SHM name used only when videoTransport=legacy_shm. Schema: `string`.
+- `videoTransport` (Video Transport, `rw`): Video input transport backend. Zenoh is default; legacy_shm keeps old shmName input. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
 - `videoKey` (Video Key, `rw`): Zenoh latest-frame key for video input. Schema: `string`.
 - `initSelect` (Init Select, `rw`): Init bbox selection strategy: first_box | closest_center | largest_area | highest_score. Schema: `string / enum[first_box, closest_center, largest_area, highest_score] / default=closest_center`.
 - `trackerKind` (Tracker Kind, `rw`): OpenCV tracker backend: csrt | kcf | mil | nano | vit. Schema: `string / enum[csrt, kcf, mil, nano, vit] / default=csrt`.

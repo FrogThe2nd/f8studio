@@ -46,10 +46,10 @@ def _default_audio_zenoh_key(service_id: str) -> str:
 
 class VizAudioRuntimeNode(OperatorNode):
     """
-    Studio-only visualization node: view an Audio SHM (ring buffer) waveform.
+    Studio-only visualization node: view Zenoh latest-audio or legacy SHM waveforms.
 
-    This runtime node only pushes config to the UI layer; the Qt widget reads
-    shared memory directly.
+    This runtime node only pushes config to the UI layer; the Qt widget owns
+    the selected latest-audio reader.
     """
 
     SPEC = F8OperatorSpec(
@@ -59,8 +59,8 @@ class VizAudioRuntimeNode(OperatorNode):
         operatorClass=OPERATOR_CLASS,
         version="0.0.1",
         label="Audio Viz",
-        description="Display waveform from an AudioSHM region.",
-        tags=["ui", "shm", "audio", "viewer", "waveform"],
+        description="Display waveform from Zenoh latest-audio streams.",
+        tags=["ui", "zenoh", "audio", "viewer", "waveform"],
         dataInPorts=[],
         dataOutPorts=[],
         rendererClass=RENDERER_CLASS,
@@ -77,7 +77,7 @@ class VizAudioRuntimeNode(OperatorNode):
             F8StateSpec(
                 name="serviceId",
                 label="Service Id",
-                description="If set and shmName is empty, uses shm.<serviceId>.audio",
+                description="Optional producer service id used to derive the default Zenoh audio key.",
                 valueSchema=string_schema(default=""),
                 access=F8StateAccess.rw,
                 required=True,
@@ -85,26 +85,26 @@ class VizAudioRuntimeNode(OperatorNode):
             ),
             F8StateSpec(
                 name="shmName",
-                label="SHM Name",
-                description="Audio SHM mapping name (e.g. shm.audiocap.audio). Overrides serviceId.",
+                label="Legacy Audio SHM",
+                description="Legacy audio SHM mapping name used only when audioTransport=legacy_shm.",
                 valueSchema=string_schema(default=""),
                 access=F8StateAccess.rw,
-                required=True,
-                showOnNode=True,
+                required=False,
+                showOnNode=False,
             ),
             F8StateSpec(
                 name="audioTransport",
                 label="Audio Transport",
                 description="Audio input transport backend. Zenoh uses audioKey; legacy_shm uses shmName.",
-                valueSchema=string_schema(default="zenoh", enum=["legacy_shm", "zenoh"]),
+                valueSchema=string_schema(default="zenoh", enum=["zenoh", "legacy_shm"]),
                 access=F8StateAccess.rw,
                 required=True,
-                showOnNode=True,
+                showOnNode=False,
             ),
             F8StateSpec(
                 name="audioKey",
                 label="Audio Key",
-                description="Transport-specific audio stream key.",
+                description="Zenoh latest-audio key for input chunks.",
                 valueSchema=string_schema(default=""),
                 access=F8StateAccess.rw,
                 required=True,

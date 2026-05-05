@@ -482,7 +482,7 @@ class DetectionSorterServiceNodeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(bus.emitted), 1)
             emitted_payload = bus.emitted[0][2]
             self.assertEqual([item["cls"] for item in emitted_payload["detections"]], ["x"])
-            self.assertIn("score SHM unavailable", bus.errors[-1][2])
+            self.assertIn("score source unavailable", bus.errors[-1][2])
             node._close_score_reader()
         finally:
             writer.close(unlink=True)
@@ -569,7 +569,7 @@ class DetectionSorterServiceNodeTests(unittest.IsolatedAsyncioTestCase):
             await node.on_data("detections", payload)
 
             self.assertEqual(len(bus.emitted), 1)
-            self.assertIn("score SHM unavailable", bus.errors[-1][2])
+            self.assertIn("score source unavailable", bus.errors[-1][2])
             node._close_score_reader()
         finally:
             writer.close(unlink=True)

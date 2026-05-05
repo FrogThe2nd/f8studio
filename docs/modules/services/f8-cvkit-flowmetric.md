@@ -47,13 +47,13 @@ No description.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `inputFlowShmName` | `rw` | `true` | `true` | `string` | Input flow SHM name (format flow2_f16, e.g. shm.xxx.flow). |
+| `inputFlowShmName` | `rw` | `true` | `false` | `string` | Legacy input flow SHM name used only when inputFlowTransport=legacy_shm. |
 | `inputFlowTransport` | `rw` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Input flow frame transport backend. Zenoh is default; legacy_shm keeps old inputFlowShmName. |
 | `inputFlowKey` | `rw` | `true` | `true` | `string` | Input flow frame transport key. |
 | `computeEveryNFrames` | `rw` | `true` | `false` | `integer / default=1` | Compute selected flow metric once per N new flow frames. |
 | `metricMode` | `rw` | `true` | `false` | `string / enum[divergence, magnitude, curl, strain] / default=divergence` | Flow metric mode: divergence \| magnitude \| curl \| strain. |
 | `metricScale` | `rw` | `true` | `false` | `number / default=1.0` | Scale factor applied to computed metric values before output. |
-| `scalarShmName` | `ro` | `true` | `true` | `string` | Output SHM name for scalar metric field. |
+| `scalarShmName` | `ro` | `true` | `false` | `string` | Legacy output SHM name used only when scalarTransport=legacy_shm. |
 | `scalarTransport` | `ro` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Output scalar frame transport backend. Zenoh is default; legacy_shm keeps old scalarShmName. |
 | `scalarKey` | `ro` | `true` | `true` | `string` | Output scalar frame transport key. |
 | `scalarShmFormat` | `ro` | `true` | `false` | `string` | Output payload format. Fixed to scalar1_f32. |
@@ -63,13 +63,13 @@ No description.
 
 ### Key Fields That Matter
 
-- `inputFlowShmName` (Input Flow SHM, `rw`): Input flow SHM name (format flow2_f16, e.g. shm.xxx.flow). Schema: `string`.
+- `inputFlowShmName` (Legacy Input Flow SHM, `rw`): Legacy input flow SHM name used only when inputFlowTransport=legacy_shm. Schema: `string`.
 - `inputFlowTransport` (Input Flow Transport, `rw`): Input flow frame transport backend. Zenoh is default; legacy_shm keeps old inputFlowShmName. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
 - `inputFlowKey` (Input Flow Key, `rw`): Input flow frame transport key. Schema: `string`.
 - `computeEveryNFrames` (Compute Every N Frames, `rw`): Compute selected flow metric once per N new flow frames. Schema: `integer / default=1`.
 - `metricMode` (Metric Mode, `rw`): Flow metric mode: divergence | magnitude | curl | strain. Schema: `string / enum[divergence, magnitude, curl, strain] / default=divergence`.
 - `metricScale` (Metric Scale, `rw`): Scale factor applied to computed metric values before output. Schema: `number / default=1.0`.
-- `scalarShmName` (Scalar SHM Name, `ro`): Output SHM name for scalar metric field. Schema: `string`.
+- `scalarShmName` (Legacy Scalar SHM, `ro`): Legacy output SHM name used only when scalarTransport=legacy_shm. Schema: `string`.
 - `scalarTransport` (Scalar Transport, `ro`): Output scalar frame transport backend. Zenoh is default; legacy_shm keeps old scalarShmName. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
 
 ### Service Commands

@@ -98,12 +98,12 @@ def _state_fields() -> list[F8StateSpec]:
     return [
         F8StateSpec(
             name="shmName",
-            label="Video SHM",
-            description="Video SHM mapping name (e.g. shm.implayer.video).",
+            label="Legacy Video SHM",
+            description="Legacy SHM mapping name used only when videoTransport=legacy_shm.",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
-            required=True,
-            showOnNode=True,
+            required=False,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="videoTransport",
@@ -112,12 +112,12 @@ def _state_fields() -> list[F8StateSpec]:
             valueSchema=string_schema(default="zenoh", enum=["zenoh", "legacy_shm"]),
             access=F8StateAccess.rw,
             required=True,
-            showOnNode=True,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="videoKey",
             label="Video Key",
-            description="Transport-specific video stream key.",
+            description="Zenoh latest-frame key for video input.",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
             required=True,

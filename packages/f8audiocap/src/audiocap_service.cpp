@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstring>
 #include <utility>
+#include <vector>
 
 #include <SDL3/SDL.h>
 #include <nlohmann/json.hpp>
@@ -534,13 +535,15 @@ nlohmann::json AudioCapService::describe() {
       {"label", "Audio Capture"},
       {"version", "0.0.1"},
       {"rendererClass", "default_svc"},
-      {"tags", json::array({"audio", "capture", "shm"})},
+      {"tags", json::array({"audio", "capture", "zenoh"})},
       {"stateFields",
        json::array({
-           state_field("audioShmName", schema_string(), "ro", "Audio SHM", "Name of the audio shared memory segment", true),
-           state_field("audioTransport", schema_string_enum({"legacy_shm", "zenoh"}), "ro", "Audio Transport",
+           state_field("audioShmName", schema_string(), "ro", "Legacy Audio SHM",
+                       "Legacy shared memory segment name when the legacy_shm fallback is active.", false),
+           state_field("audioTransport", schema_string_enum(std::vector<std::string>{"zenoh", "legacy_shm"}, "zenoh"),
+                       "ro", "Audio Transport",
                        "Audio transport backend. Zenoh is the default runtime data path; legacy_shm keeps audioShmName.",
-                       true),
+                       false),
            state_field("audioKey", schema_string(), "ro", "Audio Key", "Transport-specific audio stream key", true),
            state_field("audioDevice", schema_string(), "ro", "Audio Device", "Name of the audio capture device in use", false),
            state_field("audioSampleRate", schema_integer(), "ro", "Audio Sample Rate", "Sample rate of the audio capture device", false),

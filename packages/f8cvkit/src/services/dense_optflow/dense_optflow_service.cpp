@@ -725,14 +725,16 @@ json DenseOptflowService::describe() {
   service["rendererClass"] = "default_svc";
   service["tags"] = json::array({"cv", "optical_flow", "flow_field"});
   service["stateFields"] = json::array({
-      state_field("inputShmName", schema_string(), "rw", "Input Video SHM", "Input SHM name (e.g. shm.xxx.video).", true),
+      state_field("inputShmName", schema_string(), "rw", "Legacy Input SHM",
+                  "Legacy input SHM name used only when inputVideoTransport=legacy_shm.", false),
       state_field("inputVideoTransport", schema_string_enum(std::vector<std::string>{"zenoh", "legacy_shm"}, "zenoh"),
                   "rw", "Input Video Transport",
                   "Input video frame transport backend. Zenoh is default; legacy_shm keeps old inputShmName.", false),
       state_field("inputVideoKey", schema_string(), "rw", "Input Video Key", "Input video frame transport key.", true),
       state_field("computeEveryNFrames", schema_integer(2, 1, 120), "rw", "Compute Every N Frames",
                   "Compute flow once per N new frames.", false),
-      state_field("flowShmName", schema_string(), "ro", "Flow SHM Name", "Output SHM name for UV flow field.", true),
+      state_field("flowShmName", schema_string(), "ro", "Legacy Flow SHM",
+                  "Legacy output SHM name used only when flowTransport=legacy_shm.", false),
       state_field("flowTransport", schema_string_enum(std::vector<std::string>{"zenoh", "legacy_shm"}, "zenoh"), "ro",
                   "Flow Transport",
                   "Output flow frame transport backend. Zenoh is default; legacy_shm keeps old flowShmName.", false),

@@ -47,11 +47,11 @@ No description.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `inputShmName` | `rw` | `true` | `true` | `string` | Input SHM name (e.g. shm.xxx.video). |
+| `inputShmName` | `rw` | `true` | `false` | `string` | Legacy input SHM name used only when inputVideoTransport=legacy_shm. |
 | `inputVideoTransport` | `rw` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Input video frame transport backend. Zenoh is default; legacy_shm keeps old inputShmName. |
 | `inputVideoKey` | `rw` | `true` | `true` | `string` | Input video frame transport key. |
 | `computeEveryNFrames` | `rw` | `true` | `false` | `integer / default=2` | Compute flow once per N new frames. |
-| `flowShmName` | `ro` | `true` | `true` | `string` | Output SHM name for UV flow field. |
+| `flowShmName` | `ro` | `true` | `false` | `string` | Legacy output SHM name used only when flowTransport=legacy_shm. |
 | `flowTransport` | `ro` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Output flow frame transport backend. Zenoh is default; legacy_shm keeps old flowShmName. |
 | `flowKey` | `ro` | `true` | `true` | `string` | Output flow frame transport key. |
 | `flowShmFormat` | `ro` | `true` | `false` | `string` | Flow payload format. Fixed to flow2_f16. |
@@ -64,11 +64,11 @@ No description.
 
 ### Key Fields That Matter
 
-- `inputShmName` (Input Video SHM, `rw`): Input SHM name (e.g. shm.xxx.video). Schema: `string`.
+- `inputShmName` (Legacy Input SHM, `rw`): Legacy input SHM name used only when inputVideoTransport=legacy_shm. Schema: `string`.
 - `inputVideoTransport` (Input Video Transport, `rw`): Input video frame transport backend. Zenoh is default; legacy_shm keeps old inputShmName. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
 - `inputVideoKey` (Input Video Key, `rw`): Input video frame transport key. Schema: `string`.
 - `computeEveryNFrames` (Compute Every N Frames, `rw`): Compute flow once per N new frames. Schema: `integer / default=2`.
-- `flowShmName` (Flow SHM Name, `ro`): Output SHM name for UV flow field. Schema: `string`.
+- `flowShmName` (Legacy Flow SHM, `ro`): Legacy output SHM name used only when flowTransport=legacy_shm. Schema: `string`.
 - `flowTransport` (Flow Transport, `ro`): Output flow frame transport backend. Zenoh is default; legacy_shm keeps old flowShmName. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
 - `flowKey` (Flow Key, `ro`): Output flow frame transport key. Schema: `string`.
 - `flowShmFormat` (Flow SHM Format, `ro`): Flow payload format. Fixed to flow2_f16. Schema: `string`.

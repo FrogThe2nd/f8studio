@@ -53,8 +53,8 @@ No description.
 | `matchColorMode` | `rw` | `true` | `false` | `string` | gray or bgr. gray is faster. |
 | `searchRoiPaddingPx` | `rw` | `true` | `false` | `integer / default=0` | If >0, search around the previous detection with this padding. |
 | `pyramidScale` | `rw` | `true` | `false` | `number / default=1.0` | Optional downscale factor for faster coarse template matching. |
-| `shmName` | `rw` | `true` | `true` | `string` | Optional SHM name override (e.g. shm.xxx.video). |
-| `videoTransport` | `rw` | `true` | `false` | `string / enum[zenoh, legacy_shm]` | Video input transport backend. Zenoh is default; legacy_shm keeps old shmName input. |
+| `shmName` | `rw` | `true` | `false` | `string` | Legacy SHM name used only when videoTransport=legacy_shm. |
+| `videoTransport` | `rw` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Video input transport backend. Zenoh is default; legacy_shm keeps old shmName input. |
 | `videoKey` | `rw` | `true` | `true` | `string` | Zenoh latest-frame key for video input. |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
@@ -67,13 +67,13 @@ No description.
 - `matchColorMode` (Match Color Mode, `rw`): gray or bgr. gray is faster. Schema: `string`.
 - `searchRoiPaddingPx` (Search ROI Padding, `rw`): If >0, search around the previous detection with this padding. Schema: `integer / default=0`.
 - `pyramidScale` (Pyramid Scale, `rw`): Optional downscale factor for faster coarse template matching. Schema: `number / default=1.0`.
-- `shmName` (Video SHM, `rw`): Optional SHM name override (e.g. shm.xxx.video). Schema: `string`.
-- `videoTransport` (Video Transport, `rw`): Video input transport backend. Zenoh is default; legacy_shm keeps old shmName input. Schema: `string / enum[zenoh, legacy_shm]`.
+- `shmName` (Legacy Video SHM, `rw`): Legacy SHM name used only when videoTransport=legacy_shm. Schema: `string`.
+- `videoTransport` (Video Transport, `rw`): Video input transport backend. Zenoh is default; legacy_shm keeps old shmName input. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
 
 ### Service Commands
 
 ### `captureTemplateFrame`
-Capture current SHM frame as an encoded image (base64).
+Capture current video frame as an encoded image (base64).
 
 - Show on node: `true`
 

@@ -47,10 +47,10 @@ No description.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `inputShmName` | `rw` | `true` | `true` | `string` | Input SHM name (e.g. shm.xxx.video). |
+| `inputShmName` | `rw` | `true` | `false` | `string` | Legacy input SHM name used only when inputVideoTransport=legacy_shm. |
 | `inputVideoTransport` | `rw` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Input video frame transport backend. Zenoh is default; legacy_shm keeps old inputShmName. |
 | `inputVideoKey` | `rw` | `true` | `true` | `string` | Input video frame transport key. |
-| `outputShmName` | `ro` | `true` | `true` | `string` | Output SHM name generated from serviceId. |
+| `outputShmName` | `ro` | `true` | `false` | `string` | Legacy output SHM name used only when videoTransport=legacy_shm. |
 | `videoTransport` | `ro` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Output video frame transport backend. Zenoh is default; legacy_shm keeps old outputShmName. |
 | `videoKey` | `ro` | `true` | `true` | `string` | Output video frame transport key. |
 | `videoFormat` | `ro` | `true` | `false` | `string / enum[bgra32]` | Output video payload format. |
@@ -72,10 +72,10 @@ No description.
 
 ### Key Fields That Matter
 
-- `inputShmName` (Input Video SHM, `rw`): Input SHM name (e.g. shm.xxx.video). Schema: `string`.
+- `inputShmName` (Legacy Input SHM, `rw`): Legacy input SHM name used only when inputVideoTransport=legacy_shm. Schema: `string`.
 - `inputVideoTransport` (Input Video Transport, `rw`): Input video frame transport backend. Zenoh is default; legacy_shm keeps old inputShmName. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
 - `inputVideoKey` (Input Video Key, `rw`): Input video frame transport key. Schema: `string`.
-- `outputShmName` (Output Video SHM, `ro`): Output SHM name generated from serviceId. Schema: `string`.
+- `outputShmName` (Legacy Output SHM, `ro`): Legacy output SHM name used only when videoTransport=legacy_shm. Schema: `string`.
 - `videoTransport` (Video Transport, `ro`): Output video frame transport backend. Zenoh is default; legacy_shm keeps old outputShmName. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
 - `videoKey` (Video Key, `ro`): Output video frame transport key. Schema: `string`.
 - `videoFormat` (Video Format, `ro`): Output video payload format. Schema: `string / enum[bgra32]`.

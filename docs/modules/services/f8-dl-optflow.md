@@ -47,7 +47,7 @@ pixi run -e onnx f8pydl_optflow
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `inputShmName` | `rw` | `true` | `true` | `string / default=` | Input SHM name (e.g. shm.xxx.video). |
+| `inputShmName` | `rw` | `false` | `false` | `string / default=` | Legacy input SHM name used only when inputVideoTransport=legacy_shm. |
 | `inputVideoTransport` | `rw` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Input video transport backend. Use zenoh with inputVideoKey; legacy_shm keeps old inputShmName. |
 | `inputVideoKey` | `rw` | `true` | `true` | `string / default=` | Zenoh latest-frame key for input video. |
 | `computeEveryNFrames` | `rw` | `true` | `false` | `integer / default=2` | Compute optical flow once per N new frames. |
@@ -59,7 +59,7 @@ pixi run -e onnx f8pydl_optflow
 | `availableModels` | `ro` | `true` | `false` | `array[string]` | List of model ids discovered from weightsDir. |
 | `loadedModel` | `ro` | `true` | `false` | `string / default=` | Current loaded model id/task. |
 | `ortActiveProviders` | `ro` | `true` | `false` | `string / default=` | JSON list of active ONNX Runtime providers for this session. |
-| `flowShmName` | `ro` | `true` | `true` | `string / default=` | Output flow SHM name. |
+| `flowShmName` | `ro` | `false` | `false` | `string / default=` | Legacy output flow SHM name used only when flowTransport=legacy_shm. |
 | `flowTransport` | `ro` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Output flow transport backend. Zenoh is the default latest-frame path; legacy_shm is an explicit fallback. |
 | `flowKey` | `ro` | `true` | `true` | `string / default=` | Zenoh latest-frame key for output flow. |
 | `flowShmFormat` | `ro` | `true` | `false` | `string / default=flow2_f16` | Flow payload format. Fixed to flow2_f16. |
@@ -68,7 +68,7 @@ pixi run -e onnx f8pydl_optflow
 
 ### Key Fields That Matter
 
-- `inputShmName` (Input Video SHM, `rw`): Input SHM name (e.g. shm.xxx.video). Schema: `string / default=`.
+- `inputShmName` (Legacy Input SHM, `rw`): Legacy input SHM name used only when inputVideoTransport=legacy_shm. Schema: `string / default=`.
 - `inputVideoTransport` (Input Video Transport, `rw`): Input video transport backend. Use zenoh with inputVideoKey; legacy_shm keeps old inputShmName. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
 - `inputVideoKey` (Input Video Key, `rw`): Zenoh latest-frame key for input video. Schema: `string / default=`.
 - `computeEveryNFrames` (Compute Every N Frames, `rw`): Compute optical flow once per N new frames. Schema: `integer / default=2`.

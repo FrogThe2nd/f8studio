@@ -48,10 +48,10 @@ def _default_video_zenoh_key(service_id: str, port_id: str) -> str:
 
 class VizVideoRuntimeNode(OperatorNode):
     """
-    Studio-only visualization node: view a Video SHM (BGRA32) in a Qt widget.
+    Studio-only visualization node: view Zenoh latest-frame or legacy SHM video in a Qt widget.
 
-    This runtime node only pushes config to the UI layer; the Qt widget reads
-    shared memory directly (avoids pushing frame payloads through UiCommand).
+    This runtime node only pushes config to the UI layer; the Qt widget owns
+    the selected latest-frame reader to avoid pushing frame payloads through UiCommand.
     """
 
     SPEC = F8OperatorSpec(
@@ -61,8 +61,8 @@ class VizVideoRuntimeNode(OperatorNode):
         operatorClass=OPERATOR_CLASS,
         version="0.0.1",
         label="Video Viz",
-        description="Display frames from a VideoSHM region (BGRA32).",
-        tags=["ui", "shm", "video", "viewer"],
+        description="Display frames from Zenoh latest-frame video streams.",
+        tags=["ui", "zenoh", "video", "viewer"],
         dataInPorts=[],
         dataOutPorts=[],
         rendererClass=RENDERER_CLASS,
@@ -79,7 +79,7 @@ class VizVideoRuntimeNode(OperatorNode):
             F8StateSpec(
                 name="serviceId",
                 label="Service Id",
-                description="If set and shmName is empty, uses shm.<serviceId>.video",
+                description="Optional producer service id used to derive the default Zenoh video key.",
                 valueSchema=string_schema(default=""),
                 access=F8StateAccess.rw,
                 required=True,
@@ -87,18 +87,18 @@ class VizVideoRuntimeNode(OperatorNode):
             ),
             F8StateSpec(
                 name="shmName",
-                label="SHM Name",
-                description="Video SHM mapping name (e.g. shm.implayer.video). Overrides serviceId.",
+                label="Legacy Video SHM",
+                description="Legacy video SHM mapping name used only when videoTransport=legacy_shm.",
                 valueSchema=string_schema(default=""),
                 access=F8StateAccess.rw,
-                required=True,
-                showOnNode=True,
+                required=False,
+                showOnNode=False,
             ),
             F8StateSpec(
                 name="videoTransport",
                 label="Video Transport",
                 description="Frame transport backend.",
-                valueSchema=string_schema(default="zenoh", enum=["legacy_shm", "zenoh"]),
+                valueSchema=string_schema(default="zenoh", enum=["zenoh", "legacy_shm"]),
                 access=F8StateAccess.rw,
                 required=True,
                 showOnNode=False,
@@ -106,7 +106,7 @@ class VizVideoRuntimeNode(OperatorNode):
             F8StateSpec(
                 name="videoKey",
                 label="Video Key",
-                description="Transport-specific video stream key. Used as SHM name when videoTransport=legacy_shm.",
+                description="Zenoh latest-frame key for video input.",
                 valueSchema=string_schema(default=""),
                 access=F8StateAccess.rw,
                 required=True,
@@ -132,18 +132,18 @@ class VizVideoRuntimeNode(OperatorNode):
             ),
             F8StateSpec(
                 name="flowShmName",
-                label="Flow SHM Name",
-                description="Optional flow SHM mapping name (format flow2_f16).",
+                label="Legacy Flow SHM",
+                description="Legacy flow SHM mapping name used only when flowTransport=legacy_shm.",
                 valueSchema=string_schema(default=""),
                 access=F8StateAccess.rw,
-                required=True,
-                showOnNode=True,
+                required=False,
+                showOnNode=False,
             ),
             F8StateSpec(
                 name="flowTransport",
                 label="Flow Transport",
                 description="Flow frame transport backend.",
-                valueSchema=string_schema(default="zenoh", enum=["legacy_shm", "zenoh"]),
+                valueSchema=string_schema(default="zenoh", enum=["zenoh", "legacy_shm"]),
                 access=F8StateAccess.rw,
                 required=True,
                 showOnNode=False,
@@ -151,7 +151,7 @@ class VizVideoRuntimeNode(OperatorNode):
             F8StateSpec(
                 name="flowKey",
                 label="Flow Key",
-                description="Transport-specific flow stream key.",
+                description="Zenoh latest-frame key for flow input.",
                 valueSchema=string_schema(default=""),
                 access=F8StateAccess.rw,
                 required=True,
@@ -195,18 +195,18 @@ class VizVideoRuntimeNode(OperatorNode):
             ),
             F8StateSpec(
                 name="scalarShmName",
-                label="Scalar SHM Name",
-                description="Optional scalar field SHM mapping name (format scalar1_f32).",
+                label="Legacy Scalar SHM",
+                description="Legacy scalar SHM mapping name used only when scalarTransport=legacy_shm.",
                 valueSchema=string_schema(default=""),
                 access=F8StateAccess.rw,
-                required=True,
-                showOnNode=True,
+                required=False,
+                showOnNode=False,
             ),
             F8StateSpec(
                 name="scalarTransport",
                 label="Scalar Transport",
                 description="Scalar frame transport backend.",
-                valueSchema=string_schema(default="zenoh", enum=["legacy_shm", "zenoh"]),
+                valueSchema=string_schema(default="zenoh", enum=["zenoh", "legacy_shm"]),
                 access=F8StateAccess.rw,
                 required=True,
                 showOnNode=False,

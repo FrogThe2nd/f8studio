@@ -54,13 +54,13 @@
           "tags": [
             "audio",
             "capture",
-            "shm"
+            "zenoh"
           ],
           "stateFields": [
             {
               "name": "audioShmName",
-              "label": "Audio SHM",
-              "description": "Name of the audio shared memory segment",
+              "label": "Legacy Audio SHM",
+              "description": "Legacy shared memory segment name when the legacy_shm fallback is active.",
               "valueSchema": {
                 "title": null,
                 "description": null,
@@ -78,7 +78,7 @@
               "access": "ro",
               "required": false,
               "uiControl": null,
-              "showOnNode": true
+              "showOnNode": false
             },
             {
               "name": "audioDevice",
@@ -376,7 +376,9 @@
           }
         },
         "custom": {
-          "audioShmName": "shm.w8RS.audio",
+          "audioShmName": "",
+          "audioTransport": "zenoh",
+          "audioKey": "f8/svc/w8RS/nodes/w8RS/data/audio",
           "audioDevice": "WASAPI(loopback): Speakers (Realtek USB Audio)",
           "audioSampleRate": 48000,
           "audioChannels": 2,
@@ -430,7 +432,7 @@
           "rendererClass": "default_svc",
           "version": "0.0.1",
           "label": "Audio Feature Core",
-          "description": "Audio SHM core feature extraction service (rms, onset, centroid).",
+          "description": "Zenoh latest-audio core feature extraction service (rms, onset, centroid).",
           "tags": [
             "audio",
             "feature",
@@ -441,8 +443,8 @@
           "stateFields": [
             {
               "name": "audioShmName",
-              "label": "Audio SHM",
-              "description": "Audio SHM mapping name (e.g. shm.audiocap.audio).",
+              "label": "Legacy Audio SHM",
+              "description": "Legacy audio SHM mapping name used only when audioTransport=legacy_shm.",
               "valueSchema": {
                 "title": null,
                 "description": null,
@@ -460,7 +462,7 @@
               "access": "rw",
               "required": false,
               "uiControl": null,
-              "showOnNode": true
+              "showOnNode": false
             },
             {
               "name": "channelMode",
@@ -647,7 +649,9 @@
           }
         },
         "custom": {
-          "audioShmName": "shm.w8RS.audio",
+          "audioShmName": "",
+          "audioTransport": "zenoh",
+          "audioKey": "f8/svc/w8RS/nodes/w8RS/data/audio",
           "channelMode": "mono_mix",
           "windowMs": 768,
           "hopMs": 64,
@@ -922,10 +926,10 @@
           "rendererClass": "viz_audio",
           "version": "0.0.1",
           "label": "Audio Viz",
-          "description": "Display waveform from an AudioSHM region.",
+          "description": "Display waveform from Zenoh latest-audio streams.",
           "tags": [
             "ui",
-            "shm",
+            "zenoh",
             "audio",
             "viewer",
             "waveform"
@@ -957,7 +961,7 @@
             {
               "name": "serviceId",
               "label": "Service Id",
-              "description": "If set and shmName is empty, uses shm.<serviceId>.audio",
+              "description": "Optional producer service id used to derive the default Zenoh audio key.",
               "valueSchema": {
                 "title": null,
                 "description": null,
@@ -979,8 +983,8 @@
             },
             {
               "name": "shmName",
-              "label": "SHM Name",
-              "description": "Audio SHM mapping name (e.g. shm.audiocap.audio). Overrides serviceId.",
+              "label": "Legacy Audio SHM",
+              "description": "Legacy audio SHM mapping name used only when audioTransport=legacy_shm.",
               "valueSchema": {
                 "title": null,
                 "description": null,
@@ -998,7 +1002,7 @@
               "access": "rw",
               "required": false,
               "uiControl": null,
-              "showOnNode": true
+              "showOnNode": false
             },
             {
               "name": "throttleMs",
@@ -1083,8 +1087,10 @@
         "f8_ui_overrides": {},
         "custom": {
           "uiUpdate": true,
-          "serviceId": "",
-          "shmName": "shm.w8RS.audio",
+          "serviceId": "w8RS",
+          "shmName": "",
+          "audioTransport": "zenoh",
+          "audioKey": "f8/svc/w8RS/nodes/w8RS/data/audio",
           "throttleMs": 20,
           "historyMs": 250,
           "channel": 0
