@@ -383,7 +383,7 @@ void TemplateMatchService::on_data(const std::string& node_id, const std::string
   (void)port;
   (void)value;
   (void)meta;
-  // Pull-based via video shm; no data port required.
+  // Pull-based latest-frame input; no data port required.
 }
 
 void TemplateMatchService::set_template_png_b64(const std::string& b64, const json& meta) {
@@ -502,7 +502,7 @@ bool TemplateMatchService::ensure_video_open() {
   // field later; for now keep the contract simple and consistent.
   const std::size_t bytes = f8::cppsdk::shm::kDefaultVideoShmBytes;
   if (!video_.open(shm_name, bytes)) {
-    publish_error_if_changed("video shm open failed: " + shm_name, "runtime", json::object());
+    publish_error_if_changed("legacy video SHM open failed: " + shm_name, "runtime", json::object());
     return false;
   }
   last_notify_seq_ = 0;
@@ -638,16 +638,16 @@ void TemplateMatchService::detect_once() {
     }
 
     if (hdr.format != 1 || hdr.width == 0 || hdr.height == 0 || hdr.pitch == 0) {
-      publish_error_if_changed("unsupported video shm format", "runtime", json::object());
+      publish_error_if_changed("unsupported video frame format", "runtime", json::object());
       return;
     }
     const std::size_t row_bytes = static_cast<std::size_t>(hdr.pitch);
     if (row_bytes < static_cast<std::size_t>(hdr.width) * 4) {
-      publish_error_if_changed("invalid video shm pitch", "runtime", json::object());
+      publish_error_if_changed("invalid video frame pitch", "runtime", json::object());
       return;
     }
     if (frame_bgra_.size() < row_bytes * static_cast<std::size_t>(hdr.height)) {
-      publish_error_if_changed("video shm frame too small", "runtime", json::object());
+      publish_error_if_changed("video frame too small", "runtime", json::object());
       return;
     }
     if (template_bgr_.empty()) {
@@ -847,18 +847,18 @@ bool TemplateMatchService::on_command(const std::string& call, const json& args,
 
     if (hdr.format != 1 || hdr.width == 0 || hdr.height == 0 || hdr.pitch == 0) {
       error_code = "RUNTIME_ERROR";
-      error_message = "unsupported video shm format";
+      error_message = "unsupported video frame format";
       return false;
     }
     const std::size_t row_bytes = static_cast<std::size_t>(hdr.pitch);
     if (row_bytes < static_cast<std::size_t>(hdr.width) * 4) {
       error_code = "RUNTIME_ERROR";
-      error_message = "invalid video shm pitch";
+      error_message = "invalid video frame pitch";
       return false;
     }
     if (frame.size() < row_bytes * static_cast<std::size_t>(hdr.height)) {
       error_code = "RUNTIME_ERROR";
-      error_message = "video shm frame too small";
+      error_message = "video frame too small";
       return false;
     }
 

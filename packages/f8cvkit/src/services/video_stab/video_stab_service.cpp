@@ -675,7 +675,7 @@ bool VideoStabService::ensure_input_open() {
   }
 
   if (!input_video_.open(input_shm_name_, f8::cppsdk::shm::kDefaultVideoShmBytes)) {
-    publish_error_if_changed("video shm open failed: " + input_shm_name_, "runtime", json::object());
+    publish_error_if_changed("legacy video SHM open failed: " + input_shm_name_, "runtime", json::object());
     return false;
   }
 

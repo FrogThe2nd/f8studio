@@ -25,8 +25,8 @@ int main(int argc, char** argv) {
   cxxopts::Options options("f8screencap_service", "F8 screen capture (platform backend) -> Zenoh video service");
   options.add_options()("describe", "Print service spec JSON and exit")(
       "service-id", "Service instance id (required unless --describe)", cxxopts::value<std::string>()->default_value(""))(
-      "shm-bytes", "Video SHM bytes", cxxopts::value<std::size_t>()->default_value(std::to_string(f8::cppsdk::shm::kDefaultVideoShmBytes)))(
-      "shm-slots", "Video SHM slots", cxxopts::value<std::uint32_t>()->default_value(std::to_string(f8::cppsdk::shm::kDefaultVideoShmSlots)))(
+      "shm-bytes", "Legacy video SHM bytes", cxxopts::value<std::size_t>()->default_value(std::to_string(f8::cppsdk::shm::kDefaultVideoShmBytes)))(
+      "shm-slots", "Legacy video SHM slots", cxxopts::value<std::uint32_t>()->default_value(std::to_string(f8::cppsdk::shm::kDefaultVideoShmSlots)))(
       "fps", "Capture FPS", cxxopts::value<double>()->default_value("30.0"))(
       "mode", "Capture mode (display|window|region)", cxxopts::value<std::string>()->default_value("display"))(
       "display-id", "Display id (0..N-1)", cxxopts::value<int>()->default_value("0"))(

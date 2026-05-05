@@ -1062,7 +1062,7 @@ bool TrackingService::ensure_video_open() {
 
   const std::size_t bytes = f8::cppsdk::shm::kDefaultVideoShmBytes;
   if (!video_.open(shm_name, bytes)) {
-    publish_error_if_changed("video shm open failed: " + shm_name, "runtime", json::object());
+    publish_error_if_changed("legacy video SHM open failed: " + shm_name, "runtime", json::object());
     return false;
   }
   last_notify_seq_ = 0;
@@ -1179,12 +1179,12 @@ void TrackingService::apply_init_box_if_any() {
     return;
   }
   if (hdr.format != 1 || hdr.width == 0 || hdr.height == 0 || hdr.pitch == 0) {
-    publish_error_if_changed("unsupported video shm format", "runtime", json::object());
+    publish_error_if_changed("unsupported video frame format", "runtime", json::object());
     return;
   }
   const std::size_t row_bytes = static_cast<std::size_t>(hdr.pitch);
   if (frame_bgra_.size() < row_bytes * static_cast<std::size_t>(hdr.height)) {
-    publish_error_if_changed("video shm frame too small", "runtime", json::object());
+    publish_error_if_changed("video frame too small", "runtime", json::object());
     return;
   }
 
@@ -1323,13 +1323,13 @@ void TrackingService::process_frame_once() {
   }
 
   if (hdr.format != 1 || hdr.width == 0 || hdr.height == 0 || hdr.pitch == 0) {
-    publish_error_if_changed("unsupported video shm format", "runtime", json::object());
+    publish_error_if_changed("unsupported video frame format", "runtime", json::object());
     set_tracking(false, json::object({{"reason", "bad_format"}}));
     return;
   }
   const std::size_t row_bytes = static_cast<std::size_t>(hdr.pitch);
   if (frame_bgra_.size() < row_bytes * static_cast<std::size_t>(hdr.height)) {
-    publish_error_if_changed("video shm frame too small", "runtime", json::object());
+    publish_error_if_changed("video frame too small", "runtime", json::object());
     set_tracking(false, json::object({{"reason", "bad_frame"}}));
     return;
   }

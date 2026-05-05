@@ -32,7 +32,7 @@ int main(int argc, char** argv) {
       "list-devices", "List available recording devices and exit")(
       "backend", "Backend (auto|sdl|wasapi)", cxxopts::value<std::string>()->default_value("auto"))(
       "device", "Recording device selector (index or substring match)", cxxopts::value<std::string>()->default_value(""))(
-      "shm-bytes", "Audio SHM bytes (0=auto)", cxxopts::value<std::size_t>()->default_value(std::to_string(f8::cppsdk::shm::kDefaultAudioShmBytes)))(
+      "shm-bytes", "Legacy audio SHM bytes (0=auto)", cxxopts::value<std::size_t>()->default_value(std::to_string(f8::cppsdk::shm::kDefaultAudioShmBytes)))(
       "sample-rate", "Sample rate", cxxopts::value<std::uint32_t>()->default_value("48000"))(
       "channels", "Channels", cxxopts::value<std::uint16_t>()->default_value("2"))(
       "frames-per-chunk", "Frames per chunk", cxxopts::value<std::uint32_t>()->default_value("480"))(

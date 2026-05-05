@@ -29,7 +29,7 @@ class NatsTransportConfig:
 
 class NatsTransport:
     """
-    Single-process transport for NATS core pub/sub + JetStream KV.
+    Explicit fallback transport for NATS core pub/sub + JetStream KV.
 
     Intended to be shared by all RuntimeNode instances in a service process.
     """

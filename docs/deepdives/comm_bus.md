@@ -62,10 +62,10 @@ config:
 ---
 flowchart TB
   Studio["PyStudio (UI)"]:::studio
-  subgraph NATS["NATS (Core Pub/Sub + JetStream KV + Micro)"]
-    Core["Core Pub/Sub<br/>(high-throughput)"]:::nats
-    KV["JetStream KV<br/>(per-service bucket)"]:::nats
-    Micro["Micro Endpoints<br/>(request/reply)"]:::nats
+  subgraph Zenoh["Zenoh Runtime Fabric"]
+    PubSub["Pub/Sub<br/>(data + state updates)"]:::zenoh
+    Query["Queryables<br/>(state + control endpoints)"]:::zenoh
+    Live["Liveliness<br/>(service/studio presence)"]:::zenoh
   end
 
   subgraph SvcA["Service A (pysdk/cppsdk runtime)"]
@@ -78,22 +78,24 @@ flowchart TB
   end
 
   %% Control plane
-  Studio -->|"deploy/control<br/>svc.{serviceId}.{endpoint}"| Micro
-  Micro -->|"set_rungraph / set_state / status / ..."| BusA
+  Studio -->|"deploy/control<br/>f8/svc/{serviceId}/endpoint/{endpoint}"| Query
+  Query -->|"set_rungraph / set_state / status / ..."| BusA
 
   %% State plane
-  BusA <-->|"KV put/get/watch<br/>bucket=svc_{serviceId}"| KV
-  BusB -->|"watch peer bucket<br/>(cross-service state binding)"| KV
-  Studio -->|"watch buckets<br/>(state/properties panels)"| KV
+  BusA <-->|"query local current state<br/>+ publish update keys"| Query
+  BusA -->|"state updates<br/>f8/svc/{serviceId}/state/..."| PubSub
+  BusB -->|"query/watch peer state<br/>(cross-service binding)"| Query
+  Studio -->|"query/watch state<br/>(state/properties panels)"| Query
 
   %% Data plane
-  BusA -->|"publish<br/>svc.{serviceId}.nodes.{nodeId}.data.{portId}"| Core
-  Core -->|"fan-out deliver"| BusB
+  BusA -->|"publish<br/>f8/svc/{serviceId}/nodes/{nodeId}/data/{portId}"| PubSub
+  PubSub -->|"fan-out deliver"| BusB
+  BusA -->|"assert service liveliness"| Live
 
   BusA <--> NodesA
   BusB <--> NodesB
 
-  classDef nats fill:#E3F2FD,stroke:#64B5F6,color:#0D47A1;
+  classDef zenoh fill:#E3F2FD,stroke:#64B5F6,color:#0D47A1;
   classDef studio fill:#FFEBEE,stroke:#EF9A9A,color:#B71C1C;
   classDef svc fill:#E8F5E9,stroke:#81C784,color:#1B5E20;
 ```
@@ -102,34 +104,32 @@ flowchart TB
 
 ## Naming & Resource Hierarchy (Subject / Bucket / Key)
 
-### NATS subjects
+### Zenoh key expressions
 
 ``` mermaid
 flowchart LR
-  S1["svc.{serviceId}.nodes.{nodeId}.data.{portId}"] -->|"Data Plane<br/>fan-out subject"| D[Data]
-  S2["svc.{serviceId}.{endpoint}"] -->|"Control Plane<br/>micro endpoint"| E[Endpoint]
-  S3["svc.{serviceId}.cmd"] -->|"Control Plane<br/>command channel"| C[Cmd]
+  S1["f8/svc/{serviceId}/nodes/{nodeId}/data/{portId}"] -->|"Data Plane<br/>fan-out key"| D[Data]
+  S2["f8/svc/{serviceId}/state/nodes/{nodeId}/state/{field...}"] -->|"State Plane<br/>update key"| S[State Update]
+  S3["f8/svc/{serviceId}/endpoint/{endpoint}"] -->|"Control Plane<br/>queryable endpoint"| E[Endpoint]
+  S4["f8/svc/{serviceId}/cmd"] -->|"Control Plane<br/>command stream"| C[Cmd]
+  S5["f8/live/svc/{serviceId}"] -->|"Liveliness<br/>service presence"| L[Live]
 ```
 
 Cross-language implementations (must stay consistent):
 
-- Python: `packages/f8pysdk/f8pysdk/nats_naming.py`
-- C++: `packages/f8cppsdk/src/f8_naming.cpp`
+- Python: `packages/f8pysdk/f8pysdk/zenoh_naming.py`
+- C++: `packages/f8cppsdk/include/f8cppsdk/zenoh_naming.h`
 
-### JetStream KV: one bucket per service
+### NATS fallback mapping
 
-``` mermaid
-flowchart TB
-  B["Bucket: svc_{serviceId}"] --> K1["rungraph"]
-  B --> K2["ready"]
-  B --> K3["nodes.{nodeId}.state.{field}"]
-```
+When `--bus-backend nats` is selected explicitly, the same runtime API maps to:
 
-Key semantics:
+- data subjects: `svc.{serviceId}.nodes.{nodeId}.data.{portId}`
+- micro endpoints: `svc.{serviceId}.{endpoint}`
+- command subject: `svc.{serviceId}.cmd`
+- per-service JetStream KV bucket: `svc_{serviceId}`
 
-- `rungraph`: “last successfully applied” rungraph snapshot for the service
-- `ready`: service readiness marker (used by Studio/launcher for timing and health)
-- `nodes.{nodeId}.state.{field}`: node state/parameters (watchable + editable)
+The fallback naming helpers live in `packages/f8pysdk/f8pysdk/nats_naming.py`.
 
 ---
 
@@ -165,14 +165,14 @@ Implementation references:
 sequenceDiagram
   participant P as Producer Node
   participant BusA as ServiceBus(A)
-  participant N as NATS Core Pub/Sub
+  participant Z as Zenoh Pub/Sub
   participant BusB as ServiceBus(B)
   participant C as Consumer Node
 
   P->>BusA: emit_data(node, out_port, value)
   BusA->>BusA: buffer intra edges (in-process)
-  BusA->>N: publish svc.A.nodes.X.data.port {value, ts}
-  N-->>BusB: deliver (fan-out)
+  BusA->>Z: publish f8/svc/A/nodes/X/data/port {value, ts}
+  Z-->>BusB: deliver (fan-out)
   BusB->>BusB: push_input -> buffer_input(to_node, to_port)
   C->>BusB: pull_data(to_node, in_port)<br/>(latest/queue + timeoutMs)
   BusB-->>C: value / None
@@ -182,12 +182,14 @@ sequenceDiagram
 
 ## State Plane (Reliable, Observable, Editable State)
 
-### State is not a message; it is a KV “current value”
+### State is service-owned current value, not external storage
 
-Each service owns a JetStream KV bucket (`svc_{serviceId}`). For any state field, you can always:
+Each service owns its latest state in local runtime memory and exposes it through Zenoh queryables plus update publishes. For any state field, the runtime transport API still provides:
 
 - `kv_get`: fetch current value (initial sync, reconnect, UI open)
 - `kv_watch`: subscribe to updates (real-time UI + cross-service bindings)
+
+The `kv_*` names are the stable transport-neutral API. Zenoh implements them with service-owned current state, queryables, and state-update key expressions; the explicit NATS fallback implements them with JetStream KV.
 
 ### State write pipeline (Python reference implementation)
 
@@ -197,7 +199,7 @@ The `publish_state(...)` pipeline (see `packages/f8pysdk/f8pysdk/service_bus/dom
 2. **Node validation hook** via `node.validate_state(...)` (accept/transform/reject with `StateWriteError`)
 3. **Value normalization** (`coerce_state_value(...)`) to keep KV JSON-friendly (and stable across languages)
 4. **Value dedupe** (identical values are not re-published)
-5. **Persist** to KV: `kv_put(nodes.{nodeId}.state.{field})`
+5. **Persist/update current state**: `kv_put(nodes.{nodeId}.state.{field})`
 6. **Immediate local apply** (critical UX): do not wait for a watch round-trip; apply locally right away:
    - `node.on_state(...)`
    - intra-service state fanout (state edges)
@@ -213,39 +215,39 @@ Both Python and C++ write MsgPack maps with a compatible shape (fields may vary 
 - `source`: more specific tag (e.g. `state_edge_cross`, `endpoint`, `runtime`)
 - extra meta: preserved, excluding reserved keys
 
-### UI edit loop (Studio → Service → KV → Studio)
+### UI edit loop (Studio → Service → State Update → Studio)
 
 ``` mermaid
 sequenceDiagram
   participant UI as PyStudio UI
-  participant N as NATS Micro (request/reply)
+  participant Z as Zenoh Queryable (request/reply)
   participant Bus as ServiceBus (runtime)
-  participant KV as JetStream KV
+  participant State as Service-Owned State
   participant Node as Runtime Node(s)
   participant Watch as Studio RemoteStateWatcher
 
-  UI->>N: request svc.{serviceId}.set_state<br/>{nodeId, field, value}
-  N-->>Bus: micro endpoint handler
+  UI->>Z: query f8/svc/{serviceId}/endpoint/set_state<br/>{nodeId, field, value}
+  Z-->>Bus: endpoint handler
   Bus->>Bus: validate / access / dedupe / coerce
-  Bus->>KV: kv_put bucket=svc_{serviceId}<br/>key=nodes.{nodeId}.state.{field}
+  Bus->>State: kv_put nodes.{nodeId}.state.{field}
   Bus->>Node: node.on_state(field, value)<br/>(immediate local apply)
   Bus->>Bus: intra-state fanout (state edges)
-  KV-->>Watch: watch update
+  State-->>Watch: state update key publish
   Watch-->>UI: update state + properties panel
 ```
 
 Studio-side implementation:
 
-- “Observe”: `packages/f8pystudio/f8pystudio/remote_state_watcher.py` (watch KV directly; no monitor node required)
+- “Observe”: `packages/f8pystudio/f8pystudio/bridge/remote_state_watcher.py` (watch runtime state directly; no monitor node required)
 - “Edit”: `packages/f8pystudio/f8pystudio/bridge/service_endpoint_client.py::request_set_remote_state(...)`
 
 ---
 
 ## Cross-State (Remote KV Binding → Local Field)
 
-Cross-service state edges are **bindings**, not pub/sub messages:
+Cross-service state edges are **bindings**, not ordinary data-stream messages:
 
-- Downstream watches the upstream service bucket/key
+- Downstream queries the upstream service current-state key, then watches the upstream state-update key expression
 - For every upstream update, downstream writes the value into its local target field
 - Local write then triggers local node updates + intra-state fanout
 
@@ -269,17 +271,17 @@ The Python ServiceBus uses a **two-phase init**:
 ``` mermaid
 sequenceDiagram
   participant BusDown as Downstream ServiceBus
-  participant KVUp as Upstream KV Bucket (svc_{peerServiceId})
-  participant KVDown as Downstream KV Bucket (svc_{serviceId})
+  participant Up as Upstream Service State
+  participant Down as Downstream Service State
 
   Note over BusDown: After rungraph apply
-  BusDown->>KVUp: watch nodes.{remoteNodeId}.state.{field}
-  BusDown->>KVUp: kv_get initial value (concurrency-limited)
-  KVUp-->>BusDown: current payload
-  BusDown->>KVDown: kv_put local target (no fanout)
+  BusDown->>Up: watch state update key expression
+  BusDown->>Up: kv_get initial value (concurrency-limited query)
+  Up-->>BusDown: current payload
+  BusDown->>Down: kv_put local target (no fanout)
   Note over BusDown: Then run a single ordered intra-state init sync
-  KVUp-->>BusDown: watch update (later)
-  BusDown->>KVDown: kv_put local target (fanout enabled)
+  Up-->>BusDown: watch update (later)
+  BusDown->>Down: kv_put local target (fanout enabled)
 ```
 
 ---
@@ -295,18 +297,18 @@ Studio deploys via the `set_rungraph` endpoint and receives an explicit accept/r
 ``` mermaid
 sequenceDiagram
   participant Studio as PyStudio
-  participant N as NATS Micro
+  participant Z as Zenoh Queryable
   participant Bus as ServiceBus
-  participant KV as JetStream KV (svc_{serviceId})
+  participant State as Service-Owned State
 
-  Studio->>N: request svc.{serviceId}.set_rungraph(graph)
-  N-->>Bus: handler
+  Studio->>Z: query f8/svc/{serviceId}/endpoint/set_rungraph(graph)
+  Z-->>Bus: handler
   Bus->>Bus: validate (no cycles, single-upstream, writable targets)
   Bus->>Bus: rebuild routes (data + state)
   Bus->>Bus: seed stateValues (reconcile by meta.ts, no fanout)
   Bus->>Bus: start cross-state watches + initial sync (no fanout)
   Bus->>Bus: initial_sync_intra_state_edges (ordered)
-  Bus->>KV: kv_put rungraph (only if apply ok)
+  Bus->>State: kv_put rungraph (only if apply ok)
   Bus-->>Studio: ok / error
 ```
 
@@ -378,8 +380,8 @@ Solution stack:
 
 Solution:
 
-- KV watchers handle missing remote buckets/streams by retrying in the background rather than failing permanently.
-  See: `packages/f8pysdk/f8pysdk/nats_transport.py::kv_watch_in_bucket(...)`
+- State watchers handle missing peer services by retrying in the background rather than failing permanently.
+  Zenoh uses peer queryables/update subscriptions; the NATS fallback uses bucket watches.
 
 ### 6) Exceptions in high-frequency paths
 
@@ -396,9 +398,9 @@ From a UI perspective, we want “edit feels instant” and “everyone eventual
 
 We achieve this by combining:
 
-1. **Rejectable writes** (Control Plane): Studio uses `set_state` micro endpoint and gets ok/error
+1. **Rejectable writes** (Control Plane): Studio uses `set_state` endpoint query and gets ok/error
 2. **Immediate local apply** (State pipeline): the runtime applies local writes to `node.on_state(...)` right away (no wait for watch)
-3. **KV as source of truth** (State Plane): Studio watches KV and converges to the final current values
+3. **Service-owned latest state as source of truth** (State Plane): Studio watches state updates and converges to the final current values
 4. **Data plane isolation**: high-rate data streams do not directly invoke slow callbacks by default
 
 ---
@@ -422,7 +424,7 @@ flowchart TB
   WF["workflow/ (rungraph + cross-state + lifecycle)"]
   DOM["domain/ (state write policy/pipeline)"]
   ROUTE["routing/ (data flow + buffers + subscriptions)"]
-  AD["adapters/ (infra integration, e.g. NATS micro)"]
+  AD["adapters/ (infra integration, e.g. Zenoh/NATS fallback)"]
 
   API --> WF
   API --> DOM
@@ -446,23 +448,26 @@ flowchart TB
 - ServiceBus facade + shared state/data APIs: `packages/f8pysdk/f8pysdk/service_bus/api/bus.py`
 - Data plane (buffering, pull/push delivery): `packages/f8pysdk/f8pysdk/service_bus/routing/data_flow.py`
 - State write pipeline (validate/dedupe/persist/local apply): `packages/f8pysdk/f8pysdk/service_bus/domain/state_pipeline.py`
-- Cross-state (remote KV watch + initial sync): `packages/f8pysdk/f8pysdk/service_bus/workflow/cross_state.py`
+- Cross-state (remote state watch + initial sync): `packages/f8pysdk/f8pysdk/service_bus/workflow/cross_state.py`
 - Rungraph apply (validate + rebuild + init sync): `packages/f8pysdk/f8pysdk/service_bus/workflow/rungraph.py`
-- Transport (NATS Core + JetStream KV): `packages/f8pysdk/f8pysdk/nats_transport.py`
-- Naming (subjects/keys/buckets): `packages/f8pysdk/f8pysdk/nats_naming.py`
-- Micro endpoints (control plane): `packages/f8pysdk/f8pysdk/service_bus/adapters/micro.py`
+- Transport interface: `packages/f8pysdk/f8pysdk/runtime_transport.py`
+- Zenoh transport: `packages/f8pysdk/f8pysdk/zenoh_transport.py`
+- NATS fallback transport: `packages/f8pysdk/f8pysdk/nats_transport.py`
+- Naming (Zenoh keys): `packages/f8pysdk/f8pysdk/zenoh_naming.py`
+- Control endpoints: `packages/f8pysdk/f8pysdk/service_bus/internal/control_endpoints.py`
 
 ### C++ (`f8cppsdk`)
 
-- Naming (must match Python): `packages/f8cppsdk/src/f8_naming.cpp`
+- Zenoh naming (must match Python): `packages/f8cppsdk/include/f8cppsdk/zenoh_naming.h`
+- NATS fallback naming: `packages/f8cppsdk/src/f8_naming.cpp`
 - State writes + ready flag: `packages/f8cppsdk/src/state_kv.cpp`
 - Data publish: `packages/f8cppsdk/src/data_bus.cpp`
-- Control plane (micro endpoints server): `packages/f8cppsdk/src/service_control_plane.cpp`
+- Control plane (Zenoh queryables + NATS fallback endpoints): `packages/f8cppsdk/src/service_bus.cpp`
 - Rungraph + cross-state logic: `packages/f8cppsdk/src/service_bus.cpp`
 
 ### Studio (`f8pystudio`)
 
-- Watch remote service KV: `packages/f8pystudio/f8pystudio/remote_state_watcher.py`
+- Watch remote service state: `packages/f8pystudio/f8pystudio/bridge/remote_state_watcher.py`
 - Write remote state via endpoint: `packages/f8pystudio/f8pystudio/bridge/service_endpoint_client.py`
 - Deploy rungraph (endpoint-only): `packages/f8pystudio/f8pystudio/deploy.py`
 
@@ -492,25 +497,25 @@ We make synchronization a **contract**, not an emergent behavior:
 
 By splitting into two planes:
 
-- Data Plane (Core Pub/Sub): fast fan-out streams, locally buffered by default.
-- State Plane (JetStream KV): durable, watchable “current values”, editable and inspectable.
+- Data Plane (Zenoh Pub/Sub): fast fan-out streams, locally buffered by default.
+- State Plane (service-owned current state): queryable, watchable “current values”, editable and inspectable.
 
 ### How does fan-out work?
 
-Cross-service data fan-out publishes **once** per `(serviceId, nodeId, outPort)` to a stable subject:
+Cross-service data fan-out publishes **once** per `(serviceId, nodeId, outPort)` to a stable Zenoh key:
 
-`svc.{serviceId}.nodes.{nodeId}.data.{portId}`
+`f8/svc/{serviceId}/nodes/{nodeId}/data/{portId}`
 
 Multiple receivers subscribe to the same subject.
 
 ### How can users view and edit state?
 
-- View: Studio watches KV buckets/keys via `RemoteStateWatcher`.
-- Edit: Studio calls `svc.{serviceId}.set_state` (micro endpoint). The runtime validates and either rejects or persists to KV, then applies locally immediately.
+- View: Studio watches service state updates via `RemoteStateWatcher`.
+- Edit: Studio queries `f8/svc/{serviceId}/endpoint/set_state`. The runtime validates and either rejects or updates current state, then applies locally immediately.
 
-### Is this a “decentralized CRDT on NATS KV”?
+### Is this a “decentralized CRDT on Zenoh state”?
 
-Not in the standard CRDT sense. JetStream KV acts as a centralized, ordered persistence layer, and we avoid multi-writer merges via rungraph topology constraints.
+Not in the standard CRDT sense. Each service owns its current state and publishes/query-serves it through Zenoh; we avoid multi-writer merges via rungraph topology constraints. The explicit NATS fallback maps the same API to JetStream KV.
 
 ### What are the main hard parts in this design?
 

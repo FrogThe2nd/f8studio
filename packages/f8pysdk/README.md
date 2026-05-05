@@ -19,11 +19,14 @@ Core stable public modules:
 - `f8pysdk.data`: data delivery and cross-publish policy types
 - `f8pysdk.monitoring`: monitor snapshot collection/config types
 - `f8pysdk.state`: canonical state read/write types
-- `f8pysdk.transport`: NATS transport façade
+- `f8pysdk.runtime_transport`: backend-neutral transport protocol
+- `f8pysdk.zenoh_transport`: default Zenoh runtime transport
+- `f8pysdk.transport`: explicit NATS fallback transport façade
 - `f8pysdk.testing`: in-memory harness plus emit/pull/buffer test helpers
 
 Additional stable utility modules:
-- `f8pysdk.nats_naming`: canonical NATS subject / KV naming helpers
+- `f8pysdk.zenoh_naming`: canonical Zenoh key-expression helpers
+- `f8pysdk.nats_naming`: canonical NATS fallback subject / KV naming helpers
 - `f8pysdk.capabilities`: explicit runtime node capability protocols and mixins
 - `f8pysdk.shm`: shared-memory naming and audio/video helpers
 - `f8pysdk.rungraph_validation`: rungraph validation helpers used by Studio/runtime tooling
@@ -152,7 +155,9 @@ Stable helper modules:
 - `f8pysdk.monitoring`: monitor collector façade
 - `f8pysdk.nodes`: runtime node base classes
 - `f8pysdk.registry`: author-facing registry, low-level runtime registry, and registry errors
-- `f8pysdk.transport`: NATS transport façade and KV reset helpers
+- `f8pysdk.runtime_transport`: backend-neutral runtime transport protocol
+- `f8pysdk.zenoh_transport`: default Zenoh runtime transport
+- `f8pysdk.transport`: explicit NATS fallback transport façade and KV reset helpers
 - `f8pysdk.testing`: in-memory harness plus emit/pull/buffer helpers for tests
 
 Coercion contract:

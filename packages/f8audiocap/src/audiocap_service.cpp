@@ -148,7 +148,7 @@ bool AudioCapService::start() {
     if (!shm_->initialize(shm_name, cfg_.audio_shm_bytes, cfg_.sample_rate, cfg_.channels,
                           f8::cppsdk::AudioSharedMemorySink::SampleFormat::kF32LE, cfg_.frames_per_chunk,
                           cfg_.chunk_count)) {
-      spdlog::error("failed to initialize audio shm sink name={} bytes={}", shm_name, cfg_.audio_shm_bytes);
+      spdlog::error("failed to initialize legacy audio SHM sink name={} bytes={}", shm_name, cfg_.audio_shm_bytes);
       shm_.reset();
       return false;
     }

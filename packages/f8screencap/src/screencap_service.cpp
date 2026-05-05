@@ -247,8 +247,8 @@ bool ScreenCapService::start() {
     shm_ = std::make_shared<f8::cppsdk::VideoSharedMemorySink>();
     const auto shm_name = f8::cppsdk::shm::video_shm_name(cfg_.service_id);
     if (!shm_->initialize(shm_name, cfg_.video_shm_bytes, cfg_.video_shm_slots)) {
-      spdlog::error("failed to initialize video shm sink name={} bytes={} slots={}", shm_name, cfg_.video_shm_bytes,
-                    cfg_.video_shm_slots);
+      spdlog::error("failed to initialize legacy video SHM sink name={} bytes={} slots={}", shm_name,
+                    cfg_.video_shm_bytes, cfg_.video_shm_slots);
       shm_.reset();
       frame_sink_.reset();
       return false;
