@@ -96,7 +96,8 @@ bool FlowMetricService::start() {
   metric_mode_ = MetricMode::Divergence;
   metric_mode_state_ = "divergence";
   metric_scale_ = 1.0;
-  scalar_shm_name_ = "shm." + cfg_.service_id + ".scalar";
+  scalar_shm_name_ =
+      runtime_backend.bus_backend == f8::cppsdk::BusBackend::kZenoh ? "" : "shm." + cfg_.service_id + ".scalar";
   scalar_transport_ = "legacy_shm";
   scalar_key_.clear();
   scalar_shm_format_ = "scalar1_f32";
@@ -138,6 +139,7 @@ bool FlowMetricService::start() {
       scalar_sink_.clear_frame_observer();
       spdlog::info("flow_metric zenoh scalar publisher enabled serviceId={} key={}", cfg_.service_id, key);
     } else {
+      scalar_shm_name_ = "shm." + cfg_.service_id + ".scalar";
       scalar_sink_.clear_frame_observer();
       scalar_zenoh_publisher_.reset();
       spdlog::warn("flow_metric zenoh scalar publisher unavailable serviceId={}, using legacy scalar SHM metadata",

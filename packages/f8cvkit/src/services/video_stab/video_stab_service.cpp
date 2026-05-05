@@ -149,7 +149,9 @@ bool VideoStabService::start() {
     return false;
   }
 
-  output_shm_name_ = f8::cppsdk::shm::video_shm_name(cfg_.service_id);
+  output_shm_name_ = runtime_backend.bus_backend == f8::cppsdk::BusBackend::kZenoh
+                         ? ""
+                         : f8::cppsdk::shm::video_shm_name(cfg_.service_id);
   input_shm_name_.clear();
   input_video_transport_ = runtime_backend.bus_backend == f8::cppsdk::BusBackend::kZenoh ? "zenoh" : "legacy_shm";
   input_video_key_.clear();
@@ -193,6 +195,7 @@ bool VideoStabService::start() {
       output_zenoh_video_ = publisher;
       spdlog::info("video_stab zenoh video publisher enabled serviceId={} key={}", cfg_.service_id, key);
     } else {
+      output_shm_name_ = f8::cppsdk::shm::video_shm_name(cfg_.service_id);
       output_zenoh_video_.reset();
       spdlog::warn("video_stab zenoh video publisher unavailable serviceId={}, using legacy output SHM metadata",
                    cfg_.service_id);
@@ -700,6 +703,10 @@ bool VideoStabService::ensure_output_open() {
   output_last_open_attempt_ms_ = now;
 
   output_video_ = std::make_unique<f8::cppsdk::VideoSharedMemorySink>();
+  if (output_shm_name_.empty()) {
+    output_shm_name_ = f8::cppsdk::shm::video_shm_name(cfg_.service_id);
+    publish_state_if_changed("outputShmName", output_shm_name_, "runtime", json::object());
+  }
   if (!output_video_->initialize(output_shm_name_, f8::cppsdk::shm::kDefaultVideoShmBytes,
                                  f8::cppsdk::shm::kDefaultVideoShmSlots)) {
     output_video_.reset();

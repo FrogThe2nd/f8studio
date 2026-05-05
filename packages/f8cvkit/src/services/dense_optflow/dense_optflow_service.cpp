@@ -112,7 +112,8 @@ bool DenseOptflowService::start() {
   input_video_transport_ = runtime_backend.bus_backend == f8::cppsdk::BusBackend::kZenoh ? "zenoh" : "legacy_shm";
   input_video_key_.clear();
   compute_every_n_frames_ = 2;
-  flow_shm_name_ = "shm." + cfg_.service_id + ".flow";
+  flow_shm_name_ =
+      runtime_backend.bus_backend == f8::cppsdk::BusBackend::kZenoh ? "" : "shm." + cfg_.service_id + ".flow";
   flow_transport_ = "legacy_shm";
   flow_key_.clear();
   flow_shm_format_ = "flow2_f16";
@@ -157,6 +158,7 @@ bool DenseOptflowService::start() {
       flow_sink_.clear_frame_observer();
       spdlog::info("dense_optflow zenoh flow publisher enabled serviceId={} key={}", cfg_.service_id, key);
     } else {
+      flow_shm_name_ = "shm." + cfg_.service_id + ".flow";
       flow_sink_.clear_frame_observer();
       flow_zenoh_publisher_.reset();
       spdlog::warn("dense_optflow zenoh flow publisher unavailable serviceId={}, using legacy flow SHM metadata",
