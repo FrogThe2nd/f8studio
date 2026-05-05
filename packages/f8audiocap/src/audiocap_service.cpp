@@ -141,14 +141,19 @@ bool AudioCapService::start() {
   bus_->add_command_node(this, AudioCapService::describe());
   if (!bus_->start()) return false;
 
-  shm_ = std::make_unique<f8::cppsdk::AudioSharedMemorySink>();
-  const std::string shm_name = f8::cppsdk::shm::audio_shm_name(cfg_.service_id);
-  if (!shm_->initialize(shm_name, cfg_.audio_shm_bytes, cfg_.sample_rate, cfg_.channels,
-                        f8::cppsdk::AudioSharedMemorySink::SampleFormat::kF32LE, cfg_.frames_per_chunk,
-                        cfg_.chunk_count)) {
-    spdlog::error("failed to initialize audio shm sink name={} bytes={}", shm_name, cfg_.audio_shm_bytes);
-    return false;
-  }
+  auto initialize_legacy_shm_sink = [this]() -> bool {
+    shm_ = std::make_unique<f8::cppsdk::AudioSharedMemorySink>();
+    const std::string shm_name = f8::cppsdk::shm::audio_shm_name(cfg_.service_id);
+    if (!shm_->initialize(shm_name, cfg_.audio_shm_bytes, cfg_.sample_rate, cfg_.channels,
+                          f8::cppsdk::AudioSharedMemorySink::SampleFormat::kF32LE, cfg_.frames_per_chunk,
+                          cfg_.chunk_count)) {
+      spdlog::error("failed to initialize audio shm sink name={} bytes={}", shm_name, cfg_.audio_shm_bytes);
+      shm_.reset();
+      return false;
+    }
+    return true;
+  };
+
   zenoh_audio_seq_.store(0, std::memory_order_relaxed);
   zenoh_audio_frame_index_.store(0, std::memory_order_relaxed);
   if (runtime_backend.bus_backend == f8::cppsdk::BusBackend::kZenoh) {
@@ -161,9 +166,14 @@ bool AudioCapService::start() {
     } else {
       zenoh_audio_key_.clear();
       zenoh_audio_publisher_.reset();
-      spdlog::warn("audiocap zenoh audio publisher unavailable serviceId={}, falling back to legacy SHM metadata",
+      spdlog::warn("audiocap zenoh audio publisher unavailable serviceId={}, falling back to legacy SHM",
                    cfg_.service_id);
+      if (!initialize_legacy_shm_sink()) {
+        return false;
+      }
     }
+  } else if (!initialize_legacy_shm_sink()) {
+    return false;
   }
 
   chunk_buffer_.assign(static_cast<std::size_t>(cfg_.frames_per_chunk) * cfg_.channels, 0.0f);
@@ -288,7 +298,6 @@ void AudioCapService::tick() {
   }
 
   if (!active_.load(std::memory_order_acquire)) return;
-  if (!shm_) return;
 
   if (cfg_.mode == "capture") {
     return;
@@ -342,7 +351,6 @@ void AudioCapService::handle_audio_stream_put(SDL_AudioStream* stream, int addit
     }
     return;
   }
-  if (!shm_) return;
 
   const int frame_bytes = static_cast<int>(sizeof(float) * cfg_.channels);
   int avail = SDL_GetAudioStreamAvailable(stream);
@@ -371,7 +379,6 @@ void AudioCapService::handle_captured_interleaved_f32(const float* interleaved, 
   if (!interleaved || frames == 0) return;
   if (!running_.load(std::memory_order_acquire)) return;
   if (!active_.load(std::memory_order_acquire)) return;
-  if (!shm_) return;
 
   const float* src = interleaved;
   std::uint32_t frames_left = frames;
@@ -405,6 +412,7 @@ bool AudioCapService::write_audio_chunk_interleaved_f32(const float* samples, st
     wrote_legacy_shm = shm_->write_interleaved_f32(samples, frames, ts_ms);
   }
 
+  bool published_zenoh = false;
   auto publisher = zenoh_audio_publisher_;
   if (publisher && publisher->valid()) {
     const std::uint64_t seq = zenoh_audio_seq_.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -422,10 +430,10 @@ bool AudioCapService::write_audio_chunk_interleaved_f32(const float* samples, st
     chunk.ts_ms = ts_ms;
     chunk.payload = samples;
     chunk.payload_bytes = static_cast<std::size_t>(frames) * static_cast<std::size_t>(bytes_per_frame);
-    (void)publisher->publish_chunk(chunk);
+    published_zenoh = publisher->publish_chunk(chunk);
   }
 
-  return wrote_legacy_shm;
+  return wrote_legacy_shm || published_zenoh;
 }
 
 void AudioCapService::set_active_local(bool active, const nlohmann::json& meta) {
@@ -514,8 +522,8 @@ void AudioCapService::publish_static_state() {
 }
 
 void AudioCapService::publish_dynamic_state() {
-  // SHM write sequence is intentionally not published as node state. It is a
-  // high-frequency transport counter; consumers should read it from SHM.
+  // Transport write sequence is intentionally not published as node state. It is
+  // a high-frequency counter; consumers should read it from the active audio transport.
 }
 
 nlohmann::json AudioCapService::describe() {
