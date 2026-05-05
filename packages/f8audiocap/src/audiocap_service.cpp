@@ -167,11 +167,10 @@ bool AudioCapService::start() {
     } else {
       zenoh_audio_key_.clear();
       zenoh_audio_publisher_.reset();
-      spdlog::warn("audiocap zenoh audio publisher unavailable serviceId={}, falling back to legacy SHM",
-                   cfg_.service_id);
-      if (!initialize_legacy_shm_sink()) {
-        return false;
-      }
+      spdlog::error("audiocap zenoh audio publisher unavailable serviceId={} key={}", cfg_.service_id, key);
+      bus_->stop();
+      bus_.reset();
+      return false;
     }
   } else if (!initialize_legacy_shm_sink()) {
     return false;

@@ -268,11 +268,9 @@ bool ScreenCapService::start() {
     } else {
       zenoh_video_key_.clear();
       zenoh_video_publisher_.reset();
-      spdlog::warn("screencap zenoh video publisher unavailable serviceId={}, falling back to legacy SHM",
-                   cfg_.service_id);
-      if (!initialize_legacy_shm_sink()) {
-        return false;
-      }
+      frame_sink_.reset();
+      spdlog::error("screencap zenoh video publisher unavailable serviceId={} key={}", cfg_.service_id, key);
+      return false;
     }
   } else if (!initialize_legacy_shm_sink()) {
     return false;

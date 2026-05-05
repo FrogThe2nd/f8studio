@@ -70,13 +70,13 @@ class DenseOptflowService final : public f8::cppsdk::LifecycleNode,
 
   std::mutex flow_mu_;
 
-  // Input SHM settings.
+  // Input video settings.
   std::string input_shm_name_;
-  std::string input_video_transport_ = "legacy_shm";
+  std::string input_video_transport_ = "zenoh";
   std::string input_video_key_;
   int compute_every_n_frames_ = 2;
   std::string flow_shm_name_;
-  std::string flow_transport_ = "legacy_shm";
+  std::string flow_transport_ = "zenoh";
   std::string flow_key_;
   std::string flow_shm_format_ = "flow2_f16";
   double compute_scale_ = 0.5;

@@ -2174,7 +2174,7 @@
           "commands": [
             {
               "name": "captureTemplateFrame",
-              "description": "Capture current SHM frame as an encoded image (base64).",
+              "description": "Capture current video frame as an encoded image (base64).",
               "showOnNode": true,
               "params": [
                 {

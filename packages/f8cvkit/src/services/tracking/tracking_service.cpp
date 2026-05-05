@@ -1486,7 +1486,7 @@ json TrackingService::describe() {
       state_field("autoDownloadModels", json{{"type", "boolean"}, {"default", true}}, "rw", "Auto Download Models",
                   "Auto-download missing tracker model files when a model-based tracker is selected.", false),
       state_field("maxTrackingFps", schema_number(30.0, 0.0, 240.0), "rw", "Max Tracking FPS",
-                  "Maximum tracker update rate. Set to 0 to process every incoming SHM frame.", false),
+                  "Maximum tracker update rate. Set to 0 to process every incoming video frame.", false),
       state_field("stopTrackingCooldownMs", schema_integer(1000, 0, 60000), "rw", "Stop Cooldown (ms)",
                   "After stopTracking, ignore initBox for this many ms. Set to 0 to disable.", true),
       state_field("isTracking", schema_boolean(), "ro", "Is Tracking", "True when tracker is running.", true),

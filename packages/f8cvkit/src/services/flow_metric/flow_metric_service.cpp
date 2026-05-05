@@ -99,7 +99,7 @@ bool FlowMetricService::start() {
   metric_scale_ = 1.0;
   scalar_shm_name_ =
       runtime_backend.bus_backend == f8::cppsdk::BusBackend::kZenoh ? "" : "shm." + cfg_.service_id + ".scalar";
-  scalar_transport_ = "legacy_shm";
+  scalar_transport_ = runtime_backend.bus_backend == f8::cppsdk::BusBackend::kZenoh ? "zenoh" : "legacy_shm";
   scalar_key_.clear();
   scalar_shm_format_ = "scalar1_f32";
 
@@ -140,11 +140,12 @@ bool FlowMetricService::start() {
       scalar_sink_.clear_frame_observer();
       spdlog::info("flow_metric zenoh scalar publisher enabled serviceId={} key={}", cfg_.service_id, key);
     } else {
-      scalar_shm_name_ = "shm." + cfg_.service_id + ".scalar";
       scalar_sink_.clear_frame_observer();
       scalar_zenoh_publisher_.reset();
-      spdlog::warn("flow_metric zenoh scalar publisher unavailable serviceId={}, using legacy scalar SHM metadata",
-                   cfg_.service_id);
+      spdlog::error("flow_metric zenoh scalar publisher unavailable serviceId={} key={}", cfg_.service_id, key);
+      bus_->stop();
+      bus_.reset();
+      return false;
     }
   }
 
@@ -673,6 +674,11 @@ void FlowMetricService::process_frame_once() {
       return;
     }
   } else {
+    if (scalar_transport_ == "zenoh") {
+      ++monitor_fail_frames_;
+      publish_error_if_changed("scalar zenoh publisher unavailable: " + scalar_key_, "runtime", json::object());
+      return;
+    }
     std::string shm_name = service_runtime::trim_copy(scalar_shm_name_);
     if (shm_name.empty()) {
       shm_name = "shm." + cfg_.service_id + ".scalar";

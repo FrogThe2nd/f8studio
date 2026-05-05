@@ -75,9 +75,9 @@ class FlowMetricService final : public f8::cppsdk::LifecycleNode,
 
   std::mutex io_mu_;
 
-  // Input flow SHM settings and reader state.
+  // Input flow settings and reader state.
   std::string input_flow_shm_name_;
-  std::string input_flow_transport_ = "legacy_shm";
+  std::string input_flow_transport_ = "zenoh";
   std::string input_flow_key_;
   int compute_every_n_frames_ = 1;
   MetricMode metric_mode_ = MetricMode::Divergence;
@@ -91,9 +91,9 @@ class FlowMetricService final : public f8::cppsdk::LifecycleNode,
   std::int64_t last_flow_open_attempt_ms_ = 0;
   std::uint64_t frame_counter_ = 0;
 
-  // Output scalar SHM settings and writer state.
+  // Output scalar settings and writer state.
   std::string scalar_shm_name_;
-  std::string scalar_transport_ = "legacy_shm";
+  std::string scalar_transport_ = "zenoh";
   std::string scalar_key_;
   std::string scalar_shm_format_ = "scalar1_f32";
   f8::cppsdk::VideoSharedMemorySink scalar_sink_;

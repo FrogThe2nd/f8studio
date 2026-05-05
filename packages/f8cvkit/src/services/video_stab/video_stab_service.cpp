@@ -157,7 +157,7 @@ bool VideoStabService::start() {
   input_video_key_.clear();
   input_video_.close();
   input_zenoh_video_.reset();
-  output_video_transport_ = "legacy_shm";
+  output_video_transport_ = runtime_backend.bus_backend == f8::cppsdk::BusBackend::kZenoh ? "zenoh" : "legacy_shm";
   output_video_key_.clear();
   output_frame_id_ = 0;
   output_initialized_ = false;
@@ -195,10 +195,11 @@ bool VideoStabService::start() {
       output_zenoh_video_ = publisher;
       spdlog::info("video_stab zenoh video publisher enabled serviceId={} key={}", cfg_.service_id, key);
     } else {
-      output_shm_name_ = f8::cppsdk::shm::video_shm_name(cfg_.service_id);
       output_zenoh_video_.reset();
-      spdlog::warn("video_stab zenoh video publisher unavailable serviceId={}, using legacy output SHM metadata",
-                   cfg_.service_id);
+      spdlog::error("video_stab zenoh video publisher unavailable serviceId={} key={}", cfg_.service_id, key);
+      bus_->stop();
+      bus_.reset();
+      return false;
     }
   }
 
@@ -697,6 +698,11 @@ bool VideoStabService::ensure_output_open() {
     return true;
   }
 
+  if (output_video_transport_ == "zenoh") {
+    publish_error_if_changed("output zenoh publisher unavailable: " + output_video_key_, "runtime", json::object());
+    return false;
+  }
+
   const std::int64_t now = f8::cppsdk::now_ms();
   if (output_last_open_attempt_ms_ > 0 && (now - output_last_open_attempt_ms_) < 1000) {
     return false;
@@ -1008,6 +1014,11 @@ void VideoStabService::process_frame_once() {
       return;
     }
   } else {
+    if (output_video_transport_ == "zenoh") {
+      ++monitor_fail_frames_;
+      publish_error_if_changed("output zenoh publisher unavailable: " + output_video_key_, "runtime", json::object());
+      return;
+    }
     if (!output_video_ || !output_video_->ensureConfiguration(hdr.width, hdr.height)) {
       ++monitor_fail_frames_;
       publish_error_if_changed("output shm ensureConfiguration failed", "runtime", json::object());

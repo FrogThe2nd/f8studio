@@ -115,7 +115,7 @@ bool DenseOptflowService::start() {
   compute_every_n_frames_ = 2;
   flow_shm_name_ =
       runtime_backend.bus_backend == f8::cppsdk::BusBackend::kZenoh ? "" : "shm." + cfg_.service_id + ".flow";
-  flow_transport_ = "legacy_shm";
+  flow_transport_ = runtime_backend.bus_backend == f8::cppsdk::BusBackend::kZenoh ? "zenoh" : "legacy_shm";
   flow_key_.clear();
   flow_shm_format_ = "flow2_f16";
   compute_scale_ = 0.5;
@@ -159,11 +159,12 @@ bool DenseOptflowService::start() {
       flow_sink_.clear_frame_observer();
       spdlog::info("dense_optflow zenoh flow publisher enabled serviceId={} key={}", cfg_.service_id, key);
     } else {
-      flow_shm_name_ = "shm." + cfg_.service_id + ".flow";
       flow_sink_.clear_frame_observer();
       flow_zenoh_publisher_.reset();
-      spdlog::warn("dense_optflow zenoh flow publisher unavailable serviceId={}, using legacy flow SHM metadata",
-                   cfg_.service_id);
+      spdlog::error("dense_optflow zenoh flow publisher unavailable serviceId={} key={}", cfg_.service_id, key);
+      bus_->stop();
+      bus_.reset();
+      return false;
     }
   }
 
@@ -657,6 +658,12 @@ void DenseOptflowService::process_frame_once() {
       return;
     }
   } else {
+    if (flow_transport_ == "zenoh") {
+      ++monitor_fail_frames_;
+      publish_error_if_changed("flow zenoh publisher unavailable: " + flow_key_, "runtime", json::object());
+      gray_.copyTo(prev_gray_);
+      return;
+    }
     std::string shm_name = service_runtime::trim_copy(flow_shm_name_);
     if (shm_name.empty()) {
       shm_name = "shm." + cfg_.service_id + ".flow";

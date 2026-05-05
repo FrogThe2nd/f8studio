@@ -98,9 +98,9 @@ class VideoStabService final : public f8::cppsdk::LifecycleNode,
 
   std::mutex io_mu_;
 
-  // Input video SHM (BGRA32).
+  // Input video (BGRA32).
   std::string input_shm_name_;
-  std::string input_video_transport_ = "legacy_shm";
+  std::string input_video_transport_ = "zenoh";
   std::string input_video_key_;
   f8::cppsdk::VideoSharedMemoryReader input_video_;
   std::unique_ptr<f8::cppsdk::ZenohLatestVideoFrameSubscriber> input_zenoh_video_;
@@ -109,9 +109,9 @@ class VideoStabService final : public f8::cppsdk::LifecycleNode,
   std::uint64_t input_last_frame_id_ = 0;
   std::int64_t input_last_open_attempt_ms_ = 0;
 
-  // Output video SHM (BGRA32).
+  // Output video (BGRA32).
   std::string output_shm_name_;
-  std::string output_video_transport_ = "legacy_shm";
+  std::string output_video_transport_ = "zenoh";
   std::string output_video_key_;
   std::unique_ptr<f8::cppsdk::VideoSharedMemorySink> output_video_;
   std::shared_ptr<f8::cppsdk::ZenohLatestVideoFramePublisher> output_zenoh_video_;
