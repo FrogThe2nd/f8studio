@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from f8pystudio.bridge.nats_lifecycle import SINGLETON_GUARD_DIALOG_TITLE
+from f8pystudio.bridge.runtime_lifecycle import SINGLETON_GUARD_DIALOG_TITLE
 from f8pystudio.app.program import PyStudioProgram
 from f8pystudio.bridge.studio_bridge import STARTUP_GATE_TIMEOUT_S
 

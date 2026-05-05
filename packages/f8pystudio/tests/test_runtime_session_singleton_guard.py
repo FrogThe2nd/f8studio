@@ -4,7 +4,7 @@ import asyncio
 import sys
 from types import SimpleNamespace
 
-from f8pystudio.bridge.nats_lifecycle import RuntimeSingletonGuardResult, SINGLETON_GUARD_DIALOG_MESSAGE
+from f8pystudio.bridge.runtime_lifecycle import RuntimeSingletonGuardResult, SINGLETON_GUARD_DIALOG_MESSAGE
 from f8pystudio.bridge.runtime_session_controller import (
     RuntimeSessionControllerMixin,
     _service_id_from_zenoh_liveliness_key,

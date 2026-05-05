@@ -10,7 +10,7 @@ from .command_client import (
 from .facade_qt import BridgeFacadeContext
 from .json_codec import coerce_json_dict, coerce_json_value
 from .managed_service_inventory import ManagedServiceInventory, collect_managed_service_inventory
-from .nats_lifecycle import (
+from .runtime_lifecycle import (
     NatsConnectionManager,
     NatsSingletonGuardResult,
     RuntimeConnectionManager,

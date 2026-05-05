@@ -9,7 +9,7 @@ from f8pysdk.bus import BusBackend
 from f8pysdk.codec import decode_obj, dump_json
 from f8pysdk.zenoh_naming import zenoh_studio_liveliness_key
 
-from .nats_lifecycle import (
+from .runtime_lifecycle import (
     SINGLETON_GUARD_DIALOG_MESSAGE,
     ensure_nats_server_owned_pid,
     stop_owned_nats_server,

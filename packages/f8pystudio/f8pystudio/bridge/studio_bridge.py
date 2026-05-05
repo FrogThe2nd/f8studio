@@ -24,10 +24,10 @@ from f8pystudio.nodegraph.runtime_compiler import CompiledRuntimeGraphs
 from f8pystudio.studio_specs.registry import SERVICE_CLASS
 
 from .async_runtime import AsyncRuntimeThread
-from .command_client import CommandRequest, NatsCommandGateway, RuntimeCommandGateway, RuntimeCommandGatewayConfig
+from .command_client import CommandRequest, RuntimeCommandGateway, RuntimeCommandGatewayConfig
 from .json_codec import coerce_json_value
 from .managed_service_inventory import collect_managed_service_inventory
-from .nats_lifecycle import (
+from .runtime_lifecycle import (
     RuntimeConnectionManager,
 )
 from .process_action_scheduler import ServiceProcessActionScheduler
@@ -41,7 +41,6 @@ from .remote_command_controller import RemoteCommandControllerMixin
 from .remote_state_sync import RemoteStateGatewayAdapter
 from .remote_state_watcher import RemoteStateWatcher, WatchTarget
 from .rungraph_deployer import (
-    NatsRungraphGateway,
     RungraphDeployConfig,
     RuntimeRungraphGateway,
 )
@@ -175,13 +174,9 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
 
     def _build_rungraph_gateway(self) -> Any:
         config = self._build_rungraph_config()
-        if self._cfg.bus_backend == "nats":
-            return NatsRungraphGateway(config)
         return RuntimeRungraphGateway(config)
 
     def _build_command_gateway(self) -> Any:
-        if self._cfg.bus_backend == "nats":
-            return NatsCommandGateway(nats_url=str(self._cfg.nats_url))
         return RuntimeCommandGateway(
             RuntimeCommandGatewayConfig(
                 bus_backend=self._cfg.bus_backend,
@@ -438,8 +433,6 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
                 self._process_gateway.stop(StopServiceRequest(service_id=sid))
             except Exception as exc:
                 self._report_exception(f"stop service process failed serviceId={sid}", exc)
-
-
 
 
 

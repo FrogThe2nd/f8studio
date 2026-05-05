@@ -19,7 +19,7 @@ from f8pysdk.service_runtime_tools.inventory.discovery import (
 
 from f8pystudio.plugins.api import StudioPluginManifest
 from f8pystudio.plugins.loader import load_entrypoint_plugins
-from f8pystudio.bridge.nats_lifecycle import SINGLETON_GUARD_DIALOG_TITLE
+from f8pystudio.bridge.runtime_lifecycle import SINGLETON_GUARD_DIALOG_TITLE
 from f8pystudio.studio_specs.registry import (
     create_pystudio_registry,
     SERVICE_CLASS,
