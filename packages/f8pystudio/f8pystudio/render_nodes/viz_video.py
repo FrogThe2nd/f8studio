@@ -18,7 +18,7 @@ from ..nodegraph.viz_operator_nodeitem import F8StudioVizOperatorNodeItem
 from f8pystudio.contracts.ui_commands import UiCommand
 
 _STATE_UI_UPDATE = "uiUpdate"
-_WIDGET_NAME = "__videoshm"
+_WIDGET_NAME = "__video_latest"
 _TRANSPORT_LEGACY_SHM = "legacy_shm"
 _TRANSPORT_ZENOH = "zenoh"
 
@@ -163,7 +163,7 @@ def _to_bool(value: object, *, default: bool) -> bool:
     return bool(default)
 
 
-class _VideoShmPane(QtWidgets.QWidget):
+class _LatestVideoPane(QtWidgets.QWidget):
     def __init__(self) -> None:
         super().__init__()
         layout = QtWidgets.QVBoxLayout(self)
@@ -685,7 +685,7 @@ class _VideoShmPane(QtWidgets.QWidget):
             self._present(self._latest_video)
 
 
-class _VideoShmWidget(NodeBaseWidget):
+class _LatestVideoWidget(NodeBaseWidget):
     def __init__(
         self,
         parent=None,
@@ -695,7 +695,7 @@ class _VideoShmWidget(NodeBaseWidget):
         on_update_toggled: Callable[[bool], None] | None = None,
     ) -> None:
         super().__init__(parent=parent, name=name, label=label)
-        self._pane = _VideoShmPane()
+        self._pane = _LatestVideoPane()
         self.set_custom_widget(self._pane)
         self._block = False
         self._on_update_toggled_cb = on_update_toggled
@@ -789,7 +789,7 @@ class VizVideoRenderNode(F8StudioOperatorBaseNode):
     def __init__(self):
         super().__init__(qgraphics_item=F8StudioVizOperatorNodeItem)
         self.add_ephemeral_widget(
-            _VideoShmWidget(
+            _LatestVideoWidget(
                 self.view,
                 name=_WIDGET_NAME,
                 label="",
@@ -815,12 +815,12 @@ class VizVideoRenderNode(F8StudioOperatorBaseNode):
             state_name=_STATE_UI_UPDATE,
             default=default,
             widget_name=_WIDGET_NAME,
-            widget_type=_VideoShmWidget,
-            apply_value=_VideoShmWidget.set_update_enabled,
+            widget_type=_LatestVideoWidget,
+            apply_value=_LatestVideoWidget.set_update_enabled,
         )
 
-    def _widget(self) -> _VideoShmWidget | None:
-        return self.widget_by_name(_WIDGET_NAME, _VideoShmWidget)
+    def _widget(self) -> _LatestVideoWidget | None:
+        return self.widget_by_name(_WIDGET_NAME, _LatestVideoWidget)
 
     def apply_ui_command(self, cmd: UiCommand) -> None:
         c = str(cmd.command or "")

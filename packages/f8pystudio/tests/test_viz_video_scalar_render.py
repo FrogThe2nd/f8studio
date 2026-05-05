@@ -7,7 +7,7 @@ from qtpy import QtGui, QtWidgets
 
 from f8pysdk.video_transport import LatestVideoFrame
 from f8pystudio.render_nodes.viz_video import (
-    _VideoShmPane,
+    _LatestVideoPane,
     _apply_colormap,
     _normalize_scalar_values,
     _to_bool,
@@ -107,7 +107,7 @@ def test_to_bool_accepts_string_forms() -> None:
 
 def test_video_tick_render_priority_flow_over_scalar_over_video() -> None:
     _ensure_app()
-    pane = _VideoShmPane()
+    pane = _LatestVideoPane()
     pane._timer.stop()
     pane.set_update_enabled(True)
 
@@ -140,7 +140,7 @@ def test_video_tick_render_priority_flow_over_scalar_over_video() -> None:
 
 def test_try_render_scalar_skips_non_scalar_format() -> None:
     _ensure_app()
-    pane = _VideoShmPane()
+    pane = _LatestVideoPane()
     pane._timer.stop()
     pane._scalar_display_mode = "colormap"
     pane._ensure_scalar_reader = lambda: True  # type: ignore[method-assign]
@@ -160,7 +160,7 @@ def test_try_render_scalar_skips_non_scalar_format() -> None:
 
 def test_video_pane_accepts_zenoh_video_source() -> None:
     _ensure_app()
-    pane = _VideoShmPane()
+    pane = _LatestVideoPane()
     pane._timer.stop()
     pane.set_config(
         shm_name="",

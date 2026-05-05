@@ -121,7 +121,12 @@ class AudioFeatNodeTests(unittest.TestCase):
                 node = AudioCoreFeatureServiceNode(
                     node_id="audio_core",
                     node=_NodeStub(stateFields=[]),
-                    initial_state={"audioShmName": shm_name, "windowMs": 64, "hopMs": 16},
+                    initial_state={
+                        "audioTransport": "legacy_shm",
+                        "audioShmName": shm_name,
+                        "windowMs": 64,
+                        "hopMs": 16,
+                    },
                 )
                 bus = _FakeBus()
                 RuntimeNode.attach(node, bus)
@@ -161,7 +166,12 @@ class AudioFeatNodeTests(unittest.TestCase):
                 core = AudioCoreFeatureServiceNode(
                     node_id="audio_core",
                     node=_NodeStub(stateFields=[]),
-                    initial_state={"audioShmName": shm_name, "windowMs": 64, "hopMs": 16},
+                    initial_state={
+                        "audioTransport": "legacy_shm",
+                        "audioShmName": shm_name,
+                        "windowMs": 64,
+                        "hopMs": 16,
+                    },
                 )
                 rhythm = AudioRhythmFeatureServiceNode(
                     node_id="audio_rhythm",

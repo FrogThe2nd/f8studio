@@ -5,6 +5,7 @@ import inspect
 import logging
 import time
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any
 import numpy as np
 
@@ -56,7 +57,7 @@ VIDEO_TRANSPORT_ZENOH = "zenoh"
 
 
 @dataclass
-class _VideoShmSubscription:
+class _LatestVideoSubscription:
     key: str
     shm_name: str
     video_transport: str
@@ -161,8 +162,8 @@ class PyEngineContext:
         if video_transport == VIDEO_TRANSPORT_LEGACY_SHM and not shm:
             return
         decode_mode = self._node._normalize_decode_mode(decode)
-        self._node._unsubscribe_video_shm_sync(key_name)
-        sub = _VideoShmSubscription(
+        self._node._unsubscribe_video_latest_sync(key_name)
+        sub = _LatestVideoSubscription(
             key=key_name,
             shm_name=shm,
             video_transport=video_transport,
@@ -173,11 +174,16 @@ class PyEngineContext:
         self._node._video_subscriptions[key_name] = sub
         try:
             loop = asyncio.get_running_loop()
-        except RuntimeError:
+        except RuntimeError as exc:
             sub.task = None
+            logger.error(
+                "[%s:python_script] subscribe_video_latest without running loop",
+                self.node_id,
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
             return
         sub.task = loop.create_task(
-            self._node._run_video_shm_subscription(key_name),
+            self._node._run_video_latest_subscription(key_name),
             name=f"python_script:video_sub:{self.node_id}:{key_name}",
         )
 
@@ -197,7 +203,7 @@ class PyEngineContext:
         self.unsubscribe_video_latest(key)
 
     def unsubscribe_video_latest(self, key: str) -> None:
-        self._node._unsubscribe_video_shm_sync(str(key or "").strip())
+        self._node._unsubscribe_video_latest_sync(str(key or "").strip())
 
     def list_video_shm_subscriptions(self) -> list[dict[str, Any]]:
         return self.list_video_latest_subscriptions()
@@ -343,7 +349,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         self._pull_cache_ctx_id: str | int | None = None
         self._pull_cache_outputs: dict[str, Any] = {}
         self._state_key_hint_logged = False
-        self._video_subscriptions: dict[str, _VideoShmSubscription] = {}
+        self._video_subscriptions: dict[str, _LatestVideoSubscription] = {}
         self._zenoh_config_path: str | None = None
         self._zenoh_connect: tuple[str, ...] = ()
         self._zenoh_listen: tuple[str, ...] = ()
@@ -515,7 +521,8 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             access_raw = state.access
             if not name or name in seen:
                 continue
-            access = str(access_raw.value if hasattr(access_raw, "value") else access_raw or "").strip().lower()
+            access_value = access_raw.value if isinstance(access_raw, Enum) else access_raw
+            access = str(access_value or "").strip().lower()
             if access not in ("rw", "ro", "wo"):
                 continue
             seen.add(name)
@@ -632,7 +639,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             out["decoded"] = decoded_out
         return out
 
-    def _log_video_sub_error(self, sub: _VideoShmSubscription, stage: str, exc: BaseException) -> None:
+    def _log_video_sub_error(self, sub: _LatestVideoSubscription, stage: str, exc: BaseException) -> None:
         sub.error_count += 1
         now_ms = self._now_ms()
         sig = f"{stage}:{type(exc).__name__}:{exc}"
@@ -640,7 +647,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             return
         sub.last_error_sig = sig
         sub.last_error_ts_ms = now_ms
-        logger.exception(
+        logger.error(
             "[%s:python_script] video latest subscribe failed key=%s transport=%s video_key=%s shm=%s stage=%s",
             self.node_id,
             sub.key,
@@ -648,10 +655,10 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             sub.video_key,
             sub.shm_name,
             stage,
-            exc_info=exc,
+            exc_info=(type(exc), exc, exc.__traceback__),
         )
 
-    def _close_video_sub_reader(self, sub: _VideoShmSubscription) -> None:
+    def _close_video_sub_reader(self, sub: _LatestVideoSubscription) -> None:
         reader = sub.reader
         sub.reader = None
         if reader is None:
@@ -667,7 +674,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                 exc_info=exc,
             )
 
-    def _open_video_sub_reader(self, sub: _VideoShmSubscription) -> LatestVideoFrameTransport:
+    def _open_video_sub_reader(self, sub: _LatestVideoSubscription) -> LatestVideoFrameTransport:
         if sub.video_transport == VIDEO_TRANSPORT_ZENOH:
             return ZenohLatestVideoFrameTransport.open_subscriber(
                 sub.video_key,
@@ -678,7 +685,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             )
         return LegacyShmLatestVideoFrameTransport.open_reader(sub.shm_name, use_event=bool(sub.use_event))
 
-    def _unsubscribe_video_shm_sync(self, key: str) -> bool:
+    def _unsubscribe_video_latest_sync(self, key: str) -> bool:
         key_name = str(key or "").strip()
         if not key_name:
             return False
@@ -695,7 +702,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
     def _shutdown_video_subscriptions_sync(self) -> None:
         keys = list(self._video_subscriptions.keys())
         for key in keys:
-            self._unsubscribe_video_shm_sync(key)
+            self._unsubscribe_video_latest_sync(key)
 
     async def _shutdown_video_subscriptions_async(self) -> None:
         keys = list(self._video_subscriptions.keys())
@@ -713,7 +720,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _run_video_shm_subscription(self, key: str) -> None:
+    async def _run_video_latest_subscription(self, key: str) -> None:
         key_name = str(key or "").strip()
         while True:
             sub = self._video_subscriptions.get(key_name)

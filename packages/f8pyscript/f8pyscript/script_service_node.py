@@ -7,6 +7,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, replace
+from enum import Enum
 from typing import Any, Callable
 
 from f8pysdk.bus import ServiceBus
@@ -131,7 +132,7 @@ _SAFE_MODULES: set[str] = {
 }
 
 @dataclass
-class _VideoShmSubscription:
+class _LatestVideoSubscription:
     key: str
     shm_name: str
     video_transport: str
@@ -230,8 +231,8 @@ class PyScriptServiceContext:
             return
         if video_transport == VIDEO_TRANSPORT_LEGACY_SHM and not shm:
             return
-        self._node._unsubscribe_video_shm_sync(key_name)
-        sub = _VideoShmSubscription(
+        self._node._unsubscribe_video_latest_sync(key_name)
+        sub = _LatestVideoSubscription(
             key=key_name,
             shm_name=shm,
             video_transport=video_transport,
@@ -243,10 +244,14 @@ class PyScriptServiceContext:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError as exc:
-            logger.error("[%s:pyscript] subscribe_video_shm without loop", self.service_id, exc_info=exc)
+            logger.error(
+                "[%s:pyscript] subscribe_video_latest without running loop",
+                self.service_id,
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
             return
         sub.task = loop.create_task(
-            self._node._run_video_shm_subscription(key_name),
+            self._node._run_video_latest_subscription(key_name),
             name=f"pyscript:video_sub:{self.service_id}:{key_name}",
         )
 
@@ -266,7 +271,7 @@ class PyScriptServiceContext:
         self.unsubscribe_video_latest(key)
 
     def unsubscribe_video_latest(self, key: str) -> None:
-        self._node._unsubscribe_video_shm_sync(str(key or "").strip())
+        self._node._unsubscribe_video_latest_sync(str(key or "").strip())
 
     def list_video_shm_subscriptions(self) -> list[dict[str, Any]]:
         return self.list_video_latest_subscriptions()
@@ -358,7 +363,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         self._tick_task: asyncio.Task[object] | None = None
         self._tick_seq = 0
 
-        self._video_subscriptions: dict[str, _VideoShmSubscription] = {}
+        self._video_subscriptions: dict[str, _LatestVideoSubscription] = {}
         self._zenoh_config_path: str | None = None
         self._zenoh_connect: tuple[str, ...] = ()
         self._zenoh_listen: tuple[str, ...] = ()
@@ -411,7 +416,8 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             access_raw = state.access
             if not name or name in seen:
                 continue
-            access = str(access_raw.value if hasattr(access_raw, "value") else access_raw or "").strip().lower()
+            access_value = access_raw.value if isinstance(access_raw, Enum) else access_raw
+            access = str(access_value or "").strip().lower()
             if access not in ("rw", "ro", "wo"):
                 continue
             seen.add(name)
@@ -910,7 +916,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             except Exception as exc:
                 self._log_error_deduped("emit_output", f"emit failed port={out_port}", exc)
 
-    def _unsubscribe_video_shm_sync(self, key: str) -> bool:
+    def _unsubscribe_video_latest_sync(self, key: str) -> bool:
         sub = self._video_subscriptions.pop(str(key), None)
         if sub is None:
             return False
@@ -925,7 +931,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
     def _shutdown_video_subscriptions_sync(self) -> None:
         keys = list(self._video_subscriptions.keys())
         for key in keys:
-            self._unsubscribe_video_shm_sync(key)
+            self._unsubscribe_video_latest_sync(key)
 
     async def _shutdown_video_subscriptions_async(self) -> None:
         keys = list(self._video_subscriptions.keys())
@@ -943,7 +949,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    def _close_video_sub_reader(self, sub: _VideoShmSubscription) -> None:
+    def _close_video_sub_reader(self, sub: _LatestVideoSubscription) -> None:
         reader = sub.reader
         sub.reader = None
         if reader is None:
@@ -957,7 +963,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
                 exc,
             )
 
-    def _open_video_sub_reader(self, sub: _VideoShmSubscription) -> LatestVideoFrameTransport:
+    def _open_video_sub_reader(self, sub: _LatestVideoSubscription) -> LatestVideoFrameTransport:
         if sub.video_transport == VIDEO_TRANSPORT_ZENOH:
             return ZenohLatestVideoFrameTransport.open_subscriber(
                 sub.video_key,
@@ -968,8 +974,8 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             )
         return LegacyShmLatestVideoFrameTransport.open_reader(sub.shm_name, use_event=bool(sub.use_event))
 
-    async def _run_video_shm_subscription(self, key: str) -> None:
-        sub_ref: _VideoShmSubscription | None = None
+    async def _run_video_latest_subscription(self, key: str) -> None:
+        sub_ref: _LatestVideoSubscription | None = None
         try:
             while True:
                 sub = self._video_subscriptions.get(key)

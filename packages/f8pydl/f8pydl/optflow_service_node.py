@@ -557,7 +557,7 @@ class OnnxOptflowServiceNode(ServiceNode):
             await self._clear_missing_input_error()
 
     async def _clear_missing_input_error(self) -> None:
-        if self._last_error == "missing inputShmName":
+        if self._last_error in ("missing inputVideoKey", "missing inputShmName"):
             await self._set_last_error("")
             return
         if not self._last_error:

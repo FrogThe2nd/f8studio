@@ -2263,7 +2263,7 @@ packages:
 - pypi: ./packages/f8pyaudiofeat
   name: f8pyaudiofeat
   version: 0.1.0
-  sha256: e376724d9f16a18d01a5c4c3ec1b92667029bb126b4edee7cc22663156c71b06
+  sha256: 52920c6fb6f83e7c288b5a0ebc8e422e5583afddce49095e6ba52563df313663
   requires_dist:
   - f8pysdk
   - numpy>=2.2.0

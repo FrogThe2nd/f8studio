@@ -116,12 +116,12 @@ class OptflowServiceNodeErrorTests(unittest.IsolatedAsyncioTestCase):
         )
         node._bus = bus
 
-        await node._set_last_error("missing inputShmName")
-        await node._set_last_error("missing inputShmName")
+        await node._set_last_error("missing inputVideoKey")
+        await node._set_last_error("missing inputVideoKey")
         await node._set_last_error("")
         await node._set_last_error("")
 
-        self.assertEqual(bus.errors, [("optflowA", "DL_OPTFLOW_RUNTIME", "missing inputShmName")])
+        self.assertEqual(bus.errors, [("optflowA", "DL_OPTFLOW_RUNTIME", "missing inputVideoKey")])
         self.assertEqual(bus.clear_count, 1)
 
     async def test_input_shm_state_callback_uses_callback_value(self) -> None:
@@ -140,7 +140,7 @@ class OptflowServiceNodeErrorTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(node._input_shm_name, "shm.visible.video")
 
-    async def test_missing_input_shm_resyncs_from_state_store(self) -> None:
+    async def test_missing_input_source_resyncs_from_state_store(self) -> None:
         bus = _BusStub({"inputShmName": "shm.visible.video"})
         node = OnnxOptflowServiceNode(
             node_id="optflowC",
@@ -156,7 +156,7 @@ class OptflowServiceNodeErrorTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(node._input_shm_name, "shm.visible.video")
 
-    async def test_missing_input_shm_waits_without_error(self) -> None:
+    async def test_missing_input_source_waits_without_error(self) -> None:
         bus = _BusStub({"inputShmName": ""})
         node = OnnxOptflowServiceNode(
             node_id="optflowD",
@@ -174,7 +174,7 @@ class OptflowServiceNodeErrorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bus.errors, [])
         self.assertEqual(bus.clear_count, 0)
 
-    async def test_valid_input_shm_clears_stale_missing_error(self) -> None:
+    async def test_valid_input_source_clears_stale_missing_error(self) -> None:
         bus = _BusStub()
         node = OnnxOptflowServiceNode(
             node_id="optflowE",
@@ -186,7 +186,7 @@ class OptflowServiceNodeErrorTests(unittest.IsolatedAsyncioTestCase):
         node._bus = bus
         node._config_loaded = True
 
-        await node._set_last_error("missing inputShmName")
+        await node._set_last_error("missing inputVideoKey")
         await node._apply_input_shm_name("shm.visible.video")
 
         self.assertEqual(node._last_error, "")

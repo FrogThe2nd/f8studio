@@ -160,7 +160,7 @@ class AudioCoreFeatureServiceNode(ServiceNode):
         if exc is None:
             logger.error("[%s] %s", self.node_id, msg)
             return
-        logger.exception("[%s] %s", self.node_id, msg, exc_info=exc)
+        logger.error("[%s] %s", self.node_id, msg, exc_info=(type(exc), exc, exc.__traceback__))
 
     async def _clear_last_error(self) -> None:
         if not self._last_error:
@@ -267,7 +267,13 @@ class AudioCoreFeatureServiceNode(ServiceNode):
         try:
             self._ensure_reader()
         except FileNotFoundError as exc:
-            await self._set_last_error("audio shm not found", signature="shm_not_found", exc=exc)
+            if audio_transport == "legacy_shm":
+                msg = "legacy audio SHM not found"
+                signature = "legacy_shm_not_found"
+            else:
+                msg = "audio input open failed"
+                signature = "input_open:FileNotFoundError"
+            await self._set_last_error(msg, signature=signature, exc=exc)
             await asyncio.sleep(0.05)
             return
         except (OSError, RuntimeError, ValueError) as exc:

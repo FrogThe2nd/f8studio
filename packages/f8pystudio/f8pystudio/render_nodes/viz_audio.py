@@ -21,7 +21,7 @@ from ..nodegraph.viz_operator_nodeitem import F8StudioVizOperatorNodeItem
 from f8pystudio.contracts.ui_commands import UiCommand
 
 _STATE_UI_UPDATE = "uiUpdate"
-_WIDGET_NAME = "__audioshm"
+_WIDGET_NAME = "__audio_latest"
 _TRANSPORT_LEGACY_SHM = "legacy_shm"
 _TRANSPORT_ZENOH = "zenoh"
 
@@ -37,7 +37,7 @@ def _normalize_audio_transport(value: object, *, audio_key: str, shm_name: str) 
     return _TRANSPORT_ZENOH
 
 
-class _AudioShmPane(QtWidgets.QWidget):
+class _LatestAudioPane(QtWidgets.QWidget):
     def __init__(self) -> None:
         super().__init__()
         layout = QtWidgets.QVBoxLayout(self)
@@ -265,7 +265,7 @@ class _AudioShmPane(QtWidgets.QWidget):
             chunk.release()
 
 
-class _AudioShmWidget(NodeBaseWidget):
+class _LatestAudioWidget(NodeBaseWidget):
     def __init__(
         self,
         parent=None,
@@ -275,7 +275,7 @@ class _AudioShmWidget(NodeBaseWidget):
         on_update_toggled: Callable[[bool], None] | None = None,
     ) -> None:
         super().__init__(parent=parent, name=name, label=label)
-        self._pane = _AudioShmPane()
+        self._pane = _LatestAudioPane()
         self.set_custom_widget(self._pane)
         self._block = False
         self._on_update_toggled_cb = on_update_toggled
@@ -339,7 +339,7 @@ class VizAudioRenderNode(F8StudioOperatorBaseNode):
     def __init__(self):
         super().__init__(qgraphics_item=F8StudioVizOperatorNodeItem)
         self.add_ephemeral_widget(
-            _AudioShmWidget(
+            _LatestAudioWidget(
                 self.view,
                 name=_WIDGET_NAME,
                 label="",
@@ -365,12 +365,12 @@ class VizAudioRenderNode(F8StudioOperatorBaseNode):
             state_name=_STATE_UI_UPDATE,
             default=default,
             widget_name=_WIDGET_NAME,
-            widget_type=_AudioShmWidget,
-            apply_value=_AudioShmWidget.set_update_enabled,
+            widget_type=_LatestAudioWidget,
+            apply_value=_LatestAudioWidget.set_update_enabled,
         )
 
-    def _widget(self) -> _AudioShmWidget | None:
-        return self.widget_by_name(_WIDGET_NAME, _AudioShmWidget)
+    def _widget(self) -> _LatestAudioWidget | None:
+        return self.widget_by_name(_WIDGET_NAME, _LatestAudioWidget)
 
     def apply_ui_command(self, cmd: UiCommand) -> None:
         c = str(cmd.command or "")
