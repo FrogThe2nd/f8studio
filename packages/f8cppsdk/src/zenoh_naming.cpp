@@ -133,9 +133,18 @@ std::string zenoh_kv_pattern(const std::string& service_id, const std::string& k
       prefix.pop_back();
     }
     const auto parts = split_non_empty(prefix, '.');
-    if (parts.size() >= 3 && parts[0] == "nodes" && parts[2] == "state") {
-      return std::string(kF8Prefix) + "/svc/" + ensure_token(service_id, "service_id") + "/state/nodes/" +
-             ensure_token(parts[1], "node_id") + "/state/**";
+    if (!parts.empty() && parts[0] == "nodes") {
+      const std::string sid = ensure_token(service_id, "service_id");
+      if (parts.size() == 1) {
+        return std::string(kF8Prefix) + "/svc/" + sid + "/state/nodes/**";
+      }
+      const std::string node_id = ensure_token(parts[1], "node_id");
+      if (parts.size() == 2) {
+        return std::string(kF8Prefix) + "/svc/" + sid + "/state/nodes/" + node_id + "/**";
+      }
+      if (parts.size() >= 3 && parts[2] == "state") {
+        return std::string(kF8Prefix) + "/svc/" + sid + "/state/nodes/" + node_id + "/state/**";
+      }
     }
     const std::string path = join_parts(parts, '/');
     return std::string(kF8Prefix) + "/svc/" + ensure_token(service_id, "service_id") + "/kv/" + path + "/**";

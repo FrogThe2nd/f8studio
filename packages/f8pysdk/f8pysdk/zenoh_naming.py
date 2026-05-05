@@ -72,11 +72,15 @@ def zenoh_kv_pattern(service_id: str, key_pattern: str) -> str:
         raise ValueError("key_pattern must be non-empty")
     if pattern.endswith(">"):
         prefix = pattern[:-1].rstrip(".")
-        if prefix.endswith(".state"):
-            parsed_prefix = prefix.split(".")
-            if len(parsed_prefix) >= 3 and parsed_prefix[0] == "nodes" and parsed_prefix[2] == "state":
-                sid = ensure_token(service_id, label="service_id")
-                node_id = ensure_token(parsed_prefix[1], label="node_id")
+        parsed_prefix = [part for part in prefix.split(".") if part]
+        if parsed_prefix and parsed_prefix[0] == "nodes":
+            sid = ensure_token(service_id, label="service_id")
+            if len(parsed_prefix) == 1:
+                return f"{_F8_PREFIX}/svc/{sid}/state/nodes/**"
+            node_id = ensure_token(parsed_prefix[1], label="node_id")
+            if len(parsed_prefix) == 2:
+                return f"{_F8_PREFIX}/svc/{sid}/state/nodes/{node_id}/**"
+            if len(parsed_prefix) >= 3 and parsed_prefix[2] == "state":
                 return f"{_F8_PREFIX}/svc/{sid}/state/nodes/{node_id}/state/**"
         prefix_path = "/".join(part for part in prefix.split(".") if part)
         sid = ensure_token(service_id, label="service_id")

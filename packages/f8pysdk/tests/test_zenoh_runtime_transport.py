@@ -8,7 +8,7 @@ from f8pysdk.nats_naming import kv_bucket_for_service, kv_key_node_state, new_id
 from f8pysdk.runtime_transport import RuntimeTransport
 from f8pysdk.transport import NatsTransport, NatsTransportConfig
 from f8pysdk.testing import InMemoryCluster, InMemoryTransport
-from f8pysdk.zenoh_naming import subject_to_zenoh_key, zenoh_key_to_kv_key
+from f8pysdk.zenoh_naming import subject_to_zenoh_key, zenoh_key_to_kv_key, zenoh_kv_pattern
 from f8pysdk.zenoh_transport import ZenohTransport, ZenohTransportConfig
 
 
@@ -48,6 +48,12 @@ def test_zenoh_key_mapping_preserves_wildcard_runtime_subjects() -> None:
     assert subject_to_zenoh_key("svc.*.nodes.*.data.*") == "f8/svc/*/nodes/*/data/*"
     assert subject_to_zenoh_key("svc.*.status") == "f8/svc/*/endpoint/status"
     assert subject_to_zenoh_key("svc.*.cmd") == "f8/svc/*/cmd"
+
+
+def test_zenoh_kv_pattern_maps_node_state_wildcards_to_state_keyspace() -> None:
+    assert zenoh_kv_pattern("svcA", "nodes.>") == "f8/svc/svcA/state/nodes/**"
+    assert zenoh_kv_pattern("svcA", "nodes.node.>") == "f8/svc/svcA/state/nodes/node/**"
+    assert zenoh_kv_pattern("svcA", "nodes.node.state.>") == "f8/svc/svcA/state/nodes/node/state/**"
 
 
 def test_zenoh_transport_puts_use_latest_drop_qos() -> None:
