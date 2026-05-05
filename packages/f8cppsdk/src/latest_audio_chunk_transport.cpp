@@ -445,7 +445,8 @@ class ZenohLatestAudioChunkSubscriber::Impl final {
       if (latest_seq_ == delivered_seq_ || latest_raw_.empty()) {
         return std::nullopt;
       }
-      raw = latest_raw_;
+      raw = std::move(latest_raw_);
+      latest_raw_.clear();
       delivered_seq_ = latest_seq_;
     }
     return decode_latest(raw);
@@ -468,7 +469,8 @@ class ZenohLatestAudioChunkSubscriber::Impl final {
       if (!ready || closed_ || latest_seq_ == delivered_seq_ || latest_raw_.empty()) {
         return std::nullopt;
       }
-      raw = latest_raw_;
+      raw = std::move(latest_raw_);
+      latest_raw_.clear();
       delivered_seq_ = latest_seq_;
     }
     return decode_latest(raw);
