@@ -57,6 +57,28 @@ inline bool read_runtime_backend_options(const cxxopts::ParseResult& result, Run
   return true;
 }
 
+inline void add_video_transport_backend_option(
+    cxxopts::Options& options,
+    VideoTransportBackend default_backend = video_transport_backend_from_env()) {
+  options.add_options()(
+      "video-backend",
+      "Video frame backend: auto|zenoh|legacy_shm (env: F8_VIDEO_BACKEND, default: auto)",
+      cxxopts::value<std::string>()->default_value(video_transport_backend_to_string(default_backend)));
+}
+
+inline bool read_video_transport_backend_option(const cxxopts::ParseResult& result, VideoTransportBackend& backend,
+                                                std::string& error_message) {
+  VideoTransportBackend parsed = VideoTransportBackend::kAuto;
+  const std::string backend_text = result["video-backend"].as<std::string>();
+  if (!parse_video_transport_backend(backend_text, parsed)) {
+    error_message = "Invalid --video-backend: " + backend_text + " (expected auto, zenoh, or legacy_shm)";
+    return false;
+  }
+  backend = parsed;
+  error_message.clear();
+  return true;
+}
+
 inline bool runtime_nats_url_was_supplied(const cxxopts::ParseResult& result) {
   if (result.count("nats-url") > 0) {
     return true;

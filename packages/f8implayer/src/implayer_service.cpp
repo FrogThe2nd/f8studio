@@ -657,7 +657,12 @@ bool ImPlayerService::start() {
     return true;
   };
 
-  if (runtime_backend.bus_backend == f8::cppsdk::BusBackend::kZenoh) {
+  const bool use_zenoh_video =
+      cfg_.video_backend == f8::cppsdk::VideoTransportBackend::kZenoh ||
+      (cfg_.video_backend == f8::cppsdk::VideoTransportBackend::kAuto &&
+       runtime_backend.bus_backend == f8::cppsdk::BusBackend::kZenoh);
+
+  if (use_zenoh_video) {
     const std::string key = f8::cppsdk::zenoh_data_key(cfg_.service_id, cfg_.service_id, "video");
     auto publisher = std::make_shared<f8::cppsdk::ZenohLatestVideoFramePublisher>();
     if (publisher->open(runtime_backend, key)) {
@@ -816,8 +821,9 @@ bool ImPlayerService::start() {
 
   running_.store(true, std::memory_order_release);
   stop_requested_.store(false, std::memory_order_release);
-  spdlog::info("implayer started serviceId={} backend={} natsUrl={}", cfg_.service_id,
-               f8::cppsdk::bus_backend_to_string(runtime_backend.bus_backend), runtime_backend.nats_url);
+  spdlog::info("implayer started serviceId={} backend={} videoBackend={} natsUrl={}", cfg_.service_id,
+               f8::cppsdk::bus_backend_to_string(runtime_backend.bus_backend),
+               f8::cppsdk::video_transport_backend_to_string(cfg_.video_backend), runtime_backend.nats_url);
   return true;
 }
 

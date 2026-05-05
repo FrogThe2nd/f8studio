@@ -34,6 +34,7 @@ int main(int argc, char** argv) {
       "region", "Region as x,y,w,h (mode=region)", cxxopts::value<std::string>()->default_value(""))(
       "scale", "Scale as w,h (optional; 0,0 disables)", cxxopts::value<std::string>()->default_value(""))("help", "Show help");
   f8::cppsdk::add_runtime_backend_options(options);
+  f8::cppsdk::add_video_transport_backend_option(options);
 
   auto result = options.parse(argc, argv);
   if (result.count("help")) {
@@ -73,11 +74,17 @@ int main(int argc, char** argv) {
   if (f8::cppsdk::should_warn_ignored_nats_url(result, runtime_backend)) {
     spdlog::warn("--nats-url is ignored unless --bus-backend nats");
   }
+  f8::cppsdk::VideoTransportBackend video_backend = f8::cppsdk::VideoTransportBackend::kAuto;
+  if (!f8::cppsdk::read_video_transport_backend_option(result, video_backend, runtime_error)) {
+    std::cerr << runtime_error << "\n";
+    return 2;
+  }
 
   f8::screencap::ScreenCapService::Config cfg;
   cfg.service_id = service_id;
   cfg.runtime_backend = runtime_backend;
   cfg.nats_url = runtime_backend.nats_url;
+  cfg.video_backend = video_backend;
   cfg.video_shm_bytes = result["shm-bytes"].as<std::size_t>();
   cfg.video_shm_slots = result["shm-slots"].as<std::uint32_t>();
   cfg.mode = result["mode"].as<std::string>();
