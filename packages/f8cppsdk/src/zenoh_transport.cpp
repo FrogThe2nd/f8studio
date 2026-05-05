@@ -3,6 +3,8 @@
 #include "f8cppsdk/f8_naming.h"
 #include "f8cppsdk/zenoh_naming.h"
 
+#include "zenoh_config_internal.h"
+
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
@@ -139,16 +141,7 @@ class ZenohTransport::Impl final {
       if (!config_.zenoh_listen.empty()) {
         zenoh_config.insert_json5("listen/endpoints", json_array_for_endpoints(config_.zenoh_listen));
       }
-      zenoh_config.insert_json5("transport/shared_memory/enabled", "true");
-      if (config_.zenoh_shm_pool_bytes > 0) {
-        try {
-          zenoh_config.insert_json5("transport/shared_memory/pool_size",
-                                    std::to_string(config_.zenoh_shm_pool_bytes));
-        } catch (const std::exception& exc) {
-          spdlog::debug("zenoh config does not expose shared-memory pool_size serviceId={}: {}", service_id_,
-                        exc.what());
-        }
-      }
+      zenoh_internal::apply_shared_memory_config(zenoh_config, config_.zenoh_shm_pool_bytes, service_id_);
 
       auto session = std::make_unique<zenoh::Session>(zenoh::Session::open(std::move(zenoh_config)));
       session_ = std::move(session);

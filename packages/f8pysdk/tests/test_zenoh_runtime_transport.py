@@ -8,8 +8,28 @@ from f8pysdk.nats_naming import kv_bucket_for_service, kv_key_node_state, new_id
 from f8pysdk.runtime_transport import RuntimeTransport
 from f8pysdk.transport import NatsTransport, NatsTransportConfig
 from f8pysdk.testing import InMemoryCluster, InMemoryTransport
+from f8pysdk.zenoh_config import apply_zenoh_shared_memory_config
 from f8pysdk.zenoh_naming import subject_to_zenoh_key, zenoh_key_to_kv_key, zenoh_kv_pattern
 from f8pysdk.zenoh_transport import ZenohTransport, ZenohTransportConfig
+
+
+class _FakeZenohConfigError(Exception):
+    pass
+
+
+class _FakeZenohModule:
+    ZError = _FakeZenohConfigError
+
+
+class _FakeZenohConfig:
+    def __init__(self, rejected_keys: set[str] | None = None) -> None:
+        self.rejected_keys = rejected_keys or set()
+        self.values: dict[str, str] = {}
+
+    def insert_json5(self, key: str, value: str) -> None:
+        if key in self.rejected_keys:
+            raise _FakeZenohConfigError(key)
+        self.values[key] = value
 
 
 def _sid(prefix: str) -> str:
@@ -96,6 +116,40 @@ def test_zenoh_transport_puts_use_latest_drop_qos() -> None:
         ]
 
     asyncio.run(_run())
+
+
+def test_zenoh_shared_memory_config_writes_current_and_legacy_pool_keys() -> None:
+    config = _FakeZenohConfig()
+
+    apply_zenoh_shared_memory_config(
+        config,
+        zenoh_module=_FakeZenohModule,
+        shm_pool_bytes=123,
+        log_context="test",
+    )
+
+    assert config.values == {
+        "transport/shared_memory/enabled": "true",
+        "transport/shared_memory/mode": '"init"',
+        "transport/shared_memory/transport_optimization/enabled": "true",
+        "transport/shared_memory/transport_optimization/pool_size": "123",
+        "transport/shared_memory/pool_size": "123",
+    }
+
+
+def test_zenoh_shared_memory_config_tolerates_missing_optional_pool_key() -> None:
+    legacy_key = "transport/shared_memory/pool_size"
+    config = _FakeZenohConfig(rejected_keys={legacy_key})
+
+    apply_zenoh_shared_memory_config(
+        config,
+        zenoh_module=_FakeZenohModule,
+        shm_pool_bytes=456,
+        log_context="test",
+    )
+
+    assert config.values["transport/shared_memory/transport_optimization/pool_size"] == "456"
+    assert legacy_key not in config.values
 
 
 def test_zenoh_transport_state_watch_get_and_request_roundtrip() -> None:

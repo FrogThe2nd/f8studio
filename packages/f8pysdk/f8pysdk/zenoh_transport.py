@@ -10,6 +10,7 @@ from typing import Any
 
 from .nats_naming import kv_bucket_for_service
 from .runtime_transport import RequestHandler, TransportCallback
+from .zenoh_config import apply_zenoh_shared_memory_config
 from .zenoh_naming import (
     kv_bucket_to_service_id,
     subject_to_zenoh_key,
@@ -130,12 +131,12 @@ class ZenohTransport:
             config.insert_json5("connect/endpoints", json.dumps(list(self._config.connect)))
         if self._config.listen:
             config.insert_json5("listen/endpoints", json.dumps(list(self._config.listen)))
-        config.insert_json5("transport/shared_memory/enabled", "true")
-        if self._config.shm_pool_bytes > 0:
-            try:
-                config.insert_json5("transport/shared_memory/pool_size", json.dumps(self._config.shm_pool_bytes))
-            except zenoh_module.ZError as exc:
-                log.debug("zenoh config does not expose shared-memory pool_size", exc_info=exc)
+        apply_zenoh_shared_memory_config(
+            config,
+            zenoh_module=zenoh_module,
+            shm_pool_bytes=self._config.shm_pool_bytes,
+            log_context=f"runtime:{self._config.service_id}",
+        )
         return config
 
     async def close(self) -> None:

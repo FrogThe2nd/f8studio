@@ -10,6 +10,7 @@ from types import TracebackType
 from typing import Any, Protocol
 
 from .shm.video import VideoShmReader, VideoShmWriter
+from .zenoh_config import apply_zenoh_shared_memory_config
 
 log = logging.getLogger(__name__)
 _SUBSCRIPTION_SETTLE_S = 0.01
@@ -523,12 +524,12 @@ def _open_zenoh_session(
         config.insert_json5("connect/endpoints", json.dumps(list(connect_items)))
     if listen_items:
         config.insert_json5("listen/endpoints", json.dumps(list(listen_items)))
-    config.insert_json5("transport/shared_memory/enabled", "true")
-    if int(shm_pool_bytes) > 0:
-        try:
-            config.insert_json5("transport/shared_memory/pool_size", json.dumps(int(shm_pool_bytes)))
-        except zenoh.ZError as exc:
-            log.debug("zenoh Python config does not expose shared-memory pool_size", exc_info=exc)
+    apply_zenoh_shared_memory_config(
+        config,
+        zenoh_module=zenoh,
+        shm_pool_bytes=int(shm_pool_bytes),
+        log_context="video",
+    )
     return zenoh.open(config)
 
 

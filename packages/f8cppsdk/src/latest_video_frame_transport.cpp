@@ -1,5 +1,7 @@
 #include "f8cppsdk/latest_video_frame_transport.h"
 
+#include "zenoh_config_internal.h"
+
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
@@ -7,8 +9,10 @@
 #include <limits>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <thread>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -29,25 +33,25 @@ void set_error(std::string* error_message, std::string value) {
   }
 }
 
-void append_u32_le(RuntimeBytes& out, std::uint32_t value) {
-  out.push_back(static_cast<std::uint8_t>(value & 0xFFu));
-  out.push_back(static_cast<std::uint8_t>((value >> 8u) & 0xFFu));
-  out.push_back(static_cast<std::uint8_t>((value >> 16u) & 0xFFu));
-  out.push_back(static_cast<std::uint8_t>((value >> 24u) & 0xFFu));
+void write_u32_le(std::uint8_t* out, std::size_t offset, std::uint32_t value) {
+  out[offset] = static_cast<std::uint8_t>(value & 0xFFu);
+  out[offset + 1] = static_cast<std::uint8_t>((value >> 8u) & 0xFFu);
+  out[offset + 2] = static_cast<std::uint8_t>((value >> 16u) & 0xFFu);
+  out[offset + 3] = static_cast<std::uint8_t>((value >> 24u) & 0xFFu);
 }
 
-void append_u64_le(RuntimeBytes& out, std::uint64_t value) {
+void write_u64_le(std::uint8_t* out, std::size_t offset, std::uint64_t value) {
   for (unsigned shift = 0; shift < 64; shift += 8) {
-    out.push_back(static_cast<std::uint8_t>((value >> shift) & 0xFFu));
+    out[offset + shift / 8] = static_cast<std::uint8_t>((value >> shift) & 0xFFu);
   }
 }
 
-void append_i64_le(RuntimeBytes& out, std::int64_t value) {
-  append_u64_le(out, static_cast<std::uint64_t>(value));
+void write_i64_le(std::uint8_t* out, std::size_t offset, std::int64_t value) {
+  write_u64_le(out, offset, static_cast<std::uint64_t>(value));
 }
 
-bool read_u32_le(const RuntimeBytes& data, std::size_t offset, std::uint32_t& out) {
-  if (offset > data.size() || data.size() - offset < 4) {
+bool read_u32_le(const std::uint8_t* data, std::size_t size, std::size_t offset, std::uint32_t& out) {
+  if (data == nullptr || offset > size || size - offset < 4) {
     return false;
   }
   out = static_cast<std::uint32_t>(data[offset]) | (static_cast<std::uint32_t>(data[offset + 1]) << 8u) |
@@ -56,8 +60,8 @@ bool read_u32_le(const RuntimeBytes& data, std::size_t offset, std::uint32_t& ou
   return true;
 }
 
-bool read_u64_le(const RuntimeBytes& data, std::size_t offset, std::uint64_t& out) {
-  if (offset > data.size() || data.size() - offset < 8) {
+bool read_u64_le(const std::uint8_t* data, std::size_t size, std::size_t offset, std::uint64_t& out) {
+  if (data == nullptr || offset > size || size - offset < 8) {
     return false;
   }
   out = 0;
@@ -67,9 +71,9 @@ bool read_u64_le(const RuntimeBytes& data, std::size_t offset, std::uint64_t& ou
   return true;
 }
 
-bool read_i64_le(const RuntimeBytes& data, std::size_t offset, std::int64_t& out) {
+bool read_i64_le(const std::uint8_t* data, std::size_t size, std::size_t offset, std::int64_t& out) {
   std::uint64_t value = 0;
-  if (!read_u64_le(data, offset, value)) {
+  if (!read_u64_le(data, size, offset, value)) {
     return false;
   }
   out = static_cast<std::int64_t>(value);
@@ -80,29 +84,8 @@ std::string json_array_for_endpoints(const std::vector<std::string>& endpoints) 
   return nlohmann::json(endpoints).dump();
 }
 
-#if F8_WITH_ZENOH
-RuntimeBytes payload_to_bytes(const zenoh::Bytes& payload) {
-  return payload.as_vector();
-}
-
-zenoh::Bytes bytes_to_payload(const RuntimeBytes& payload) {
-  return zenoh::Bytes(payload);
-}
-
-zenoh::Session::PutOptions realtime_drop_options() {
-  zenoh::Session::PutOptions options = zenoh::Session::PutOptions::create_default();
-  options.congestion_control = Z_CONGESTION_CONTROL_DROP;
-  options.priority = Z_PRIORITY_REAL_TIME;
-  options.reliability = Z_RELIABILITY_BEST_EFFORT;
-  options.is_express = true;
-  return options;
-}
-#endif
-
-}  // namespace
-
-bool encode_zenoh_video_frame(const VideoFrameView& frame, RuntimeBytes& out, std::string* error_message) {
-  out.clear();
+bool validate_zenoh_video_frame(const VideoFrameView& frame, std::size_t& frame_bytes, std::string* error_message) {
+  frame_bytes = 0;
   if (frame.width == 0 || frame.height == 0 || frame.pitch == 0) {
     set_error(error_message, "width, height, and pitch must be positive");
     return false;
@@ -119,7 +102,7 @@ bool encode_zenoh_video_frame(const VideoFrameView& frame, RuntimeBytes& out, st
     set_error(error_message, "payload must be non-null");
     return false;
   }
-  const std::size_t frame_bytes = static_cast<std::size_t>(frame.pitch) * static_cast<std::size_t>(frame.height);
+  frame_bytes = static_cast<std::size_t>(frame.pitch) * static_cast<std::size_t>(frame.height);
   if (frame_bytes == 0 || frame.payload_bytes < frame_bytes) {
     set_error(error_message, "payload is smaller than pitch * height");
     return false;
@@ -128,26 +111,28 @@ bool encode_zenoh_video_frame(const VideoFrameView& frame, RuntimeBytes& out, st
     set_error(error_message, "payload is too large for zenoh video frame schema v1");
     return false;
   }
-
-  out.reserve(static_cast<std::size_t>(kZenohVideoFrameHeaderBytes) + frame_bytes);
-  append_u32_le(out, kZenohVideoFrameMagic);
-  append_u32_le(out, kZenohVideoFrameSchemaVersion);
-  append_u32_le(out, kZenohVideoFrameHeaderBytes);
-  append_u32_le(out, frame.width);
-  append_u32_le(out, frame.height);
-  append_u32_le(out, frame.pitch);
-  append_u32_le(out, frame.format);
-  append_u32_le(out, static_cast<std::uint32_t>(frame_bytes));
-  append_u64_le(out, frame.frame_id);
-  append_i64_le(out, frame.ts_ms);
-  const auto* begin = reinterpret_cast<const std::uint8_t*>(frame.payload);
-  out.insert(out.end(), begin, begin + frame_bytes);
   return true;
 }
 
-bool decode_zenoh_video_frame(const RuntimeBytes& raw, LatestVideoFrame& out, std::string* error_message) {
+void write_zenoh_video_frame_unchecked(const VideoFrameView& frame, std::size_t frame_bytes, std::uint8_t* out) {
+  write_u32_le(out, 0, kZenohVideoFrameMagic);
+  write_u32_le(out, 4, kZenohVideoFrameSchemaVersion);
+  write_u32_le(out, 8, kZenohVideoFrameHeaderBytes);
+  write_u32_le(out, 12, frame.width);
+  write_u32_le(out, 16, frame.height);
+  write_u32_le(out, 20, frame.pitch);
+  write_u32_le(out, 24, frame.format);
+  write_u32_le(out, 28, static_cast<std::uint32_t>(frame_bytes));
+  write_u64_le(out, 32, frame.frame_id);
+  write_i64_le(out, 40, frame.ts_ms);
+  const auto* payload = reinterpret_cast<const std::uint8_t*>(frame.payload);
+  std::memcpy(out + kZenohVideoFrameHeaderBytes, payload, frame_bytes);
+}
+
+bool decode_zenoh_video_frame_from_buffer(const std::uint8_t* raw, std::size_t raw_size, LatestVideoFrame& out,
+                                          std::string* error_message) {
   out = LatestVideoFrame{};
-  if (raw.size() < kZenohVideoFrameHeaderBytes) {
+  if (raw == nullptr || raw_size < kZenohVideoFrameHeaderBytes) {
     set_error(error_message, "payload is smaller than zenoh video frame header");
     return false;
   }
@@ -162,10 +147,11 @@ bool decode_zenoh_video_frame(const RuntimeBytes& raw, LatestVideoFrame& out, st
   std::uint32_t payload_bytes = 0;
   std::uint64_t frame_id = 0;
   std::int64_t ts_ms = 0;
-  if (!read_u32_le(raw, 0, magic) || !read_u32_le(raw, 4, version) || !read_u32_le(raw, 8, header_bytes) ||
-      !read_u32_le(raw, 12, width) || !read_u32_le(raw, 16, height) || !read_u32_le(raw, 20, pitch) ||
-      !read_u32_le(raw, 24, format) || !read_u32_le(raw, 28, payload_bytes) ||
-      !read_u64_le(raw, 32, frame_id) || !read_i64_le(raw, 40, ts_ms)) {
+  if (!read_u32_le(raw, raw_size, 0, magic) || !read_u32_le(raw, raw_size, 4, version) ||
+      !read_u32_le(raw, raw_size, 8, header_bytes) || !read_u32_le(raw, raw_size, 12, width) ||
+      !read_u32_le(raw, raw_size, 16, height) || !read_u32_le(raw, raw_size, 20, pitch) ||
+      !read_u32_le(raw, raw_size, 24, format) || !read_u32_le(raw, raw_size, 28, payload_bytes) ||
+      !read_u64_le(raw, raw_size, 32, frame_id) || !read_i64_le(raw, raw_size, 40, ts_ms)) {
     set_error(error_message, "payload header is truncated");
     return false;
   }
@@ -186,8 +172,8 @@ bool decode_zenoh_video_frame(const RuntimeBytes& raw, LatestVideoFrame& out, st
     set_error(error_message, "zenoh video frame payload size does not match pitch * height");
     return false;
   }
-  if (static_cast<std::size_t>(header_bytes) > raw.size() || raw.size() - static_cast<std::size_t>(header_bytes) <
-                                                           static_cast<std::size_t>(payload_bytes)) {
+  if (static_cast<std::size_t>(header_bytes) > raw_size ||
+      raw_size - static_cast<std::size_t>(header_bytes) < static_cast<std::size_t>(payload_bytes)) {
     set_error(error_message, "zenoh video frame payload is truncated");
     return false;
   }
@@ -199,8 +185,67 @@ bool decode_zenoh_video_frame(const RuntimeBytes& raw, LatestVideoFrame& out, st
   out.frame_id = frame_id;
   out.ts_ms = ts_ms;
   out.payload.resize(payload_bytes);
-  std::memcpy(out.payload.data(), raw.data() + header_bytes, payload_bytes);
+  std::memcpy(out.payload.data(), raw + header_bytes, payload_bytes);
   return true;
+}
+
+#if F8_WITH_ZENOH
+zenoh::Bytes bytes_to_payload(const RuntimeBytes& payload) {
+  return zenoh::Bytes(payload);
+}
+
+zenoh::Session::PutOptions realtime_drop_options() {
+  zenoh::Session::PutOptions options = zenoh::Session::PutOptions::create_default();
+  options.congestion_control = Z_CONGESTION_CONTROL_DROP;
+  options.priority = Z_PRIORITY_REAL_TIME;
+  options.reliability = Z_RELIABILITY_BEST_EFFORT;
+  options.is_express = true;
+  return options;
+}
+
+bool decode_zenoh_video_frame_from_payload(const zenoh::Bytes& payload, LatestVideoFrame& out,
+                                           std::string* error_message) {
+#if defined(Z_FEATURE_UNSTABLE_API)
+  const auto view = payload.get_contiguous_view();
+  if (view.has_value()) {
+    return decode_zenoh_video_frame_from_buffer(view->data, view->len, out, error_message);
+  }
+#endif
+  RuntimeBytes raw = payload.as_vector();
+  return decode_zenoh_video_frame_from_buffer(raw.data(), raw.size(), out, error_message);
+}
+
+#if defined(Z_FEATURE_SHARED_MEMORY) && defined(Z_FEATURE_UNSTABLE_API)
+const char* shm_provider_state_name(zenoh::ShmProviderNotReadyState state) {
+  switch (state) {
+    case zenoh::ShmProviderNotReadyState::SHM_PROVIDER_DISABLED:
+      return "disabled";
+    case zenoh::ShmProviderNotReadyState::SHM_PROVIDER_INITIALIZING:
+      return "initializing";
+    case zenoh::ShmProviderNotReadyState::SHM_PROVIDER_ERROR:
+      return "error";
+  }
+  return "unknown";
+}
+#endif
+#endif
+
+}  // namespace
+
+bool encode_zenoh_video_frame(const VideoFrameView& frame, RuntimeBytes& out, std::string* error_message) {
+  out.clear();
+  std::size_t frame_bytes = 0;
+  if (!validate_zenoh_video_frame(frame, frame_bytes, error_message)) {
+    return false;
+  }
+
+  out.resize(static_cast<std::size_t>(kZenohVideoFrameHeaderBytes) + frame_bytes);
+  write_zenoh_video_frame_unchecked(frame, frame_bytes, out.data());
+  return true;
+}
+
+bool decode_zenoh_video_frame(const RuntimeBytes& raw, LatestVideoFrame& out, std::string* error_message) {
+  return decode_zenoh_video_frame_from_buffer(raw.data(), raw.size(), out, error_message);
 }
 
 class ZenohLatestVideoFramePublisher::Impl final {
@@ -227,19 +272,13 @@ class ZenohLatestVideoFramePublisher::Impl final {
       if (!normalized.zenoh_listen.empty()) {
         zenoh_config.insert_json5("listen/endpoints", json_array_for_endpoints(normalized.zenoh_listen));
       }
-      zenoh_config.insert_json5("transport/shared_memory/enabled", "true");
-      if (normalized.zenoh_shm_pool_bytes > 0) {
-        try {
-          zenoh_config.insert_json5("transport/shared_memory/pool_size",
-                                    std::to_string(normalized.zenoh_shm_pool_bytes));
-        } catch (const std::exception& exc) {
-          spdlog::debug("zenoh C++ config does not expose shared-memory pool_size: {}", exc.what());
-        }
-      }
+      zenoh_internal::apply_shared_memory_config(zenoh_config, normalized.zenoh_shm_pool_bytes, key);
 
       session_ = std::make_unique<zenoh::Session>(zenoh::Session::open(std::move(zenoh_config)));
       key_expr_ = key;
       publish_failure_reported_ = false;
+      shm_fallback_reported_ = false;
+      obtain_shm_provider_locked();
       return true;
     } catch (const std::exception& exc) {
       spdlog::error("zenoh video publisher open failed key={}: {}", key, exc.what());
@@ -264,35 +303,121 @@ class ZenohLatestVideoFramePublisher::Impl final {
   }
 
   bool publish_frame(const VideoFrameView& frame) {
-    RuntimeBytes encoded;
-    std::string error;
-    if (!encode_zenoh_video_frame(frame, encoded, &error)) {
-      report_publish_failure("encode failed: " + error);
-      return false;
-    }
-
 #if F8_WITH_ZENOH
+    std::string failure;
     try {
       std::lock_guard<std::mutex> lock(mu_);
       if (!session_ || key_expr_.empty()) {
         return false;
       }
-      session_->put(zenoh::KeyExpr(key_expr_), bytes_to_payload(encoded), realtime_drop_options());
-      publish_failure_reported_ = false;
-      return true;
+      std::optional<zenoh::Bytes> payload = encode_payload_locked(frame, &failure);
+      if (!payload.has_value()) {
+        if (failure.empty()) {
+          failure = "encode failed";
+        }
+      } else {
+        session_->put(zenoh::KeyExpr(key_expr_), std::move(payload.value()), realtime_drop_options());
+        publish_failure_reported_ = false;
+        return true;
+      }
     } catch (const std::exception& exc) {
-      report_publish_failure(exc.what());
-      return false;
+      failure = exc.what();
     } catch (...) {
-      report_publish_failure("unknown error");
+      failure = "unknown error";
+    }
+    report_publish_failure(failure);
+    return false;
+#else
+    std::string error;
+    RuntimeBytes encoded;
+    if (!encode_zenoh_video_frame(frame, encoded, &error)) {
+      report_publish_failure("encode failed: " + error);
       return false;
     }
-#else
-    (void)encoded;
     report_publish_failure("f8cppsdk was built without F8_WITH_ZENOH");
     return false;
 #endif
   }
+
+#if F8_WITH_ZENOH
+  std::optional<zenoh::Bytes> encode_payload_locked(const VideoFrameView& frame, std::string* error_message) {
+#if defined(Z_FEATURE_SHARED_MEMORY) && defined(Z_FEATURE_UNSTABLE_API)
+    if (!shm_provider_.has_value()) {
+      obtain_shm_provider_locked();
+    }
+    if (shm_provider_.has_value()) {
+      std::optional<zenoh::Bytes> payload = encode_payload_with_shm_locked(frame, error_message);
+      if (payload.has_value()) {
+        return payload;
+      }
+      if (!shm_fallback_reported_) {
+        shm_fallback_reported_ = true;
+        spdlog::warn("zenoh video SHM payload allocation failed key={}; falling back to copied payload", key_expr_);
+      }
+    }
+#endif
+    encoded_buffer_.clear();
+    if (!encode_zenoh_video_frame(frame, encoded_buffer_, error_message)) {
+      return std::nullopt;
+    }
+    return bytes_to_payload(encoded_buffer_);
+  }
+
+#if defined(Z_FEATURE_SHARED_MEMORY) && defined(Z_FEATURE_UNSTABLE_API)
+  void obtain_shm_provider_locked() {
+    if (!session_ || shm_provider_.has_value()) {
+      return;
+    }
+    for (int attempt = 0; attempt < 20; ++attempt) {
+      auto provider_state = session_->obtain_shm_provider();
+      if (auto* provider = std::get_if<zenoh::SharedShmProvider>(&provider_state)) {
+        shm_provider_.emplace(std::move(*provider));
+        spdlog::debug("zenoh video publisher using SHM provider key={}", key_expr_);
+        return;
+      }
+      const auto* state = std::get_if<zenoh::ShmProviderNotReadyState>(&provider_state);
+      if (state != nullptr && *state == zenoh::ShmProviderNotReadyState::SHM_PROVIDER_INITIALIZING) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        continue;
+      }
+      if (!shm_fallback_reported_) {
+        shm_fallback_reported_ = true;
+        spdlog::debug("zenoh video SHM provider unavailable key={} state={}", key_expr_,
+                      state == nullptr ? "unknown" : shm_provider_state_name(*state));
+      }
+      return;
+    }
+    if (!shm_fallback_reported_) {
+      shm_fallback_reported_ = true;
+      spdlog::debug("zenoh video SHM provider still initializing key={}", key_expr_);
+    }
+  }
+
+  std::optional<zenoh::Bytes> encode_payload_with_shm_locked(const VideoFrameView& frame,
+                                                             std::string* error_message) {
+    if (!shm_provider_.has_value()) {
+      return std::nullopt;
+    }
+    std::size_t frame_bytes = 0;
+    if (!validate_zenoh_video_frame(frame, frame_bytes, error_message)) {
+      return std::nullopt;
+    }
+    const std::size_t encoded_bytes = static_cast<std::size_t>(kZenohVideoFrameHeaderBytes) + frame_bytes;
+    auto allocation = shm_provider_->shm_provider().alloc_gc_defrag(encoded_bytes);
+    auto* shm = std::get_if<zenoh::ZShmMut>(&allocation);
+    if (shm == nullptr) {
+      set_error(error_message, "SHM pool allocation failed");
+      return std::nullopt;
+    }
+    if (shm->data() == nullptr || shm->len() < encoded_bytes) {
+      set_error(error_message, "SHM pool returned a buffer that is too small");
+      return std::nullopt;
+    }
+    write_zenoh_video_frame_unchecked(frame, frame_bytes, shm->data());
+    return zenoh::Bytes(std::move(*shm));
+  }
+#endif
+#endif
 
   bool valid() const {
     std::lock_guard<std::mutex> lock(mu_);
@@ -311,6 +436,9 @@ class ZenohLatestVideoFramePublisher::Impl final {
  private:
   void close_locked() {
 #if F8_WITH_ZENOH
+#if defined(Z_FEATURE_SHARED_MEMORY) && defined(Z_FEATURE_UNSTABLE_API)
+    shm_provider_.reset();
+#endif
     if (session_) {
       try {
         session_->close();
@@ -324,6 +452,7 @@ class ZenohLatestVideoFramePublisher::Impl final {
 #endif
     key_expr_.clear();
     publish_failure_reported_ = false;
+    shm_fallback_reported_ = false;
   }
 
   void report_publish_failure(const std::string& message) {
@@ -338,8 +467,13 @@ class ZenohLatestVideoFramePublisher::Impl final {
   mutable std::mutex mu_;
   std::string key_expr_;
   bool publish_failure_reported_ = false;
+  bool shm_fallback_reported_ = false;
 #if F8_WITH_ZENOH
+  RuntimeBytes encoded_buffer_;
   std::unique_ptr<zenoh::Session> session_;
+#if defined(Z_FEATURE_SHARED_MEMORY) && defined(Z_FEATURE_UNSTABLE_API)
+  std::optional<zenoh::SharedShmProvider> shm_provider_;
+#endif
 #endif
 };
 
@@ -367,20 +501,12 @@ class ZenohLatestVideoFrameSubscriber::Impl final {
       if (!normalized.zenoh_listen.empty()) {
         zenoh_config.insert_json5("listen/endpoints", json_array_for_endpoints(normalized.zenoh_listen));
       }
-      zenoh_config.insert_json5("transport/shared_memory/enabled", "true");
-      if (normalized.zenoh_shm_pool_bytes > 0) {
-        try {
-          zenoh_config.insert_json5("transport/shared_memory/pool_size",
-                                    std::to_string(normalized.zenoh_shm_pool_bytes));
-        } catch (const std::exception& exc) {
-          spdlog::debug("zenoh C++ config does not expose shared-memory pool_size: {}", exc.what());
-        }
-      }
+      zenoh_internal::apply_shared_memory_config(zenoh_config, normalized.zenoh_shm_pool_bytes, key);
 
       session_ = std::make_unique<zenoh::Session>(zenoh::Session::open(std::move(zenoh_config)));
       key_expr_ = key;
       closed_ = false;
-      latest_raw_.clear();
+      latest_payload_.reset();
       latest_seq_ = 0;
       delivered_seq_ = 0;
       decode_failure_reported_ = false;
@@ -388,13 +514,13 @@ class ZenohLatestVideoFrameSubscriber::Impl final {
           zenoh::KeyExpr(key_expr_),
           [this](zenoh::Sample& sample) {
             try {
-              RuntimeBytes raw = payload_to_bytes(sample.get_payload());
+              zenoh::Bytes payload = sample.get_payload().clone();
               {
                 std::lock_guard<std::mutex> sample_lock(mu_);
                 if (closed_) {
                   return;
                 }
-                latest_raw_ = std::move(raw);
+                latest_payload_ = std::move(payload);
                 ++latest_seq_;
               }
               cv_.notify_all();
@@ -431,17 +557,21 @@ class ZenohLatestVideoFrameSubscriber::Impl final {
   }
 
   std::optional<LatestVideoFrame> poll_latest() {
-    RuntimeBytes raw;
+#if F8_WITH_ZENOH
+    std::optional<zenoh::Bytes> payload;
     {
       std::lock_guard<std::mutex> lock(mu_);
-      if (latest_seq_ == delivered_seq_ || latest_raw_.empty()) {
+      if (latest_seq_ == delivered_seq_ || !latest_payload_.has_value()) {
         return std::nullopt;
       }
-      raw = std::move(latest_raw_);
-      latest_raw_.clear();
+      payload = std::move(latest_payload_);
+      latest_payload_.reset();
       delivered_seq_ = latest_seq_;
     }
-    return decode_latest(raw);
+    return decode_latest(*payload);
+#else
+    return std::nullopt;
+#endif
   }
 
   std::optional<LatestVideoFrame> wait_latest(std::chrono::milliseconds timeout) {
@@ -452,20 +582,24 @@ class ZenohLatestVideoFrameSubscriber::Impl final {
       return std::nullopt;
     }
 
-    RuntimeBytes raw;
+#if F8_WITH_ZENOH
+    std::optional<zenoh::Bytes> payload;
     {
       std::unique_lock<std::mutex> lock(mu_);
       const bool ready = cv_.wait_for(lock, timeout, [this]() {
-        return closed_ || (latest_seq_ != delivered_seq_ && !latest_raw_.empty());
+        return closed_ || (latest_seq_ != delivered_seq_ && latest_payload_.has_value());
       });
-      if (!ready || closed_ || latest_seq_ == delivered_seq_ || latest_raw_.empty()) {
+      if (!ready || closed_ || latest_seq_ == delivered_seq_ || !latest_payload_.has_value()) {
         return std::nullopt;
       }
-      raw = std::move(latest_raw_);
-      latest_raw_.clear();
+      payload = std::move(latest_payload_);
+      latest_payload_.reset();
       delivered_seq_ = latest_seq_;
     }
-    return decode_latest(raw);
+    return decode_latest(*payload);
+#else
+    return std::nullopt;
+#endif
   }
 
   bool valid() const {
@@ -505,19 +639,20 @@ class ZenohLatestVideoFrameSubscriber::Impl final {
       }
     }
     session_.reset();
+    latest_payload_.reset();
 #endif
     closed_ = true;
     key_expr_.clear();
-    latest_raw_.clear();
     latest_seq_ = 0;
     delivered_seq_ = 0;
     decode_failure_reported_ = false;
   }
 
-  std::optional<LatestVideoFrame> decode_latest(const RuntimeBytes& raw) {
+#if F8_WITH_ZENOH
+  std::optional<LatestVideoFrame> decode_latest(const zenoh::Bytes& payload) {
     LatestVideoFrame frame;
     std::string error;
-    if (!decode_zenoh_video_frame(raw, frame, &error)) {
+    if (!decode_zenoh_video_frame_from_payload(payload, frame, &error)) {
       std::lock_guard<std::mutex> lock(mu_);
       if (!decode_failure_reported_) {
         decode_failure_reported_ = true;
@@ -531,18 +666,19 @@ class ZenohLatestVideoFrameSubscriber::Impl final {
     }
     return frame;
   }
+#endif
 
   mutable std::mutex mu_;
   std::condition_variable cv_;
   std::string key_expr_;
   bool closed_ = true;
-  RuntimeBytes latest_raw_;
   std::uint64_t latest_seq_ = 0;
   std::uint64_t delivered_seq_ = 0;
   bool decode_failure_reported_ = false;
 #if F8_WITH_ZENOH
   std::unique_ptr<zenoh::Session> session_;
   std::optional<zenoh::Subscriber<void>> subscriber_;
+  std::optional<zenoh::Bytes> latest_payload_;
 #endif
 };
 
