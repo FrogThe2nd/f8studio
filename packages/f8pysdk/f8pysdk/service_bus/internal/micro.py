@@ -7,8 +7,6 @@ from dataclasses import dataclass
 from typing import Any, TYPE_CHECKING
 
 import msgspec
-from nats.micro import ServiceConfig, add_service  # type: ignore[import-not-found]
-from nats.micro.service import EndpointConfig  # type: ignore[import-not-found]
 
 from ...codec import decode_as, decode_obj, encode_obj
 from ...generated import (
@@ -64,6 +62,8 @@ class ServiceBusMicroEndpoints:
         self._micro: Any | None = None
 
     async def start(self) -> Any:
+        from nats.micro import ServiceConfig, add_service  # type: ignore[import-not-found]
+
         nc = await self._bus._transport.require_client()
         service_name = str(self._bus._service_name or "") or self._bus.service_id
         service_class = str(self._bus._service_class or "")
@@ -465,6 +465,8 @@ class ServiceBusMicroEndpoints:
         )
 
     async def _register_endpoints(self) -> None:
+        from nats.micro.service import EndpointConfig  # type: ignore[import-not-found]
+
         micro = self._micro
         if micro is None:
             return
