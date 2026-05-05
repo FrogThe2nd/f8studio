@@ -162,7 +162,7 @@ class ZenohTransport:
     async def publish(self, subject: str, payload: bytes) -> None:
         session = await self._require_session()
         key = subject_to_zenoh_key(subject)
-        await asyncio.to_thread(session.put, key, bytes(payload))
+        await asyncio.to_thread(_put_realtime_drop, session, key, bytes(payload))
 
     async def subscribe(
         self,
@@ -232,7 +232,7 @@ class ZenohTransport:
         self._kv[key_s] = raw
         session = await self._require_session()
         zenoh_key = zenoh_kv_key(self._config.service_id, key_s)
-        await asyncio.to_thread(session.put, zenoh_key, raw)
+        await asyncio.to_thread(_put_realtime_drop, session, zenoh_key, raw)
 
     async def kv_get(self, key: str) -> bytes | None:
         return self._kv.get(str(key or "").strip())
@@ -385,6 +385,20 @@ class ZenohTransport:
                 return reply
             await asyncio.sleep(0.001)
         return None
+
+
+def _put_realtime_drop(session: Any, key: str, payload: bytes) -> None:
+    try:
+        import zenoh  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise RuntimeError("Zenoh backend requires the `eclipse-zenoh` Python package") from exc
+    session.put(
+        key,
+        bytes(payload),
+        congestion_control=zenoh.CongestionControl.DROP,
+        priority=zenoh.Priority.REAL_TIME,
+        express=True,
+    )
 
 
 __all__ = ["ZenohTransport", "ZenohTransportConfig"]

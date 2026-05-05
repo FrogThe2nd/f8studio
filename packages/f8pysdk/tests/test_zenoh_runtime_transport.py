@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 from f8pysdk.bus import ServiceBus, ServiceBusConfig
 from f8pysdk.nats_naming import kv_bucket_for_service, kv_key_node_state, new_id, svc_endpoint_subject
@@ -40,6 +41,55 @@ def test_zenoh_key_mapping_preserves_dotted_state_fields() -> None:
 
     assert zenoh_key == "f8/svc/demo/nodes/node/data/out"
     assert zenoh_key_to_kv_key("f8/svc/demo/state/nodes/node/state/hidden/command/output/value") == key
+
+
+def test_zenoh_key_mapping_preserves_wildcard_runtime_subjects() -> None:
+    assert subject_to_zenoh_key("svc.*.nodes.*.data.monitor") == "f8/svc/*/nodes/*/data/monitor"
+    assert subject_to_zenoh_key("svc.*.nodes.*.data.*") == "f8/svc/*/nodes/*/data/*"
+    assert subject_to_zenoh_key("svc.*.status") == "f8/svc/*/endpoint/status"
+    assert subject_to_zenoh_key("svc.*.cmd") == "f8/svc/*/cmd"
+
+
+def test_zenoh_transport_puts_use_latest_drop_qos() -> None:
+    import zenoh  # type: ignore[import-not-found]
+
+    class _FakeSession:
+        def __init__(self) -> None:
+            self.put_calls: list[tuple[str, bytes, dict[str, Any]]] = []
+
+        def put(self, key: str, payload: bytes, **kwargs: Any) -> None:
+            self.put_calls.append((key, bytes(payload), dict(kwargs)))
+
+    async def _run() -> None:
+        session = _FakeSession()
+        transport = ZenohTransport(ZenohTransportConfig(service_id="svc_demo"))
+        transport._session = session
+
+        await transport.publish("svc.svc_demo.nodes.node.data.out", b"payload")
+        await transport.kv_put(kv_key_node_state(node_id="node", field="value"), b"state")
+
+        assert session.put_calls == [
+            (
+                "f8/svc/svc_demo/nodes/node/data/out",
+                b"payload",
+                {
+                    "congestion_control": zenoh.CongestionControl.DROP,
+                    "priority": zenoh.Priority.REAL_TIME,
+                    "express": True,
+                },
+            ),
+            (
+                "f8/svc/svc_demo/state/nodes/node/state/value",
+                b"state",
+                {
+                    "congestion_control": zenoh.CongestionControl.DROP,
+                    "priority": zenoh.Priority.REAL_TIME,
+                    "express": True,
+                },
+            ),
+        ]
+
+    asyncio.run(_run())
 
 
 def test_zenoh_transport_state_watch_get_and_request_roundtrip() -> None:
