@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from f8pysdk.specs import F8RuntimeNode
-from f8pysdk.shm import video_shm_name
+from f8pysdk.zenoh_naming import zenoh_data_key
 
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
 from f8pystudio.operators.viz_video import OPERATOR_CLASS, VizVideoRuntimeNode
@@ -27,7 +27,7 @@ def _build_runtime(initial_state: dict[str, object] | None = None) -> VizVideoRu
 class VizVideoOperatorTests(unittest.IsolatedAsyncioTestCase):
     async def test_push_config_includes_scalar_fields(self) -> None:
         runtime = _build_runtime()
-        runtime._service_id = "svc.scalar"
+        runtime._service_id = "svc_scalar"
         runtime._shm_name = ""
         runtime._throttle_ms = 17
         runtime._flow_transport = "zenoh"
@@ -54,7 +54,9 @@ class VizVideoOperatorTests(unittest.IsolatedAsyncioTestCase):
             await runtime._push_config_async(now_ms=123)
 
         payload = dict(emit.call_args.args[2])
-        assert payload["shmName"] == video_shm_name("svc.scalar")
+        assert payload["shmName"] == ""
+        assert payload["videoTransport"] == "zenoh"
+        assert payload["videoKey"] == zenoh_data_key("svc_scalar", node_id="svc_scalar", port_id="video")
         assert payload["throttleMs"] == 17
         assert payload["flowShmName"] == "shm.flow"
         assert payload["flowTransport"] == "zenoh"
