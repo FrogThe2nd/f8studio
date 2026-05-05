@@ -16,6 +16,6 @@ class ServiceBusHarness:
     cluster: InMemoryCluster = field(default_factory=InMemoryCluster)
 
     def create_bus(self, service_id: str) -> ServiceBus:
-        cfg = ServiceBusConfig(service_id=str(service_id), nats_url="mem://")
+        cfg = ServiceBusConfig(service_id=str(service_id), bus_backend="mem", nats_url="mem://")
         transport = InMemoryTransport(cluster=self.cluster, kv_bucket=kv_bucket_for_service(cfg.service_id))
         return ServiceBus(cfg, transport=transport)

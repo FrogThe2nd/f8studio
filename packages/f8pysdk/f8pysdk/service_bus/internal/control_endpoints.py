@@ -28,7 +28,7 @@ class _TransportEndpointRequest:
         self.response = bytes(payload)
 
 
-class ZenohServiceControlEndpointServer:
+class RuntimeTransportServiceControlEndpointServer:
     """
     Backend-neutral control endpoint server using RuntimeTransport request/serve.
 
@@ -98,10 +98,14 @@ class ZenohServiceControlEndpointServer:
 def create_service_control_endpoint_server(bus: Any) -> ServiceControlEndpointServer:
     if str(bus.bus_backend) == "nats":
         return ServiceBusMicroEndpoints(bus)
-    return ZenohServiceControlEndpointServer(bus)
+    return RuntimeTransportServiceControlEndpointServer(bus)
+
+
+ZenohServiceControlEndpointServer = RuntimeTransportServiceControlEndpointServer
 
 
 __all__ = [
+    "RuntimeTransportServiceControlEndpointServer",
     "ServiceControlEndpointServer",
     "ZenohServiceControlEndpointServer",
     "create_service_control_endpoint_server",

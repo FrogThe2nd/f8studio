@@ -21,6 +21,10 @@ from .zenoh_naming import (
 )
 
 log = logging.getLogger(__name__)
+# Zenoh can return a subscriber declaration before local matching is fully
+# visible to other sessions. This small setup-only pause prevents losing the
+# first state/data sample immediately after a watch is installed.
+_SUBSCRIPTION_SETTLE_S = 0.01
 
 
 def _is_zenoh_channel_drained(exc: BaseException) -> bool:
@@ -181,6 +185,7 @@ class ZenohTransport:
         )
         handle = _ZenohSubscriptionHandle(declaration, task)
         self._subs.append(handle)
+        await asyncio.sleep(_SUBSCRIPTION_SETTLE_S)
         return handle
 
     async def request(
@@ -264,6 +269,7 @@ class ZenohTransport:
         )
         handle = _ZenohSubscriptionHandle(declaration, task)
         self._subs.append(handle)
+        await asyncio.sleep(_SUBSCRIPTION_SETTLE_S)
         return handle
 
     async def kv_get_in_bucket(self, bucket: str, key: str, *, timeout: float | None = None) -> bytes | None:
