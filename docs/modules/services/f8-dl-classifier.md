@@ -48,6 +48,8 @@ pixi run -e onnx f8pydl_classifier
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
 | `shmName` | `rw` | `true` | `true` | `string / default=` | Video SHM mapping name (e.g. shm.implayer.video). |
+| `videoTransport` | `rw` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Video input transport backend. Use zenoh with videoKey; legacy_shm keeps old shmName input. |
+| `videoKey` | `rw` | `true` | `true` | `string / default=` | Zenoh latest-frame key for video input. |
 | `weightsDir` | `rw` | `true` | `true` | `string / default=services/f8/dl/weights` | Directory containing *.yaml + *.onnx model files. Reset to the default relative path when exporting publish JSON. |
 | `modelId` | `rw` | `true` | `true` | `string / default=` | Model id selected from weightsDir (ignored if modelYamlPath is set). |
 | `modelYamlPath` | `rw` | `true` | `false` | `string / default=` | Optional explicit model yaml path (overrides modelId). Cleared when exporting publish JSON. |
@@ -64,13 +66,13 @@ pixi run -e onnx f8pydl_classifier
 ### Key Fields That Matter
 
 - `shmName` (Video SHM, `rw`): Video SHM mapping name (e.g. shm.implayer.video). Schema: `string / default=`.
+- `videoTransport` (Video Transport, `rw`): Video input transport backend. Use zenoh with videoKey; legacy_shm keeps old shmName input. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
+- `videoKey` (Video Key, `rw`): Zenoh latest-frame key for video input. Schema: `string / default=`.
 - `weightsDir` (Weights Dir, `rw`): Directory containing *.yaml + *.onnx model files. Reset to the default relative path when exporting publish JSON. Schema: `string / default=services/f8/dl/weights`.
 - `modelId` (Model Id, `rw`): Model id selected from weightsDir (ignored if modelYamlPath is set). Schema: `string / default=`.
 - `modelYamlPath` (Model YAML Path, `rw`): Optional explicit model yaml path (overrides modelId). Cleared when exporting publish JSON. Schema: `string / default=`.
 - `ortProvider` (ONNX Runtime Provider, `rw`): auto prefers CUDAExecutionProvider when available. Schema: `string / enum[auto, cuda, cpu] / default=auto`.
 - `autoDownloadWeights` (Auto Download Weights, `rw`): When model file is missing, download from onnxUrl in model yaml. Schema: `boolean / default=True`.
-- `inferEveryN` (Infer Every N Frames, `rw`): Run model inference every N frames (>=1). Schema: `integer / default=1`.
-- `topK` (Top K, `rw`): Number of top classes to emit. Schema: `integer / default=5`.
 
 ### Service Commands
 

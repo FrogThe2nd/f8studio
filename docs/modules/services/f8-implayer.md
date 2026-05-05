@@ -56,6 +56,10 @@ linux/f8implayer_service
 | `duration` | `ro` | `true` | `true` | `number` | Duration (seconds). |
 | `videoShmName` | `ro` | `true` | `true` | `string` | Shared memory region name. |
 | `videoShmEvent` | `ro` | `true` | `false` | `string` | Optional named event to signal new frames. |
+| `videoTransport` | `ro` | `true` | `true` | `string / enum[legacy_shm, zenoh]` | Frame transport backend. |
+| `videoKey` | `ro` | `true` | `true` | `string` | Transport-specific video stream key. |
+| `videoFormat` | `ro` | `true` | `false` | `string / enum[bgra32, bgr24, flow2_f16, scalar1_f32]` | Frame payload format. |
+| `videoFrameSchemaVersion` | `ro` | `true` | `false` | `integer` | Frame schema version. |
 | `videoShmMaxWidth` | `rw` | `true` | `false` | `integer` | Downsample limit (0 = auto). |
 | `videoShmMaxHeight` | `rw` | `true` | `false` | `integer` | Downsample limit (0 = auto). |
 | `videoShmMaxFps` | `rw` | `true` | `false` | `number` | Copy rate limit (0 = unlimited). |

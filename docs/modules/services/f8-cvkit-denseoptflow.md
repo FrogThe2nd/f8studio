@@ -48,22 +48,30 @@ No description.
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
 | `inputShmName` | `rw` | `true` | `true` | `string` | Input SHM name (e.g. shm.xxx.video). |
+| `inputVideoTransport` | `rw` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Input video frame transport backend. Zenoh is default; legacy_shm keeps old inputShmName. |
+| `inputVideoKey` | `rw` | `true` | `true` | `string` | Input video frame transport key. |
 | `computeEveryNFrames` | `rw` | `true` | `false` | `integer / default=2` | Compute flow once per N new frames. |
 | `flowShmName` | `ro` | `true` | `true` | `string` | Output SHM name for UV flow field. |
+| `flowTransport` | `ro` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Output flow frame transport backend. Zenoh is default; legacy_shm keeps old flowShmName. |
+| `flowKey` | `ro` | `true` | `true` | `string` | Output flow frame transport key. |
 | `flowShmFormat` | `ro` | `true` | `false` | `string` | Flow payload format. Fixed to flow2_f16. |
+| `flowFrameSchemaVersion` | `ro` | `true` | `false` | `integer / default=1` | Output flow frame schema version. |
 | `computeScale` | `rw` | `true` | `false` | `number / default=0.5` | Farneback compute scale; output flow stays at compute scale. |
+| `flowOutputScaleX` | `ro` | `true` | `false` | `number` | Output flow width / source width. |
+| `flowOutputScaleY` | `ro` | `true` | `false` | `number` | Output flow height / source height. |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
 ### Key Fields That Matter
 
 - `inputShmName` (Input Video SHM, `rw`): Input SHM name (e.g. shm.xxx.video). Schema: `string`.
+- `inputVideoTransport` (Input Video Transport, `rw`): Input video frame transport backend. Zenoh is default; legacy_shm keeps old inputShmName. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
+- `inputVideoKey` (Input Video Key, `rw`): Input video frame transport key. Schema: `string`.
 - `computeEveryNFrames` (Compute Every N Frames, `rw`): Compute flow once per N new frames. Schema: `integer / default=2`.
 - `flowShmName` (Flow SHM Name, `ro`): Output SHM name for UV flow field. Schema: `string`.
+- `flowTransport` (Flow Transport, `ro`): Output flow frame transport backend. Zenoh is default; legacy_shm keeps old flowShmName. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
+- `flowKey` (Flow Key, `ro`): Output flow frame transport key. Schema: `string`.
 - `flowShmFormat` (Flow SHM Format, `ro`): Flow payload format. Fixed to flow2_f16. Schema: `string`.
-- `computeScale` (Compute Scale, `rw`): Farneback compute scale; output flow stays at compute scale. Schema: `number / default=0.5`.
-- `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
-- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 
 ### Service Commands
 

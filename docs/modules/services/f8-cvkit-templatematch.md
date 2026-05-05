@@ -50,7 +50,12 @@ No description.
 | `templateImagePngB64` | `rw` | `true` | `false` | `string` | PNG bytes encoded as base64. Local-only payload; cleared when exporting publish JSON. |
 | `matchThreshold` | `rw` | `true` | `true` | `number / default=0.5` | 0..1 score threshold used to emit detections. |
 | `matchingIntervalMs` | `rw` | `true` | `false` | `integer / default=200` | Minimum milliseconds between template matching passes. |
+| `matchColorMode` | `rw` | `true` | `false` | `string` | gray or bgr. gray is faster. |
+| `searchRoiPaddingPx` | `rw` | `true` | `false` | `integer / default=0` | If >0, search around the previous detection with this padding. |
+| `pyramidScale` | `rw` | `true` | `false` | `number / default=1.0` | Optional downscale factor for faster coarse template matching. |
 | `shmName` | `rw` | `true` | `true` | `string` | Optional SHM name override (e.g. shm.xxx.video). |
+| `videoTransport` | `rw` | `true` | `false` | `string / enum[zenoh, legacy_shm]` | Video input transport backend. Zenoh is default; legacy_shm keeps old shmName input. |
+| `videoKey` | `rw` | `true` | `true` | `string` | Zenoh latest-frame key for video input. |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
@@ -59,9 +64,11 @@ No description.
 - `templateImagePngB64` (Template PNG (Base64), `rw`): PNG bytes encoded as base64. Local-only payload; cleared when exporting publish JSON. Schema: `string`.
 - `matchThreshold` (Match Threshold, `rw`): 0..1 score threshold used to emit detections. Schema: `number / default=0.5`.
 - `matchingIntervalMs` (Matching Interval (ms), `rw`): Minimum milliseconds between template matching passes. Schema: `integer / default=200`.
+- `matchColorMode` (Match Color Mode, `rw`): gray or bgr. gray is faster. Schema: `string`.
+- `searchRoiPaddingPx` (Search ROI Padding, `rw`): If >0, search around the previous detection with this padding. Schema: `integer / default=0`.
+- `pyramidScale` (Pyramid Scale, `rw`): Optional downscale factor for faster coarse template matching. Schema: `number / default=1.0`.
 - `shmName` (Video SHM, `rw`): Optional SHM name override (e.g. shm.xxx.video). Schema: `string`.
-- `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
-- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `videoTransport` (Video Transport, `rw`): Video input transport backend. Zenoh is default; legacy_shm keeps old shmName input. Schema: `string / enum[zenoh, legacy_shm]`.
 
 ### Service Commands
 

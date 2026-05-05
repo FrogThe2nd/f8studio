@@ -1,4 +1,6 @@
-# Comm Bus Deep Dive: High-Throughput Data Streams + Reliable State Sync
+# Comm Bus Deep Dive: Zenoh Runtime, Data Streams, and State Sync
+
+> Current status: the runtime is Zenoh-first. NATS Core, JetStream KV, and NATS Micro remain as explicit fallback implementations for `--bus-backend nats`; older NATS-specific terminology below should be read as the fallback mapping, not the default runtime path.
 
 This document explains the **Comm Bus** design shared across:
 
@@ -26,15 +28,15 @@ It focuses on **synchronization and propagation**:
 
 We split “communication” into three planes, each optimized for a different contract:
 
-- **Data Plane (high-throughput stream):** NATS Core Pub/Sub  
-  Goal: throughput + low latency + fan-out.  
-  Contract: samples may be dropped or skipped; buffering and per-edge strategy define consumption semantics.
-- **State Plane (reliable, inspectable state):** JetStream KV (one bucket per service)  
-  Goal: durable “current value”, watchable, readable on demand, editable from Studio.  
-  Contract: “register-like” state keys with a strict write pipeline and topology constraints.
-- **Control Plane (request/reply, rejectable):** NATS Micro Endpoints  
-  Goal: deploy/control operations must validate and **return a decision**.  
-  Examples: `set_rungraph`, `set_state`, `activate/deactivate/status/terminate`, `cmd`.
+- **Data Plane (high-throughput stream):** Zenoh pub/sub and latest-frame/latest-chunk transports
+  Goal: throughput + low latency + fan-out.
+  Contract: samples may be dropped or skipped; latest-frame consumers can skip stale frames rather than building backlog.
+- **State Plane (reliable, inspectable state):** service-owned latest state with Zenoh queryables and update publishes
+  Goal: “current value”, watchable, readable on demand, editable from Studio.
+  Contract: “register-like” state keys with a strict write pipeline and topology constraints. NATS fallback maps this to JetStream KV.
+- **Control Plane (request/reply, rejectable):** Zenoh queryables
+  Goal: deploy/control operations must validate and **return a decision**.
+  Examples: `set_rungraph`, `set_state`, `activate/deactivate/status/terminate`, `cmd`. NATS fallback maps this to NATS Micro endpoints.
 
 ### 2) Topology constraints instead of general conflict merging
 
@@ -322,16 +324,16 @@ then **no**: our state system is not a general CRDT framework.
 
 Why:
 
-1. We rely on **NATS + JetStream KV** as the centralized transport and per-key ordering substrate.
-2. Updates are **whole-value writes** to KV keys, not a CRDT operation set with a merge function.
+1. We rely on **Zenoh queryables + update publishes** as the default transport and per-service current-state substrate.
+2. Updates are **whole-value writes** to service-owned state keys, not a CRDT operation set with a merge function.
 3. We avoid conflicts primarily through **rungraph constraints** (no cycles, single-upstream), rather than general merge.
 
 What is “CRDT-like”:
 
-- Each state field behaves similarly to an **LWW register** in the sense that observers converge to the KV “current value”.
+- Each state field behaves similarly to an **LWW register** in the sense that observers converge to the service-owned “current value”.
 - Cross-state binding adds **out-of-order guards** to improve stability for downstream consumers.
 
-More accurate description: a distributed state replication system with **JetStream KV as the source of truth**, plus rungraph-enforced topology constraints and watch-based synchronization.
+More accurate description: a distributed state replication system with **service-owned latest state as the source of truth**, plus rungraph-enforced topology constraints and watch-based synchronization. The NATS fallback maps the same API to JetStream KV.
 
 ---
 

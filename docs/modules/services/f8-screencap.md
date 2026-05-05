@@ -49,6 +49,10 @@ linux/f8screencap_service
 | --- | --- | --- | --- | --- | --- |
 | `videoShmName` | `ro` | `true` | `true` | `string` | Shared memory region name |
 | `videoShmEvent` | `ro` | `true` | `false` | `string` | Shared memory event name |
+| `videoTransport` | `ro` | `true` | `true` | `string / enum[legacy_shm, zenoh]` | Frame transport backend |
+| `videoKey` | `ro` | `true` | `true` | `string` | Transport-specific video stream key |
+| `videoFormat` | `ro` | `true` | `false` | `string / enum[bgra32, bgr24, flow2_f16, scalar1_f32]` | Frame payload format |
+| `videoFrameSchemaVersion` | `ro` | `true` | `false` | `integer` | Frame schema version |
 | `mode` | `rw` | `true` | `false` | `string / enum[display, window, region]` | display\|window\|region |
 | `fps` | `rw` | `true` | `true` | `number` | Capture rate |
 | `displayId` | `ro` | `true` | `false` | `integer` | 0..N-1 (see listDisplays) |
@@ -67,12 +71,12 @@ linux/f8screencap_service
 
 - `videoShmName` (Video SHM, `ro`): Shared memory region name Schema: `string`.
 - `videoShmEvent` (Video Event, `ro`): Shared memory event name Schema: `string`.
+- `videoTransport` (Video Transport, `ro`): Frame transport backend Schema: `string / enum[legacy_shm, zenoh]`.
+- `videoKey` (Video Key, `ro`): Transport-specific video stream key Schema: `string`.
+- `videoFormat` (Video Format, `ro`): Frame payload format Schema: `string / enum[bgra32, bgr24, flow2_f16, scalar1_f32]`.
+- `videoFrameSchemaVersion` (Video Schema, `ro`): Frame schema version Schema: `integer`.
 - `mode` (Mode, `rw`): display|window|region Schema: `string / enum[display, window, region]`.
 - `fps` (FPS, `rw`): Capture rate Schema: `number`.
-- `displayId` (Display ID, `ro`): 0..N-1 (see listDisplays) Schema: `integer`.
-- `windowId` (Window ID, `ro`): backend-specific (e.g. win32:hwnd:0x... or x11:win:0x...) Schema: `string`.
-- `window` (Window, `ro`): Resolved window metadata (best-effort) Schema: `object{backend, id, pid, rect, ...}`.
-- `region` (Region, `ro`): Virtual desktop coordinates Schema: `object{h, w, x, y}`.
 
 ### Service Commands
 

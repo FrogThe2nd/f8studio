@@ -71,7 +71,10 @@ Lifecycle contract:
 Prefer `ServiceApp` plus `Registry` for new services:
 - one explicit owner object for describe/build/run/CLI
 - one explicit registry owner for specs and runtime node factories
-- standard CLI: `--describe`, `--service-id`, `--nats-url` (with `F8_SERVICE_ID`, `F8_NATS_URL` env fallbacks)
+- standard CLI: `--describe`, `--service-id`, `--bus-backend`, Zenoh options, and deprecated `--nats-url`
+- default backend: `zenoh`
+- explicit fallbacks: `--bus-backend nats` or `--bus-backend mem`
+- `--nats-url` / `F8_NATS_URL` are used only when `--bus-backend nats`
 
 Minimal example:
 
@@ -97,7 +100,10 @@ app = ServiceApp(
     registry=registry,
 )
 
-app.run(service_id="svc-a", nats_url="nats://127.0.0.1:4222")
+app.run(service_id="svc-a")
+
+# Explicit NATS fallback:
+# app.run(service_id="svc-a", bus_backend="nats", nats_url="nats://127.0.0.1:4222")
 ```
 
 Registry contract:

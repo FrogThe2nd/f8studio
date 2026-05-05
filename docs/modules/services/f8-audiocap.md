@@ -48,13 +48,15 @@ linux/f8audiocap_service
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
 | `audioShmName` | `ro` | `true` | `true` | `string` | Name of the audio shared memory segment |
+| `audioTransport` | `ro` | `true` | `true` | `string / enum[legacy_shm, zenoh]` | Audio transport backend. Zenoh is the default runtime data path; legacy_shm keeps audioShmName. |
+| `audioKey` | `ro` | `true` | `true` | `string` | Transport-specific audio stream key |
 | `audioDevice` | `ro` | `true` | `false` | `string` | Name of the audio capture device in use |
 | `audioSampleRate` | `ro` | `true` | `false` | `integer` | Sample rate of the audio capture device |
 | `audioChannels` | `ro` | `true` | `false` | `integer` | Number of audio channels |
 | `audioFormat` | `ro` | `true` | `false` | `string` | Format of the audio data |
 | `audioFramesPerChunk` | `ro` | `true` | `false` | `integer` | Number of audio frames per chunk |
 | `audioChunkCount` | `ro` | `true` | `false` | `integer` | Number of audio chunks |
-| `writeSeq` | `ro` | `true` | `false` | `integer` | Sequence number of the last written audio chunk |
+| `audioChunkSchemaVersion` | `ro` | `true` | `false` | `integer` | Zenoh audio chunk schema version. |
 | `mode` | `rw` | `true` | `false` | `string` | Current mode of the audio capture service |
 | `toneHz` | `rw` | `true` | `false` | `number` | Frequency of the generated tone |
 | `gain` | `rw` | `true` | `false` | `number` | Gain applied to the audio signal |
@@ -64,13 +66,13 @@ linux/f8audiocap_service
 ### Key Fields That Matter
 
 - `audioShmName` (Audio SHM, `ro`): Name of the audio shared memory segment Schema: `string`.
+- `audioTransport` (Audio Transport, `ro`): Audio transport backend. Zenoh is the default runtime data path; legacy_shm keeps audioShmName. Schema: `string / enum[legacy_shm, zenoh]`.
+- `audioKey` (Audio Key, `ro`): Transport-specific audio stream key Schema: `string`.
 - `audioDevice` (Audio Device, `ro`): Name of the audio capture device in use Schema: `string`.
 - `audioSampleRate` (Audio Sample Rate, `ro`): Sample rate of the audio capture device Schema: `integer`.
 - `audioChannels` (Audio Channels, `ro`): Number of audio channels Schema: `integer`.
 - `audioFormat` (Audio Format, `ro`): Format of the audio data Schema: `string`.
 - `audioFramesPerChunk` (Audio Frames Per Chunk, `ro`): Number of audio frames per chunk Schema: `integer`.
-- `audioChunkCount` (Audio Chunk Count, `ro`): Number of audio chunks Schema: `integer`.
-- `writeSeq` (Write Sequence, `ro`): Sequence number of the last written audio chunk Schema: `integer`.
 
 ### Service Commands
 

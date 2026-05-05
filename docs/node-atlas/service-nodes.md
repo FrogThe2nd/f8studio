@@ -33,9 +33,9 @@ Canonical service documentation lives under `Modules > Services`; this page is t
 | --- | --- | --- | --- | --- |
 | `f8.dl.classifier` | DL Classifier | ONNXRuntime image classifier service (no tracking). | `0` | [Open](../modules/services/f8-dl-classifier.md) |
 | `f8.dl.detector` | DL Detector | ONNXRuntime object detector service (no tracking). | `0` | [Open](../modules/services/f8-dl-detector.md) |
-| `f8.dl.detsorter` | DL Detection Sorter | Sort detection payloads by a score-map SHM metric. | `0` | [Open](../modules/services/f8-dl-detsorter.md) |
+| `f8.dl.detsorter` | DL Detection Sorter | Sort detection payloads by a score-map metric. | `0` | [Open](../modules/services/f8-dl-detsorter.md) |
 | `f8.dl.humandetector` | DL Human Detector | ONNXRuntime human detection/pose service (no tracking). | `0` | [Open](../modules/services/f8-dl-humandetector.md) |
-| `f8.dl.optflow` | DL Optical Flow | ONNXRuntime NeuFlowV2 dense optical flow service (flow SHM output). | `0` | [Open](../modules/services/f8-dl-optflow.md) |
+| `f8.dl.optflow` | DL Optical Flow | ONNXRuntime NeuFlowV2 dense optical flow service (Zenoh latest-frame flow output). | `0` | [Open](../modules/services/f8-dl-optflow.md) |
 | `f8.dl.tcnwave` | DL TCN Wave | ONNXRuntime temporal convolution wave inference service (port output). | `0` | [Open](../modules/services/f8-dl-tcnwave.md) |
 
 ## MediaPipe

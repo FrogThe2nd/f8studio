@@ -48,6 +48,8 @@ pixi run -e default f8pyaudiofeat_core
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
 | `audioShmName` | `rw` | `true` | `true` | `string / default=` | Audio SHM mapping name (e.g. shm.audiocap.audio). |
+| `audioTransport` | `rw` | `true` | `true` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Audio input transport backend. Use zenoh with audioKey; legacy_shm keeps old audioShmName input. |
+| `audioKey` | `rw` | `true` | `true` | `string / default=` | Transport-specific audio stream key. |
 | `channelMode` | `rw` | `true` | `true` | `string / enum[mono_mix, left, right] / default=mono_mix` | Channel selection for analysis. |
 | `windowMs` | `rw` | `true` | `true` | `integer / default=768` | Feature analysis window size in milliseconds. |
 | `hopMs` | `rw` | `true` | `true` | `integer / default=64` | Feature analysis hop size in milliseconds. |
@@ -58,12 +60,13 @@ pixi run -e default f8pyaudiofeat_core
 ### Key Fields That Matter
 
 - `audioShmName` (Audio SHM, `rw`): Audio SHM mapping name (e.g. shm.audiocap.audio). Schema: `string / default=`.
+- `audioTransport` (Audio Transport, `rw`): Audio input transport backend. Use zenoh with audioKey; legacy_shm keeps old audioShmName input. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
+- `audioKey` (Audio Key, `rw`): Transport-specific audio stream key. Schema: `string / default=`.
 - `channelMode` (Channel Mode, `rw`): Channel selection for analysis. Schema: `string / enum[mono_mix, left, right] / default=mono_mix`.
 - `windowMs` (Window (ms), `rw`): Feature analysis window size in milliseconds. Schema: `integer / default=768`.
 - `hopMs` (Hop (ms), `rw`): Feature analysis hop size in milliseconds. Schema: `integer / default=64`.
 - `emitEveryHops` (Emit Every Hops, `rw`): Emit one coreFeatures payload every N analysis hops. Schema: `integer / default=1`.
 - `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
-- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 
 ### Service Commands
 

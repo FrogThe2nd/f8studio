@@ -48,7 +48,13 @@ No description.
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
 | `inputShmName` | `rw` | `true` | `true` | `string` | Input SHM name (e.g. shm.xxx.video). |
+| `inputVideoTransport` | `rw` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Input video frame transport backend. Zenoh is default; legacy_shm keeps old inputShmName. |
+| `inputVideoKey` | `rw` | `true` | `true` | `string` | Input video frame transport key. |
 | `outputShmName` | `ro` | `true` | `true` | `string` | Output SHM name generated from serviceId. |
+| `videoTransport` | `ro` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Output video frame transport backend. Zenoh is default; legacy_shm keeps old outputShmName. |
+| `videoKey` | `ro` | `true` | `true` | `string` | Output video frame transport key. |
+| `videoFormat` | `ro` | `true` | `false` | `string / enum[bgra32]` | Output video payload format. |
+| `videoFrameSchemaVersion` | `ro` | `true` | `false` | `integer / default=1` | Output video frame schema version. |
 | `motionModel` | `rw` | `true` | `false` | `string / enum[affine, homography] / default=affine` | Global motion model used by stabilizer. |
 | `stabilizationMode` | `rw` | `true` | `false` | `string / enum[trajectory, instant] / default=trajectory` | trajectory=smooth accumulated path; instant=smooth per-frame motion. |
 | `smoothAlpha` | `rw` | `true` | `false` | `number / default=0.15` | EMA alpha used for motion smoothing. |
@@ -61,20 +67,19 @@ No description.
 | `sceneCutFrameDiffThreshold` | `rw` | `true` | `false` | `number / default=18.0` | Scene cut threshold for mean(abs(gray-prevGray)). |
 | `sceneCutTrackRatioThreshold` | `rw` | `true` | `false` | `number / default=0.25` | Scene cut threshold for trackedPoints/max(prevPoints,1). |
 | `sceneCutCooldownFrames` | `rw` | `true` | `false` | `integer / default=5` | Suppress repeated scene cut triggers for N frames after a cut. |
-| `sceneChangeCount` | `ro` | `true` | `false` | `integer` | Monotonic counter incremented when a scene cut is detected. |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
 ### Key Fields That Matter
 
 - `inputShmName` (Input Video SHM, `rw`): Input SHM name (e.g. shm.xxx.video). Schema: `string`.
+- `inputVideoTransport` (Input Video Transport, `rw`): Input video frame transport backend. Zenoh is default; legacy_shm keeps old inputShmName. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
+- `inputVideoKey` (Input Video Key, `rw`): Input video frame transport key. Schema: `string`.
 - `outputShmName` (Output Video SHM, `ro`): Output SHM name generated from serviceId. Schema: `string`.
-- `motionModel` (Motion Model, `rw`): Global motion model used by stabilizer. Schema: `string / enum[affine, homography] / default=affine`.
-- `stabilizationMode` (Stabilization Mode, `rw`): trajectory=smooth accumulated path; instant=smooth per-frame motion. Schema: `string / enum[trajectory, instant] / default=trajectory`.
-- `smoothAlpha` (Smooth Alpha, `rw`): EMA alpha used for motion smoothing. Schema: `number / default=0.15`.
-- `maxCornerCount` (Max Corner Count, `rw`): LK feature count. Schema: `integer / default=300`.
-- `qualityLevel` (Quality Level, `rw`): goodFeaturesToTrack quality level. Schema: `number / default=0.01`.
-- `minDistance` (Min Distance, `rw`): Minimum corner distance. Schema: `number / default=8.0`.
+- `videoTransport` (Video Transport, `ro`): Output video frame transport backend. Zenoh is default; legacy_shm keeps old outputShmName. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
+- `videoKey` (Video Key, `ro`): Output video frame transport key. Schema: `string`.
+- `videoFormat` (Video Format, `ro`): Output video payload format. Schema: `string / enum[bgra32]`.
+- `videoFrameSchemaVersion` (Video Frame Schema, `ro`): Output video frame schema version. Schema: `integer / default=1`.
 
 ### Service Commands
 
