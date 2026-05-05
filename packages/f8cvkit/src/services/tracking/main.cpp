@@ -27,7 +27,6 @@ int main(int argc, char** argv) {
   cxxopts::Options options("f8cvkit_tracking_service", "CVKit tracking service (OpenCV contrib tracking)");
   options.add_options()("describe", "Print service spec JSON and exit")(
       "service-id", "Service instance id (required unless --describe)", cxxopts::value<std::string>()->default_value(""))(
-      "shm-name", "Override SHM name (e.g. shm.xxx.video)", cxxopts::value<std::string>()->default_value(""))(
       "tracker-kind", "Tracker backend (csrt|kcf|mil|nano|vit)",
       cxxopts::value<std::string>()->default_value("csrt"))(
       "model-dir", "Directory for tracker model files used by nano/vit",
@@ -82,7 +81,6 @@ int main(int argc, char** argv) {
   f8::cvkit::tracking::TrackingService::Config cfg;
   cfg.service_id = service_id;
   cfg.runtime_backend = runtime_backend;
-  cfg.shm_name = result["shm-name"].as<std::string>();
   cfg.tracker_kind = result["tracker-kind"].as<std::string>();
   cfg.model_dir = result["model-dir"].as<std::string>();
   cfg.auto_download_models = result["auto-download-models"].as<bool>();

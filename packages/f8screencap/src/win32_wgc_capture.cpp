@@ -374,7 +374,7 @@ bool Win32WgcCapture::open_capture(std::string& err) {
   rt_ = rt.release();
   set_error(std::string{});
 
-  // Write one placeholder frame so consumers (e.g. videoshm_viewer.py) can see valid dimensions immediately
+  // Write one placeholder frame so downstream stream consumers can see valid dimensions immediately,
   // even if no frames arrive yet.
   {
     const int out_w = static_cast<int>(sink_->outputWidth());

@@ -15,11 +15,10 @@ from f8pysdk.capabilities import ClosableNode, CommandableNode
 from f8pysdk.codec import unwrap_json_value
 from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
-from f8pysdk.shm.video import VIDEO_FORMAT_BGRA32, VIDEO_FORMAT_FLOW2_F16
+from f8pysdk.video_transport import VIDEO_FORMAT_BGRA32, VIDEO_FORMAT_FLOW2_F16
 from f8pysdk.video_transport import (
     LatestVideoFrame,
     LatestVideoFrameTransport,
-    LegacyShmLatestVideoFrameTransport,
     ZenohLatestVideoFrameTransport,
 )
 
@@ -30,9 +29,6 @@ from .script_runtime_values import (
 )
 
 logger = logging.getLogger(__name__)
-VIDEO_TRANSPORT_LEGACY_SHM = "legacy_shm"
-VIDEO_TRANSPORT_ZENOH = "zenoh"
-
 try:
     import numpy as np
 except ModuleNotFoundError:
@@ -59,9 +55,8 @@ DEFAULT_CODE = (
     "# - await ctx.set_state_async(field, value)\n"
     "# - ctx.emit(port, value)\n"
     "# - ctx.permission.local_exec_granted / ctx.permission.expires_ts_ms\n"
-    "# - ctx.subscribe_video_latest(key, video_key='f8/svc/.../data/video', decode='auto')\n"
+    "# - ctx.subscribe_video_latest(key, stream_key='f8/svc/.../data/video', decode='auto')\n"
     "# - pkt = ctx.get_video_latest(key)\n"
-    "# - ctx.subscribe_video_shm(key, shm_name, decode='auto')  # legacy compatibility\n"
     "# - TypeGuard helpers are available from f8_dynamic_inputs\n"
     "#   - example: from f8_dynamic_inputs import is_port_in\n"
     "#   - optional: from f8_dynamic_inputs import *\n"
@@ -134,11 +129,8 @@ _SAFE_MODULES: set[str] = {
 @dataclass
 class _LatestVideoSubscription:
     key: str
-    shm_name: str
-    video_transport: str
-    video_key: str
+    stream_key: str
     decode_mode: str
-    use_event: bool
     reader: LatestVideoFrameTransport | None = None
     task: asyncio.Task[object] | None = None
     latest_packet: dict[str, Any] | None = None
@@ -149,16 +141,7 @@ class _LatestVideoSubscription:
 
 
 def _video_subscription_source_metadata(sub: _LatestVideoSubscription) -> dict[str, Any]:
-    metadata: dict[str, Any] = {
-        "key": sub.key,
-        "transport": sub.video_transport,
-        "videoTransport": sub.video_transport,
-    }
-    if sub.video_transport == VIDEO_TRANSPORT_LEGACY_SHM:
-        metadata["shmName"] = sub.shm_name
-    else:
-        metadata["videoKey"] = sub.video_key
-    return metadata
+    return {"key": sub.key, "transport": "zenoh", "streamKey": sub.stream_key}
 
 
 def _video_subscription_status_metadata(sub: _LatestVideoSubscription) -> dict[str, Any]:
@@ -224,43 +207,24 @@ class PyScriptServiceContext:
     async def read_state(self, field: str) -> Any:
         return await self._node.get_state_value(str(field))
 
-    def subscribe_video_shm(self, key: str, shm_name: str, *, decode: str = "auto", use_event: bool = False) -> None:
-        self.subscribe_video_latest(
-            key,
-            transport=VIDEO_TRANSPORT_LEGACY_SHM,
-            shm_name=shm_name,
-            decode=decode,
-            use_event=use_event,
-        )
-
     def subscribe_video_latest(
         self,
         key: str,
         *,
-        video_key: str = "",
-        transport: str = VIDEO_TRANSPORT_ZENOH,
-        shm_name: str = "",
+        stream_key: str = "",
         decode: str = "auto",
-        use_event: bool = False,
     ) -> None:
         key_name = str(key or "").strip()
-        video_key_text = str(video_key or "").strip()
-        shm = str(shm_name or "").strip()
-        video_transport = self._node._normalize_video_transport(transport, video_key=video_key_text, shm_name=shm)
+        stream_key_text = str(stream_key or "").strip()
         if not key_name:
             return
-        if video_transport == VIDEO_TRANSPORT_ZENOH and not video_key_text:
-            return
-        if video_transport == VIDEO_TRANSPORT_LEGACY_SHM and not shm:
+        if not stream_key_text:
             return
         self._node._unsubscribe_video_latest_sync(key_name)
         sub = _LatestVideoSubscription(
             key=key_name,
-            shm_name=shm,
-            video_transport=video_transport,
-            video_key=video_key_text,
+            stream_key=stream_key_text,
             decode_mode=self._node._normalize_decode_mode(decode),
-            use_event=bool(use_event),
         )
         self._node._video_subscriptions[key_name] = sub
         try:
@@ -277,9 +241,6 @@ class PyScriptServiceContext:
             name=f"pyscript:video_sub:{self.service_id}:{key_name}",
         )
 
-    def get_video_shm(self, key: str) -> dict[str, Any] | None:
-        return self.get_video_latest(key)
-
     def get_video_latest(self, key: str) -> dict[str, Any] | None:
         key_name = str(key or "").strip()
         if not key_name:
@@ -289,14 +250,8 @@ class PyScriptServiceContext:
             return None
         return self._node._copy_packet_for_script(sub.latest_packet)
 
-    def unsubscribe_video_shm(self, key: str) -> None:
-        self.unsubscribe_video_latest(key)
-
     def unsubscribe_video_latest(self, key: str) -> None:
         self._node._unsubscribe_video_latest_sync(str(key or "").strip())
-
-    def list_video_shm_subscriptions(self) -> list[dict[str, Any]]:
-        return self.list_video_latest_subscriptions()
 
     def list_video_latest_subscriptions(self) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
@@ -448,18 +403,6 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         if mode in ("none", "auto"):
             return mode
         return "auto"
-
-    @staticmethod
-    def _normalize_video_transport(transport: Any, *, video_key: str, shm_name: str) -> str:
-        mode = str(transport or "").strip().lower()
-        _ = shm_name
-        if mode == VIDEO_TRANSPORT_ZENOH:
-            return VIDEO_TRANSPORT_ZENOH
-        if mode in (VIDEO_TRANSPORT_LEGACY_SHM, "shm"):
-            return VIDEO_TRANSPORT_LEGACY_SHM
-        if str(video_key or "").strip():
-            return VIDEO_TRANSPORT_ZENOH
-        return VIDEO_TRANSPORT_ZENOH
 
     @staticmethod
     def _header_to_dict(frame: LatestVideoFrame) -> dict[str, int]:
@@ -968,20 +911,18 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         except Exception as exc:
             self._log_error_deduped(
                 f"video_reader_close:{sub.key}",
-                f"video reader close failed key={sub.key} transport={sub.video_transport}",
+                f"video reader close failed key={sub.key}",
                 exc,
             )
 
     def _open_video_sub_reader(self, sub: _LatestVideoSubscription) -> LatestVideoFrameTransport:
-        if sub.video_transport == VIDEO_TRANSPORT_ZENOH:
-            return ZenohLatestVideoFrameTransport.open_subscriber(
-                sub.video_key,
-                config_path=self._zenoh_config_path,
-                connect=self._zenoh_connect,
-                listen=self._zenoh_listen,
-                shm_pool_bytes=self._zenoh_shm_pool_bytes,
-            )
-        return LegacyShmLatestVideoFrameTransport.open_reader(sub.shm_name, use_event=bool(sub.use_event))
+        return ZenohLatestVideoFrameTransport.open_subscriber(
+            sub.stream_key,
+            config_path=self._zenoh_config_path,
+            connect=self._zenoh_connect,
+            listen=self._zenoh_listen,
+            shm_pool_bytes=self._zenoh_shm_pool_bytes,
+        )
 
     async def _run_video_latest_subscription(self, key: str) -> None:
         sub_ref: _LatestVideoSubscription | None = None
@@ -1002,10 +943,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
                         sub.error_count += 1
                         self._log_error_deduped(
                             f"video_open:{sub.key}",
-                            (
-                                f"video latest open failed key={sub.key} transport={sub.video_transport} "
-                                f"videoKey={sub.video_key} shm={sub.shm_name}"
-                            ),
+                            f"video latest open failed key={sub.key} stream_key={sub.stream_key}",
                             exc,
                         )
                         await asyncio.sleep(0.2)
@@ -1054,10 +992,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
                     sub.error_count += 1
                     self._log_error_deduped(
                         f"video_read:{sub.key}",
-                        (
-                            f"video latest read failed key={sub.key} transport={sub.video_transport} "
-                            f"videoKey={sub.video_key} shm={sub.shm_name}"
-                        ),
+                        f"video latest read failed key={sub.key} stream_key={sub.stream_key}",
                         exc,
                     )
                     self._close_video_sub_reader(sub)

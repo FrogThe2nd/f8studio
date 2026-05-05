@@ -25,18 +25,18 @@ These nodes are editor-local features shipped by `f8.pystudio`. They are first-c
 
 ## `f8.viz.video`
 
-- What it does: previews Zenoh latest-frame video and optional flow/scalar overlays, with legacy SHM fallback.
+- What it does: previews Zenoh latest-frame video and optional flow/scalar overlays from typed data ports.
 - Use it when: validating screen/video ingestion or checking optical-flow/scalar-field outputs.
-- Common wiring: point `serviceId` or `videoKey` at `f8.implayer`, `f8.screencap`, or downstream flow/scalar producers.
-- Key fields: `serviceId`, `videoKey`, `flowKey`, `flowDisplay`, `scalarKey`, `scalarDisplay`.
+- Common wiring: connect `video`, `flow`, or `scalar` data inputs to `f8.implayer`, `f8.screencap`, or downstream flow/scalar producers.
+- Key fields: `flowDisplay`, `scalarDisplay`, and render refresh controls.
 - Related scenarios: best paired with media, CVKit, and flow-metric service pages.
 
 ## `f8.viz.audio`
 
-- What it does: previews waveform data from Zenoh latest-audio chunks, with legacy SHM fallback.
+- What it does: previews waveform data from Zenoh latest-audio chunks on a typed data input.
 - Use it when: checking capture health, input latency, and whether audio activity matches downstream features.
-- Common wiring: point `serviceId` or `audioKey` at `f8.audiocap`.
-- Key fields: `serviceId`, `audioKey`, `historyMs`, `channel`, `refreshMs`.
+- Common wiring: connect its `audio` data input to `f8.audiocap`.
+- Key fields: `historyMs`, `channel`, `refreshMs`.
 - Related scenarios: `Scene 03`.
 
 ## `f8.viz.track`

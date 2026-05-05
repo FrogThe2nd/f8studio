@@ -8,10 +8,10 @@ import numpy as np
 from qtpy import QtCore, QtGui, QtWidgets
 from NodeGraphQt.nodes.base_node import NodeBaseWidget
 
-from f8pysdk.shm import VIDEO_FORMAT_BGRA32, VIDEO_FORMAT_FLOW2_F16
 from f8pysdk.video_transport import (
     LatestVideoFrameTransport,
-    LegacyShmLatestVideoFrameTransport,
+    VIDEO_FORMAT_BGRA32,
+    VIDEO_FORMAT_FLOW2_F16,
     ZenohLatestVideoFrameTransport,
 )
 
@@ -24,18 +24,6 @@ import pyqtgraph as pg  # type: ignore[import-not-found]
 
 _STATE_UI_UPDATE = "uiUpdate"
 _WIDGET_NAME = "__trackviz"
-_TRANSPORT_LEGACY_SHM = "legacy_shm"
-_TRANSPORT_ZENOH = "zenoh"
-
-
-def _normalize_frame_transport(value: object, *, zenoh_key: str, shm_name: str) -> str:
-    transport = str(value or "").strip().lower()
-    _ = shm_name
-    if transport in (_TRANSPORT_LEGACY_SHM, _TRANSPORT_ZENOH):
-        return transport
-    if str(zenoh_key or "").strip():
-        return _TRANSPORT_ZENOH
-    return _TRANSPORT_ZENOH
 
 
 def _color_for_id(track_id: int) -> tuple[int, int, int]:
@@ -406,19 +394,15 @@ class _TrackVizPane(QtWidgets.QWidget):
         self._pending = None
         self._last_wh: tuple[int, int] | None = None
         self._scene_size: tuple[int, int] | None = None
-        self._video_transport = _TRANSPORT_ZENOH
-        self._video_key = ""
-        self._video_shm_name = ""
-        self._video_shm_throttle_ms = 33
+        self._video_stream_key = ""
+        self._video_frame_throttle_ms = 33
         self._video_reader: LatestVideoFrameTransport | None = None
-        self._flow_transport = _TRANSPORT_ZENOH
-        self._flow_key = ""
+        self._flow_stream_key = ""
         self._flow_reader: LatestVideoFrameTransport | None = None
         self._video_frame_id = 0
         self._flow_frame_id = 0
         self._video_frame_bytes: bytes | None = None
         self._video_size: tuple[int, int] | None = None
-        self._flow_shm_name = ""
         self._show_dense_flow = True
         self._show_sparse_flow = True
         self._dense_flow_mode = "hsv"
@@ -427,7 +411,7 @@ class _TrackVizPane(QtWidgets.QWidget):
         self._video_timer.timeout.connect(self._tick_video)  # type: ignore[attr-defined]
         self._video_timer.setInterval(33)
 
-        # Smaller default footprint (similar to VideoSHM view).
+        # Smaller default footprint for graph-embedded preview.
         self.setMinimumWidth(240)
         self.setMinimumHeight(180)
         self.setMaximumWidth(240)
@@ -455,29 +439,13 @@ class _TrackVizPane(QtWidgets.QWidget):
             return
 
         try:
-            video_shm_name = str(payload.get("videoShmName") or "").strip()
+            video_stream_key = str(payload.get("videoStreamKey") or "").strip()
         except (AttributeError, TypeError, ValueError):
-            video_shm_name = ""
+            video_stream_key = ""
         try:
-            video_transport = payload.get("videoTransport")
+            flow_stream_key = str(payload.get("flowStreamKey") or "").strip()
         except (AttributeError, TypeError, ValueError):
-            video_transport = ""
-        try:
-            video_key = str(payload.get("videoKey") or "").strip()
-        except (AttributeError, TypeError, ValueError):
-            video_key = ""
-        try:
-            flow_shm_name = str(payload.get("flowShmName") or "").strip()
-        except (AttributeError, TypeError, ValueError):
-            flow_shm_name = ""
-        try:
-            flow_transport = payload.get("flowTransport")
-        except (AttributeError, TypeError, ValueError):
-            flow_transport = ""
-        try:
-            flow_key = str(payload.get("flowKey") or "").strip()
-        except (AttributeError, TypeError, ValueError):
-            flow_key = ""
+            flow_stream_key = ""
         try:
             dense_flow_mode = str(payload.get("denseFlowMode") or "hsv").strip().lower()
         except (AttributeError, TypeError, ValueError):
@@ -487,18 +455,14 @@ class _TrackVizPane(QtWidgets.QWidget):
         show_dense_flow = bool(payload.get("showDenseFlow", True))
         show_sparse_flow = bool(payload.get("showSparseFlow", True))
         try:
-            video_shm_throttle_ms = int(payload.get("throttleMs") or 33)
+            video_frame_throttle_ms = int(payload.get("throttleMs") or 33)
         except (AttributeError, TypeError, ValueError):
-            video_shm_throttle_ms = 33
+            video_frame_throttle_ms = 33
 
         self._set_video_config(
-            shm_name=video_shm_name,
-            video_transport=video_transport,
-            video_key=video_key,
-            throttle_ms=video_shm_throttle_ms,
-            flow_shm_name=flow_shm_name,
-            flow_transport=flow_transport,
-            flow_key=flow_key,
+            video_stream_key=video_stream_key,
+            throttle_ms=video_frame_throttle_ms,
+            flow_stream_key=flow_stream_key,
             show_dense_flow=show_dense_flow,
             show_sparse_flow=show_sparse_flow,
             dense_flow_mode=dense_flow_mode,
@@ -531,54 +495,26 @@ class _TrackVizPane(QtWidgets.QWidget):
     def _set_video_config(
         self,
         *,
-        shm_name: str,
-        video_transport: object,
-        video_key: str,
+        video_stream_key: str,
         throttle_ms: int,
-        flow_shm_name: str,
-        flow_transport: object,
-        flow_key: str,
+        flow_stream_key: str,
         show_dense_flow: bool,
         show_sparse_flow: bool,
         dense_flow_mode: str,
     ) -> None:
         next_throttle_ms = max(1, int(throttle_ms))
-        if self._video_shm_throttle_ms != next_throttle_ms:
-            self._video_shm_throttle_ms = next_throttle_ms
-            self._video_timer.setInterval(self._video_shm_throttle_ms)
+        if self._video_frame_throttle_ms != next_throttle_ms:
+            self._video_frame_throttle_ms = next_throttle_ms
+            self._video_timer.setInterval(self._video_frame_throttle_ms)
 
-        next_name = str(shm_name or "").strip()
-        next_video_key = str(video_key or "").strip()
-        next_video_transport = _normalize_frame_transport(
-            video_transport,
-            zenoh_key=next_video_key,
-            shm_name=next_name,
-        )
-        if (
-            next_name != self._video_shm_name
-            or next_video_transport != self._video_transport
-            or next_video_key != self._video_key
-        ):
-            self._video_shm_name = next_name
-            self._video_transport = next_video_transport
-            self._video_key = next_video_key
+        next_video_stream_key = str(video_stream_key or "").strip()
+        if next_video_stream_key != self._video_stream_key:
+            self._video_stream_key = next_video_stream_key
             self._reset_video_reader()
 
-        next_flow_name = str(flow_shm_name or "").strip()
-        next_flow_key = str(flow_key or "").strip()
-        next_flow_transport = _normalize_frame_transport(
-            flow_transport,
-            zenoh_key=next_flow_key,
-            shm_name=next_flow_name,
-        )
-        if (
-            next_flow_name != self._flow_shm_name
-            or next_flow_transport != self._flow_transport
-            or next_flow_key != self._flow_key
-        ):
-            self._flow_shm_name = next_flow_name
-            self._flow_transport = next_flow_transport
-            self._flow_key = next_flow_key
+        next_flow_stream_key = str(flow_stream_key or "").strip()
+        if next_flow_stream_key != self._flow_stream_key:
+            self._flow_stream_key = next_flow_stream_key
             self._reset_flow_reader()
 
         self._show_dense_flow = bool(show_dense_flow)
@@ -588,12 +524,8 @@ class _TrackVizPane(QtWidgets.QWidget):
         self._sync_video_timer_with_update_state()
 
     def _sync_video_timer_with_update_state(self) -> None:
-        has_video_input = (
-            bool(self._video_key) if self._video_transport == _TRANSPORT_ZENOH else bool(self._video_shm_name)
-        )
-        has_flow_input = (
-            bool(self._flow_key) if self._flow_transport == _TRANSPORT_ZENOH else bool(self._flow_shm_name)
-        )
+        has_video_input = bool(self._video_stream_key)
+        has_flow_input = bool(self._flow_stream_key)
         has_input = has_video_input or (self._show_dense_flow and has_flow_input)
         if has_input and self.update_enabled():
             if not self._video_timer.isActive():
@@ -611,7 +543,7 @@ class _TrackVizPane(QtWidgets.QWidget):
             return
         width = 0
         height = 0
-        # Priority: VideoSHM frame size first.
+        # Priority: live video frame size first.
         if self._video_size is not None:
             width, height = self._video_size
         elif self._scene_size is not None:
@@ -655,17 +587,12 @@ class _TrackVizPane(QtWidgets.QWidget):
         if self._video_reader is not None:
             return True
         try:
-            if self._video_transport == _TRANSPORT_ZENOH:
-                if not self._video_key:
-                    return False
-                reader: LatestVideoFrameTransport = ZenohLatestVideoFrameTransport.open_subscriber(self._video_key)
-            else:
-                if not self._video_shm_name:
-                    return False
-                reader = LegacyShmLatestVideoFrameTransport.open_reader(self._video_shm_name, use_event=False)
+            if not self._video_stream_key:
+                return False
+            reader: LatestVideoFrameTransport = ZenohLatestVideoFrameTransport.open_subscriber(self._video_stream_key)
             self._video_reader = reader
             return True
-        except (FileNotFoundError, OSError, RuntimeError, ValueError):
+        except (OSError, RuntimeError, ValueError):
             self._video_reader = None
             return False
 
@@ -673,17 +600,12 @@ class _TrackVizPane(QtWidgets.QWidget):
         if self._flow_reader is not None:
             return True
         try:
-            if self._flow_transport == _TRANSPORT_ZENOH:
-                if not self._flow_key:
-                    return False
-                reader: LatestVideoFrameTransport = ZenohLatestVideoFrameTransport.open_subscriber(self._flow_key)
-            else:
-                if not self._flow_shm_name:
-                    return False
-                reader = LegacyShmLatestVideoFrameTransport.open_reader(self._flow_shm_name, use_event=False)
+            if not self._flow_stream_key:
+                return False
+            reader: LatestVideoFrameTransport = ZenohLatestVideoFrameTransport.open_subscriber(self._flow_stream_key)
             self._flow_reader = reader
             return True
-        except (FileNotFoundError, OSError, RuntimeError, ValueError):
+        except (OSError, RuntimeError, ValueError):
             self._flow_reader = None
             return False
 
@@ -746,9 +668,7 @@ class _TrackVizPane(QtWidgets.QWidget):
                 finally:
                     frame.release()
 
-        has_flow_input = (
-            bool(self._flow_key) if self._flow_transport == _TRANSPORT_ZENOH else bool(self._flow_shm_name)
-        )
+        has_flow_input = bool(self._flow_stream_key)
         if not self._show_dense_flow or not has_flow_input:
             return
 

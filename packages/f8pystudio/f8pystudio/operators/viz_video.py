@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
-from typing import Any
+from typing import Any, cast
 
 from f8pysdk.specs import (
+    F8DataPortDelivery,
+    F8DataPortPayloadKind,
+    F8DataPortSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
+    F8RuntimeGraph,
     F8RuntimeNode,
     F8StateAccess,
     F8StateSpec,
@@ -14,12 +19,12 @@ from f8pysdk.specs import (
     integer_schema,
     number_schema,
     string_schema,
+    video_frame_schema,
 )
+from f8pysdk.capabilities import RungraphHookBus
 from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import OperatorNode
 from f8pysdk.registry import Registry
-from f8pysdk.shm import video_shm_name
-from f8pysdk.zenoh_naming import zenoh_data_key
 
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
 from f8pystudio.contracts.ui_commands import emit_ui_command
@@ -28,27 +33,12 @@ from .categories import PALETTE_CATEGORY_VIZ
 
 OPERATOR_CLASS = "f8.viz.video"
 RENDERER_CLASS = "viz_video"
-
-
-def _default_video_shm_name(service_id: str) -> str:
-    s = str(service_id or "").strip()
-    return video_shm_name(s) if s else ""
-
-
-def _default_video_zenoh_key(service_id: str, port_id: str) -> str:
-    s = str(service_id or "").strip()
-    p = str(port_id or "").strip()
-    if not s or not p:
-        return ""
-    try:
-        return zenoh_data_key(s, node_id=s, port_id=p)
-    except ValueError:
-        return ""
+log = logging.getLogger(__name__)
 
 
 class VizVideoRuntimeNode(OperatorNode):
     """
-    Studio-only visualization node: view Zenoh latest-frame or legacy SHM video in a Qt widget.
+    Studio-only visualization node: view Zenoh latest-frame video in a Qt widget.
 
     This runtime node only pushes config to the UI layer; the Qt widget owns
     the selected latest-frame reader to avoid pushing frame payloads through UiCommand.
@@ -63,7 +53,32 @@ class VizVideoRuntimeNode(OperatorNode):
         label="Video Viz",
         description="Display frames from Zenoh latest-frame video streams.",
         tags=["ui", "zenoh", "video", "viewer"],
-        dataInPorts=[],
+        dataInPorts=[
+            F8DataPortSpec(
+                name="video",
+                description="Input video frame stream.",
+                valueSchema=video_frame_schema(),
+                payloadKind=F8DataPortPayloadKind.video_frame,
+                delivery=F8DataPortDelivery.latest,
+                required=True,
+            ),
+            F8DataPortSpec(
+                name="flow",
+                description="Optional dense optical-flow frame stream.",
+                valueSchema=video_frame_schema(),
+                payloadKind=F8DataPortPayloadKind.video_frame,
+                delivery=F8DataPortDelivery.latest,
+                required=False,
+            ),
+            F8DataPortSpec(
+                name="scalar",
+                description="Optional scalar metric frame stream.",
+                valueSchema=video_frame_schema(),
+                payloadKind=F8DataPortPayloadKind.video_frame,
+                delivery=F8DataPortDelivery.latest,
+                required=False,
+            ),
+        ],
         dataOutPorts=[],
         rendererClass=RENDERER_CLASS,
         stateFields=[
@@ -77,51 +92,6 @@ class VizVideoRuntimeNode(OperatorNode):
                 showOnNode=False,
             ),
             F8StateSpec(
-                name="serviceId",
-                label="Service Id",
-                description="Optional producer service id used to derive the default Zenoh video key.",
-                valueSchema=string_schema(default=""),
-                access=F8StateAccess.rw,
-                required=True,
-                showOnNode=False,
-            ),
-            F8StateSpec(
-                name="shmName",
-                label="Legacy Video SHM",
-                description="Legacy video SHM mapping name used only when videoTransport=legacy_shm.",
-                valueSchema=string_schema(default=""),
-                access=F8StateAccess.rw,
-                required=False,
-                showOnNode=False,
-            ),
-            F8StateSpec(
-                name="videoTransport",
-                label="Video Transport",
-                description="Frame transport backend.",
-                valueSchema=string_schema(default="zenoh", enum=["zenoh", "legacy_shm"]),
-                access=F8StateAccess.rw,
-                required=True,
-                showOnNode=False,
-            ),
-            F8StateSpec(
-                name="videoKey",
-                label="Video Key",
-                description="Zenoh latest-frame key for video input.",
-                valueSchema=string_schema(default=""),
-                access=F8StateAccess.rw,
-                required=True,
-                showOnNode=True,
-            ),
-            F8StateSpec(
-                name="videoFormat",
-                label="Video Format",
-                description="Frame payload format.",
-                valueSchema=string_schema(default="bgra32", enum=["bgra32", "bgr24", "flow2_f16", "scalar1_f32"]),
-                access=F8StateAccess.rw,
-                required=True,
-                showOnNode=False,
-            ),
-            F8StateSpec(
                 name="throttleMs",
                 label="Refresh (ms)",
                 description="UI refresh interval in milliseconds (0 = as fast as possible).",
@@ -129,33 +99,6 @@ class VizVideoRuntimeNode(OperatorNode):
                 access=F8StateAccess.rw,
                 required=True,
                 showOnNode=False,
-            ),
-            F8StateSpec(
-                name="flowShmName",
-                label="Legacy Flow SHM",
-                description="Legacy flow SHM mapping name used only when flowTransport=legacy_shm.",
-                valueSchema=string_schema(default=""),
-                access=F8StateAccess.rw,
-                required=False,
-                showOnNode=False,
-            ),
-            F8StateSpec(
-                name="flowTransport",
-                label="Flow Transport",
-                description="Flow frame transport backend.",
-                valueSchema=string_schema(default="zenoh", enum=["zenoh", "legacy_shm"]),
-                access=F8StateAccess.rw,
-                required=True,
-                showOnNode=False,
-            ),
-            F8StateSpec(
-                name="flowKey",
-                label="Flow Key",
-                description="Zenoh latest-frame key for flow input.",
-                valueSchema=string_schema(default=""),
-                access=F8StateAccess.rw,
-                required=True,
-                showOnNode=True,
             ),
             F8StateSpec(
                 name="flowDisplayMode",
@@ -192,33 +135,6 @@ class VizVideoRuntimeNode(OperatorNode):
                 access=F8StateAccess.rw,
                 required=True,
                 showOnNode=False,
-            ),
-            F8StateSpec(
-                name="scalarShmName",
-                label="Legacy Scalar SHM",
-                description="Legacy scalar SHM mapping name used only when scalarTransport=legacy_shm.",
-                valueSchema=string_schema(default=""),
-                access=F8StateAccess.rw,
-                required=False,
-                showOnNode=False,
-            ),
-            F8StateSpec(
-                name="scalarTransport",
-                label="Scalar Transport",
-                description="Scalar frame transport backend.",
-                valueSchema=string_schema(default="zenoh", enum=["zenoh", "legacy_shm"]),
-                access=F8StateAccess.rw,
-                required=True,
-                showOnNode=False,
-            ),
-            F8StateSpec(
-                name="scalarKey",
-                label="Scalar Key",
-                description="Transport-specific scalar stream key.",
-                valueSchema=string_schema(default=""),
-                access=F8StateAccess.rw,
-                required=True,
-                showOnNode=True,
             ),
             F8StateSpec(
                 name="scalarDisplayMode",
@@ -313,22 +229,11 @@ class VizVideoRuntimeNode(OperatorNode):
         )
         self._initial_state = dict(initial_state or {})
         self._config_loaded = False
-        self._service_id = ""
-        self._shm_name = ""
-        self._video_transport = "zenoh"
-        self._video_key = ""
-        self._video_format = "bgra32"
         self._throttle_ms = 33
-        self._flow_shm_name = ""
-        self._flow_transport = "zenoh"
-        self._flow_key = ""
         self._flow_display_mode = "off"
         self._flow_mag_scale = 20.0
         self._flow_stride = 12
         self._scale_mode = "native"
-        self._scalar_shm_name = ""
-        self._scalar_transport = "zenoh"
-        self._scalar_key = ""
         self._scalar_display_mode = "off"
         self._scalar_colormap = "turbo"
         self._scalar_range_mode = "auto"
@@ -339,45 +244,50 @@ class VizVideoRuntimeNode(OperatorNode):
         self._scalar_invert = False
         self._scalar_nan_mode = "transparent"
         self._pending_task: asyncio.Task[object] | None = None
+        self._rungraph_bus: RungraphHookBus | None = None
 
     def attach(self, bus: Any) -> None:
         super().attach(bus)
+        rungraph_bus = cast(RungraphHookBus, bus)
+        rungraph_bus.register_rungraph_hook(self)
+        self._rungraph_bus = rungraph_bus
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(self._ensure_config_loaded(), name=f"pystudio:videoshm:init:{self.node_id}")
+            loop.create_task(self._ensure_config_loaded(), name=f"pystudio:video:init:{self.node_id}")
         except RuntimeError:
             pass
 
     async def close(self) -> None:
         try:
+            rungraph_bus = self._rungraph_bus
+            self._rungraph_bus = None
+            if rungraph_bus is not None:
+                rungraph_bus.unregister_rungraph_hook(self)
             t = self._pending_task
             self._pending_task = None
             if t is not None:
                 t.cancel()
                 await asyncio.gather(t, return_exceptions=True)
-        except (RuntimeError, TypeError):
-            pass
+        except (RuntimeError, TypeError, ValueError) as exc:
+            log.debug("viz video node close cleanup failed node_id=%s", self.node_id, exc_info=exc)
         emit_ui_command(self.node_id, "viz.video.detach", {}, ts_ms=int(time.time() * 1000))
+
+    async def validate_rungraph(self, graph: F8RuntimeGraph) -> None:
+        del graph
+
+    async def on_rungraph(self, graph: F8RuntimeGraph) -> None:
+        del graph
+        await self._ensure_config_loaded()
+        await self._push_config(now_ms=int(time.time() * 1000))
 
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
         f = str(field or "").strip()
         if f not in (
-            "serviceId",
-            "shmName",
-            "videoTransport",
-            "videoKey",
-            "videoFormat",
             "throttleMs",
-            "flowShmName",
-            "flowTransport",
-            "flowKey",
             "flowDisplayMode",
             "flowMagScale",
             "flowStride",
             "scaleMode",
-            "scalarShmName",
-            "scalarTransport",
-            "scalarKey",
             "scalarDisplayMode",
             "scalarColormap",
             "scalarRangeMode",
@@ -390,27 +300,8 @@ class VizVideoRuntimeNode(OperatorNode):
         ):
             return
         await self._ensure_config_loaded()
-        if f == "serviceId":
-            self._service_id = str(await self._get_str_state("serviceId", default=self._service_id)).strip()
-        elif f == "shmName":
-            self._shm_name = str(await self._get_str_state("shmName", default=self._shm_name)).strip()
-        elif f == "videoTransport":
-            transport = str(await self._get_str_state("videoTransport", default=self._video_transport)).strip().lower()
-            self._video_transport = transport if transport in ("legacy_shm", "zenoh") else "zenoh"
-        elif f == "videoKey":
-            self._video_key = str(await self._get_str_state("videoKey", default=self._video_key)).strip()
-        elif f == "videoFormat":
-            fmt = str(await self._get_str_state("videoFormat", default=self._video_format)).strip().lower()
-            self._video_format = fmt if fmt in ("bgra32", "bgr24", "flow2_f16", "scalar1_f32") else "bgra32"
-        elif f == "throttleMs":
+        if f == "throttleMs":
             self._throttle_ms = await self._get_int_state("throttleMs", default=self._throttle_ms, minimum=0, maximum=60000)
-        elif f == "flowShmName":
-            self._flow_shm_name = str(await self._get_str_state("flowShmName", default=self._flow_shm_name)).strip()
-        elif f == "flowTransport":
-            transport = str(await self._get_str_state("flowTransport", default=self._flow_transport)).strip().lower()
-            self._flow_transport = transport if transport in ("legacy_shm", "zenoh") else "zenoh"
-        elif f == "flowKey":
-            self._flow_key = str(await self._get_str_state("flowKey", default=self._flow_key)).strip()
         elif f == "flowDisplayMode":
             mode = str(await self._get_str_state("flowDisplayMode", default=self._flow_display_mode)).strip().lower()
             self._flow_display_mode = mode if mode in ("off", "hsv", "arrows") else "off"
@@ -421,13 +312,6 @@ class VizVideoRuntimeNode(OperatorNode):
         elif f == "scaleMode":
             mode = str(await self._get_str_state("scaleMode", default=self._scale_mode)).strip().lower()
             self._scale_mode = mode if mode in ("native", "fit") else "native"
-        elif f == "scalarShmName":
-            self._scalar_shm_name = str(await self._get_str_state("scalarShmName", default=self._scalar_shm_name)).strip()
-        elif f == "scalarTransport":
-            transport = str(await self._get_str_state("scalarTransport", default=self._scalar_transport)).strip().lower()
-            self._scalar_transport = transport if transport in ("legacy_shm", "zenoh") else "zenoh"
-        elif f == "scalarKey":
-            self._scalar_key = str(await self._get_str_state("scalarKey", default=self._scalar_key)).strip()
         elif f == "scalarDisplayMode":
             mode = str(await self._get_str_state("scalarDisplayMode", default=self._scalar_display_mode)).strip().lower()
             self._scalar_display_mode = self._normalize_scalar_display_mode(mode)
@@ -475,43 +359,13 @@ class VizVideoRuntimeNode(OperatorNode):
     async def _ensure_config_loaded(self) -> None:
         if self._config_loaded:
             return
-        self._service_id = str(await self._get_str_state("serviceId", default=str(self._initial_state.get("serviceId", "")))).strip()
-        self._shm_name = str(await self._get_str_state("shmName", default=str(self._initial_state.get("shmName", "")))).strip()
-        transport = str(
-            await self._get_str_state("videoTransport", default=str(self._initial_state.get("videoTransport", "zenoh")))
-        ).strip().lower()
-        self._video_transport = transport if transport in ("legacy_shm", "zenoh") else "zenoh"
-        self._video_key = str(
-            await self._get_str_state("videoKey", default=str(self._initial_state.get("videoKey", "")))
-        ).strip()
-        fmt = str(await self._get_str_state("videoFormat", default=str(self._initial_state.get("videoFormat", "bgra32")))).strip().lower()
-        self._video_format = fmt if fmt in ("bgra32", "bgr24", "flow2_f16", "scalar1_f32") else "bgra32"
         self._throttle_ms = await self._get_int_state("throttleMs", default=33, minimum=0, maximum=60000)
-        self._flow_shm_name = str(await self._get_str_state("flowShmName", default=str(self._initial_state.get("flowShmName", "")))).strip()
-        flow_transport = str(
-            await self._get_str_state("flowTransport", default=str(self._initial_state.get("flowTransport", "zenoh")))
-        ).strip().lower()
-        self._flow_transport = flow_transport if flow_transport in ("legacy_shm", "zenoh") else "zenoh"
-        self._flow_key = str(await self._get_str_state("flowKey", default=str(self._initial_state.get("flowKey", "")))).strip()
         flow_mode = str(await self._get_str_state("flowDisplayMode", default=str(self._initial_state.get("flowDisplayMode", "off")))).strip().lower()
         self._flow_display_mode = flow_mode if flow_mode in ("off", "hsv", "arrows") else "off"
         self._flow_mag_scale = await self._get_float_state("flowMagScale", default=20.0, minimum=0.1, maximum=500.0)
         self._flow_stride = await self._get_int_state("flowStride", default=12, minimum=2, maximum=128)
         mode = str(await self._get_str_state("scaleMode", default=str(self._initial_state.get("scaleMode", "native")))).strip().lower()
         self._scale_mode = mode if mode in ("native", "fit") else "native"
-        self._scalar_shm_name = str(
-            await self._get_str_state("scalarShmName", default=str(self._initial_state.get("scalarShmName", "")))
-        ).strip()
-        scalar_transport = str(
-            await self._get_str_state(
-                "scalarTransport",
-                default=str(self._initial_state.get("scalarTransport", "zenoh")),
-            )
-        ).strip().lower()
-        self._scalar_transport = scalar_transport if scalar_transport in ("legacy_shm", "zenoh") else "zenoh"
-        self._scalar_key = str(
-            await self._get_str_state("scalarKey", default=str(self._initial_state.get("scalarKey", "")))
-        ).strip()
         scalar_display = str(
             await self._get_str_state("scalarDisplayMode", default=str(self._initial_state.get("scalarDisplayMode", "off")))
         ).strip().lower()
@@ -556,43 +410,21 @@ class VizVideoRuntimeNode(OperatorNode):
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
-        self._pending_task = loop.create_task(self._push_config_async(now_ms), name=f"pystudio:videoshm:cfg:{self.node_id}")
+        self._pending_task = loop.create_task(self._push_config_async(now_ms), name=f"pystudio:video:cfg:{self.node_id}")
 
     async def _push_config_async(self, now_ms: int) -> None:
-        shm_name = str(self._shm_name or "").strip()
-        if not shm_name and self._video_transport == "legacy_shm":
-            shm_name = str(self._video_key or "").strip()
-        if not shm_name and self._video_transport == "legacy_shm":
-            shm_name = _default_video_shm_name(self._service_id)
-        flow_shm_name = str(self._flow_shm_name or "").strip()
-        if not flow_shm_name and self._flow_transport == "legacy_shm":
-            flow_shm_name = str(self._flow_key or "").strip()
-        scalar_shm_name = str(self._scalar_shm_name or "").strip()
-        if not scalar_shm_name and self._scalar_transport == "legacy_shm":
-            scalar_shm_name = str(self._scalar_key or "").strip()
-        video_key = str(self._video_key or "").strip()
-        if not video_key and self._video_transport == "zenoh":
-            video_key = _default_video_zenoh_key(self._service_id, "video")
-        flow_key = str(self._flow_key or "").strip()
-        if not flow_key and self._flow_transport == "zenoh":
-            flow_key = _default_video_zenoh_key(self._service_id, "flow")
-        scalar_key = str(self._scalar_key or "").strip()
-        if not scalar_key and self._scalar_transport == "zenoh":
-            scalar_key = _default_video_zenoh_key(self._service_id, "scalar")
+        video_stream_key = str(self.input_zenoh_key("video") or "").strip()
+        flow_stream_key = str(self.input_zenoh_key("flow") or "").strip()
+        scalar_stream_key = str(self.input_zenoh_key("scalar") or "").strip()
         payload: dict[str, object] = {
-            "serviceId": str(self._service_id or "").strip(),
-            "videoTransport": str(self._video_transport or "zenoh"),
-            "videoKey": video_key,
-            "videoFormat": str(self._video_format or "bgra32"),
+            "videoStreamKey": video_stream_key,
             "throttleMs": int(self._throttle_ms),
-            "flowTransport": str(self._flow_transport or "zenoh"),
-            "flowKey": flow_key,
+            "flowStreamKey": flow_stream_key,
             "flowDisplayMode": str(self._flow_display_mode or "off"),
             "flowMagScale": float(self._flow_mag_scale),
             "flowStride": int(self._flow_stride),
             "scaleMode": str(self._scale_mode or "native"),
-            "scalarTransport": str(self._scalar_transport or "zenoh"),
-            "scalarKey": scalar_key,
+            "scalarStreamKey": scalar_stream_key,
             "scalarDisplayMode": self._normalize_scalar_display_mode(self._scalar_display_mode),
             "scalarColormap": self._normalize_scalar_colormap(self._scalar_colormap),
             "scalarRangeMode": self._normalize_scalar_range_mode(self._scalar_range_mode),
@@ -603,12 +435,6 @@ class VizVideoRuntimeNode(OperatorNode):
             "scalarInvert": bool(self._scalar_invert),
             "scalarNanMode": self._normalize_scalar_nan_mode(self._scalar_nan_mode),
         }
-        if self._video_transport == "legacy_shm":
-            payload["shmName"] = shm_name
-        if self._flow_transport == "legacy_shm":
-            payload["flowShmName"] = flow_shm_name
-        if self._scalar_transport == "legacy_shm":
-            payload["scalarShmName"] = scalar_shm_name
         emit_ui_command(
             self.node_id,
             "viz.video.set",

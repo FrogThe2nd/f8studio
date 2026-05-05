@@ -83,6 +83,37 @@ json schema_array(const json& item_schema) {
   return arr;
 }
 
+json schema_video_frame() {
+  json obj = schema_object(
+      json{{"schemaVersion", schema_integer(1, 1, 1)},
+           {"format", schema_string_enum({"bgra32", "bgr24", "flow2_f16", "scalar1_f32"})},
+           {"width", schema_integer()},
+           {"height", schema_integer()},
+           {"pitch", schema_integer()},
+           {"frameId", schema_integer()},
+           {"tsMs", schema_integer()}},
+      json::array({"schemaVersion", "format", "width", "height", "pitch", "frameId", "tsMs"}));
+  obj["$comment"] = "f8.payloadKind=video_frame";
+  return obj;
+}
+
+json schema_audio_chunk() {
+  json obj = schema_object(
+      json{{"schemaVersion", schema_integer(1, 1, 1)},
+           {"format", schema_string_enum({"f32le"})},
+           {"sampleRate", schema_integer()},
+           {"channels", schema_integer()},
+           {"frames", schema_integer()},
+           {"bytesPerFrame", schema_integer()},
+           {"seq", schema_integer()},
+           {"frameIndex", schema_integer()},
+           {"tsMs", schema_integer()}},
+      json::array({"schemaVersion", "format", "sampleRate", "channels", "frames", "bytesPerFrame", "seq",
+                   "frameIndex", "tsMs"}));
+  obj["$comment"] = "f8.payloadKind=audio_chunk";
+  return obj;
+}
+
 json state_field(std::string name, const json& value_schema, std::string access, std::string label,
                  std::string description, bool show_on_node, std::string ui_control, bool redact_on_publish) {
   json sf;

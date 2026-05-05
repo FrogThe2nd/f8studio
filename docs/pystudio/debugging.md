@@ -7,7 +7,7 @@ Release readiness comes from being able to diagnose the same graph reliably insi
 1. Compile the graph and inspect the generated runtime structure
 2. Verify every operator host binding (`Service Id`)
 3. Check required state fields for empty or invalid values
-4. Confirm the producer/consumer transport keys actually match (`videoKey`, `audioKey`, `flowKey`, `scalarKey`)
+4. Confirm the producer and consumer data ports are connected with matching payload kinds
 5. Open a visualization node close to the failure stage, not only at the end
 
 ## Common Shortcuts

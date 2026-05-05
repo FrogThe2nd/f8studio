@@ -10,8 +10,19 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from f8pysdk.specs import F8Edge, F8EdgeKindEnum, F8EdgeStrategyEnum, F8RuntimeGraph, F8RuntimeNode  # noqa: E402
+from f8pysdk.specs import (  # noqa: E402
+    F8DataPortDelivery,
+    F8DataPortPayloadKind,
+    F8DataPortSpec,
+    F8Edge,
+    F8EdgeKindEnum,
+    F8EdgeStrategyEnum,
+    F8RuntimeGraph,
+    F8RuntimeNode,
+    video_frame_schema,
+)
 from f8pysdk.f8_naming import data_subject  # noqa: E402
+from f8pysdk.zenoh_naming import subject_to_zenoh_key  # noqa: E402
 from f8pysdk.bus import ServiceBus, ServiceBusConfig  # noqa: E402
 from f8pysdk.service_bus.data.emit import DataEmitOptions  # noqa: E402
 from f8pysdk.testing import InMemoryCluster, InMemoryTransport, push_input  # noqa: E402
@@ -88,6 +99,16 @@ def _runtime_node(*, node_id: str, service_id: str, data_in: list[str] | None = 
     )
 
 
+def _video_port(name: str) -> F8DataPortSpec:
+    return F8DataPortSpec(
+        name=name,
+        valueSchema=video_frame_schema(),
+        payloadKind=F8DataPortPayloadKind.video_frame,
+        delivery=F8DataPortDelivery.latest,
+        required=True,
+    )
+
+
 def _data_edge(
     *,
     edge_id: str,
@@ -117,6 +138,90 @@ async def _sleep_ticks(ticks: int) -> None:
 
 
 class DataFlowRoutingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_video_frame_edge_resolves_stream_key_without_json_subscription(self) -> None:
+        cluster = InMemoryCluster()
+        transport = _RecordingTransport(cluster=cluster, kv_bucket="kv.sink")
+        bus = ServiceBus(ServiceBusConfig(service_id="sink"), transport=transport)
+        subject = data_subject("player", from_node_id="player", port_id="video")
+
+        graph = F8RuntimeGraph(
+            graphId="g-video-stream-edge",
+            revision="r1",
+            nodes=[
+                F8RuntimeNode(
+                    nodeId="player",
+                    serviceId="player",
+                    serviceClass="f8.implayer",
+                    dataOutPorts=[_video_port("video")],
+                ),
+                F8RuntimeNode(
+                    nodeId="sink",
+                    serviceId="sink",
+                    serviceClass="f8.sink",
+                    dataInPorts=[_video_port("video")],
+                ),
+            ],
+            edges=[
+                _data_edge(
+                    edge_id="video",
+                    from_service="player",
+                    from_node="player",
+                    from_port="video",
+                    to_service="sink",
+                    to_node="sink",
+                    to_port="video",
+                ),
+            ],
+        )
+
+        await bus.set_rungraph(graph)
+
+        self.assertEqual(bus.data_input_zenoh_key("sink", "video"), subject_to_zenoh_key(subject))
+        self.assertEqual(bus.data_router.cross_in_by_subject, {})
+        self.assertEqual(bus.data_router.input_buffers, {})
+
+    async def test_video_frame_service_node_edge_uses_service_id_as_stream_node(self) -> None:
+        cluster = InMemoryCluster()
+        transport = _RecordingTransport(cluster=cluster, kv_bucket="kv.sink")
+        bus = ServiceBus(ServiceBusConfig(service_id="sink"), transport=transport)
+        subject = data_subject("player", from_node_id="player", port_id="video")
+
+        graph = F8RuntimeGraph(
+            graphId="g-video-service-node-edge",
+            revision="r1",
+            nodes=[
+                F8RuntimeNode(
+                    nodeId="player",
+                    serviceId="player",
+                    serviceClass="f8.implayer",
+                    dataOutPorts=[_video_port("video")],
+                ),
+                F8RuntimeNode(
+                    nodeId="sink",
+                    serviceId="sink",
+                    serviceClass="f8.sink",
+                    dataInPorts=[_video_port("video")],
+                ),
+            ],
+            edges=[
+                F8Edge(
+                    edgeId="video",
+                    fromServiceId="player",
+                    fromPort="video",
+                    toServiceId="sink",
+                    toPort="video",
+                    kind=F8EdgeKindEnum.data,
+                    strategy=F8EdgeStrategyEnum.latest,
+                ),
+            ],
+        )
+
+        await bus.set_rungraph(graph)
+
+        self.assertEqual(bus.data_input_zenoh_key("sink", "video"), subject_to_zenoh_key(subject))
+        self.assertEqual(bus.data_router.cross_in_by_subject, {})
+        self.assertEqual(bus.data_router.input_buffers, {})
+
     async def test_default_cross_publish_policy_is_routed(self) -> None:
         cluster = InMemoryCluster()
         transport = _RecordingTransport(cluster=cluster, kv_bucket="kv.svc")

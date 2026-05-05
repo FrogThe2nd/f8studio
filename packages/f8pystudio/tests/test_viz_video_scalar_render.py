@@ -163,19 +163,13 @@ def test_video_pane_accepts_zenoh_video_source() -> None:
     pane = _LatestVideoPane()
     pane._timer.stop()
     pane.set_config(
-        shm_name="",
-        video_transport="zenoh",
-        video_key="f8/test/video/source",
+        video_stream_key="f8/test/video/source",
         throttle_ms=33,
-        flow_transport="legacy_shm",
-        flow_key="",
-        flow_shm_name="",
+        flow_stream_key="",
         flow_display_mode="off",
         flow_mag_scale=20.0,
         flow_stride=12,
-        scalar_transport="legacy_shm",
-        scalar_key="",
-        scalar_shm_name="",
+        scalar_stream_key="",
         scalar_display_mode="off",
         scalar_colormap="turbo",
         scalar_range_mode="auto",
@@ -188,8 +182,7 @@ def test_video_pane_accepts_zenoh_video_source() -> None:
         scale_mode="fit",
     )
     try:
-        assert pane._video_transport == "zenoh"
-        assert pane._video_key == "f8/test/video/source"
+        assert pane._video_stream_key == "f8/test/video/source"
         assert pane._timer.isActive()
     finally:
         pane.detach()

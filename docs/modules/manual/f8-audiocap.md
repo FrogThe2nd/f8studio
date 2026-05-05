@@ -8,7 +8,7 @@
 
 - A standard chain is `f8.audiocap -> f8.audiofeat.core / f8.audiofeat.rhythm`.
 - During setup, keep a `f8.viz.audio` branch connected so you can confirm that audio is really flowing.
-- If multiple services consume the same stream, keep `audioKey` consistent across the branch. Use `audioShmName` only for explicit `legacy_shm` fallback graphs.
+- If multiple services consume the same stream, connect the producer `audio` data port to each downstream typed audio input.
 
 ## Pitfalls / Gotchas
 

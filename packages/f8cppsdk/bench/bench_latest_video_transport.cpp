@@ -1,5 +1,4 @@
 #include "f8cppsdk/latest_video_frame_transport.h"
-#include "f8cppsdk/video_shared_memory_sink.h"
 
 #include <algorithm>
 #include <chrono>
@@ -296,144 +295,6 @@ Stats bench_zenoh_firehose(const Args& args, unsigned channels, const std::strin
                     "published frames; delivered count intentionally latest-slot only");
 }
 
-std::size_t shm_capacity(std::size_t frame_bytes) {
-  return std::max<std::size_t>(256ULL * 1024ULL * 1024ULL, frame_bytes * 4ULL + 64ULL);
-}
-
-bool copy_latest_payload(f8::cppsdk::VideoSharedMemoryReader& reader, std::vector<std::byte>& out,
-                         f8::cppsdk::VideoSharedMemoryHeader& header, std::uint64_t& last_frame_id) {
-  if (!reader.copyLatestPayloadIfChanged(out, header, last_frame_id)) {
-    return false;
-  }
-  last_frame_id = header.frame_id;
-  return true;
-}
-
-Stats bench_legacy_roundtrip(const Args& args, unsigned channels, const std::string& run_id) {
-  const unsigned pitch = args.width * channels;
-  const std::size_t payload_bytes = static_cast<std::size_t>(pitch) * args.height;
-  const std::size_t capacity = shm_capacity(payload_bytes);
-  std::vector<std::byte> payload = make_payload(payload_bytes);
-  const std::uint32_t format = channels == 4 ? f8::cppsdk::kVideoFormatBgra32 : 99u;
-  const std::string name = "bench.cpp." + run_id + "." + std::to_string(channels);
-
-  f8::cppsdk::VideoSharedMemorySink sink;
-  if (!sink.initialize(name, capacity, 2) || !sink.ensureConfigurationForFormat(args.width, args.height, format, channels)) {
-    return make_stats("legacy_shm_cpp.video_roundtrip." + std::to_string(args.width) + "x" +
-                          std::to_string(args.height) + "x" + std::to_string(channels),
-                      "legacy_shm", "video_roundtrip", payload_bytes, args.iterations, 0, 0.0, 0.0, {}, false,
-                      "failed to open legacy SHM transport");
-  }
-  sink.set_unlink_on_close(true);
-  f8::cppsdk::VideoSharedMemoryReader reader;
-  if (!reader.open(name, capacity)) {
-    return make_stats("legacy_shm_cpp.video_roundtrip." + std::to_string(args.width) + "x" +
-                          std::to_string(args.height) + "x" + std::to_string(channels),
-                      "legacy_shm", "video_roundtrip", payload_bytes, args.iterations, 0, 0.0, 0.0, {}, false,
-                      "failed to open legacy SHM reader");
-  }
-
-  std::uint32_t notify_seq = 0;
-  std::uint64_t last_frame_id = 0;
-  std::vector<std::byte> received_payload;
-  f8::cppsdk::VideoSharedMemoryHeader header{};
-  for (int index = 0; index < args.warmup_iterations; ++index) {
-    write_i64_le(payload, steady_now_ns());
-    (void)sink.writeFrameWithFormat(payload.data(), pitch, format);
-    (void)reader.waitNewFrame(notify_seq, 1000, &notify_seq);
-    (void)copy_latest_payload(reader, received_payload, header, last_frame_id);
-  }
-
-  std::vector<double> latencies_ms;
-  int delivered = 0;
-  double publish_elapsed_s = 0.0;
-  const auto start = clock_type::now();
-  for (int index = 0; index < args.iterations; ++index) {
-    write_i64_le(payload, steady_now_ns());
-    const auto publish_start = clock_type::now();
-    if (!sink.writeFrameWithFormat(payload.data(), pitch, format)) {
-      continue;
-    }
-    publish_elapsed_s += seconds_since(publish_start);
-    if (!reader.waitNewFrame(notify_seq, 1000, &notify_seq)) {
-      continue;
-    }
-    if (!copy_latest_payload(reader, received_payload, header, last_frame_id)) {
-      continue;
-    }
-    const auto sent_ns = read_i64_le(received_payload);
-    if (!sent_ns.has_value()) {
-      continue;
-    }
-    latencies_ms.push_back(static_cast<double>(steady_now_ns() - sent_ns.value()) / 1'000'000.0);
-    ++delivered;
-  }
-  const double elapsed_s = seconds_since(start);
-  reader.close();
-  return make_stats("legacy_shm_cpp.video_roundtrip." + std::to_string(args.width) + "x" + std::to_string(args.height) +
-                        "x" + std::to_string(channels),
-                    "legacy_shm", "video_roundtrip", payload_bytes, args.iterations, delivered, elapsed_s,
-                    publish_elapsed_s, latencies_ms, delivered == args.iterations,
-                    channels == 4 ? "BGRA32" : "BGR24 synthetic fmt=99");
-}
-
-Stats bench_legacy_firehose(const Args& args, unsigned channels, const std::string& run_id) {
-  const unsigned pitch = args.width * channels;
-  const std::size_t payload_bytes = static_cast<std::size_t>(pitch) * args.height;
-  const std::size_t capacity = shm_capacity(payload_bytes);
-  std::vector<std::byte> payload = make_payload(payload_bytes);
-  const std::uint32_t format = channels == 4 ? f8::cppsdk::kVideoFormatBgra32 : 99u;
-  const std::string name = "bench.cpp.firehose." + run_id + "." + std::to_string(channels);
-
-  f8::cppsdk::VideoSharedMemorySink sink;
-  if (!sink.initialize(name, capacity, 2) || !sink.ensureConfigurationForFormat(args.width, args.height, format, channels)) {
-    return make_stats("legacy_shm_cpp.video_firehose_latest." + std::to_string(args.width) + "x" +
-                          std::to_string(args.height) + "x" + std::to_string(channels),
-                      "legacy_shm", "video_firehose_latest", payload_bytes, args.firehose_iterations, 0, 0.0, 0.0,
-                      {}, false, "failed to open legacy SHM transport");
-  }
-  sink.set_unlink_on_close(true);
-  f8::cppsdk::VideoSharedMemoryReader reader;
-  if (!reader.open(name, capacity)) {
-    return make_stats("legacy_shm_cpp.video_firehose_latest." + std::to_string(args.width) + "x" +
-                          std::to_string(args.height) + "x" + std::to_string(channels),
-                      "legacy_shm", "video_firehose_latest", payload_bytes, args.firehose_iterations, 0, 0.0, 0.0,
-                      {}, false, "failed to open legacy SHM reader");
-  }
-
-  std::uint64_t last_frame_id = 0;
-  std::vector<std::byte> received_payload;
-  f8::cppsdk::VideoSharedMemoryHeader header{};
-  for (int index = 0; index < args.warmup_iterations; ++index) {
-    write_i64_le(payload, steady_now_ns());
-    (void)sink.writeFrameWithFormat(payload.data(), pitch, format);
-    (void)copy_latest_payload(reader, received_payload, header, last_frame_id);
-  }
-
-  const auto start = clock_type::now();
-  for (int index = 0; index < args.firehose_iterations; ++index) {
-    write_i64_le(payload, steady_now_ns());
-    (void)sink.writeFrameWithFormat(payload.data(), pitch, format);
-  }
-  const double publish_elapsed_s = seconds_since(start);
-  std::vector<double> latencies_ms;
-  int delivered = 0;
-  if (copy_latest_payload(reader, received_payload, header, last_frame_id)) {
-    const auto sent_ns = read_i64_le(received_payload);
-    if (sent_ns.has_value()) {
-      latencies_ms.push_back(static_cast<double>(steady_now_ns() - sent_ns.value()) / 1'000'000.0);
-      delivered = 1;
-    }
-  }
-  const double elapsed_s = seconds_since(start);
-  reader.close();
-  return make_stats("legacy_shm_cpp.video_firehose_latest." + std::to_string(args.width) + "x" +
-                        std::to_string(args.height) + "x" + std::to_string(channels),
-                    "legacy_shm", "video_firehose_latest", payload_bytes, args.firehose_iterations, delivered,
-                    elapsed_s, publish_elapsed_s, latencies_ms, delivered == 1,
-                    "published frames; delivered count intentionally latest-slot only");
-}
-
 Args parse_args(int argc, char** argv) {
   Args args;
   for (int index = 1; index < argc; ++index) {
@@ -481,8 +342,6 @@ int main(int argc, char** argv) {
     std::cout << "name,backend,category,payload_bytes,iterations,delivered,lost,throughput_ops_s,"
                  "publish_throughput_ops_s,throughput_mib_s,publish_throughput_mib_s,p50_ms,p95_ms,p99_ms,ok,note\n";
     for (const unsigned channels : {3u, 4u}) {
-      print_stats(bench_legacy_roundtrip(args, channels, run_id));
-      print_stats(bench_legacy_firehose(args, channels, run_id));
       print_stats(bench_zenoh_roundtrip(args, channels, run_id));
       print_stats(bench_zenoh_firehose(args, channels, run_id));
     }

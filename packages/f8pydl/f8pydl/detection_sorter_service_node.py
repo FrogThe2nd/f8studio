@@ -12,12 +12,12 @@ import numpy as np
 from f8pysdk.codec import coerce_int, coerce_str
 from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
-from f8pysdk.shm.video import (
+from f8pysdk.video_transport import (
     VIDEO_FORMAT_FLOW2_F16,
     VIDEO_FORMAT_SCALAR1_F32,
 )
 
-from .video_frame_source import LatestVideoFrameSource, VideoFrameSourceConfig, select_video_source_transport
+from .video_frame_source import LatestVideoFrameSource, VideoFrameSourceConfig
 
 SortDirection = Literal["asc", "desc"]
 ScoreAggregation = Literal["mean", "max", "sum", "median"]
@@ -145,11 +145,11 @@ def decode_score_map_from_frame(*, header: ScoreFrameHeader, payload: memoryview
     height = int(header.height)
     pitch = int(header.pitch)
     if width <= 0 or height <= 0 or pitch <= 0:
-        raise ValueError("invalid score shm dimensions")
+        raise ValueError("invalid score frame dimensions")
 
     frame_bytes = int(pitch) * int(height)
     if len(payload) < frame_bytes:
-        raise ValueError("score shm frame too small")
+        raise ValueError("score frame payload too small")
 
     if int(header.fmt) == VIDEO_FORMAT_SCALAR1_F32:
         if pitch < width * 4 or (pitch % 4) != 0:
@@ -168,7 +168,7 @@ def decode_score_map_from_frame(*, header: ScoreFrameHeader, payload: memoryview
         magnitude = np.sqrt((flow[:, :, 0] * flow[:, :, 0]) + (flow[:, :, 1] * flow[:, :, 1]))
         return np.ascontiguousarray(magnitude, dtype=np.float32)
 
-    raise ValueError(f"unsupported score shm format: {int(header.fmt)}")
+    raise ValueError(f"unsupported score frame format: {int(header.fmt)}")
 
 
 def rescale_bbox_to_score_map(
@@ -316,16 +316,13 @@ class DetectionSorterServiceNode(ServiceNode):
     def __init__(self, *, node_id: str, node: Any, initial_state: dict[str, Any] | None = None) -> None:
         super().__init__(
             node_id=ensure_token(node_id, label="node_id"),
-            data_in_ports=["detections"],
+            data_in_ports=["detections", "score"],
             data_out_ports=["detections"],
             state_fields=[state.name for state in list(node.stateFields or [])],
         )
         self._initial_state = dict(initial_state or {})
         self._active = True
         self._config_loaded = False
-        self._score_shm_name = ""
-        self._score_transport = ""
-        self._score_key = ""
         self._sort_direction: SortDirection = "desc"
         self._score_aggregation: ScoreAggregation = "mean"
         self._cls_weights_exact: dict[str, float] = {}
@@ -359,9 +356,6 @@ class DetectionSorterServiceNode(ServiceNode):
     async def _ensure_config_loaded(self) -> None:
         if self._config_loaded:
             return
-        self._score_shm_name = coerce_str(self._read_initial_or_cached_state("scoreShmName", ""))
-        self._score_transport = coerce_str(self._read_initial_or_cached_state("scoreTransport", ""))
-        self._score_key = coerce_str(self._read_initial_or_cached_state("scoreKey", ""))
         self._sort_direction = _coerce_sort_direction(self._read_initial_or_cached_state("sortDirection", "desc"))
         self._score_aggregation = _coerce_score_aggregation(self._read_initial_or_cached_state("scoreAggregation", "mean"))
         cls_weights_text = coerce_str(self._read_initial_or_cached_state("clsWeights", "{}"), default="{}")
@@ -381,15 +375,6 @@ class DetectionSorterServiceNode(ServiceNode):
             if aggregation not in ("mean", "max", "sum", "median"):
                 raise ValueError("invalid scoreAggregation (expected mean, max, sum, or median)")
             return aggregation
-        if name == "scoreShmName":
-            return coerce_str(value)
-        if name == "scoreTransport":
-            text = coerce_str(value).lower()
-            if text not in ("", "zenoh", "legacy_shm"):
-                raise ValueError("invalid scoreTransport (expected zenoh or legacy_shm)")
-            return text
-        if name == "scoreKey":
-            return coerce_str(value)
         if name == "clsWeights":
             text = coerce_str(value, default="{}")
             _ = _parse_cls_weights_json(text)
@@ -400,18 +385,6 @@ class DetectionSorterServiceNode(ServiceNode):
         del ts_ms
         await self._ensure_config_loaded()
         name = str(field or "").strip()
-        if name == "scoreShmName":
-            self._score_shm_name = coerce_str(value, default=self._score_shm_name)
-            self._close_score_reader()
-            return
-        if name == "scoreTransport":
-            self._score_transport = coerce_str(value, default=self._score_transport)
-            self._reset_score_source()
-            return
-        if name == "scoreKey":
-            self._score_key = coerce_str(value, default=self._score_key)
-            self._reset_score_source()
-            return
         if name == "sortDirection":
             self._sort_direction = _coerce_sort_direction(value, default=self._sort_direction)
             return
@@ -476,27 +449,12 @@ class DetectionSorterServiceNode(ServiceNode):
         return source
 
     def _read_latest_score_frame(self) -> tuple[ScoreFrameHeader, memoryview]:
-        score_key = str(self._score_key or "").strip()
-        score_transport = str(self._score_transport or "").strip().lower()
-        score_shm_name = str(self._score_shm_name or "").strip()
-        selected_transport = select_video_source_transport(
-            video_transport=score_transport,
-            video_key=score_key,
-            shm_name=score_shm_name,
-        )
-        if selected_transport == "zenoh" and not score_key:
-            raise ScoreSourceUnavailableError("scoreKey is empty", reason="not_ready")
-        if selected_transport == "legacy_shm" and not score_shm_name:
-            raise ScoreSourceUnavailableError("scoreShmName is empty", reason="not_ready")
+        score_key = str(self.input_zenoh_key("score") or "").strip()
+        if not score_key:
+            raise ScoreSourceUnavailableError("score data input is missing", reason="not_ready")
         source = self._ensure_score_source()
         try:
-            frame = source.read_latest(
-                video_transport=score_transport,
-                video_key=score_key,
-                shm_name=score_shm_name,
-                timeout_ms=0,
-                dedupe=False,
-            )
+            frame = source.read_latest(stream_key=score_key, timeout_ms=0, dedupe=False)
         except FileNotFoundError as exc:
             raise ScoreSourceUnavailableError(f"open pending: {type(exc).__name__}: {exc}", reason="not_ready") from exc
         except ValueError as exc:

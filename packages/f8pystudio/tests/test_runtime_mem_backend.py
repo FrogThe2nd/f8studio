@@ -69,8 +69,8 @@ def test_remote_state_watcher_accepts_cpp_ts_field() -> None:
     asyncio.run(
         watcher._on_kv(
             "engine",
-            kv_key_node_state(node_id="camera", field="videoKey"),
-            encode_obj({"value": "f8/svc/engine/nodes/camera/data/video", "ts": 1_700_000_001_234}),
+            kv_key_node_state(node_id="camera", field="statusText"),
+            encode_obj({"value": "ready", "ts": 1_700_000_001_234}),
         )
     )
 
@@ -78,8 +78,8 @@ def test_remote_state_watcher_accepts_cpp_ts_field() -> None:
         (
             "engine",
             "camera",
-            "videoKey",
-            "f8/svc/engine/nodes/camera/data/video",
+            "statusText",
+            "ready",
             1_700_000_001_234,
         )
     ]

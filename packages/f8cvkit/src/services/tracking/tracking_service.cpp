@@ -15,9 +15,6 @@
 #include <opencv2/imgproc.hpp>
 
 #include "f8cppsdk/describe_schema.h"
-#include "f8cppsdk/f8_naming.h"
-#include "f8cppsdk/shm/naming.h"
-#include "f8cppsdk/shm/sizing.h"
 #include "f8cppsdk/time_utils.h"
 #include "../common/service_runtime_utils.h"
 
@@ -31,6 +28,7 @@ using f8::cppsdk::describe::schema_number;
 using f8::cppsdk::describe::schema_object;
 using f8::cppsdk::describe::schema_string;
 using f8::cppsdk::describe::schema_string_enum;
+using f8::cppsdk::describe::schema_video_frame;
 using f8::cppsdk::describe::state_field;
 
 namespace {
@@ -614,12 +612,6 @@ bool TrackingService::start() {
     return false;
   }
 
-  shm_name_override_.clear();
-  const bool use_zenoh_default =
-      service_runtime::trim_copy(cfg_.shm_name).empty() &&
-      runtime_backend.bus_backend == f8::cppsdk::BusBackend::kZenoh;
-  video_transport_state_ = use_zenoh_default ? "zenoh" : "legacy_shm";
-  video_key_state_.clear();
   init_select_mode_ = TrackingInitSelectMode::ClosestCenter;
   init_select_state_ = "closest_center";
   tracker_kind_ = TrackerKind::Csrt;
@@ -644,9 +636,6 @@ bool TrackingService::start() {
   }
 
   publish_state_if_changed("serviceClass", cfg_.service_class, "init", json::object());
-  publish_state_if_changed("shmName", "", "init", json::object());
-  publish_state_if_changed("videoTransport", video_transport_state_, "init", json::object());
-  publish_state_if_changed("videoKey", "", "init", json::object());
   publish_state_if_changed("initSelect", init_select_state_, "init", json::object());
   publish_state_if_changed("trackerKind", tracker_kind_state_, "init", json::object());
   publish_state_if_changed("modelDir", model_dir_state_, "init", json::object());
@@ -659,14 +648,11 @@ bool TrackingService::start() {
   publish_state_if_changed("isNotTracking", true, "init", json::object());
   publish_error_if_changed("", "init", json::object());
 
-  video_.close();
   zenoh_video_.close();
   zenoh_video_open_key_.clear();
   frame_bgra_.clear();
   frame_bgr_.release();
-  last_header_.reset();
   last_frame_id_ = 0;
-  last_notify_seq_ = 0;
   last_processed_frame_ts_ms_ = 0;
   next_tracking_due_ts_ms_ = 0.0;
   last_video_open_attempt_ms_ = 0;
@@ -683,10 +669,6 @@ bool TrackingService::start() {
   monitor_last_process_ms_ = 0.0;
   monitor_total_process_ms_ = 0.0;
   monitor_fps_ = 0.0;
-
-  if (!cfg_.shm_name.empty()) {
-    set_shm_name(cfg_.shm_name, json::object({{"init", true}}));
-  }
 
   running_.store(true, std::memory_order_release);
   stop_requested_.store(false, std::memory_order_release);
@@ -778,18 +760,6 @@ void TrackingService::on_state(const std::string& node_id, const std::string& fi
   (void)ts_ms;
   if (node_id != cfg_.service_id)
     return;
-  if (field == "shmName" && value.is_string()) {
-    set_shm_name(value.get<std::string>(), meta);
-    return;
-  }
-  if (field == "videoTransport" && value.is_string()) {
-    set_video_transport(value.get<std::string>(), meta);
-    return;
-  }
-  if (field == "videoKey" && value.is_string()) {
-    set_video_key(value.get<std::string>(), meta);
-    return;
-  }
   if (field == "initSelect" && value.is_string()) {
     set_init_select(value.get<std::string>(), meta);
     return;
@@ -915,71 +885,6 @@ void TrackingService::stop_tracking_internal(const json& meta) {
   set_tracking(false, meta);
 }
 
-void TrackingService::set_shm_name(const std::string& shm_name, const json& meta) {
-  const std::string s = service_runtime::trim_copy(shm_name);
-
-  if (s == shm_name_override_) {
-    publish_state_if_changed("shmName", shm_name_override_, "state", meta);
-    return;
-  }
-  shm_name_override_ = s;
-  if (video_transport_state_ == "legacy_shm") {
-    video_.close();
-    last_video_open_attempt_ms_ = 0;
-    last_notify_seq_ = 0;
-  }
-  publish_state_if_changed("shmName", shm_name_override_, "state", meta);
-  last_frame_id_ = 0;
-  last_processed_frame_ts_ms_ = 0;
-  next_tracking_due_ts_ms_ = 0.0;
-  frame_bgra_.clear();
-  frame_bgr_.release();
-}
-
-void TrackingService::set_video_transport(const std::string& transport, const json& meta) {
-  std::string normalized = service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(transport));
-  if (normalized == "shm") {
-    normalized = "legacy_shm";
-  } else if (normalized != "zenoh" && normalized != "legacy_shm") {
-    normalized = "zenoh";
-  }
-  if (normalized == video_transport_state_) {
-    publish_state_if_changed("videoTransport", video_transport_state_, "state", meta);
-    return;
-  }
-  video_transport_state_ = normalized;
-  publish_state_if_changed("videoTransport", video_transport_state_, "state", meta);
-  video_.close();
-  zenoh_video_.close();
-  zenoh_video_open_key_.clear();
-  last_video_open_attempt_ms_ = 0;
-  last_frame_id_ = 0;
-  last_notify_seq_ = 0;
-  last_processed_frame_ts_ms_ = 0;
-  next_tracking_due_ts_ms_ = 0.0;
-  frame_bgra_.clear();
-  frame_bgr_.release();
-}
-
-void TrackingService::set_video_key(const std::string& key, const json& meta) {
-  const std::string s = service_runtime::trim_copy(key);
-  if (s == video_key_state_) {
-    publish_state_if_changed("videoKey", video_key_state_, "state", meta);
-    return;
-  }
-  video_key_state_ = s;
-  publish_state_if_changed("videoKey", video_key_state_, "state", meta);
-  zenoh_video_.close();
-  zenoh_video_open_key_.clear();
-  last_video_open_attempt_ms_ = 0;
-  last_frame_id_ = 0;
-  last_notify_seq_ = 0;
-  last_processed_frame_ts_ms_ = 0;
-  next_tracking_due_ts_ms_ = 0.0;
-  frame_bgra_.clear();
-  frame_bgr_.release();
-}
-
 void TrackingService::set_init_select(const std::string& mode, const json& meta) {
   std::string normalized;
   bool ok = false;
@@ -1032,55 +937,16 @@ void TrackingService::set_max_tracking_fps(double fps, const json& meta) {
   publish_error_if_changed("", "state", meta);
 }
 
-bool TrackingService::ensure_video_open() {
-  if (use_zenoh_video_input()) {
-    return ensure_zenoh_video_open();
-  }
-
-  f8::cppsdk::VideoSharedMemoryHeader hdr{};
-  if (video_.readHeader(hdr)) {
-    return true;
-  }
-
-  const std::int64_t now = f8::cppsdk::now_ms();
-  if (last_video_open_attempt_ms_ > 0 && (now - last_video_open_attempt_ms_) < 1000) {
-    return false;
-  }
-  last_video_open_attempt_ms_ = now;
-
-  std::string shm_name = shm_name_override_;
-  if (shm_name.empty()) {
-    shm_name = f8::cppsdk::shm::video_shm_name(cfg_.service_id);
-  }
-
-  const std::size_t bytes = f8::cppsdk::shm::kDefaultVideoShmBytes;
-  if (!video_.open(shm_name, bytes)) {
-    publish_error_if_changed("legacy video SHM open failed: " + shm_name, "runtime", json::object());
-    return false;
-  }
-  last_notify_seq_ = 0;
-  last_processed_frame_ts_ms_ = 0;
-  next_tracking_due_ts_ms_ = 0.0;
-  publish_error_if_changed("", "runtime", json::object());
-  return true;
-}
-
-bool TrackingService::use_zenoh_video_input() const {
-  const std::string transport =
-      service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(video_transport_state_));
-  if (transport == "zenoh") {
-    return true;
-  }
-  if (transport == "legacy_shm" || transport == "shm") {
-    return false;
-  }
-  return !service_runtime::trim_copy(video_key_state_).empty();
-}
-
 bool TrackingService::ensure_zenoh_video_open() {
-  const std::string key = service_runtime::trim_copy(video_key_state_);
+  std::string key;
+  if (bus_) {
+    const auto resolved = bus_->data_input_zenoh_key(cfg_.service_id, "video");
+    if (resolved.has_value()) {
+      key = service_runtime::trim_copy(*resolved);
+    }
+  }
   if (key.empty()) {
-    publish_error_if_changed("missing videoKey", "runtime", json::object());
+    publish_error_if_changed("missing video data input", "runtime", json::object());
     return false;
   }
   if (zenoh_video_.valid() && zenoh_video_open_key_ == key) {
@@ -1108,43 +974,27 @@ bool TrackingService::ensure_zenoh_video_open() {
 }
 
 bool TrackingService::copy_latest_video_frame(std::vector<std::byte>& out_payload,
-                                              f8::cppsdk::VideoSharedMemoryHeader& out_header, bool changed_only,
+                                              f8::cppsdk::LatestVideoFrame& out_frame, bool changed_only,
                                               std::uint64_t last_frame_id, std::chrono::milliseconds timeout) {
-  if (use_zenoh_video_input()) {
-    if (!ensure_zenoh_video_open()) {
-      return false;
-    }
-    auto frame = zenoh_video_.wait_latest(timeout);
-    if (!frame.has_value()) {
-      return false;
-    }
-    if (changed_only && frame->frame_id == last_frame_id) {
-      return false;
-    }
-    out_header = f8::cppsdk::VideoSharedMemoryHeader{};
-    out_header.magic = 0;
-    out_header.version = f8::cppsdk::kZenohVideoFrameSchemaVersion;
-    out_header.slot_count = 1;
-    out_header.width = frame->width;
-    out_header.height = frame->height;
-    out_header.pitch = frame->pitch;
-    out_header.format = frame->format;
-    out_header.frame_id = frame->frame_id;
-    out_header.ts_ms = frame->ts_ms;
-    out_header.active_slot = 0;
-    out_header.payload_capacity = static_cast<std::uint32_t>(frame->payload.size());
-    out_header.notify_seq = static_cast<std::uint32_t>(frame->frame_id & 0xFFFFFFFFu);
-    out_payload = std::move(frame->payload);
-    return true;
-  }
-
-  if (!ensure_video_open()) {
+  if (!ensure_zenoh_video_open()) {
     return false;
   }
-  if (changed_only) {
-    return video_.copyLatestFrameIfChanged(out_payload, out_header, last_frame_id);
+  auto frame = zenoh_video_.wait_latest(timeout);
+  if (!frame.has_value()) {
+    return false;
   }
-  return video_.copyLatestFrame(out_payload, out_header);
+  if (changed_only && frame->frame_id == last_frame_id) {
+    return false;
+  }
+  out_frame = f8::cppsdk::LatestVideoFrame{};
+  out_frame.width = frame->width;
+  out_frame.height = frame->height;
+  out_frame.pitch = frame->pitch;
+  out_frame.format = frame->format;
+  out_frame.frame_id = frame->frame_id;
+  out_frame.ts_ms = frame->ts_ms;
+  out_payload = std::move(frame->payload);
+  return true;
 }
 
 void TrackingService::apply_init_box_if_any() {
@@ -1165,23 +1015,23 @@ void TrackingService::apply_init_box_if_any() {
     pending_init_boxes_.clear();
   }
 
-  f8::cppsdk::VideoSharedMemoryHeader hdr{};
-  if (!copy_latest_video_frame(frame_bgra_, hdr, false, 0, std::chrono::milliseconds(20))) {
+  f8::cppsdk::LatestVideoFrame frame_meta{};
+  if (!copy_latest_video_frame(frame_bgra_, frame_meta, false, 0, std::chrono::milliseconds(20))) {
     publish_error_if_changed("failed to read video frame for init", "runtime", json::object());
     return;
   }
-  if (hdr.format != 1 || hdr.width == 0 || hdr.height == 0 || hdr.pitch == 0) {
+  if (frame_meta.format != 1 || frame_meta.width == 0 || frame_meta.height == 0 || frame_meta.pitch == 0) {
     publish_error_if_changed("unsupported video frame format", "runtime", json::object());
     return;
   }
-  const std::size_t row_bytes = static_cast<std::size_t>(hdr.pitch);
-  if (frame_bgra_.size() < row_bytes * static_cast<std::size_t>(hdr.height)) {
+  const std::size_t row_bytes = static_cast<std::size_t>(frame_meta.pitch);
+  if (frame_bgra_.size() < row_bytes * static_cast<std::size_t>(frame_meta.height)) {
     publish_error_if_changed("video frame too small", "runtime", json::object());
     return;
   }
 
-  cv::Mat bgra_mat(static_cast<int>(hdr.height), static_cast<int>(hdr.width), CV_8UC4,
-                   const_cast<std::byte*>(frame_bgra_.data()), static_cast<std::size_t>(hdr.pitch));
+  cv::Mat bgra_mat(static_cast<int>(frame_meta.height), static_cast<int>(frame_meta.width), CV_8UC4,
+                   const_cast<std::byte*>(frame_bgra_.data()), static_cast<std::size_t>(frame_meta.pitch));
   try {
     cv::cvtColor(bgra_mat, frame_bgr_, cv::COLOR_BGRA2BGR);
   } catch (const cv::Exception& ex) {
@@ -1191,7 +1041,7 @@ void TrackingService::apply_init_box_if_any() {
   }
 
   // Clamp to frame and pick the configured init bbox candidate.
-  cv::Rect frame_rect(0, 0, static_cast<int>(hdr.width), static_cast<int>(hdr.height));
+  cv::Rect frame_rect(0, 0, static_cast<int>(frame_meta.width), static_cast<int>(frame_meta.height));
   const std::optional<cv::Rect> selected = pick_best_bbox(candidates, frame_rect, init_select_mode_);
   if (!selected.has_value()) {
     publish_error_if_changed("initBox has no valid bbox candidate", "runtime", json::object());
@@ -1275,30 +1125,28 @@ void TrackingService::process_frame_once() {
     bbox = bbox_;
     active_tracker_kind = active_tracker_kind_state_;
   }
-  f8::cppsdk::VideoSharedMemoryHeader hdr{};
-  if (!copy_latest_video_frame(frame_bgra_, hdr, true, last_frame_id_, std::chrono::milliseconds(20))) {
+  f8::cppsdk::LatestVideoFrame frame_meta{};
+  if (!copy_latest_video_frame(frame_bgra_, frame_meta, true, last_frame_id_, std::chrono::milliseconds(20))) {
     return;
   }
-  if (hdr.frame_id == 0 || hdr.frame_id == last_frame_id_) {
+  if (frame_meta.frame_id == 0 || frame_meta.frame_id == last_frame_id_) {
     return;
   }
   ++monitor_observed_frames_;
 
   const double max_tracking_fps = max_tracking_fps_.load(std::memory_order_acquire);
   if (max_tracking_fps > 0.0 && next_tracking_due_ts_ms_ > 0.0) {
-    const std::int64_t frame_ts_ms = hdr.ts_ms > 0 ? hdr.ts_ms : f8::cppsdk::now_ms();
+    const std::int64_t frame_ts_ms = frame_meta.ts_ms > 0 ? frame_meta.ts_ms : f8::cppsdk::now_ms();
     const double min_interval_ms = 1000.0 / max_tracking_fps;
     constexpr double kEarlyToleranceMs = 3.0;
     if (static_cast<double>(frame_ts_ms) + kEarlyToleranceMs < next_tracking_due_ts_ms_) {
-      last_frame_id_ = hdr.frame_id;
-      last_header_ = hdr;
+      last_frame_id_ = frame_meta.frame_id;
       return;
     }
   }
 
-  last_frame_id_ = hdr.frame_id;
-  last_header_ = hdr;
-  last_processed_frame_ts_ms_ = hdr.ts_ms > 0 ? hdr.ts_ms : f8::cppsdk::now_ms();
+  last_frame_id_ = frame_meta.frame_id;
+  last_processed_frame_ts_ms_ = frame_meta.ts_ms > 0 ? frame_meta.ts_ms : f8::cppsdk::now_ms();
   if (max_tracking_fps > 0.0) {
     const double min_interval_ms = 1000.0 / max_tracking_fps;
     const double processed_ts_ms = static_cast<double>(last_processed_frame_ts_ms_);
@@ -1314,20 +1162,20 @@ void TrackingService::process_frame_once() {
     next_tracking_due_ts_ms_ = 0.0;
   }
 
-  if (hdr.format != 1 || hdr.width == 0 || hdr.height == 0 || hdr.pitch == 0) {
+  if (frame_meta.format != 1 || frame_meta.width == 0 || frame_meta.height == 0 || frame_meta.pitch == 0) {
     publish_error_if_changed("unsupported video frame format", "runtime", json::object());
     set_tracking(false, json::object({{"reason", "bad_format"}}));
     return;
   }
-  const std::size_t row_bytes = static_cast<std::size_t>(hdr.pitch);
-  if (frame_bgra_.size() < row_bytes * static_cast<std::size_t>(hdr.height)) {
+  const std::size_t row_bytes = static_cast<std::size_t>(frame_meta.pitch);
+  if (frame_bgra_.size() < row_bytes * static_cast<std::size_t>(frame_meta.height)) {
     publish_error_if_changed("video frame too small", "runtime", json::object());
     set_tracking(false, json::object({{"reason", "bad_frame"}}));
     return;
   }
 
-  cv::Mat bgra_mat(static_cast<int>(hdr.height), static_cast<int>(hdr.width), CV_8UC4,
-                   const_cast<std::byte*>(frame_bgra_.data()), static_cast<std::size_t>(hdr.pitch));
+  cv::Mat bgra_mat(static_cast<int>(frame_meta.height), static_cast<int>(frame_meta.width), CV_8UC4,
+                   const_cast<std::byte*>(frame_bgra_.data()), static_cast<std::size_t>(frame_meta.pitch));
   try {
     cv::cvtColor(bgra_mat, frame_bgr_, cv::COLOR_BGRA2BGR);
   } catch (const cv::Exception& ex) {
@@ -1369,10 +1217,10 @@ void TrackingService::process_frame_once() {
   const cv::Rect emit_bbox = out_bbox;
 
   json out = json::object();
-  out["frameId"] = hdr.frame_id;
-  out["tsMs"] = hdr.ts_ms;
-  out["width"] = hdr.width;
-  out["height"] = hdr.height;
+  out["frameId"] = frame_meta.frame_id;
+  out["tsMs"] = frame_meta.ts_ms;
+  out["width"] = frame_meta.width;
+  out["height"] = frame_meta.height;
   out["status"] = "tracking";
   out["tracks"] = json::array(
       {json::object({{"id", 1},
@@ -1386,7 +1234,7 @@ void TrackingService::process_frame_once() {
     (void)bus_->emit_data(cfg_.service_id, "tracking", out);
   }
   const std::int64_t end_ts_ms = f8::cppsdk::now_ms();
-  emit_monitor_snapshot(end_ts_ms, hdr.frame_id, static_cast<double>(end_ts_ms - process_start_ms));
+  emit_monitor_snapshot(end_ts_ms, frame_meta.frame_id, static_cast<double>(end_ts_ms - process_start_ms));
 }
 
 void TrackingService::set_tracking(bool tracking, const json& meta) {
@@ -1457,13 +1305,6 @@ json TrackingService::describe() {
   service["rendererClass"] = "default_svc";
   service["tags"] = json::array({"cv", "tracking"});
   service["stateFields"] = json::array({
-      state_field("shmName", schema_string(), "rw", "Legacy Video SHM",
-                  "Legacy SHM name used only when videoTransport=legacy_shm.", false),
-      state_field("videoTransport", schema_string_enum(std::vector<std::string>{"zenoh", "legacy_shm"}, "zenoh"),
-                  "rw", "Video Transport",
-                  "Video input transport backend. Zenoh is default; legacy_shm keeps old shmName input.",
-                  false),
-      state_field("videoKey", schema_string(), "rw", "Video Key", "Zenoh latest-frame key for video input.", true),
       state_field("initSelect",
                   schema_string_enum({"first_box", "closest_center", "largest_area", "highest_score"}, "closest_center"), "rw",
                   "Init Select", "Init bbox selection strategy: first_box | closest_center | largest_area | highest_score.", true),
@@ -1491,6 +1332,13 @@ json TrackingService::describe() {
            {"showOnNode", true}},
   });
   service["dataInPorts"] = json::array({
+      json{{"name", "video"},
+           {"valueSchema", schema_video_frame()},
+           {"description", "Input video frame stream."},
+           {"payloadKind", "video_frame"},
+           {"delivery", "latest"},
+           {"required", true},
+           {"showOnNode", true}},
       json{
           {"name", "initBox"},
           {"valueSchema", init_box_schema},

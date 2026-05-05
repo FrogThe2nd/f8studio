@@ -12,14 +12,13 @@ from typing import Any, Literal
 from f8pysdk.codec import coerce_bool, coerce_float, coerce_int, coerce_str
 from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
-from f8pysdk.shm.video import VIDEO_FORMAT_BGRA32
+from f8pysdk.video_transport import VIDEO_FORMAT_BGRA32
 
 from .model_config import ModelSpec, ModelTask, build_model_index, build_model_index_with_errors, load_model_spec
 from .onnx_runtime import OnnxTemporalWaveRuntime
 from .video_frame_source import (
     LatestVideoFrameSource,
     VideoFrameSourceConfig,
-    select_video_source_transport,
     video_source_metadata,
 )
 from .weights_downloader import ensure_onnx_file, onnx_file_matches_sha256
@@ -234,9 +233,6 @@ class _Telemetry:
         service_class: str,
         model: ModelSpec | None,
         ort_provider: str,
-        video_transport: str,
-        video_key: str,
-        shm_name: str,
         frame_id_last_seen: int | None,
         frame_id_last_processed: int | None,
     ) -> dict[str, Any]:
@@ -254,11 +250,7 @@ class _Telemetry:
                 "provider": (model.provider if model else ""),
             },
             "windowMs": int(win_ms),
-            "source": video_source_metadata(
-                video_transport=video_transport,
-                video_key=video_key,
-                shm_name=shm_name,
-            ),
+            "source": video_source_metadata(),
             "frameId": {
                 "lastSeen": int(frame_id_last_seen) if frame_id_last_seen is not None else None,
                 "lastProcessed": int(frame_id_last_processed) if frame_id_last_processed is not None else None,
@@ -305,9 +297,6 @@ class OnnxTcnWaveServiceNode(ServiceNode):
         self._output_scale = 10.0
         self._output_bias = 0.0
         self._use_vr_focus_crop = False
-        self._shm_name = ""
-        self._video_transport = ""
-        self._video_key = ""
         self._auto_download_weights = True
         self._download_retry_at_monotonic = 0.0
 
@@ -413,23 +402,6 @@ class OnnxTcnWaveServiceNode(ServiceNode):
             )
             return
 
-        if name == "shmName":
-            self._shm_name = coerce_str(await self.get_state_value("shmName"), default=self._shm_name)
-            self._reset_video_source()
-            return
-
-        if name == "videoTransport":
-            self._video_transport = coerce_str(
-                await self.get_state_value("videoTransport"), default=self._video_transport
-            )
-            self._reset_video_source()
-            return
-
-        if name == "videoKey":
-            self._video_key = coerce_str(await self.get_state_value("videoKey"), default=self._video_key)
-            self._reset_video_source()
-            return
-
         if name == "autoDownloadWeights":
             self._auto_download_weights = coerce_bool(
                 await self.get_state_value("autoDownloadWeights"),
@@ -474,16 +446,6 @@ class OnnxTcnWaveServiceNode(ServiceNode):
         self._auto_download_weights = coerce_bool(
             await self.get_state_value("autoDownloadWeights"),
             default=bool(self._initial_state.get("autoDownloadWeights", True)),
-        )
-        self._shm_name = coerce_str(
-            await self.get_state_value("shmName"), default=str(self._initial_state.get("shmName") or "")
-        )
-        self._video_transport = coerce_str(
-            await self.get_state_value("videoTransport"),
-            default=str(self._initial_state.get("videoTransport") or ""),
-        )
-        self._video_key = coerce_str(
-            await self.get_state_value("videoKey"), default=str(self._initial_state.get("videoKey") or "")
         )
         self._config_loaded = True
         await self._publish_model_index()
@@ -547,13 +509,8 @@ class OnnxTcnWaveServiceNode(ServiceNode):
             return
         await self.clear_error()
 
-    async def _handle_missing_video_input(self, *, video_transport: str, video_key: str, shm_name: str) -> None:
-        selected = select_video_source_transport(
-            video_transport=video_transport,
-            video_key=video_key,
-            shm_name=shm_name,
-        )
-        message = "missing shmName" if selected == "legacy_shm" else "missing videoKey"
+    async def _handle_missing_video_input(self) -> None:
+        message = "missing video data input"
         await self._set_last_error(message)
 
     async def _record_exception(self, *, where: str, exc: Exception) -> None:
@@ -601,17 +558,8 @@ class OnnxTcnWaveServiceNode(ServiceNode):
         self._last_infer_frame_id = None
         self._dup_skipped_since_last_processed = 0
 
-    def _resolve_shm_name(self) -> str:
-        shm_name = str(self._shm_name or "").strip()
-        if shm_name:
-            return shm_name
-        return ""
-
-    def _resolve_video_transport(self) -> str:
-        return str(self._video_transport or "").strip()
-
-    def _resolve_video_key(self) -> str:
-        return str(self._video_key or "").strip()
+    def _resolve_video_stream_key(self) -> str:
+        return self.input_zenoh_key("video")
 
     def _close_video_source(self) -> None:
         source = self._video_source
@@ -761,34 +709,16 @@ class OnnxTcnWaveServiceNode(ServiceNode):
                     continue
 
                 source = self._ensure_video_source()
-                video_key = self._resolve_video_key()
-                shm_name = self._resolve_shm_name()
-                video_transport = self._resolve_video_transport()
-                selected_transport = select_video_source_transport(
-                    video_transport=video_transport,
-                    video_key=video_key,
-                    shm_name=shm_name,
-                )
-                if (selected_transport == "zenoh" and not video_key) or (
-                    selected_transport == "legacy_shm" and not shm_name
-                ):
-                    await self._handle_missing_video_input(
-                        video_transport=video_transport,
-                        video_key=video_key,
-                        shm_name=shm_name,
-                    )
+                video_stream_key = self._resolve_video_stream_key()
+                if not video_stream_key:
+                    await self._handle_missing_video_input()
                     await asyncio.sleep(0.05)
                     continue
 
                 assert self._runtime is not None
                 t0 = time.perf_counter()
                 try:
-                    frame = source.read_latest(
-                        video_transport=video_transport,
-                        video_key=video_key,
-                        shm_name=shm_name,
-                        timeout_ms=10,
-                    )
+                    frame = source.read_latest(stream_key=video_stream_key, timeout_ms=10)
                 except Exception as exc:
                     await self._record_exception(where="open_video_source", exc=exc)
                     await asyncio.sleep(0.1)

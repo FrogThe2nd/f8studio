@@ -27,40 +27,13 @@ class VizTrackOperatorTests(unittest.IsolatedAsyncioTestCase):
     async def test_flush_includes_zenoh_video_and_flow_fields(self) -> None:
         runtime = _build_runtime()
         runtime._dirty = True
-        runtime._video_transport = "zenoh"
-        runtime._video_key = "f8/svc/camera/nodes/camera/data/video"
-        runtime._video_shm_name = "shm.camera.video"
-        runtime._flow_transport = "zenoh"
-        runtime._flow_key = "f8/svc/flow/nodes/flow/data/flow"
-        runtime._flow_shm_name = "shm.flow"
 
         with patch("f8pystudio.operators.viz_track.emit_ui_command") as emit:
             await runtime._flush(now_ms=123)
 
         payload = dict(emit.call_args.args[2])
-        assert payload["videoTransport"] == "zenoh"
-        assert payload["videoKey"] == "f8/svc/camera/nodes/camera/data/video"
-        assert "videoShmName" not in payload
-        assert payload["flowTransport"] == "zenoh"
-        assert payload["flowKey"] == "f8/svc/flow/nodes/flow/data/flow"
-        assert "flowShmName" not in payload
-
-    async def test_flush_keeps_legacy_shm_fields_when_selected(self) -> None:
-        runtime = _build_runtime()
-        runtime._dirty = True
-        runtime._video_transport = "legacy_shm"
-        runtime._video_shm_name = "shm.camera.video"
-        runtime._flow_transport = "legacy_shm"
-        runtime._flow_shm_name = "shm.flow"
-
-        with patch("f8pystudio.operators.viz_track.emit_ui_command") as emit:
-            await runtime._flush(now_ms=123)
-
-        payload = dict(emit.call_args.args[2])
-        assert payload["videoTransport"] == "legacy_shm"
-        assert payload["videoShmName"] == "shm.camera.video"
-        assert payload["flowTransport"] == "legacy_shm"
-        assert payload["flowShmName"] == "shm.flow"
+        assert payload["videoStreamKey"] == ""
+        assert payload["flowStreamKey"] == ""
 
 
 if __name__ == "__main__":

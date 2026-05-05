@@ -27,7 +27,6 @@ Additional stable utility modules:
 - `f8pysdk.zenoh_naming`: canonical Zenoh key-expression helpers
 - `f8pysdk.f8_naming`: canonical runtime token, subject, and state-key helpers
 - `f8pysdk.capabilities`: explicit runtime node capability protocols and mixins
-- `f8pysdk.shm`: shared-memory naming and audio/video helpers
 - `f8pysdk.rungraph_validation`: rungraph validation helpers used by Studio/runtime tooling
 - `f8pysdk.editor_assist_protocol`: editor-assist payload validation helpers
 - `f8pysdk.time_utils`: small runtime timestamp helpers

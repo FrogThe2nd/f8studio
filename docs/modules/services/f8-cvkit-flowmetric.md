@@ -39,38 +39,31 @@ No description.
 
 ### Typical Inputs / Outputs
 
-- Data inputs: none
-- Data outputs: `monitor`
+- Data inputs: `flow`
+- Data outputs: `scalar`, `monitor`
 - Commands: none
 
 ### Service State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `inputFlowShmName` | `rw` | `true` | `false` | `string` | Legacy input flow SHM name used only when inputFlowTransport=legacy_shm. |
-| `inputFlowTransport` | `rw` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Input flow frame transport backend. Zenoh is default; legacy_shm keeps old inputFlowShmName. |
-| `inputFlowKey` | `rw` | `true` | `true` | `string` | Input flow frame transport key. |
 | `computeEveryNFrames` | `rw` | `true` | `false` | `integer / default=1` | Compute selected flow metric once per N new flow frames. |
 | `metricMode` | `rw` | `true` | `false` | `string / enum[divergence, magnitude, curl, strain] / default=divergence` | Flow metric mode: divergence \| magnitude \| curl \| strain. |
 | `metricScale` | `rw` | `true` | `false` | `number / default=1.0` | Scale factor applied to computed metric values before output. |
-| `scalarShmName` | `ro` | `true` | `false` | `string` | Legacy output SHM name used only when scalarTransport=legacy_shm. |
-| `scalarTransport` | `ro` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Output scalar frame transport backend. Zenoh is default; legacy_shm keeps old scalarShmName. |
-| `scalarKey` | `ro` | `true` | `true` | `string` | Output scalar frame transport key. |
-| `scalarShmFormat` | `ro` | `true` | `false` | `string` | Output payload format. Fixed to scalar1_f32. |
+| `scalarFormat` | `ro` | `true` | `false` | `string / enum[scalar1_f32]` | Output payload format. Fixed to scalar1_f32. |
 | `scalarFrameSchemaVersion` | `ro` | `true` | `false` | `integer / default=1` | Output scalar frame schema version. |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
 ### Key Fields That Matter
 
-- `inputFlowShmName` (Legacy Input Flow SHM, `rw`): Legacy input flow SHM name used only when inputFlowTransport=legacy_shm. Schema: `string`.
-- `inputFlowTransport` (Input Flow Transport, `rw`): Input flow frame transport backend. Zenoh is default; legacy_shm keeps old inputFlowShmName. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
-- `inputFlowKey` (Input Flow Key, `rw`): Input flow frame transport key. Schema: `string`.
 - `computeEveryNFrames` (Compute Every N Frames, `rw`): Compute selected flow metric once per N new flow frames. Schema: `integer / default=1`.
 - `metricMode` (Metric Mode, `rw`): Flow metric mode: divergence | magnitude | curl | strain. Schema: `string / enum[divergence, magnitude, curl, strain] / default=divergence`.
 - `metricScale` (Metric Scale, `rw`): Scale factor applied to computed metric values before output. Schema: `number / default=1.0`.
-- `scalarShmName` (Legacy Scalar SHM, `ro`): Legacy output SHM name used only when scalarTransport=legacy_shm. Schema: `string`.
-- `scalarTransport` (Scalar Transport, `ro`): Output scalar frame transport backend. Zenoh is default; legacy_shm keeps old scalarShmName. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
+- `scalarFormat` (Scalar Format, `ro`): Output payload format. Fixed to scalar1_f32. Schema: `string / enum[scalar1_f32]`.
+- `scalarFrameSchemaVersion` (Scalar Frame Schema, `ro`): Output scalar frame schema version. Schema: `integer / default=1`.
+- `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 
 ### Service Commands
 
@@ -78,12 +71,15 @@ _None_
 
 ### Service Data Input Ports
 
-_None_
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `flow` | `true` | `true` | `object{format, frameId, height, pitch, ...}` | Input dense optical-flow frame stream. |
 
 ### Service Data Output Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
+| `scalar` | `true` | `true` | `object{format, frameId, height, pitch, ...}` | Scalar metric frame stream. |
 | `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators

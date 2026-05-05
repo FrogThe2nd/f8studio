@@ -25,8 +25,6 @@ int main(int argc, char** argv) {
   cxxopts::Options options("f8screencap_service", "F8 screen capture (platform backend) -> Zenoh video service");
   options.add_options()("describe", "Print service spec JSON and exit")(
       "service-id", "Service instance id (required unless --describe)", cxxopts::value<std::string>()->default_value(""))(
-      "shm-bytes", "Legacy video SHM bytes", cxxopts::value<std::size_t>()->default_value(std::to_string(f8::cppsdk::shm::kDefaultVideoShmBytes)))(
-      "shm-slots", "Legacy video SHM slots", cxxopts::value<std::uint32_t>()->default_value(std::to_string(f8::cppsdk::shm::kDefaultVideoShmSlots)))(
       "fps", "Capture FPS", cxxopts::value<double>()->default_value("30.0"))(
       "mode", "Capture mode (display|window|region)", cxxopts::value<std::string>()->default_value("display"))(
       "display-id", "Display id (0..N-1)", cxxopts::value<int>()->default_value("0"))(
@@ -34,7 +32,6 @@ int main(int argc, char** argv) {
       "region", "Region as x,y,w,h (mode=region)", cxxopts::value<std::string>()->default_value(""))(
       "scale", "Scale as w,h (optional; 0,0 disables)", cxxopts::value<std::string>()->default_value(""))("help", "Show help");
   f8::cppsdk::add_runtime_backend_options(options);
-  f8::cppsdk::add_video_transport_backend_option(options);
 
   auto result = options.parse(argc, argv);
   if (result.count("help")) {
@@ -71,18 +68,9 @@ int main(int argc, char** argv) {
     std::cerr << runtime_error << "\n";
     return 2;
   }
-  f8::cppsdk::VideoTransportBackend video_backend = f8::cppsdk::VideoTransportBackend::kAuto;
-  if (!f8::cppsdk::read_video_transport_backend_option(result, video_backend, runtime_error)) {
-    std::cerr << runtime_error << "\n";
-    return 2;
-  }
-
   f8::screencap::ScreenCapService::Config cfg;
   cfg.service_id = service_id;
   cfg.runtime_backend = runtime_backend;
-  cfg.video_backend = video_backend;
-  cfg.video_shm_bytes = result["shm-bytes"].as<std::size_t>();
-  cfg.video_shm_slots = result["shm-slots"].as<std::uint32_t>();
   cfg.mode = result["mode"].as<std::string>();
   cfg.fps = result["fps"].as<double>();
   cfg.display_id = result["display-id"].as<int>();

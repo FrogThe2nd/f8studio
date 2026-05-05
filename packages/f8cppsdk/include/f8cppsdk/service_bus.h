@@ -128,6 +128,9 @@ class ServiceBus final : public ServiceControlHandler {
   // Pull buffered inbound data for (node,port). Returns nullopt if empty/stale.
   std::optional<json> pull_data(const std::string& node_id, const std::string& port_id);
 
+  // Resolve the Zenoh stream key feeding a local typed stream input port.
+  std::optional<std::string> data_input_zenoh_key(const std::string& node_id, const std::string& port_id) const;
+
   // ---- state ----------------------------------------------------------
   // Read state from local cache/KV (wire-compatible with f8pysdk get_state).
   StateRead get_state(const std::string& node_id, const std::string& field);
@@ -287,6 +290,7 @@ class ServiceBus final : public ServiceControlHandler {
   mutable std::mutex data_mu_;
   std::unordered_map<std::string, std::unique_ptr<RuntimeSubscription>> runtime_data_subs_;
   std::unordered_map<_NodePortKey, std::shared_ptr<_InputBuffer>, _NodePortKeyHash> data_inputs_;
+  std::unordered_map<_NodePortKey, std::string, _NodePortKeyHash> data_input_stream_subjects_;
 
   struct _RouteRuntime {
     std::string to_node_id;

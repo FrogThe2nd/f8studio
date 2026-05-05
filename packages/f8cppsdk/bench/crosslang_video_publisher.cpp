@@ -1,5 +1,4 @@
 #include "f8cppsdk/latest_video_frame_transport.h"
-#include "f8cppsdk/video_shared_memory_sink.h"
 
 #include <algorithm>
 #include <chrono>
@@ -19,9 +18,7 @@ namespace {
 using clock_type = std::chrono::steady_clock;
 
 struct Args {
-  std::string backend = "zenoh";
   std::string key_expr;
-  std::string shm_name;
   std::string ready_file;
   unsigned width = 1920;
   unsigned height = 1080;
@@ -74,10 +71,6 @@ std::vector<std::byte> make_payload(std::size_t payload_bytes) {
     payload[index] = static_cast<std::byte>(index % 251);
   }
   return payload;
-}
-
-std::size_t shm_capacity(std::size_t frame_bytes) {
-  return std::max<std::size_t>(256ULL * 1024ULL * 1024ULL, frame_bytes * 4ULL + 64ULL);
 }
 
 f8::cppsdk::RuntimeBackendConfig zenoh_config(const Args& args) {
@@ -140,52 +133,6 @@ nlohmann::json publish_zenoh(const Args& args) {
   };
 }
 
-nlohmann::json publish_legacy_shm(const Args& args) {
-  const unsigned pitch = args.width * args.channels;
-  const std::size_t payload_bytes = static_cast<std::size_t>(pitch) * args.height;
-  const std::size_t capacity = shm_capacity(payload_bytes);
-  const std::uint32_t format = args.channels == 4 ? f8::cppsdk::kVideoFormatBgra32 : 99u;
-  std::vector<std::byte> payload = make_payload(payload_bytes);
-
-  f8::cppsdk::VideoSharedMemorySink sink;
-  if (!sink.initialize(args.shm_name, capacity, 2) ||
-      !sink.ensureConfigurationForFormat(args.width, args.height, format, args.channels)) {
-    throw std::runtime_error("failed to open legacy SHM publisher");
-  }
-  sink.set_unlink_on_close(true);
-  touch_ready_file(args.ready_file);
-  if (args.start_delay_ms > 0) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(args.start_delay_ms));
-  }
-
-  const int total = std::max(0, args.warmup_iterations) + std::max(1, args.iterations);
-  const auto period = args.fps > 0.0 ? std::chrono::duration<double>(1.0 / args.fps) : std::chrono::duration<double>(0);
-  auto next_publish = clock_type::now();
-  int published = 0;
-  int failed = 0;
-  const auto start = clock_type::now();
-  for (int index = 0; index < total; ++index) {
-    if (args.fps > 0.0) {
-      std::this_thread::sleep_until(next_publish);
-      next_publish += std::chrono::duration_cast<clock_type::duration>(period);
-    }
-    write_i64_le(payload, steady_now_ns());
-    if (sink.writeFrameWithFormat(payload.data(), pitch, format)) {
-      ++published;
-    } else {
-      ++failed;
-    }
-  }
-  const double elapsed_s = seconds_since(start);
-  return nlohmann::json{
-      {"backend", "legacy_shm"},
-      {"payload_bytes", payload_bytes},
-      {"published", published},
-      {"failed", failed},
-      {"elapsed_s", elapsed_s},
-  };
-}
-
 Args parse_args(int argc, char** argv) {
   Args args;
   for (int index = 1; index < argc; ++index) {
@@ -197,12 +144,8 @@ Args parse_args(int argc, char** argv) {
       ++index;
       return argv[index];
     };
-    if (flag == "--backend") {
-      args.backend = require_value(flag);
-    } else if (flag == "--key") {
+    if (flag == "--key") {
       args.key_expr = require_value(flag);
-    } else if (flag == "--shm-name") {
-      args.shm_name = require_value(flag);
     } else if (flag == "--ready-file") {
       args.ready_file = require_value(flag);
     } else if (flag == "--video-width") {
@@ -222,8 +165,8 @@ Args parse_args(int argc, char** argv) {
     } else if (flag == "--zenoh-shm-pool-bytes") {
       args.zenoh_shm_pool_bytes = static_cast<std::uint64_t>(std::stoull(require_value(flag)));
     } else if (flag == "--help" || flag == "-h") {
-      std::cout << "Usage: f8cpp_crosslang_video_publisher --backend zenoh|legacy_shm [--key KEY]\n"
-                << "       [--shm-name NAME] [--ready-file PATH] [--video-width N] [--video-height N]\n"
+      std::cout << "Usage: f8cpp_crosslang_video_publisher --key KEY\n"
+                << "       [--ready-file PATH] [--video-width N] [--video-height N]\n"
                 << "       [--channels 3|4] [--iterations N] [--warmup-iterations N] [--fps N]\n";
       std::exit(0);
     } else {
@@ -233,14 +176,8 @@ Args parse_args(int argc, char** argv) {
   if (args.channels != 3 && args.channels != 4) {
     throw std::runtime_error("--channels must be 3 or 4");
   }
-  if (args.backend != "zenoh" && args.backend != "legacy_shm") {
-    throw std::runtime_error("--backend must be zenoh or legacy_shm");
-  }
-  if (args.backend == "zenoh" && args.key_expr.empty()) {
-    throw std::runtime_error("--key is required for zenoh");
-  }
-  if (args.backend == "legacy_shm" && args.shm_name.empty()) {
-    throw std::runtime_error("--shm-name is required for legacy_shm");
+  if (args.key_expr.empty()) {
+    throw std::runtime_error("--key is required");
   }
   args.iterations = std::max(1, args.iterations);
   args.warmup_iterations = std::max(0, args.warmup_iterations);
@@ -253,7 +190,7 @@ Args parse_args(int argc, char** argv) {
 int main(int argc, char** argv) {
   try {
     const Args args = parse_args(argc, argv);
-    nlohmann::json result = args.backend == "zenoh" ? publish_zenoh(args) : publish_legacy_shm(args);
+    nlohmann::json result = publish_zenoh(args);
     result["width"] = args.width;
     result["height"] = args.height;
     result["channels"] = args.channels;

@@ -14,13 +14,11 @@
 
 #include "f8cppsdk/capabilities.h"
 #include "f8cppsdk/service_bus.h"
-#include "f8cppsdk/shm/video.h"
 #include "implayer_playback_state.h"
 #include "sdl_video_window.h"
 
 namespace f8::cppsdk {
 class ZenohLatestVideoFramePublisher;
-class VideoSharedMemorySink;
 }
 
 namespace f8::implayer {
@@ -29,7 +27,6 @@ class MpvPlayer;
 class ImPlayerGui;
 class OpenXrPresenter;
 class VideoFrameSink;
-using VideoSharedMemorySink = ::f8::cppsdk::VideoSharedMemorySink;
 
 class ImPlayerService final : public f8::cppsdk::LifecycleNode,
                               public f8::cppsdk::StatefulNode,
@@ -41,13 +38,10 @@ class ImPlayerService final : public f8::cppsdk::LifecycleNode,
     std::string service_id;
     std::string service_class = "f8.implayer";
     f8::cppsdk::RuntimeBackendConfig runtime_backend;
-    f8::cppsdk::VideoTransportBackend video_backend = f8::cppsdk::VideoTransportBackend::kAuto;
 
-    std::size_t video_shm_bytes = f8::cppsdk::shm::kDefaultVideoShmBytes;
-    std::uint32_t video_shm_slots = f8::cppsdk::shm::kDefaultVideoShmSlots;
-    std::uint32_t video_shm_max_width = 600;
-    std::uint32_t video_shm_max_height = 600;
-    double video_shm_max_fps = 40.0;
+    std::uint32_t video_output_max_width = 600;
+    std::uint32_t video_output_max_height = 600;
+    double video_output_max_fps = 40.0;
 
     int window_width = 1280;
     int window_height = 720;
@@ -129,7 +123,6 @@ class ImPlayerService final : public f8::cppsdk::LifecycleNode,
   std::unique_ptr<ImPlayerGui> gui_;
   std::unique_ptr<MpvPlayer> player_;
   std::shared_ptr<VideoFrameSink> frame_sink_;
-  std::shared_ptr<VideoSharedMemorySink> shm_;
   std::shared_ptr<f8::cppsdk::ZenohLatestVideoFramePublisher> zenoh_video_publisher_;
   std::string zenoh_video_key_;
 

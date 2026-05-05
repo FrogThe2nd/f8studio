@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 from f8pysdk.specs import (
+    F8DataPortDelivery,
+    F8DataPortPayloadKind,
     F8DataPortSpec,
     F8RuntimeNode,
     F8ServiceSchemaVersion,
@@ -15,6 +17,7 @@ from f8pysdk.specs import (
     integer_schema,
     number_schema,
     string_schema,
+    video_frame_schema,
 )
 from f8pysdk.nodes import RuntimeNode
 from f8pysdk.registry import Registry, RuntimeNodeRegistry, create_runtime_node_registry, shared_runtime_node_registry
@@ -92,6 +95,17 @@ def _detections_payload_schema():
     )
 
 
+def _video_input_port() -> F8DataPortSpec:
+    return F8DataPortSpec(
+        name="video",
+        description="Input video frame stream.",
+        valueSchema=video_frame_schema(),
+        payloadKind=F8DataPortPayloadKind.video_frame,
+        delivery=F8DataPortDelivery.latest,
+        required=True,
+    )
+
+
 def _detection_sorter_state_fields() -> list[F8StateSpec]:
     return [
         F8StateSpec(
@@ -110,33 +124,6 @@ def _detection_sorter_state_fields() -> list[F8StateSpec]:
             required=True,
             uiControl="code[json]",
             showOnNode=False,
-        ),
-        F8StateSpec(
-            name="scoreShmName",
-            label="Legacy Score SHM",
-            description="Legacy score-map SHM name used only when scoreTransport=legacy_shm.",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.rw,
-            required=False,
-            showOnNode=False,
-        ),
-        F8StateSpec(
-            name="scoreTransport",
-            label="Score Transport",
-            description="Score-map transport backend. Use zenoh for latest-frame score maps; legacy_shm keeps old SHM input.",
-            valueSchema=string_schema(default="zenoh", enum=["zenoh", "legacy_shm"]),
-            access=F8StateAccess.rw,
-            required=True,
-            showOnNode=False,
-        ),
-        F8StateSpec(
-            name="scoreKey",
-            label="Score Key",
-            description="Zenoh latest-frame key for scalar/flow score-map input.",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.rw,
-            required=True,
-            showOnNode=True,
         ),
         F8StateSpec(
             name="sortDirection",
@@ -166,33 +153,6 @@ def _common_state_fields(
     include_class_filter: bool,
 ) -> list[F8StateSpec]:
     fields = [
-        F8StateSpec(
-            name="shmName",
-            label="Legacy Video SHM",
-            description="Legacy SHM mapping name used only when videoTransport=legacy_shm.",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.rw,
-            required=False,
-            showOnNode=False,
-        ),
-        F8StateSpec(
-            name="videoTransport",
-            label="Video Transport",
-            description="Video input transport backend. Use zenoh with videoKey; legacy_shm keeps old shmName input.",
-            valueSchema=string_schema(default="zenoh", enum=["zenoh", "legacy_shm"]),
-            access=F8StateAccess.rw,
-            required=True,
-            showOnNode=False,
-        ),
-        F8StateSpec(
-            name="videoKey",
-            label="Video Key",
-            description="Zenoh latest-frame key for video input.",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.rw,
-            required=True,
-            showOnNode=True,
-        ),
         F8StateSpec(
             name="weightsDir",
             label="Weights Dir",
@@ -359,33 +319,6 @@ def _common_state_fields(
 def _optflow_state_fields() -> list[F8StateSpec]:
     return [
         F8StateSpec(
-            name="inputShmName",
-            label="Legacy Input SHM",
-            description="Legacy input SHM name used only when inputVideoTransport=legacy_shm.",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.rw,
-            required=False,
-            showOnNode=False,
-        ),
-        F8StateSpec(
-            name="inputVideoTransport",
-            label="Input Video Transport",
-            description="Input video transport backend. Use zenoh with inputVideoKey; legacy_shm keeps old inputShmName.",
-            valueSchema=string_schema(default="zenoh", enum=["zenoh", "legacy_shm"]),
-            access=F8StateAccess.rw,
-            required=True,
-            showOnNode=False,
-        ),
-        F8StateSpec(
-            name="inputVideoKey",
-            label="Input Video Key",
-            description="Zenoh latest-frame key for input video.",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.rw,
-            required=True,
-            showOnNode=True,
-        ),
-        F8StateSpec(
             name="computeEveryNFrames",
             label="Compute Every N Frames",
             description="Compute optical flow once per N new frames.",
@@ -470,37 +403,10 @@ def _optflow_state_fields() -> list[F8StateSpec]:
             showOnNode=False,
         ),
         F8StateSpec(
-            name="flowShmName",
-            label="Legacy Flow SHM",
-            description="Legacy output flow SHM name used only when flowTransport=legacy_shm.",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.ro,
-            required=False,
-            showOnNode=False,
-        ),
-        F8StateSpec(
-            name="flowTransport",
-            label="Flow Transport",
-            description="Output flow transport backend. Zenoh is the default latest-frame path; legacy_shm is an explicit fallback.",
-            valueSchema=string_schema(default="zenoh", enum=["zenoh", "legacy_shm"]),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=False,
-        ),
-        F8StateSpec(
-            name="flowKey",
-            label="Flow Key",
-            description="Zenoh latest-frame key for output flow.",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=True,
-        ),
-        F8StateSpec(
-            name="flowShmFormat",
-            label="Flow SHM Format",
+            name="flowFormat",
+            label="Flow Format",
             description="Flow payload format. Fixed to flow2_f16.",
-            valueSchema=string_schema(default="flow2_f16"),
+            valueSchema=string_schema(default="flow2_f16", enum=["flow2_f16"]),
             access=F8StateAccess.ro,
             required=True,
             showOnNode=False,
@@ -580,6 +486,7 @@ def _register_classifier(registry: Registry) -> None:
                 include_top_k=True,
                 include_class_filter=False,
             ),
+            dataInPorts=[_video_input_port()],
             dataOutPorts=[
                 F8DataPortSpec(
                     name="classifications",
@@ -620,6 +527,7 @@ def _register_detector(registry: Registry) -> None:
                 include_top_k=False,
                 include_class_filter=True,
             ),
+            dataInPorts=[_video_input_port()],
             dataOutPorts=[
                 F8DataPortSpec(
                     name="detections",
@@ -660,6 +568,7 @@ def _register_human_detector(registry: Registry) -> None:
                 include_top_k=False,
                 include_class_filter=True,
             ),
+            dataInPorts=[_video_input_port()],
             dataOutPorts=[
                 F8DataPortSpec(
                     name="detections",
@@ -694,7 +603,17 @@ def _register_optflow(registry: Registry) -> None:
             tags=["onnx", "vision", "optical_flow", "zenoh_flow"],
             rendererClass="default_svc",
             stateFields=_optflow_state_fields(),
-            dataOutPorts=[],
+            dataInPorts=[_video_input_port()],
+            dataOutPorts=[
+                F8DataPortSpec(
+                    name="flow",
+                    description="Dense optical-flow frame stream.",
+                    valueSchema=video_frame_schema(),
+                    payloadKind=F8DataPortPayloadKind.video_frame,
+                    delivery=F8DataPortDelivery.latest,
+                    required=True,
+                ),
+            ],
         ),
         _factory,
         overwrite=True,
@@ -718,6 +637,14 @@ def _register_detection_sorter(registry: Registry) -> None:
                     name="detections",
                     description="Detection input in schema f8visionDetections/1.",
                     valueSchema=_detections_payload_schema(),
+                    required=True,
+                ),
+                F8DataPortSpec(
+                    name="score",
+                    description="Scalar or flow score-map frame stream used to rank detections.",
+                    valueSchema=video_frame_schema(),
+                    payloadKind=F8DataPortPayloadKind.video_frame,
+                    delivery=F8DataPortDelivery.latest,
                     required=True,
                 ),
             ],
@@ -755,6 +682,7 @@ def _register_tcn_wave(registry: Registry) -> None:
             tags=["onnx", "vision", "temporal", "wave", "signal"],
             rendererClass="default_svc",
             stateFields=_tcn_wave_state_fields(),
+            dataInPorts=[_video_input_port()],
             dataOutPorts=[
                 F8DataPortSpec(
                     name="predictedChange",

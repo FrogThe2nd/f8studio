@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from f8pysdk.specs import (
-    array_schema,
+    F8DataPortDelivery,
+    F8DataPortPayloadKind,
     F8DataPortSpec,
     F8ServiceSchemaVersion,
     F8ServiceSpec,
     F8StateAccess,
     F8StateSpec,
+    array_schema,
+    audio_chunk_schema,
     complex_object_schema,
     integer_schema,
     number_schema,
@@ -53,33 +56,6 @@ def _rhythm_features_schema():
 
 def _core_state_fields() -> list[F8StateSpec]:
     return [
-        F8StateSpec(
-            name="audioShmName",
-            label="Legacy Audio SHM",
-            description="Legacy audio SHM mapping name used only when audioTransport=legacy_shm.",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.rw,
-            required=False,
-            showOnNode=False,
-        ),
-        F8StateSpec(
-            name="audioTransport",
-            label="Audio Transport",
-            description="Audio input transport backend. Use zenoh with audioKey; legacy_shm keeps old audioShmName input.",
-            valueSchema=string_schema(default="zenoh", enum=["zenoh", "legacy_shm"]),
-            access=F8StateAccess.rw,
-            required=True,
-            showOnNode=False,
-        ),
-        F8StateSpec(
-            name="audioKey",
-            label="Audio Key",
-            description="Zenoh latest-audio key for input chunks.",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.rw,
-            required=True,
-            showOnNode=True,
-        ),
         F8StateSpec(
             name="channelMode",
             label="Channel Mode",
@@ -163,6 +139,16 @@ def _register_core(registry: Registry) -> None:
             tags=["audio", "feature", "rms", "onset", "centroid"],
             rendererClass="default_svc",
             stateFields=_core_state_fields(),
+            dataInPorts=[
+                F8DataPortSpec(
+                    name="audio",
+                    description="Input audio chunk stream from f8.audiocap.",
+                    valueSchema=audio_chunk_schema(),
+                    payloadKind=F8DataPortPayloadKind.audio_chunk,
+                    delivery=F8DataPortDelivery.latest,
+                    required=True,
+                )
+            ],
             dataOutPorts=[
                 F8DataPortSpec(
                     name="coreFeatures",

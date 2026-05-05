@@ -101,11 +101,11 @@ MpvPlayer::MpvPlayer(const VideoConfig& config, TimeCallback timeCallback, Playi
       timeCallback_(std::move(timeCallback)),
       playingCallback_(std::move(playingCallback)),
       finishedCallback_(std::move(finishedCallback)) {
-  shm_max_width_.store(config_.videoShmMaxWidth, std::memory_order_relaxed);
-  shm_max_height_.store(config_.videoShmMaxHeight, std::memory_order_relaxed);
-  shm_max_fps_.store(config_.videoShmMaxFps, std::memory_order_relaxed);
-  shm_frame_interval_s_.store(config_.videoShmMaxFps > 0.0 ? (1.0 / config_.videoShmMaxFps) : 0.0,
-                              std::memory_order_relaxed);
+  export_max_width_.store(config_.videoOutputMaxWidth, std::memory_order_relaxed);
+  export_max_height_.store(config_.videoOutputMaxHeight, std::memory_order_relaxed);
+  export_max_fps_.store(config_.videoOutputMaxFps, std::memory_order_relaxed);
+  export_frame_interval_s_.store(config_.videoOutputMaxFps > 0.0 ? (1.0 / config_.videoOutputMaxFps) : 0.0,
+                                 std::memory_order_relaxed);
   initializeMpv();
   startEventThread();
 }
@@ -361,31 +361,31 @@ void MpvPlayer::setVideoFrameSink(std::shared_ptr<VideoFrameSink> sink) {
   sink_ = std::move(sink);
 }
 
-void MpvPlayer::setVideoShmMaxSize(std::uint32_t max_width, std::uint32_t max_height) {
-  shm_max_width_.store(max_width, std::memory_order_relaxed);
-  shm_max_height_.store(max_height, std::memory_order_relaxed);
+void MpvPlayer::setVideoOutputMaxSize(std::uint32_t max_width, std::uint32_t max_height) {
+  export_max_width_.store(max_width, std::memory_order_relaxed);
+  export_max_height_.store(max_height, std::memory_order_relaxed);
 }
 
-void MpvPlayer::setVideoShmMaxFps(double max_fps) {
+void MpvPlayer::setVideoOutputMaxFps(double max_fps) {
   if (max_fps < 0.0)
     max_fps = 0.0;
-  shm_max_fps_.store(max_fps, std::memory_order_relaxed);
-  shm_frame_interval_s_.store(max_fps > 0.0 ? (1.0 / max_fps) : 0.0, std::memory_order_relaxed);
-  shm_rate_reset_.store(true, std::memory_order_release);
+  export_max_fps_.store(max_fps, std::memory_order_relaxed);
+  export_frame_interval_s_.store(max_fps > 0.0 ? (1.0 / max_fps) : 0.0, std::memory_order_relaxed);
+  export_rate_reset_.store(true, std::memory_order_release);
 }
 
-void MpvPlayer::setShmViewMode(ShmViewMode mode) {
-  shm_view_mode_.store(static_cast<int>(mode), std::memory_order_relaxed);
+void MpvPlayer::setFrameExportViewMode(FrameExportViewMode mode) {
+  export_view_mode_.store(static_cast<int>(mode), std::memory_order_relaxed);
 }
 
-std::uint32_t MpvPlayer::videoShmMaxWidth() const {
-  return shm_max_width_.load(std::memory_order_relaxed);
+std::uint32_t MpvPlayer::videoOutputMaxWidth() const {
+  return export_max_width_.load(std::memory_order_relaxed);
 }
-std::uint32_t MpvPlayer::videoShmMaxHeight() const {
-  return shm_max_height_.load(std::memory_order_relaxed);
+std::uint32_t MpvPlayer::videoOutputMaxHeight() const {
+  return export_max_height_.load(std::memory_order_relaxed);
 }
-double MpvPlayer::videoShmMaxFps() const {
-  return shm_max_fps_.load(std::memory_order_relaxed);
+double MpvPlayer::videoOutputMaxFps() const {
+  return export_max_fps_.load(std::memory_order_relaxed);
 }
 
 bool MpvPlayer::initializeGl() {
@@ -523,8 +523,8 @@ bool MpvPlayer::renderVideoFrame() {
     return false;
   }
 
-  double shm_copy_ms = 0.0;
-  copyFrameToSharedMemory(width, height, shm_copy_ms);
+  double export_copy_ms = 0.0;
+  copyFrameToSink(width, height, export_copy_ms);
 
   const double total_ms = DurationMs(std::chrono::steady_clock::now() - t0);
   {
@@ -744,8 +744,8 @@ void MpvPlayer::handleVideoReconfig() {
   int64_t width = 0;
   int64_t height = 0;
   // Use the decoded frame size for the render targets so the on-screen playback
-  // remains full-quality. The SHM size limit is applied later in
-  // copyFrameToSharedMemory() via targetDimensions().
+  // remains full-quality. The stream output size limit is applied later in
+  // copyFrameToSink() via targetDimensions().
   //
   // Fallback to display dimensions if the source dimensions are unavailable.
   if (mpv_get_property(mpv_, "width", MPV_FORMAT_INT64, &width) < 0 ||
@@ -767,8 +767,8 @@ std::pair<unsigned, unsigned> MpvPlayer::targetDimensions(unsigned width, unsign
   double out_w = static_cast<double>(width);
   double out_h = static_cast<double>(height);
   double scale = 1.0;
-  const auto max_w = shm_max_width_.load(std::memory_order_relaxed);
-  const auto max_h = shm_max_height_.load(std::memory_order_relaxed);
+  const auto max_w = export_max_width_.load(std::memory_order_relaxed);
+  const auto max_h = export_max_height_.load(std::memory_order_relaxed);
   if (max_w > 0)
     scale = std::min(scale, static_cast<double>(max_w) / out_w);
   if (max_h > 0)
@@ -954,15 +954,15 @@ void MpvPlayer::destroyReadbackPbos() {
   }
 }
 
-bool MpvPlayer::shouldCopyToSharedMemory(std::chrono::steady_clock::time_point now) {
+bool MpvPlayer::shouldExportFrame(std::chrono::steady_clock::time_point now) {
   if (config_.offline)
     return false;
-  if (shm_rate_reset_.exchange(false, std::memory_order_acq_rel)) {
-    std::lock_guard<std::mutex> lock(shmRateMutex_);
-    shm_due_initialized_ = false;
+  if (export_rate_reset_.exchange(false, std::memory_order_acq_rel)) {
+    std::lock_guard<std::mutex> lock(exportRateMutex_);
+    export_due_initialized_ = false;
   }
 
-  const double interval_s = shm_frame_interval_s_.load(std::memory_order_relaxed);
+  const double interval_s = export_frame_interval_s_.load(std::memory_order_relaxed);
   if (interval_s <= 0.0)
     return true;
 
@@ -973,46 +973,47 @@ bool MpvPlayer::shouldCopyToSharedMemory(std::chrono::steady_clock::time_point n
   const auto interval = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
       std::chrono::duration<double>(interval_s));
 
-  std::lock_guard<std::mutex> lock(shmRateMutex_);
-  if (!shm_due_initialized_) {
-    shm_next_due_ = now;
-    shm_due_initialized_ = true;
+  std::lock_guard<std::mutex> lock(exportRateMutex_);
+  if (!export_due_initialized_) {
+    export_next_due_ = now;
+    export_due_initialized_ = true;
     return true;
   }
-  if (now + kEarlyTolerance < shm_next_due_)
+  if (now + kEarlyTolerance < export_next_due_)
     return false;
 
-  shm_next_due_ += interval;
+  export_next_due_ += interval;
   // If we were delayed by more than one interval, resync to avoid bursty catch-up.
-  if (shm_next_due_ + interval < now)
-    shm_next_due_ = now + interval;
+  if (export_next_due_ + interval < now)
+    export_next_due_ = now + interval;
   return true;
 }
 
-bool MpvPlayer::copyFrameToSharedMemory(unsigned width, unsigned height, double&) {
+bool MpvPlayer::copyFrameToSink(unsigned width, unsigned height, double&) {
   auto sink = sharedSink();
   if (!sink) {
     std::lock_guard<std::mutex> lock(statsMutex_);
-    stats_.shmSkipNoSink += 1;
+    stats_.exportSkipNoSink += 1;
     return false;
   }
   const auto now = std::chrono::steady_clock::now();
-  if (!shouldCopyToSharedMemory(now)) {
+  if (!shouldExportFrame(now)) {
     std::lock_guard<std::mutex> lock(statsMutex_);
-    stats_.shmSkipInterval += 1;
+    stats_.exportSkipInterval += 1;
     return false;
   }
 
-  const ShmViewMode view_mode = static_cast<ShmViewMode>(shm_view_mode_.load(std::memory_order_relaxed));
+  const FrameExportViewMode view_mode =
+      static_cast<FrameExportViewMode>(export_view_mode_.load(std::memory_order_relaxed));
   unsigned src_x0 = 0;
   unsigned src_w = width;
-  if (view_mode != ShmViewMode::FullFrame && width >= 2) {
+  if (view_mode != FrameExportViewMode::FullFrame && width >= 2) {
     const unsigned left_w = width / 2;
     const unsigned right_w = width - left_w;
-    if (view_mode == ShmViewMode::SbsLeft) {
+    if (view_mode == FrameExportViewMode::SbsLeft) {
       src_x0 = 0;
       src_w = left_w;
-    } else if (view_mode == ShmViewMode::SbsRight) {
+    } else if (view_mode == FrameExportViewMode::SbsRight) {
       src_x0 = left_w;
       src_w = right_w;
     }
@@ -1021,12 +1022,12 @@ bool MpvPlayer::copyFrameToSharedMemory(unsigned width, unsigned height, double&
   auto [target_w, target_h] = targetDimensions(src_w, height);
   if (target_w == 0 || target_h == 0) {
     std::lock_guard<std::mutex> lock(statsMutex_);
-    stats_.shmSkipTarget += 1;
+    stats_.exportSkipTarget += 1;
     return false;
   }
   if (!sink->ensureConfiguration(target_w, target_h)) {
     std::lock_guard<std::mutex> lock(statsMutex_);
-    stats_.shmSkipSinkConfig += 1;
+    stats_.exportSkipSinkConfig += 1;
     return false;
   }
   if (!ensureDownsampleTargets(target_w, target_h))
@@ -1039,7 +1040,7 @@ bool MpvPlayer::copyFrameToSharedMemory(unsigned width, unsigned height, double&
 
   glBindFramebuffer(GL_READ_FRAMEBUFFER, videoFboId_);
   glBindFramebuffer(GL_DRAW_FRAMEBUFFER, downsampleFboId_);
-  // glReadPixels reads from bottom-left; flip during blit so the SHM payload is top-down.
+  // glReadPixels reads from bottom-left; flip during blit so the exported payload is top-down.
   glBlitFramebuffer(static_cast<GLint>(src_x0), 0, static_cast<GLint>(src_x0 + src_w), static_cast<GLint>(height), 0,
                     static_cast<GLint>(target_h), static_cast<GLint>(target_w), 0, GL_COLOR_BUFFER_BIT, GL_LINEAR);
 
@@ -1087,17 +1088,17 @@ bool MpvPlayer::copyFrameToSharedMemory(unsigned width, unsigned height, double&
     const double map_write_ms = DurationMs(std::chrono::steady_clock::now() - t_map0);
     {
       std::lock_guard<std::mutex> lock(statsMutex_);
-      stats_.shmWritten += 1;
-      stats_.shmReadbacksMapped += 1;
-      stats_.lastShmWidth = target_w;
-      stats_.lastShmHeight = target_h;
-      stats_.lastShmMapWriteMs = map_write_ms;
-      if (stats_.emaShmMapWriteMs <= 0.0) {
-        stats_.emaShmMapWriteMs = map_write_ms;
+      stats_.framesExported += 1;
+      stats_.exportReadbacksMapped += 1;
+      stats_.lastExportWidth = target_w;
+      stats_.lastExportHeight = target_h;
+      stats_.lastExportMapWriteMs = map_write_ms;
+      if (stats_.emaExportMapWriteMs <= 0.0) {
+        stats_.emaExportMapWriteMs = map_write_ms;
       } else {
-        stats_.emaShmMapWriteMs = (1.0 - kEmaAlpha) * stats_.emaShmMapWriteMs + kEmaAlpha * map_write_ms;
+        stats_.emaExportMapWriteMs = (1.0 - kEmaAlpha) * stats_.emaExportMapWriteMs + kEmaAlpha * map_write_ms;
       }
-      stats_.lastShmWriteSteadyNs = steady_now_ns();
+      stats_.lastExportWriteSteadyNs = steady_now_ns();
     }
     return true;
   };
@@ -1131,14 +1132,14 @@ bool MpvPlayer::copyFrameToSharedMemory(unsigned width, unsigned height, double&
     const double issue_ms = DurationMs(std::chrono::steady_clock::now() - t_issue0);
     {
       std::lock_guard<std::mutex> lock(statsMutex_);
-      stats_.shmReadbacksIssued += 1;
-      stats_.lastShmIssueMs = issue_ms;
-      stats_.lastShmWidth = target_w;
-      stats_.lastShmHeight = target_h;
+      stats_.exportReadbacksIssued += 1;
+      stats_.lastExportIssueMs = issue_ms;
+      stats_.lastExportWidth = target_w;
+      stats_.lastExportHeight = target_h;
     }
   } else {
     std::lock_guard<std::mutex> lock(statsMutex_);
-    stats_.shmSkipReadbackBusy += 1;
+    stats_.exportSkipReadbackBusy += 1;
   }
 
   glBindFramebuffer(GL_READ_FRAMEBUFFER, prev_read);
@@ -1158,7 +1159,7 @@ MpvPlayer::Stats MpvPlayer::statsSnapshot() const {
     out = stats_;
   }
   const std::uint64_t now_ns = steady_now_ns();
-  out.shmSinceLastWriteMs = steady_elapsed_ms(out.lastShmWriteSteadyNs, now_ns);
+  out.exportSinceLastWriteMs = steady_elapsed_ms(out.lastExportWriteSteadyNs, now_ns);
   return out;
 }
 

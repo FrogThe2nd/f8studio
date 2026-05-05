@@ -13,7 +13,7 @@ from f8pysdk.bus import ServiceBus
 from f8pysdk.codec import coerce_bool, coerce_int, coerce_str
 from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
-from f8pysdk.shm.video import VIDEO_FORMAT_BGRA32, VIDEO_FORMAT_FLOW2_F16, VideoShmWriter
+from f8pysdk.video_transport import VIDEO_FORMAT_BGRA32, VIDEO_FORMAT_FLOW2_F16
 from f8pysdk.video_transport import ZenohLatestVideoFrameTransport
 from f8pysdk.zenoh_naming import zenoh_data_key
 
@@ -22,7 +22,6 @@ from .onnx_runtime import OnnxNeuFlowRuntime
 from .video_frame_source import (
     LatestVideoFrameSource,
     VideoFrameSourceConfig,
-    select_video_source_transport,
     video_source_metadata,
 )
 from .weights_downloader import ensure_onnx_file, onnx_file_matches_sha256
@@ -140,9 +139,6 @@ class _Telemetry:
         service_class: str,
         model: ModelSpec | None,
         ort_provider: str,
-        video_transport: str,
-        video_key: str,
-        shm_name: str,
         frame_id_last_seen: int | None,
         frame_id_last_processed: int | None,
     ) -> dict[str, Any]:
@@ -160,11 +156,7 @@ class _Telemetry:
                 "provider": (model.provider if model else ""),
             },
             "windowMs": int(win_ms),
-            "source": video_source_metadata(
-                video_transport=video_transport,
-                video_key=video_key,
-                shm_name=shm_name,
-            ),
+            "source": video_source_metadata(),
             "frameId": {
                 "lastSeen": int(frame_id_last_seen) if frame_id_last_seen is not None else None,
                 "lastProcessed": int(frame_id_last_processed) if frame_id_last_processed is not None else None,
@@ -231,7 +223,7 @@ class OnnxOptflowServiceNode(ServiceNode):
         super().__init__(
             node_id=ensure_token(node_id, label="node_id"),
             data_in_ports=[],
-            data_out_ports=[],
+            data_out_ports=["flow"],
             state_fields=[s.name for s in (node.stateFields or [])],
         )
         self._initial_state = dict(initial_state or {})
@@ -246,27 +238,16 @@ class OnnxOptflowServiceNode(ServiceNode):
         self._model_yaml_path = ""
         self._model_id = ""
         self._ort_provider: Literal["auto", "cuda", "cpu"] = "auto"
-        self._input_shm_name = ""
-        self._input_video_transport = ""
-        self._input_video_key = ""
-        self._input_source_resync_next_monotonic = 0.0
         self._compute_every_n_frames = 2
         self._auto_download_weights = True
         self._download_retry_at_monotonic = 0.0
 
         self._video_config = VideoFrameSourceConfig.from_bus(None)
         self._video_source: LatestVideoFrameSource | None = None
-        self._bus_backend = "zenoh"
 
-        self._flow_shm_name = ""
-        self._flow_shm_format = "flow2_f16"
-        self._flow_transport = ""
+        self._flow_format = "flow2_f16"
         self._flow_key = zenoh_data_key(self.node_id, node_id=self.node_id, port_id="flow")
-        self._flow_writer: VideoShmWriter | None = None
         self._flow_zenoh_writer: ZenohLatestVideoFrameTransport | None = None
-        self._flow_writer_pitch = 0
-        self._flow_writer_width = 0
-        self._flow_writer_height = 0
 
         self._runtime: OnnxNeuFlowRuntime | None = None
         self._runtime_yaml: Path | None = None
@@ -289,7 +270,6 @@ class OnnxOptflowServiceNode(ServiceNode):
         self._video_config = VideoFrameSourceConfig.from_bus(bus)
         self._video_source = LatestVideoFrameSource(config=self._video_config)
         if isinstance(bus, ServiceBus):
-            self._bus_backend = str(bus.bus_backend)
             self._flow_key = zenoh_data_key(bus.service_id, node_id=self.node_id, port_id="flow")
         loop = asyncio.get_running_loop()
         loop.create_task(self._ensure_config_loaded(), name=f"f8dl-optflow:init:{self.node_id}")
@@ -336,18 +316,6 @@ class OnnxOptflowServiceNode(ServiceNode):
             await self._reset_runtime()
             return
 
-        if name == "inputShmName":
-            await self._apply_input_shm_name(coerce_str(value, default=self._input_shm_name))
-            return
-
-        if name == "inputVideoTransport":
-            await self._apply_input_video_transport(coerce_str(value, default=self._input_video_transport))
-            return
-
-        if name == "inputVideoKey":
-            await self._apply_input_video_key(coerce_str(value, default=self._input_video_key))
-            return
-
         if name == "computeEveryNFrames":
             self._compute_every_n_frames = coerce_int(
                 value,
@@ -384,18 +352,6 @@ class OnnxOptflowServiceNode(ServiceNode):
             await self.get_state_value("ortProvider"), default=str(self._initial_state.get("ortProvider") or "auto")
         ).lower()
         self._ort_provider = v if v in ("auto", "cuda", "cpu") else "auto"
-        self._input_shm_name = coerce_str(
-            await self.get_state_value("inputShmName"),
-            default=str(self._initial_state.get("inputShmName") or ""),
-        )
-        self._input_video_transport = coerce_str(
-            await self.get_state_value("inputVideoTransport"),
-            default=str(self._initial_state.get("inputVideoTransport") or ""),
-        )
-        self._input_video_key = coerce_str(
-            await self.get_state_value("inputVideoKey"),
-            default=str(self._initial_state.get("inputVideoKey") or ""),
-        )
         self._compute_every_n_frames = coerce_int(
             await self.get_state_value("computeEveryNFrames"),
             default=int(self._initial_state.get("computeEveryNFrames") or 2),
@@ -407,11 +363,9 @@ class OnnxOptflowServiceNode(ServiceNode):
             default=bool(self._initial_state.get("autoDownloadWeights", True)),
         )
         self._config_loaded = True
-        if self._input_shm_name or self._input_video_key:
+        if self.input_zenoh_key("video"):
             await self._clear_missing_input_error()
-        await self._publish_flow_transport_state()
-        await self.set_state("flowShmName", self._flow_shm_name)
-        await self.set_state("flowShmFormat", self._flow_shm_format)
+        await self.set_state("flowFormat", self._flow_format)
         await self._publish_model_index()
 
     async def _publish_model_index(self) -> None:
@@ -537,108 +491,17 @@ class OnnxOptflowServiceNode(ServiceNode):
         self._last_infer_frame_id = None
         self._dup_skipped_since_last_processed = 0
 
-    async def _apply_input_shm_name(self, shm_name: str) -> None:
-        normalized = str(shm_name or "").strip()
-        if normalized == self._input_shm_name:
-            if normalized:
-                await self._clear_missing_input_error()
-            return
-        self._input_shm_name = normalized
-        self._reset_input_source()
-        if normalized:
-            await self._clear_missing_input_error()
-
-    async def _apply_input_video_transport(self, video_transport: str) -> None:
-        normalized = str(video_transport or "").strip()
-        if normalized == self._input_video_transport:
-            return
-        self._input_video_transport = normalized
-        self._reset_input_source()
-        if self._input_video_key:
-            await self._clear_missing_input_error()
-
-    async def _apply_input_video_key(self, video_key: str) -> None:
-        normalized = str(video_key or "").strip()
-        if normalized == self._input_video_key:
-            if normalized:
-                await self._clear_missing_input_error()
-            return
-        self._input_video_key = normalized
-        self._reset_input_source()
-        if normalized:
-            await self._clear_missing_input_error()
-
     async def _clear_missing_input_error(self) -> None:
-        if self._last_error in ("missing inputVideoKey", "missing inputShmName"):
+        if self._last_error in (
+            "missing video data input",
+        ):
             await self._set_last_error("")
             return
         if not self._last_error:
             await self.clear_error()
 
-    async def _sync_input_source_from_state(self, *, force: bool = False) -> None:
-        now = time.monotonic()
-        if not force and now < float(self._input_source_resync_next_monotonic):
-            return
-        self._input_source_resync_next_monotonic = float(now) + 1.0
-        raw_shm_name = await self.get_state_value("inputShmName")
-        raw_video_transport = await self.get_state_value("inputVideoTransport")
-        raw_video_key = await self.get_state_value("inputVideoKey")
-        await self._apply_input_shm_name(coerce_str(raw_shm_name, default=self._input_shm_name))
-        await self._apply_input_video_transport(coerce_str(raw_video_transport, default=self._input_video_transport))
-        await self._apply_input_video_key(coerce_str(raw_video_key, default=self._input_video_key))
-
-    async def _sync_input_source_if_missing(self) -> None:
-        if self._resolve_input_video_key() or self._resolve_input_shm_name():
-            return
-        await self._sync_input_source_from_state()
-
-    async def _sync_input_shm_name_from_state(self, *, force: bool = False) -> None:
-        await self._sync_input_source_from_state(force=force)
-
-    async def _resolve_synced_input_shm_name(self) -> str:
-        input_shm_name = self._resolve_input_shm_name()
-        if input_shm_name:
-            return input_shm_name
-        await self._sync_input_source_from_state()
-        return self._resolve_input_shm_name()
-
-    def _resolve_input_shm_name(self) -> str:
-        shm_name = str(self._input_shm_name or "").strip()
-        if shm_name:
-            return shm_name
-        return ""
-
-    def _resolve_input_video_transport(self) -> str:
-        return str(self._input_video_transport or "").strip()
-
-    def _resolve_input_video_key(self) -> str:
-        return str(self._input_video_key or "").strip()
-
-    def _legacy_flow_shm_name(self) -> str:
-        return f"shm.{self.node_id}.flow"
-
-    def _should_publish_zenoh_flow(self) -> bool:
-        transport = str(self._flow_transport or "").strip().lower()
-        if transport == "zenoh":
-            return True
-        if transport in ("legacy_shm", "shm"):
-            return False
-        return str(self._bus_backend).strip().lower() == "zenoh"
-
-    async def _publish_flow_transport_state(self) -> None:
-        if self._should_publish_zenoh_flow():
-            self._flow_transport = "zenoh"
-            self._flow_shm_name = ""
-            await self.set_state("flowShmName", "")
-            await self.set_state("flowTransport", "zenoh")
-            await self.set_state("flowKey", self._flow_key)
-            return
-        self._flow_transport = "legacy_shm"
-        if not self._flow_shm_name:
-            self._flow_shm_name = self._legacy_flow_shm_name()
-        await self.set_state("flowShmName", self._flow_shm_name)
-        await self.set_state("flowTransport", "legacy_shm")
-        await self.set_state("flowKey", "")
+    def _resolve_input_stream_key(self) -> str:
+        return self.input_zenoh_key("video")
 
     def _resolve_model_yaml(self) -> Path:
         if self._model_yaml_path:
@@ -677,8 +540,7 @@ class OnnxOptflowServiceNode(ServiceNode):
         providers = runtime.active_providers
         await self.set_state("loadedModel", f"{spec.model_id} ({spec.task})")
         await self.set_state("ortActiveProviders", json.dumps(providers))
-        await self.set_state("flowShmName", self._flow_shm_name)
-        await self.set_state("flowShmFormat", self._flow_shm_format)
+        await self.set_state("flowFormat", self._flow_format)
 
         warn_parts: list[str] = []
         if runtime.provider_warning:
@@ -721,9 +583,7 @@ class OnnxOptflowServiceNode(ServiceNode):
         await self.set_state("loadedModel", "")
         await self.clear_error()
         await self.set_state("ortActiveProviders", "")
-        await self._publish_flow_transport_state()
-        await self.set_state("flowShmName", self._flow_shm_name)
-        await self.set_state("flowShmFormat", self._flow_shm_format)
+        await self.set_state("flowFormat", self._flow_format)
         if self._model_index_warning:
             await self._set_last_error(self._model_index_warning)
 
@@ -768,37 +628,10 @@ class OnnxOptflowServiceNode(ServiceNode):
             ) from exc
 
     def _close_flow_writer(self) -> None:
-        writer = self._flow_writer
-        self._flow_writer = None
-        if writer is not None:
-            writer.close()
         zenoh_writer = self._flow_zenoh_writer
         self._flow_zenoh_writer = None
         if zenoh_writer is not None:
             zenoh_writer.close()
-        self._flow_writer_width = 0
-        self._flow_writer_height = 0
-        self._flow_writer_pitch = 0
-
-    def _ensure_flow_writer(self, *, width: int, height: int, pitch: int) -> None:
-        if not self._flow_shm_name:
-            self._flow_shm_name = self._legacy_flow_shm_name()
-        if self._flow_writer is not None:
-            if (
-                int(self._flow_writer_width) == int(width)
-                and int(self._flow_writer_height) == int(height)
-                and int(self._flow_writer_pitch) == int(pitch)
-            ):
-                return
-            self._close_flow_writer()
-        frame_bytes = int(pitch) * int(height)
-        shm_size = max(1024 * 1024, frame_bytes * 2 + 4096)
-        writer = VideoShmWriter(shm_name=self._flow_shm_name, size=shm_size, slot_count=2)
-        writer.open()
-        self._flow_writer = writer
-        self._flow_writer_width = int(width)
-        self._flow_writer_height = int(height)
-        self._flow_writer_pitch = int(pitch)
 
     def _ensure_flow_zenoh_writer(self) -> ZenohLatestVideoFrameTransport:
         writer = self._flow_zenoh_writer
@@ -815,8 +648,6 @@ class OnnxOptflowServiceNode(ServiceNode):
         return writer
 
     def _publish_flow_zenoh(self, *, width: int, height: int, pitch: int, payload: bytes, ts_ms: int) -> None:
-        if not self._should_publish_zenoh_flow():
-            return
         writer = self._ensure_flow_zenoh_writer()
         writer.publish_frame(
             width=int(width),
@@ -839,21 +670,9 @@ class OnnxOptflowServiceNode(ServiceNode):
 
                 await self._ensure_config_loaded()
 
-                await self._sync_input_source_if_missing()
-                input_video_key = self._resolve_input_video_key()
-                input_shm_name = self._resolve_input_shm_name()
-                input_video_transport = self._resolve_input_video_transport()
-                selected_transport = select_video_source_transport(
-                    video_transport=input_video_transport,
-                    video_key=input_video_key,
-                    shm_name=input_shm_name,
-                )
-                if selected_transport == "zenoh" and not input_video_key:
-                    await self._set_last_error("missing inputVideoKey")
-                    await asyncio.sleep(0.05)
-                    continue
-                if selected_transport == "legacy_shm" and not input_shm_name:
-                    await self._set_last_error("missing inputShmName")
+                input_stream_key = self._resolve_input_stream_key()
+                if not input_stream_key:
+                    await self._set_last_error("missing video data input")
                     await asyncio.sleep(0.05)
                     continue
 
@@ -868,12 +687,7 @@ class OnnxOptflowServiceNode(ServiceNode):
                 source = self._ensure_video_source()
                 t0 = time.perf_counter()
                 try:
-                    frame = source.read_latest(
-                        video_transport=input_video_transport,
-                        video_key=input_video_key,
-                        shm_name=input_shm_name,
-                        timeout_ms=10,
-                    )
+                    frame = source.read_latest(stream_key=input_stream_key, timeout_ms=10)
                 except Exception as exc:
                     await self._record_exception(where="open_video_source", exc=exc)
                     await asyncio.sleep(0.1)
@@ -948,29 +762,18 @@ class OnnxOptflowServiceNode(ServiceNode):
                     flow_pitch, flow_payload = pack_flow2_f16_payload(flow)
                 finally:
                     frame.release()
-                if self._should_publish_zenoh_flow():
-                    try:
-                        self._publish_flow_zenoh(
-                            width=width,
-                            height=height,
-                            pitch=flow_pitch,
-                            payload=flow_payload,
-                            ts_ms=int(frame.ts_ms),
-                        )
-                    except Exception as exc:
-                        await self._record_exception(where="publish_flow_zenoh", exc=exc)
-                        await asyncio.sleep(0.1)
-                        continue
-                else:
-                    self._ensure_flow_writer(width=width, height=height, pitch=flow_pitch)
-                    assert self._flow_writer is not None
-                    self._flow_writer.write_frame(
+                try:
+                    self._publish_flow_zenoh(
                         width=width,
                         height=height,
                         pitch=flow_pitch,
                         payload=flow_payload,
-                        fmt=VIDEO_FORMAT_FLOW2_F16,
+                        ts_ms=int(frame.ts_ms),
                     )
+                except Exception as exc:
+                    await self._record_exception(where="publish_flow_zenoh", exc=exc)
+                    await asyncio.sleep(0.1)
+                    continue
                 t_infer1 = time.perf_counter()
                 if self._runtime_warning:
                     await self._set_last_error(self._runtime_warning)

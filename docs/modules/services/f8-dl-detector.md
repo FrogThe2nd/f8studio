@@ -39,7 +39,7 @@ pixi run -e onnx f8pydl_detector
 
 ### Typical Inputs / Outputs
 
-- Data inputs: none
+- Data inputs: `video`
 - Data outputs: `detections`, `monitor`
 - Commands: none
 
@@ -47,9 +47,6 @@ pixi run -e onnx f8pydl_detector
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `shmName` | `rw` | `false` | `false` | `string / default=` | Legacy SHM mapping name used only when videoTransport=legacy_shm. |
-| `videoTransport` | `rw` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Video input transport backend. Use zenoh with videoKey; legacy_shm keeps old shmName input. |
-| `videoKey` | `rw` | `true` | `true` | `string / default=` | Zenoh latest-frame key for video input. |
 | `weightsDir` | `rw` | `true` | `true` | `string / default=services/f8/dl/weights` | Directory containing *.yaml + *.onnx model files. Reset to the default relative path when exporting publish JSON. |
 | `modelId` | `rw` | `true` | `true` | `string / default=` | Model id selected from weightsDir (ignored if modelYamlPath is set). |
 | `modelYamlPath` | `rw` | `true` | `false` | `string / default=` | Optional explicit model yaml path (overrides modelId). Cleared when exporting publish JSON. |
@@ -69,14 +66,14 @@ pixi run -e onnx f8pydl_detector
 
 ### Key Fields That Matter
 
-- `shmName` (Legacy Video SHM, `rw`): Legacy SHM mapping name used only when videoTransport=legacy_shm. Schema: `string / default=`.
-- `videoTransport` (Video Transport, `rw`): Video input transport backend. Use zenoh with videoKey; legacy_shm keeps old shmName input. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
-- `videoKey` (Video Key, `rw`): Zenoh latest-frame key for video input. Schema: `string / default=`.
 - `weightsDir` (Weights Dir, `rw`): Directory containing *.yaml + *.onnx model files. Reset to the default relative path when exporting publish JSON. Schema: `string / default=services/f8/dl/weights`.
 - `modelId` (Model Id, `rw`): Model id selected from weightsDir (ignored if modelYamlPath is set). Schema: `string / default=`.
 - `modelYamlPath` (Model YAML Path, `rw`): Optional explicit model yaml path (overrides modelId). Cleared when exporting publish JSON. Schema: `string / default=`.
 - `ortProvider` (ONNX Runtime Provider, `rw`): auto prefers CUDAExecutionProvider when available. Schema: `string / enum[auto, cuda, cpu] / default=auto`.
 - `autoDownloadWeights` (Auto Download Weights, `rw`): When model file is missing, download from onnxUrl in model yaml. Schema: `boolean / default=True`.
+- `inferEveryN` (Infer Every N Frames, `rw`): Run model inference every N frames (>=1). Schema: `integer / default=1`.
+- `confThreshold` (Conf Threshold Override, `rw`): Override confidence threshold (negative uses model yaml). Schema: `number / default=-1.0`.
+- `iouThreshold` (IoU Threshold Override, `rw`): Override IoU threshold for NMS (negative uses model yaml). Schema: `number / default=-1.0`.
 
 ### Service Commands
 
@@ -84,7 +81,9 @@ _None_
 
 ### Service Data Input Ports
 
-_None_
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `video` | `true` | `true` | `object{format, frameId, height, pitch, ...}` | Input video frame stream. |
 
 ### Service Data Output Ports
 

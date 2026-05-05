@@ -39,20 +39,14 @@ No description.
 
 ### Typical Inputs / Outputs
 
-- Data inputs: none
-- Data outputs: `motion`, `monitor`
+- Data inputs: `video`
+- Data outputs: `video`, `motion`, `monitor`
 - Commands: `resetStabilizer`
 
 ### Service State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `inputShmName` | `rw` | `true` | `false` | `string` | Legacy input SHM name used only when inputVideoTransport=legacy_shm. |
-| `inputVideoTransport` | `rw` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Input video frame transport backend. Zenoh is default; legacy_shm keeps old inputShmName. |
-| `inputVideoKey` | `rw` | `true` | `true` | `string` | Input video frame transport key. |
-| `outputShmName` | `ro` | `true` | `false` | `string` | Legacy output SHM name used only when videoTransport=legacy_shm. |
-| `videoTransport` | `ro` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Output video frame transport backend. Zenoh is default; legacy_shm keeps old outputShmName. |
-| `videoKey` | `ro` | `true` | `true` | `string` | Output video frame transport key. |
 | `videoFormat` | `ro` | `true` | `false` | `string / enum[bgra32]` | Output video payload format. |
 | `videoFrameSchemaVersion` | `ro` | `true` | `false` | `integer / default=1` | Output video frame schema version. |
 | `motionModel` | `rw` | `true` | `false` | `string / enum[affine, homography] / default=affine` | Global motion model used by stabilizer. |
@@ -72,14 +66,14 @@ No description.
 
 ### Key Fields That Matter
 
-- `inputShmName` (Legacy Input SHM, `rw`): Legacy input SHM name used only when inputVideoTransport=legacy_shm. Schema: `string`.
-- `inputVideoTransport` (Input Video Transport, `rw`): Input video frame transport backend. Zenoh is default; legacy_shm keeps old inputShmName. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
-- `inputVideoKey` (Input Video Key, `rw`): Input video frame transport key. Schema: `string`.
-- `outputShmName` (Legacy Output SHM, `ro`): Legacy output SHM name used only when videoTransport=legacy_shm. Schema: `string`.
-- `videoTransport` (Video Transport, `ro`): Output video frame transport backend. Zenoh is default; legacy_shm keeps old outputShmName. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
-- `videoKey` (Video Key, `ro`): Output video frame transport key. Schema: `string`.
 - `videoFormat` (Video Format, `ro`): Output video payload format. Schema: `string / enum[bgra32]`.
 - `videoFrameSchemaVersion` (Video Frame Schema, `ro`): Output video frame schema version. Schema: `integer / default=1`.
+- `motionModel` (Motion Model, `rw`): Global motion model used by stabilizer. Schema: `string / enum[affine, homography] / default=affine`.
+- `stabilizationMode` (Stabilization Mode, `rw`): trajectory=smooth accumulated path; instant=smooth per-frame motion. Schema: `string / enum[trajectory, instant] / default=trajectory`.
+- `smoothAlpha` (Smooth Alpha, `rw`): EMA alpha used for motion smoothing. Schema: `number / default=0.15`.
+- `maxCornerCount` (Max Corner Count, `rw`): LK feature count. Schema: `integer / default=300`.
+- `qualityLevel` (Quality Level, `rw`): goodFeaturesToTrack quality level. Schema: `number / default=0.01`.
+- `minDistance` (Min Distance, `rw`): Minimum corner distance. Schema: `number / default=8.0`.
 
 ### Service Commands
 
@@ -91,12 +85,15 @@ Reset internal trajectory/smoothing state.
 
 ### Service Data Input Ports
 
-_None_
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `video` | `true` | `true` | `object{format, frameId, height, pitch, ...}` | Input video frame stream. |
 
 ### Service Data Output Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
+| `video` | `true` | `true` | `object{format, frameId, height, pitch, ...}` | Stabilized video frame stream. |
 | `motion` | `true` | `true` | `object{corrAngleDeg, corrScale, corrTx, corrTy, ...}` | Per-frame estimated and smoothed motion parameters. |
 | `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 

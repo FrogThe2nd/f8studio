@@ -14,11 +14,11 @@ Output schemas:
 - `f8visionClassifications/1` on `classifications`
 - `f8visionDetections/1` on `detections`
 - `f8visionDetections/1` in/out on `detections` (`f8.dl.detsorter`, reordered by score-map metric)
-- `flow2_f16` latest-frame output on `flowKey` (`f8.dl.optflow`, Zenoh default)
+- `flow2_f16` latest-frame output on the `flow` data port (`f8.dl.optflow`)
 - `number` on `predictedChange` (`f8.dl.tcnwave`)
 
 Detection sorter notes (`f8.dl.detsorter`):
-- Reads score maps from `scoreKey` by default; `scoreShmName` is legacy SHM fallback.
+- Reads score maps from the typed `score` data input port.
 - Supports `scalar1_f32` directly and `flow2_f16` by converting flow vectors to magnitude.
 - If detection payload `width`/`height` differs from score-map `width`/`height`, bbox coordinates are rescaled to score-map space before scoring.
 - Sort behavior is controlled by `sortDirection` (`desc` default, or `asc`) and `scoreAggregation` (`mean` default, or `max` / `sum` / `median`).

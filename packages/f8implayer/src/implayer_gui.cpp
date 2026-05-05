@@ -578,21 +578,21 @@ void ImPlayerGui::renderOverlay(const MpvPlayer& player, const Callbacks& cb, co
                   stats.lastStutterMs);
 
       ImGui::Spacing();
-      ImGui::TextDisabled("SHM readback");
+      ImGui::TextDisabled("Frame stream export");
       ImGui::Separator();
-      ImGui::Text("written=%llu issued=%llu mapped=%llu", static_cast<unsigned long long>(stats.shmWritten),
-                  static_cast<unsigned long long>(stats.shmReadbacksIssued),
-                  static_cast<unsigned long long>(stats.shmReadbacksMapped));
-      ImGui::Text("last dims: %u x %u", stats.lastShmWidth, stats.lastShmHeight);
-      ImGui::Text("issue ms: %.2f   map+write ms: last=%.2f ema=%.2f", stats.lastShmIssueMs, stats.lastShmMapWriteMs,
-                  stats.emaShmMapWriteMs);
+      ImGui::Text("written=%llu issued=%llu mapped=%llu", static_cast<unsigned long long>(stats.framesExported),
+                  static_cast<unsigned long long>(stats.exportReadbacksIssued),
+                  static_cast<unsigned long long>(stats.exportReadbacksMapped));
+      ImGui::Text("last dims: %u x %u", stats.lastExportWidth, stats.lastExportHeight);
+      ImGui::Text("issue ms: %.2f   map+write ms: last=%.2f ema=%.2f", stats.lastExportIssueMs, stats.lastExportMapWriteMs,
+                  stats.emaExportMapWriteMs);
       ImGui::Text("skips: noSink=%llu interval=%llu target=%llu sinkCfg=%llu busy=%llu",
-                  static_cast<unsigned long long>(stats.shmSkipNoSink),
-                  static_cast<unsigned long long>(stats.shmSkipInterval),
-                  static_cast<unsigned long long>(stats.shmSkipTarget),
-                  static_cast<unsigned long long>(stats.shmSkipSinkConfig),
-                  static_cast<unsigned long long>(stats.shmSkipReadbackBusy));
-      ImGui::Text("since last write: %.1f ms", stats.shmSinceLastWriteMs);
+                  static_cast<unsigned long long>(stats.exportSkipNoSink),
+                  static_cast<unsigned long long>(stats.exportSkipInterval),
+                  static_cast<unsigned long long>(stats.exportSkipTarget),
+                  static_cast<unsigned long long>(stats.exportSkipSinkConfig),
+                  static_cast<unsigned long long>(stats.exportSkipReadbackBusy));
+      ImGui::Text("since last write: %.1f ms", stats.exportSinceLastWriteMs);
 
       ImGui::Spacing();
       ImGui::TextDisabled("GPU (estimated, our targets only)");

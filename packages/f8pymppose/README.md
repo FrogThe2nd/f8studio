@@ -6,8 +6,7 @@ Service class:
 - `f8.mp.pose`
 
 Input:
-- Zenoh latest-frame video via `videoTransport=zenoh` and `videoKey` by default.
-- Legacy `shmName` is only used when `videoTransport=legacy_shm`.
+- Zenoh latest-frame video via the typed `video` data input port.
 
 Output schema:
 - `f8visionDetections/1` on `detections`

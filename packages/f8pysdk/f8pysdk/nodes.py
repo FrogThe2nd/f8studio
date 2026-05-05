@@ -92,6 +92,11 @@ class RuntimeNode(BusAttachableNode, StatefulNode, DataReceivableNode, Computabl
             return None
         return await self._bus.pull_data(self.node_id, port, ctx_id=ctx_id)
 
+    def input_zenoh_key(self, port: str) -> str | None:
+        if self._bus is None:
+            return None
+        return self._bus.data_input_zenoh_key(self.node_id, port)
+
     async def set_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
         if self._bus is None:
             return

@@ -18,7 +18,6 @@
 #include "f8cppsdk/capabilities.h"
 #include "f8cppsdk/latest_video_frame_transport.h"
 #include "f8cppsdk/service_bus.h"
-#include "f8cppsdk/video_shared_memory_sink.h"
 
 namespace f8::cvkit::tracking {
 
@@ -51,7 +50,6 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
     std::string service_id;
     std::string service_class = "f8.cvkit.tracking";
     f8::cppsdk::RuntimeBackendConfig runtime_backend;
-    std::string shm_name;
     std::string tracker_kind = "csrt";
     std::string model_dir = "models";
     bool auto_download_models = true;
@@ -87,17 +85,12 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
                                 const json& meta);
   void publish_error_if_changed(const json& value, const std::string& source, const json& meta);
   void emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms);
-  void set_shm_name(const std::string& shm_name, const json& meta);
-  void set_video_transport(const std::string& transport, const json& meta);
-  void set_video_key(const std::string& key, const json& meta);
   void set_init_select(const std::string& mode, const json& meta);
   void set_tracker_kind(const std::string& kind, const json& meta);
   void set_model_dir(const std::string& model_dir, const json& meta);
   void set_max_tracking_fps(double fps, const json& meta);
-  bool use_zenoh_video_input() const;
-  bool ensure_video_open();
   bool ensure_zenoh_video_open();
-  bool copy_latest_video_frame(std::vector<std::byte>& out_payload, f8::cppsdk::VideoSharedMemoryHeader& out_header,
+  bool copy_latest_video_frame(std::vector<std::byte>& out_payload, f8::cppsdk::LatestVideoFrame& out_frame,
                                bool changed_only, std::uint64_t last_frame_id,
                                std::chrono::milliseconds timeout);
   void apply_init_box_if_any();
@@ -117,18 +110,12 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
   std::mutex state_mu_;
   std::unordered_map<std::string, json> published_state_;
 
-  // Video input (Zenoh latest-frame by default, legacy SHM fallback).
-  std::string shm_name_override_;
-  std::string video_transport_state_;
-  std::string video_key_state_;
-  f8::cppsdk::VideoSharedMemoryReader video_;
+  // Video input.
   f8::cppsdk::ZenohLatestVideoFrameSubscriber zenoh_video_;
   std::string zenoh_video_open_key_;
   std::vector<std::byte> frame_bgra_;
   cv::Mat frame_bgr_;
-  std::optional<f8::cppsdk::VideoSharedMemoryHeader> last_header_;
   std::uint64_t last_frame_id_ = 0;
-  std::uint32_t last_notify_seq_ = 0;
   std::int64_t last_processed_frame_ts_ms_ = 0;
   double next_tracking_due_ts_ms_ = 0.0;
   std::int64_t last_video_open_attempt_ms_ = 0;

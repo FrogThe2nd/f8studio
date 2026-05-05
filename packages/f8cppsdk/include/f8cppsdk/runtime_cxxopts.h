@@ -53,48 +53,4 @@ inline bool read_runtime_backend_options(const cxxopts::ParseResult& result, Run
   return true;
 }
 
-inline void add_video_transport_backend_option(
-    cxxopts::Options& options,
-    VideoTransportBackend default_backend = video_transport_backend_from_env()) {
-  options.add_options()(
-      "video-backend",
-      "Video frame backend: auto|zenoh|legacy_shm (env: F8_VIDEO_BACKEND, default: auto)",
-      cxxopts::value<std::string>()->default_value(video_transport_backend_to_string(default_backend)));
-}
-
-inline bool read_video_transport_backend_option(const cxxopts::ParseResult& result, VideoTransportBackend& backend,
-                                                std::string& error_message) {
-  VideoTransportBackend parsed = VideoTransportBackend::kAuto;
-  const std::string backend_text = result["video-backend"].as<std::string>();
-  if (!parse_video_transport_backend(backend_text, parsed)) {
-    error_message = "Invalid --video-backend: " + backend_text + " (expected auto, zenoh, or legacy_shm)";
-    return false;
-  }
-  backend = parsed;
-  error_message.clear();
-  return true;
-}
-
-inline void add_audio_transport_backend_option(
-    cxxopts::Options& options,
-    AudioTransportBackend default_backend = audio_transport_backend_from_env()) {
-  options.add_options()(
-      "audio-backend",
-      "Audio chunk backend: auto|zenoh|legacy_shm (env: F8_AUDIO_BACKEND, default: auto)",
-      cxxopts::value<std::string>()->default_value(audio_transport_backend_to_string(default_backend)));
-}
-
-inline bool read_audio_transport_backend_option(const cxxopts::ParseResult& result, AudioTransportBackend& backend,
-                                                std::string& error_message) {
-  AudioTransportBackend parsed = AudioTransportBackend::kAuto;
-  const std::string backend_text = result["audio-backend"].as<std::string>();
-  if (!parse_audio_transport_backend(backend_text, parsed)) {
-    error_message = "Invalid --audio-backend: " + backend_text + " (expected auto, zenoh, or legacy_shm)";
-    return false;
-  }
-  backend = parsed;
-  error_message.clear();
-  return true;
-}
-
 }  // namespace f8::cppsdk

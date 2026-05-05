@@ -6,10 +6,11 @@ import numpy as np
 from NodeGraphQt.nodes.base_node import NodeBaseWidget
 from qtpy import QtCore, QtGui, QtWidgets
 
-from f8pysdk.shm import VIDEO_FORMAT_BGRA32, VIDEO_FORMAT_FLOW2_F16, VIDEO_FORMAT_SCALAR1_F32
 from f8pysdk.video_transport import (
     LatestVideoFrameTransport,
-    LegacyShmLatestVideoFrameTransport,
+    VIDEO_FORMAT_BGRA32,
+    VIDEO_FORMAT_FLOW2_F16,
+    VIDEO_FORMAT_SCALAR1_F32,
     ZenohLatestVideoFrameTransport,
 )
 
@@ -19,18 +20,6 @@ from f8pystudio.contracts.ui_commands import UiCommand
 
 _STATE_UI_UPDATE = "uiUpdate"
 _WIDGET_NAME = "__video_latest"
-_TRANSPORT_LEGACY_SHM = "legacy_shm"
-_TRANSPORT_ZENOH = "zenoh"
-
-
-def _normalize_frame_transport(value: object, *, zenoh_key: str, shm_name: str) -> str:
-    transport = str(value or "").strip().lower()
-    _ = shm_name
-    if transport in (_TRANSPORT_LEGACY_SHM, _TRANSPORT_ZENOH):
-        return transport
-    if str(zenoh_key or "").strip():
-        return _TRANSPORT_ZENOH
-    return _TRANSPORT_ZENOH
 
 
 def _hsv_to_rgb_u8(h: np.ndarray, s: np.ndarray, v: np.ndarray) -> np.ndarray:
@@ -208,15 +197,9 @@ class _LatestVideoPane(QtWidgets.QWidget):
         self._video_reader: LatestVideoFrameTransport | None = None
         self._flow_reader: LatestVideoFrameTransport | None = None
         self._scalar_reader: LatestVideoFrameTransport | None = None
-        self._video_shm_name = ""
-        self._video_transport = _TRANSPORT_ZENOH
-        self._video_key = ""
-        self._flow_transport = _TRANSPORT_ZENOH
-        self._flow_key = ""
-        self._flow_shm_name = ""
-        self._scalar_transport = _TRANSPORT_ZENOH
-        self._scalar_key = ""
-        self._scalar_shm_name = ""
+        self._video_stream_key = ""
+        self._flow_stream_key = ""
+        self._scalar_stream_key = ""
         self._flow_display_mode = "off"
         self._flow_mag_scale = 20.0
         self._flow_stride = 12
@@ -251,19 +234,13 @@ class _LatestVideoPane(QtWidgets.QWidget):
     def set_config(
         self,
         *,
-        shm_name: str,
-        video_transport: object,
-        video_key: str,
+        video_stream_key: str,
         throttle_ms: int,
-        flow_transport: object,
-        flow_key: str,
-        flow_shm_name: str,
+        flow_stream_key: str,
         flow_display_mode: str,
         flow_mag_scale: float,
         flow_stride: int,
-        scalar_transport: object,
-        scalar_key: str,
-        scalar_shm_name: str,
+        scalar_stream_key: str,
         scalar_display_mode: str,
         scalar_colormap: str,
         scalar_range_mode: str,
@@ -275,27 +252,9 @@ class _LatestVideoPane(QtWidgets.QWidget):
         scalar_nan_mode: str,
         scale_mode: str,
     ) -> None:
-        next_video = str(shm_name or "").strip()
-        next_video_key = str(video_key or "").strip()
-        next_video_transport = _normalize_frame_transport(
-            video_transport,
-            zenoh_key=next_video_key,
-            shm_name=next_video,
-        )
-        next_flow_key = str(flow_key or "").strip()
-        next_flow = str(flow_shm_name or "").strip()
-        next_flow_transport = _normalize_frame_transport(
-            flow_transport,
-            zenoh_key=next_flow_key,
-            shm_name=next_flow,
-        )
-        next_scalar_key = str(scalar_key or "").strip()
-        next_scalar = str(scalar_shm_name or "").strip()
-        next_scalar_transport = _normalize_frame_transport(
-            scalar_transport,
-            zenoh_key=next_scalar_key,
-            shm_name=next_scalar,
-        )
+        next_video_stream_key = str(video_stream_key or "").strip()
+        next_flow_stream_key = str(flow_stream_key or "").strip()
+        next_scalar_stream_key = str(scalar_stream_key or "").strip()
         next_mode = str(flow_display_mode or "off").strip().lower()
         if next_mode not in ("off", "hsv", "arrows"):
             next_mode = "off"
@@ -312,32 +271,14 @@ class _LatestVideoPane(QtWidgets.QWidget):
         if next_scalar_nan_mode not in ("transparent", "zero", "min", "max"):
             next_scalar_nan_mode = "transparent"
 
-        if (
-            next_video != self._video_shm_name
-            or next_video_transport != self._video_transport
-            or next_video_key != self._video_key
-        ):
-            self._video_shm_name = next_video
-            self._video_transport = next_video_transport
-            self._video_key = next_video_key
+        if next_video_stream_key != self._video_stream_key:
+            self._video_stream_key = next_video_stream_key
             self._reset_video_reader()
-        if (
-            next_flow != self._flow_shm_name
-            or next_flow_transport != self._flow_transport
-            or next_flow_key != self._flow_key
-        ):
-            self._flow_shm_name = next_flow
-            self._flow_transport = next_flow_transport
-            self._flow_key = next_flow_key
+        if next_flow_stream_key != self._flow_stream_key:
+            self._flow_stream_key = next_flow_stream_key
             self._reset_flow_reader()
-        if (
-            next_scalar != self._scalar_shm_name
-            or next_scalar_transport != self._scalar_transport
-            or next_scalar_key != self._scalar_key
-        ):
-            self._scalar_shm_name = next_scalar
-            self._scalar_transport = next_scalar_transport
-            self._scalar_key = next_scalar_key
+        if next_scalar_stream_key != self._scalar_stream_key:
+            self._scalar_stream_key = next_scalar_stream_key
             self._reset_scalar_reader()
         self._flow_display_mode = next_mode
         self._flow_mag_scale = max(0.1, float(flow_mag_scale))
@@ -393,15 +334,9 @@ class _LatestVideoPane(QtWidgets.QWidget):
         self._scalar_reader = None
 
     def _sync_timer_with_update_state(self) -> None:
-        has_video_source = (
-            bool(self._video_key) if self._video_transport == _TRANSPORT_ZENOH else bool(self._video_shm_name)
-        )
-        has_flow_source = (
-            bool(self._flow_key) if self._flow_transport == _TRANSPORT_ZENOH else bool(self._flow_shm_name)
-        )
-        has_scalar_source = (
-            bool(self._scalar_key) if self._scalar_transport == _TRANSPORT_ZENOH else bool(self._scalar_shm_name)
-        )
+        has_video_source = bool(self._video_stream_key)
+        has_flow_source = bool(self._flow_stream_key)
+        has_scalar_source = bool(self._scalar_stream_key)
         has_source = has_video_source or has_flow_source or has_scalar_source
         if self.update_enabled() and has_source:
             if not self._timer.isActive():
@@ -413,63 +348,36 @@ class _LatestVideoPane(QtWidgets.QWidget):
     def _ensure_video_reader(self) -> bool:
         if self._video_reader is not None:
             return True
-        if self._video_transport == _TRANSPORT_ZENOH:
-            if not self._video_key:
-                return False
-            try:
-                self._video_reader = ZenohLatestVideoFrameTransport.open_subscriber(self._video_key)
-                return True
-            except (OSError, RuntimeError, ValueError):
-                self._video_reader = None
-                return False
-        if not self._video_shm_name:
+        if not self._video_stream_key:
             return False
         try:
-            self._video_reader = LegacyShmLatestVideoFrameTransport.open_reader(self._video_shm_name, use_event=False)
+            self._video_reader = ZenohLatestVideoFrameTransport.open_subscriber(self._video_stream_key)
             return True
-        except (FileNotFoundError, OSError, RuntimeError):
+        except (OSError, RuntimeError, ValueError):
             self._video_reader = None
             return False
 
     def _ensure_flow_reader(self) -> bool:
         if self._flow_reader is not None:
             return True
-        if self._flow_transport == _TRANSPORT_ZENOH:
-            if not self._flow_key:
-                return False
-            try:
-                self._flow_reader = ZenohLatestVideoFrameTransport.open_subscriber(self._flow_key)
-                return True
-            except (OSError, RuntimeError, ValueError):
-                self._flow_reader = None
-                return False
-        if not self._flow_shm_name:
+        if not self._flow_stream_key:
             return False
         try:
-            self._flow_reader = LegacyShmLatestVideoFrameTransport.open_reader(self._flow_shm_name, use_event=False)
+            self._flow_reader = ZenohLatestVideoFrameTransport.open_subscriber(self._flow_stream_key)
             return True
-        except (FileNotFoundError, OSError, RuntimeError):
+        except (OSError, RuntimeError, ValueError):
             self._flow_reader = None
             return False
 
     def _ensure_scalar_reader(self) -> bool:
         if self._scalar_reader is not None:
             return True
-        if self._scalar_transport == _TRANSPORT_ZENOH:
-            if not self._scalar_key:
-                return False
-            try:
-                self._scalar_reader = ZenohLatestVideoFrameTransport.open_subscriber(self._scalar_key)
-                return True
-            except (OSError, RuntimeError, ValueError):
-                self._scalar_reader = None
-                return False
-        if not self._scalar_shm_name:
+        if not self._scalar_stream_key:
             return False
         try:
-            self._scalar_reader = LegacyShmLatestVideoFrameTransport.open_reader(self._scalar_shm_name, use_event=False)
+            self._scalar_reader = ZenohLatestVideoFrameTransport.open_subscriber(self._scalar_stream_key)
             return True
-        except (FileNotFoundError, OSError, RuntimeError):
+        except (OSError, RuntimeError, ValueError):
             self._scalar_reader = None
             return False
 
@@ -730,19 +638,13 @@ class _LatestVideoWidget(NodeBaseWidget):
     def set_config(
         self,
         *,
-        shm_name: str,
-        video_transport: object,
-        video_key: str,
+        video_stream_key: str,
         throttle_ms: int,
-        flow_transport: object,
-        flow_key: str,
-        flow_shm_name: str,
+        flow_stream_key: str,
         flow_display_mode: str,
         flow_mag_scale: float,
         flow_stride: int,
-        scalar_transport: object,
-        scalar_key: str,
-        scalar_shm_name: str,
+        scalar_stream_key: str,
         scalar_display_mode: str,
         scalar_colormap: str,
         scalar_range_mode: str,
@@ -755,19 +657,13 @@ class _LatestVideoWidget(NodeBaseWidget):
         scale_mode: str,
     ) -> None:
         self._pane.set_config(
-            shm_name=shm_name,
-            video_transport=video_transport,
-            video_key=video_key,
+            video_stream_key=video_stream_key,
             throttle_ms=throttle_ms,
-            flow_transport=flow_transport,
-            flow_key=flow_key,
-            flow_shm_name=flow_shm_name,
+            flow_stream_key=flow_stream_key,
             flow_display_mode=flow_display_mode,
             flow_mag_scale=flow_mag_scale,
             flow_stride=flow_stride,
-            scalar_transport=scalar_transport,
-            scalar_key=scalar_key,
-            scalar_shm_name=scalar_shm_name,
+            scalar_stream_key=scalar_stream_key,
             scalar_display_mode=scalar_display_mode,
             scalar_colormap=scalar_colormap,
             scalar_range_mode=scalar_range_mode,
@@ -833,19 +729,13 @@ class VizVideoRenderNode(F8StudioOperatorBaseNode):
             return
         try:
             payload = dict(cmd.payload or {})
-            shm_name = str(payload.get("shmName") or "").strip()
-            video_transport = payload.get("videoTransport")
-            video_key = str(payload.get("videoKey") or "").strip()
+            video_stream_key = str(payload.get("videoStreamKey") or "").strip()
             throttle_ms = int(payload.get("throttleMs") or 33)
-            flow_transport = payload.get("flowTransport")
-            flow_key = str(payload.get("flowKey") or "").strip()
-            flow_shm_name = str(payload.get("flowShmName") or "").strip()
+            flow_stream_key = str(payload.get("flowStreamKey") or "").strip()
             flow_display_mode = str(payload.get("flowDisplayMode") or "off").strip().lower()
             flow_mag_scale = float(payload.get("flowMagScale") or 20.0)
             flow_stride = int(payload.get("flowStride") or 12)
-            scalar_transport = payload.get("scalarTransport")
-            scalar_key = str(payload.get("scalarKey") or "").strip()
-            scalar_shm_name = str(payload.get("scalarShmName") or "").strip()
+            scalar_stream_key = str(payload.get("scalarStreamKey") or "").strip()
             scalar_display_mode = str(payload.get("scalarDisplayMode") or "off").strip().lower()
             scalar_colormap = str(payload.get("scalarColormap") or "turbo").strip().lower()
             scalar_range_mode = str(payload.get("scalarRangeMode") or "auto").strip().lower()
@@ -862,19 +752,13 @@ class VizVideoRenderNode(F8StudioOperatorBaseNode):
         if widget is None:
             return
         widget.set_config(
-            shm_name=shm_name,
-            video_transport=video_transport,
-            video_key=video_key,
+            video_stream_key=video_stream_key,
             throttle_ms=throttle_ms,
-            flow_transport=flow_transport,
-            flow_key=flow_key,
-            flow_shm_name=flow_shm_name,
+            flow_stream_key=flow_stream_key,
             flow_display_mode=flow_display_mode,
             flow_mag_scale=flow_mag_scale,
             flow_stride=flow_stride,
-            scalar_transport=scalar_transport,
-            scalar_key=scalar_key,
-            scalar_shm_name=scalar_shm_name,
+            scalar_stream_key=scalar_stream_key,
             scalar_display_mode=scalar_display_mode,
             scalar_colormap=scalar_colormap,
             scalar_range_mode=scalar_range_mode,

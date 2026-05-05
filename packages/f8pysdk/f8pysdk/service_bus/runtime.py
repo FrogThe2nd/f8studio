@@ -19,6 +19,7 @@ from ..generated import F8RuntimeGraph
 from ..f8_naming import ensure_token, kv_bucket_for_service, kv_key_ready, kv_key_rungraph
 from ..runtime_transport import RuntimeTransport
 from ..zenoh_transport import ZenohTransport, ZenohTransportConfig
+from ..zenoh_naming import subject_to_zenoh_key
 from ..state import StateRead, StateWriteOrigin, StateWriteSource
 from ..time_utils import now_ms
 from .config import ServiceBusConfig, _debug_state_enabled
@@ -696,3 +697,17 @@ class ServiceBus:
         node_id_s = ensure_token(node_id, label="node_id")
         port_s = ensure_token(port, label="port_id")
         return await self._data_router.pull_data(node_id_s, port_s, ctx_id=ctx_id)
+
+    def data_input_zenoh_key(self, node_id: str, port: str) -> str | None:
+        """
+        Resolve the Zenoh stream key feeding a local typed stream input port.
+
+        Media/binary data ports use this runtime-resolved key internally instead
+        of exposing transport-specific media state fields to user graphs.
+        """
+        node_id_s = ensure_token(node_id, label="node_id")
+        port_s = ensure_token(port, label="port_id")
+        subject = self._data_router.input_stream_subject(node_id=node_id_s, port=port_s)
+        if subject is None:
+            return None
+        return subject_to_zenoh_key(subject)

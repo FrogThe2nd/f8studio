@@ -3,10 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from f8pysdk.shm.video import VIDEO_FORMAT_BGRA32
+from f8pysdk.video_transport import VIDEO_FORMAT_BGRA32
 from f8pysdk.video_transport import (
     LatestVideoFrameTransport,
-    LegacyShmLatestVideoFrameTransport,
     ZenohLatestVideoFrameTransport,
 )
 
@@ -24,62 +23,44 @@ class FrameContext:
 class LatestVideoInput:
     def __init__(self) -> None:
         self._reader: LatestVideoFrameTransport | None = None
-        self._open_transport = ""
         self._open_key = ""
-        self._open_name = ""
 
     @property
     def open_name(self) -> str:
-        return self._open_name
+        return self._open_key
 
     @property
     def is_open(self) -> bool:
         return self._reader is not None
 
-    def is_open_for(self, *, video_transport: str, video_key: str, shm_name: str) -> bool:
-        return (
-            self._reader is not None
-            and self._open_transport == str(video_transport or "").strip().lower()
-            and self._open_key == str(video_key or "").strip()
-            and self._open_name == str(shm_name or "").strip()
-        )
+    def is_open_for(self, *, stream_key: str) -> bool:
+        return self._reader is not None and self._open_key == str(stream_key or "").strip()
 
     def close(self) -> None:
         if self._reader is not None:
             self._reader.close()
         self._reader = None
-        self._open_transport = ""
         self._open_key = ""
-        self._open_name = ""
 
     def open(
         self,
         *,
-        video_transport: str,
-        video_key: str,
-        shm_name: str,
+        stream_key: str,
         config_path: str | None,
         connect: tuple[str, ...],
         listen: tuple[str, ...],
         shm_pool_bytes: int,
     ) -> None:
         self.close()
-        transport = str(video_transport or "").strip().lower()
-        if transport == "zenoh":
-            reader = ZenohLatestVideoFrameTransport.open_subscriber(
-                str(video_key or "").strip(),
-                config_path=config_path,
-                connect=connect,
-                listen=listen,
-                shm_pool_bytes=shm_pool_bytes,
-            )
-        else:
-            reader = LegacyShmLatestVideoFrameTransport.open_reader(str(shm_name or "").strip(), use_event=True)
-            transport = "legacy_shm"
+        reader = ZenohLatestVideoFrameTransport.open_subscriber(
+            str(stream_key or "").strip(),
+            config_path=config_path,
+            connect=connect,
+            listen=listen,
+            shm_pool_bytes=shm_pool_bytes,
+        )
         self._reader = reader
-        self._open_transport = transport
-        self._open_key = str(video_key or "").strip()
-        self._open_name = str(shm_name or "").strip()
+        self._open_key = str(stream_key or "").strip()
 
     def read_frame(self) -> FrameContext | None:
         assert self._reader is not None
@@ -109,9 +90,6 @@ class LatestVideoInput:
             )
         finally:
             frame.release()
-
-
-VideoShmInput = LatestVideoInput
 
 
 def frame_rgb_from_context(frame: FrameContext, *, np_module: Any) -> Any:

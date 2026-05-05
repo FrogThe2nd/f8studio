@@ -12,7 +12,6 @@
 #include <opencv2/imgproc.hpp>
 
 #include "f8cppsdk/describe_schema.h"
-#include "f8cppsdk/shm/sizing.h"
 #include "f8cppsdk/time_utils.h"
 #include "f8cvkit/base64.h"
 #include "../common/service_runtime_utils.h"
@@ -26,6 +25,7 @@ using f8::cppsdk::describe::schema_number;
 using f8::cppsdk::describe::schema_object;
 using f8::cppsdk::describe::schema_string;
 using f8::cppsdk::describe::schema_string_enum;
+using f8::cppsdk::describe::schema_video_frame;
 using f8::cppsdk::describe::state_field;
 
 namespace {
@@ -152,17 +152,8 @@ EncodedImage encode_image_b64(const cv::Mat& bgr, std::string format, int qualit
   return out;
 }
 
-json video_source_metadata(bool use_zenoh, const std::string& video_key, const std::string& shm_name,
-                           std::uint32_t width, std::uint32_t height) {
-  json source = json::object({{"width", width},
-                              {"height", height},
-                              {"videoTransport", use_zenoh ? "zenoh" : "legacy_shm"}});
-  if (use_zenoh) {
-    source["videoKey"] = video_key;
-  } else {
-    source["shmName"] = shm_name;
-  }
-  return source;
+json video_source_metadata(std::uint32_t width, std::uint32_t height) {
+  return json::object({{"width", width}, {"height", height}, {"payloadKind", "video_frame"}});
 }
 
 }  // namespace
@@ -194,10 +185,6 @@ bool TemplateMatchService::start() {
     return false;
   }
 
-  shm_name_override_.clear();
-  video_transport_state_ = runtime_backend.bus_backend == f8::cppsdk::BusBackend::kZenoh ? "zenoh" : "legacy_shm";
-  video_key_state_.clear();
-
   publish_state_if_changed("serviceClass", cfg_.service_class, "init", json::object());
   publish_state_if_changed("templateImagePngB64", "", "init", json::object());
   publish_state_if_changed("matchThreshold", match_threshold_, "init", json::object());
@@ -205,9 +192,6 @@ bool TemplateMatchService::start() {
   publish_state_if_changed("matchColorMode", match_color_mode_, "init", json::object());
   publish_state_if_changed("searchRoiPaddingPx", search_roi_padding_px_, "init", json::object());
   publish_state_if_changed("pyramidScale", pyramid_scale_, "init", json::object());
-  publish_state_if_changed("shmName", "", "init", json::object());
-  publish_state_if_changed("videoTransport", video_transport_state_, "init", json::object());
-  publish_state_if_changed("videoKey", "", "init", json::object());
   publish_error_if_changed("", "init", json::object());
 
   template_loaded_ = false;
@@ -224,7 +208,6 @@ bool TemplateMatchService::start() {
   has_last_detection_ = false;
   last_detection_bbox_ = cv::Rect();
 
-  video_.close();
   zenoh_video_.close();
   zenoh_video_open_key_.clear();
   frame_bgra_.clear();
@@ -233,9 +216,7 @@ bool TemplateMatchService::start() {
   roi_small_.release();
   templ_small_.release();
   match_result_.release();
-  last_header_.reset();
   last_frame_id_ = 0;
-  last_notify_seq_ = 0;
   last_video_open_attempt_ms_ = 0;
   monitor_observed_frames_ = 0;
   monitor_processed_frames_ = 0;
@@ -303,27 +284,6 @@ void TemplateMatchService::on_state(const std::string& node_id, const std::strin
     set_template_png_b64(value.get<std::string>(), meta);
     return;
   }
-  if (field == "shmName" && value.is_string()) {
-    {
-      std::lock_guard<std::mutex> lock(video_mu_);
-      shm_name_override_ = service_runtime::trim_copy(value.get<std::string>());
-      if (video_transport_state_ == "legacy_shm") {
-        video_.close();
-        last_video_open_attempt_ms_ = 0;
-        last_notify_seq_ = 0;
-      }
-    }
-    publish_state_if_changed("shmName", shm_name_override_, "state", meta);
-    return;
-  }
-  if (field == "videoTransport" && value.is_string()) {
-    set_video_transport(value.get<std::string>(), meta);
-    return;
-  }
-  if (field == "videoKey" && value.is_string()) {
-    set_video_key(value.get<std::string>(), meta);
-    return;
-  }
   if (field == "matchThreshold") {
     double v = 0.0;
     if (!service_runtime::parse_json_double(value, v)) {
@@ -389,7 +349,7 @@ void TemplateMatchService::on_data(const std::string& node_id, const std::string
   (void)port;
   (void)value;
   (void)meta;
-  // Pull-based latest-frame input; no data port required.
+  // Pull-based latest-frame stream input.
 }
 
 void TemplateMatchService::set_template_png_b64(const std::string& b64, const json& meta) {
@@ -443,95 +403,16 @@ void TemplateMatchService::set_template_png_b64(const std::string& b64, const js
   publish_error_if_changed("", "state", meta);
 }
 
-void TemplateMatchService::set_video_transport(const std::string& transport, const json& meta) {
-  std::string normalized = service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(transport));
-  if (normalized == "shm") {
-    normalized = "legacy_shm";
-  } else if (normalized != "zenoh" && normalized != "legacy_shm") {
-    normalized = "zenoh";
-  }
-  std::lock_guard<std::mutex> lock(video_mu_);
-  if (normalized == video_transport_state_) {
-    publish_state_if_changed("videoTransport", video_transport_state_, "state", meta);
-    return;
-  }
-  video_transport_state_ = normalized;
-  video_.close();
-  zenoh_video_.close();
-  zenoh_video_open_key_.clear();
-  last_video_open_attempt_ms_ = 0;
-  last_frame_id_ = 0;
-  last_notify_seq_ = 0;
-  frame_bgra_.clear();
-  publish_state_if_changed("videoTransport", video_transport_state_, "state", meta);
-}
-
-void TemplateMatchService::set_video_key(const std::string& key, const json& meta) {
-  const std::string s = service_runtime::trim_copy(key);
-  std::lock_guard<std::mutex> lock(video_mu_);
-  if (s == video_key_state_) {
-    publish_state_if_changed("videoKey", video_key_state_, "state", meta);
-    return;
-  }
-  video_key_state_ = s;
-  zenoh_video_.close();
-  zenoh_video_open_key_.clear();
-  last_video_open_attempt_ms_ = 0;
-  last_frame_id_ = 0;
-  last_notify_seq_ = 0;
-  frame_bgra_.clear();
-  publish_state_if_changed("videoKey", video_key_state_, "state", meta);
-}
-
-bool TemplateMatchService::ensure_video_open() {
-  if (use_zenoh_video_input()) {
-    return ensure_zenoh_video_open();
-  }
-
-  f8::cppsdk::VideoSharedMemoryHeader hdr{};
-  if (video_.readHeader(hdr)) {
-    return true;
-  }
-
-  const std::int64_t now = f8::cppsdk::now_ms();
-  if (last_video_open_attempt_ms_ > 0 && (now - last_video_open_attempt_ms_) < 1000) {
-    return false;
-  }
-  last_video_open_attempt_ms_ = now;
-
-  const std::string shm_name = shm_name_override_;
-  if (shm_name.empty()) {
-    publish_error_if_changed("missing shmName", "runtime", json::object());
-    return false;
-  }
-  // Use the default SHM size. If producers override capacity, expose a state/config
-  // field later; for now keep the contract simple and consistent.
-  const std::size_t bytes = f8::cppsdk::shm::kDefaultVideoShmBytes;
-  if (!video_.open(shm_name, bytes)) {
-    publish_error_if_changed("legacy video SHM open failed: " + shm_name, "runtime", json::object());
-    return false;
-  }
-  last_notify_seq_ = 0;
-  publish_error_if_changed("", "runtime", json::object());
-  return true;
-}
-
-bool TemplateMatchService::use_zenoh_video_input() const {
-  const std::string transport =
-      service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(video_transport_state_));
-  if (transport == "zenoh") {
-    return true;
-  }
-  if (transport == "legacy_shm" || transport == "shm") {
-    return false;
-  }
-  return !service_runtime::trim_copy(video_key_state_).empty();
-}
-
 bool TemplateMatchService::ensure_zenoh_video_open() {
-  const std::string key = service_runtime::trim_copy(video_key_state_);
+  std::string key;
+  if (bus_) {
+    const auto resolved = bus_->data_input_zenoh_key(cfg_.service_id, "video");
+    if (resolved.has_value()) {
+      key = service_runtime::trim_copy(*resolved);
+    }
+  }
   if (key.empty()) {
-    publish_error_if_changed("missing videoKey", "runtime", json::object());
+    publish_error_if_changed("missing video data input", "runtime", json::object());
     return false;
   }
   if (zenoh_video_.valid() && zenoh_video_open_key_ == key) {
@@ -557,42 +438,28 @@ bool TemplateMatchService::ensure_zenoh_video_open() {
 }
 
 bool TemplateMatchService::copy_latest_video_frame(std::vector<std::byte>& out_payload,
-                                                   f8::cppsdk::VideoSharedMemoryHeader& out_header,
+                                                   f8::cppsdk::LatestVideoFrame& out_frame,
                                                    bool changed_only, std::uint64_t last_frame_id,
                                                    std::chrono::milliseconds timeout) {
-  if (use_zenoh_video_input()) {
-    if (!ensure_zenoh_video_open()) {
-      return false;
-    }
-    auto frame = zenoh_video_.wait_latest(timeout);
-    if (!frame.has_value()) {
-      return false;
-    }
-    if (changed_only && frame->frame_id == last_frame_id) {
-      return false;
-    }
-    out_header = f8::cppsdk::VideoSharedMemoryHeader{};
-    out_header.version = f8::cppsdk::kZenohVideoFrameSchemaVersion;
-    out_header.slot_count = 1;
-    out_header.width = frame->width;
-    out_header.height = frame->height;
-    out_header.pitch = frame->pitch;
-    out_header.format = frame->format;
-    out_header.frame_id = frame->frame_id;
-    out_header.ts_ms = frame->ts_ms;
-    out_header.payload_capacity = static_cast<std::uint32_t>(frame->payload.size());
-    out_header.notify_seq = static_cast<std::uint32_t>(frame->frame_id & 0xFFFFFFFFu);
-    out_payload = std::move(frame->payload);
-    return true;
-  }
-
-  if (!ensure_video_open()) {
+  if (!ensure_zenoh_video_open()) {
     return false;
   }
-  if (changed_only) {
-    return video_.copyLatestFrameIfChanged(out_payload, out_header, last_frame_id);
+  auto frame = zenoh_video_.wait_latest(timeout);
+  if (!frame.has_value()) {
+    return false;
   }
-  return video_.copyLatestFrame(out_payload, out_header);
+  if (changed_only && frame->frame_id == last_frame_id) {
+    return false;
+  }
+  out_frame = f8::cppsdk::LatestVideoFrame{};
+  out_frame.width = frame->width;
+  out_frame.height = frame->height;
+  out_frame.pitch = frame->pitch;
+  out_frame.format = frame->format;
+  out_frame.frame_id = frame->frame_id;
+  out_frame.ts_ms = frame->ts_ms;
+  out_payload = std::move(frame->payload);
+  return true;
 }
 
 void TemplateMatchService::detect_once() {
@@ -607,7 +474,6 @@ void TemplateMatchService::detect_once() {
 
   {
     std::lock_guard<std::mutex> lock(video_mu_);
-    std::uint32_t observed_notify_seq = last_notify_seq_;
     std::uint32_t wait_timeout_ms = 50;
     if (matching_interval_ms_ > 0 && last_match_ts_ms_ > 0) {
       const std::int64_t now_ms = f8::cppsdk::now_ms();
@@ -616,42 +482,32 @@ void TemplateMatchService::detect_once() {
         wait_timeout_ms = static_cast<std::uint32_t>(std::min<std::int64_t>(remaining, 500));
       }
     }
-    f8::cppsdk::VideoSharedMemoryHeader hdr{};
-    if (!use_zenoh_video_input()) {
-      if (!ensure_video_open()) {
-        return;
-      }
-      if (!video_.waitNewFrame(last_notify_seq_, wait_timeout_ms, &observed_notify_seq)) {
-        return;
-      }
-      last_notify_seq_ = observed_notify_seq;
-    }
-    if (!copy_latest_video_frame(frame_bgra_, hdr, true, last_frame_id_,
+    f8::cppsdk::LatestVideoFrame frame_meta{};
+    if (!copy_latest_video_frame(frame_bgra_, frame_meta, true, last_frame_id_,
                                  std::chrono::milliseconds(wait_timeout_ms))) {
       return;
     }
-    if (hdr.frame_id == 0 || hdr.frame_id == last_frame_id_) {
+    if (frame_meta.frame_id == 0 || frame_meta.frame_id == last_frame_id_) {
       return;
     }
     ++monitor_observed_frames_;
-    last_frame_id_ = hdr.frame_id;
-    last_header_ = hdr;
+    last_frame_id_ = frame_meta.frame_id;
 
     const std::int64_t now_ms = f8::cppsdk::now_ms();
     if (matching_interval_ms_ > 0 && last_match_ts_ms_ > 0 && (now_ms - last_match_ts_ms_) < matching_interval_ms_) {
       return;
     }
 
-    if (hdr.format != 1 || hdr.width == 0 || hdr.height == 0 || hdr.pitch == 0) {
+    if (frame_meta.format != 1 || frame_meta.width == 0 || frame_meta.height == 0 || frame_meta.pitch == 0) {
       publish_error_if_changed("unsupported video frame format", "runtime", json::object());
       return;
     }
-    const std::size_t row_bytes = static_cast<std::size_t>(hdr.pitch);
-    if (row_bytes < static_cast<std::size_t>(hdr.width) * 4) {
+    const std::size_t row_bytes = static_cast<std::size_t>(frame_meta.pitch);
+    if (row_bytes < static_cast<std::size_t>(frame_meta.width) * 4) {
       publish_error_if_changed("invalid video frame pitch", "runtime", json::object());
       return;
     }
-    if (frame_bgra_.size() < row_bytes * static_cast<std::size_t>(hdr.height)) {
+    if (frame_bgra_.size() < row_bytes * static_cast<std::size_t>(frame_meta.height)) {
       publish_error_if_changed("video frame too small", "runtime", json::object());
       return;
     }
@@ -662,8 +518,8 @@ void TemplateMatchService::detect_once() {
       return;
     }
 
-    cv::Mat bgra_mat(static_cast<int>(hdr.height), static_cast<int>(hdr.width), CV_8UC4,
-                     const_cast<std::byte*>(frame_bgra_.data()), static_cast<std::size_t>(hdr.pitch));
+    cv::Mat bgra_mat(static_cast<int>(frame_meta.height), static_cast<int>(frame_meta.width), CV_8UC4,
+                     const_cast<std::byte*>(frame_bgra_.data()), static_cast<std::size_t>(frame_meta.pitch));
 
     if (template_bgr_.cols > bgra_mat.cols || template_bgr_.rows > bgra_mat.rows) {
       publish_error_if_changed("template larger than frame", "runtime", json::object());
@@ -756,10 +612,10 @@ void TemplateMatchService::detect_once() {
 
     json out = json::object();
     out["schemaVersion"] = "f8visionDetections/1";
-    out["frameId"] = hdr.frame_id;
-    out["tsMs"] = hdr.ts_ms;
-    out["width"] = hdr.width;
-    out["height"] = hdr.height;
+    out["frameId"] = frame_meta.frame_id;
+    out["tsMs"] = frame_meta.ts_ms;
+    out["width"] = frame_meta.width;
+    out["height"] = frame_meta.height;
     out["model"] = "cvkit.template_match";
     out["task"] = "template_match";
     out["skeletonProtocol"] = "none";
@@ -769,7 +625,7 @@ void TemplateMatchService::detect_once() {
     last_match_ts_ms_ = now_ms;
     (void)bus_->emit_data(cfg_.service_id, "detections", out);
     const std::int64_t end_ts_ms = f8::cppsdk::now_ms();
-    emit_monitor_snapshot(end_ts_ms, hdr.frame_id, static_cast<double>(end_ts_ms - now_ms));
+    emit_monitor_snapshot(end_ts_ms, frame_meta.frame_id, static_cast<double>(end_ts_ms - now_ms));
   }
 }
 
@@ -838,37 +694,35 @@ bool TemplateMatchService::on_command(const std::string& call, const json& args,
     max_h = clamp_int(max_h, 0, 10000);
 
     std::vector<std::byte> frame;
-    f8::cppsdk::VideoSharedMemoryHeader hdr{};
-    std::string shm_name;
+    f8::cppsdk::LatestVideoFrame frame_meta{};
     {
       std::lock_guard<std::mutex> lock(video_mu_);
-      if (!copy_latest_video_frame(frame, hdr, false, 0, std::chrono::milliseconds(100))) {
+      if (!copy_latest_video_frame(frame, frame_meta, false, 0, std::chrono::milliseconds(100))) {
         error_code = "RUNTIME_ERROR";
         error_message = "no frame available";
         return false;
       }
-      shm_name = shm_name_override_;
     }
 
-    if (hdr.format != 1 || hdr.width == 0 || hdr.height == 0 || hdr.pitch == 0) {
+    if (frame_meta.format != 1 || frame_meta.width == 0 || frame_meta.height == 0 || frame_meta.pitch == 0) {
       error_code = "RUNTIME_ERROR";
       error_message = "unsupported video frame format";
       return false;
     }
-    const std::size_t row_bytes = static_cast<std::size_t>(hdr.pitch);
-    if (row_bytes < static_cast<std::size_t>(hdr.width) * 4) {
+    const std::size_t row_bytes = static_cast<std::size_t>(frame_meta.pitch);
+    if (row_bytes < static_cast<std::size_t>(frame_meta.width) * 4) {
       error_code = "RUNTIME_ERROR";
       error_message = "invalid video frame pitch";
       return false;
     }
-    if (frame.size() < row_bytes * static_cast<std::size_t>(hdr.height)) {
+    if (frame.size() < row_bytes * static_cast<std::size_t>(frame_meta.height)) {
       error_code = "RUNTIME_ERROR";
       error_message = "video frame too small";
       return false;
     }
 
-    cv::Mat bgra_mat(static_cast<int>(hdr.height), static_cast<int>(hdr.width), CV_8UC4,
-                     const_cast<std::byte*>(frame.data()), static_cast<std::size_t>(hdr.pitch));
+    cv::Mat bgra_mat(static_cast<int>(frame_meta.height), static_cast<int>(frame_meta.width), CV_8UC4,
+                     const_cast<std::byte*>(frame.data()), static_cast<std::size_t>(frame_meta.pitch));
     cv::Mat bgr;
     try {
       cv::cvtColor(bgra_mat, bgr, cv::COLOR_BGRA2BGR);
@@ -885,10 +739,9 @@ bool TemplateMatchService::on_command(const std::string& call, const json& args,
       return false;
     }
 
-    result["frameId"] = hdr.frame_id;
-    result["tsMs"] = hdr.ts_ms;
-    result["source"] = video_source_metadata(use_zenoh_video_input(), video_key_state_, shm_name, hdr.width,
-                                             hdr.height);
+    result["frameId"] = frame_meta.frame_id;
+    result["tsMs"] = frame_meta.ts_ms;
+    result["source"] = video_source_metadata(frame_meta.width, frame_meta.height);
     result["image"] = json::object({{"b64", enc.b64},
                                     {"format", enc.format},
                                     {"width", enc.width},
@@ -944,13 +797,6 @@ json TemplateMatchService::describe() {
                   "If >0, search around the previous detection with this padding.", false),
       state_field("pyramidScale", schema_number(1.0, 0.25, 1.0), "rw", "Pyramid Scale",
                   "Optional downscale factor for faster coarse template matching.", false),
-      state_field("shmName", schema_string(), "rw", "Legacy Video SHM",
-                  "Legacy SHM name used only when videoTransport=legacy_shm.", false),
-      state_field("videoTransport", schema_string_enum(std::vector<std::string>{"zenoh", "legacy_shm"}, "zenoh"),
-                  "rw", "Video Transport",
-                  "Video input transport backend. Zenoh is default; legacy_shm keeps old shmName input.",
-                  false),
-      state_field("videoKey", schema_string(), "rw", "Video Key", "Zenoh latest-frame key for video input.", true),
   });
   service["commands"] = json::array({
       json{{"name", "captureTemplateFrame"},
@@ -966,7 +812,15 @@ json TemplateMatchService::describe() {
                       })}},
       json{{"name", "ping"}, {"description", "Health check."}, {"required", true}, {"showOnNode", false}},
   });
-  service["dataInPorts"] = json::array();
+  service["dataInPorts"] = json::array({
+      json{{"name", "video"},
+           {"valueSchema", schema_video_frame()},
+           {"description", "Input video frame stream."},
+           {"payloadKind", "video_frame"},
+           {"delivery", "latest"},
+           {"required", true},
+           {"showOnNode", true}},
+  });
   service["dataOutPorts"] = json::array({
       json{{"name", "detections"},
            {"valueSchema", detections_schema},

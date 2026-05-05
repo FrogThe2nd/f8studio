@@ -11,14 +11,13 @@ import numpy as np
 
 from f8pysdk.audio_transport import (
     LatestAudioChunkTransport,
-    LegacyShmLatestAudioChunkTransport,
+    SAMPLE_FORMAT_F32LE,
     ZenohLatestAudioChunkTransport,
 )
 from f8pysdk.bus import ServiceBus
-from f8pysdk.codec import coerce_int, coerce_str
+from f8pysdk.codec import coerce_int
 from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
-from f8pysdk.shm.audio import SAMPLE_FORMAT_F32LE
 
 from .constants import CORE_SCHEMA_VERSION
 from .feature_math import compute_core_features, librosa_available
@@ -38,7 +37,7 @@ class AudioCoreFeatureServiceNode(ServiceNode):
     def __init__(self, *, node_id: str, node: Any, initial_state: dict[str, Any] | None) -> None:
         super().__init__(
             node_id=ensure_token(node_id, label="node_id"),
-            data_in_ports=[],
+            data_in_ports=["audio"],
             data_out_ports=["coreFeatures"],
             state_fields=[str(s.name) for s in list(node.stateFields or [])],
         )
@@ -46,13 +45,6 @@ class AudioCoreFeatureServiceNode(ServiceNode):
         self._active = True
         self._task: asyncio.Task[object] | None = None
 
-        self._audio_key = coerce_str(self._initial_state.get("audioKey"), default="")
-        self._audio_shm_name = coerce_str(self._initial_state.get("audioShmName"), default="")
-        raw_audio_transport = self._initial_state.get("audioTransport")
-        if raw_audio_transport is None or str(raw_audio_transport or "").strip() == "":
-            self._audio_transport = ""
-        else:
-            self._audio_transport = self._coerce_audio_transport(raw_audio_transport)
         self._channel_mode = self._coerce_channel_mode(self._initial_state.get("channelMode"))
         self._window_ms = coerce_int(self._initial_state.get("windowMs"), default=CoreDefaults.window_ms, minimum=64)
         self._hop_ms = coerce_int(self._initial_state.get("hopMs"), default=CoreDefaults.hop_ms, minimum=8)
@@ -61,8 +53,6 @@ class AudioCoreFeatureServiceNode(ServiceNode):
         )
 
         self._reader: LatestAudioChunkTransport | None = None
-        self._opened_shm_name = ""
-        self._opened_audio_transport = ""
         self._opened_audio_key = ""
         self._last_seq = 0
         self._emit_seq = 0
@@ -103,18 +93,6 @@ class AudioCoreFeatureServiceNode(ServiceNode):
 
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
         del ts_ms
-        if field == "audioShmName":
-            self._audio_shm_name = coerce_str(value, default="")
-            self._close_reader()
-            return
-        if field == "audioTransport":
-            self._audio_transport = self._coerce_audio_transport(value)
-            self._close_reader()
-            return
-        if field == "audioKey":
-            self._audio_key = coerce_str(value, default="")
-            self._close_reader()
-            return
         if field == "channelMode":
             self._channel_mode = self._coerce_channel_mode(value)
             return
@@ -173,55 +151,24 @@ class AudioCoreFeatureServiceNode(ServiceNode):
         if self._reader is not None:
             self._reader.close()
             self._reader = None
-        self._opened_shm_name = ""
-        self._opened_audio_transport = ""
         self._opened_audio_key = ""
         self._last_seq = 0
         self._sample_ring = np.asarray([], dtype=np.float32)
 
     def _ensure_reader(self) -> None:
-        audio_transport = self._selected_audio_transport()
-        audio_key = str(self._audio_key or "").strip()
-        shm_name = str(self._audio_shm_name or "").strip()
-        if (
-            self._reader is not None
-            and self._opened_audio_transport == audio_transport
-            and self._opened_audio_key == audio_key
-            and self._opened_shm_name == shm_name
-        ):
+        audio_key = str(self.input_zenoh_key("audio") or "").strip()
+        if self._reader is not None and self._opened_audio_key == audio_key:
             return
         self._close_reader()
-        if audio_transport == "zenoh":
-            reader = ZenohLatestAudioChunkTransport.open_subscriber(
-                audio_key,
-                config_path=self._zenoh_config_path,
-                connect=self._zenoh_connect,
-                listen=self._zenoh_listen,
-                shm_pool_bytes=self._zenoh_shm_pool_bytes,
-            )
-        else:
-            reader = LegacyShmLatestAudioChunkTransport.open_reader(shm_name, use_event=False)
+        reader = ZenohLatestAudioChunkTransport.open_subscriber(
+            audio_key,
+            config_path=self._zenoh_config_path,
+            connect=self._zenoh_connect,
+            listen=self._zenoh_listen,
+            shm_pool_bytes=self._zenoh_shm_pool_bytes,
+        )
         self._reader = reader
-        self._opened_audio_transport = audio_transport
         self._opened_audio_key = audio_key
-        self._opened_shm_name = shm_name
-
-    def _selected_audio_transport(self) -> str:
-        audio_transport = str(self._audio_transport or "").strip().lower()
-        if audio_transport == "zenoh":
-            return "zenoh"
-        if audio_transport in ("legacy_shm", "shm"):
-            return "legacy_shm"
-        if str(self._audio_key or "").strip():
-            return "zenoh"
-        return "zenoh"
-
-    @staticmethod
-    def _coerce_audio_transport(value: Any) -> str:
-        audio_transport = coerce_str(value, default="").strip().lower()
-        if audio_transport in ("legacy_shm", "shm"):
-            return "legacy_shm"
-        return "zenoh"
 
     def _chunk_to_mono(self, payload: memoryview, *, frames: int, channels: int) -> np.ndarray:
         samples = np.frombuffer(payload, dtype=np.float32)
@@ -252,26 +199,18 @@ class AudioCoreFeatureServiceNode(ServiceNode):
             await asyncio.sleep(0.02)
             return
 
-        audio_transport = self._selected_audio_transport()
-        if audio_transport == "zenoh" and not str(self._audio_key or "").strip():
-            await self._set_last_error("missing audioKey", signature="missing_audio_key")
-            await asyncio.sleep(0.05)
-            return
-        if audio_transport == "legacy_shm" and not self._audio_shm_name:
-            await self._set_last_error("missing audioShmName", signature="missing_shm")
+        audio_key = str(self.input_zenoh_key("audio") or "").strip()
+        if not audio_key:
+            await self._set_last_error("missing audio data input", signature="missing_audio_input")
             await asyncio.sleep(0.05)
             return
 
         try:
             self._ensure_reader()
         except FileNotFoundError as exc:
-            if audio_transport == "legacy_shm":
-                msg = "legacy audio SHM not found"
-                signature = "legacy_shm_not_found"
-            else:
-                msg = "audio input open failed"
-                signature = "input_open:FileNotFoundError"
-            await self._set_last_error(msg, signature=signature, exc=exc)
+            await self._set_last_error(
+                "audio input open failed", signature="input_open:FileNotFoundError", exc=exc
+            )
             await asyncio.sleep(0.05)
             return
         except (OSError, RuntimeError, ValueError) as exc:

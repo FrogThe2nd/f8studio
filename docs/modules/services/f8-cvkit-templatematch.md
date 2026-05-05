@@ -39,7 +39,7 @@ No description.
 
 ### Typical Inputs / Outputs
 
-- Data inputs: none
+- Data inputs: `video`
 - Data outputs: `detections`, `monitor`
 - Commands: `captureTemplateFrame`, `ping`
 
@@ -53,9 +53,6 @@ No description.
 | `matchColorMode` | `rw` | `true` | `false` | `string` | gray or bgr. gray is faster. |
 | `searchRoiPaddingPx` | `rw` | `true` | `false` | `integer / default=0` | If >0, search around the previous detection with this padding. |
 | `pyramidScale` | `rw` | `true` | `false` | `number / default=1.0` | Optional downscale factor for faster coarse template matching. |
-| `shmName` | `rw` | `true` | `false` | `string` | Legacy SHM name used only when videoTransport=legacy_shm. |
-| `videoTransport` | `rw` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Video input transport backend. Zenoh is default; legacy_shm keeps old shmName input. |
-| `videoKey` | `rw` | `true` | `true` | `string` | Zenoh latest-frame key for video input. |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
@@ -67,8 +64,8 @@ No description.
 - `matchColorMode` (Match Color Mode, `rw`): gray or bgr. gray is faster. Schema: `string`.
 - `searchRoiPaddingPx` (Search ROI Padding, `rw`): If >0, search around the previous detection with this padding. Schema: `integer / default=0`.
 - `pyramidScale` (Pyramid Scale, `rw`): Optional downscale factor for faster coarse template matching. Schema: `number / default=1.0`.
-- `shmName` (Legacy Video SHM, `rw`): Legacy SHM name used only when videoTransport=legacy_shm. Schema: `string`.
-- `videoTransport` (Video Transport, `rw`): Video input transport backend. Zenoh is default; legacy_shm keeps old shmName input. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
+- `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 
 ### Service Commands
 
@@ -93,7 +90,9 @@ Health check.
 
 ### Service Data Input Ports
 
-_None_
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `video` | `true` | `true` | `object{format, frameId, height, pitch, ...}` | Input video frame stream. |
 
 ### Service Data Output Ports
 
@@ -108,4 +107,4 @@ _None_
 
 ## Related Scenarios
 
-- [Scene 01: CVKit Template Tracking](../../scenarios/scene-01-cvkit_template_tracking.md)
+- No bundled scenario references this node yet.

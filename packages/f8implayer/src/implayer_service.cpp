@@ -25,9 +25,7 @@
 #include "f8cppsdk/describe_schema.h"
 #include "f8cppsdk/f8_naming.h"
 #include "f8cppsdk/latest_video_frame_transport.h"
-#include "f8cppsdk/shm/video.h"
 #include "f8cppsdk/time_utils.h"
-#include "f8cppsdk/video_shared_memory_sink.h"
 #include "f8cppsdk/zenoh_naming.h"
 #include "implayer_gui.h"
 #include "mpv_player.h"
@@ -52,30 +50,10 @@ using f8::cppsdk::describe::schema_number;
 using f8::cppsdk::describe::schema_object;
 using f8::cppsdk::describe::schema_string;
 using f8::cppsdk::describe::schema_string_enum;
+using f8::cppsdk::describe::schema_video_frame;
 using f8::cppsdk::describe::state_field;
 
 namespace {
-
-class ShmVideoFrameSink final : public VideoFrameSink {
- public:
-  explicit ShmVideoFrameSink(std::shared_ptr<VideoSharedMemorySink> sink) : sink_(std::move(sink)) {}
-
-  bool ensureConfiguration(unsigned width, unsigned height) override {
-    return sink_ && sink_->ensureConfiguration(width, height);
-  }
-
-  bool writeFrame(const void* data, unsigned stride_bytes) override {
-    return sink_ && sink_->writeFrame(data, stride_bytes);
-  }
-
-  unsigned outputWidth() const override { return sink_ ? sink_->outputWidth() : 0; }
-  unsigned outputHeight() const override { return sink_ ? sink_->outputHeight() : 0; }
-  unsigned outputPitch() const override { return sink_ ? sink_->outputPitch() : 0; }
-  std::uint64_t frameId() const override { return sink_ ? sink_->frameId() : 0; }
-
- private:
-  std::shared_ptr<VideoSharedMemorySink> sink_;
-};
 
 class ZenohVideoFrameSink final : public VideoFrameSink {
  public:
@@ -596,11 +574,11 @@ float normalize_yaw_deg(float yaw_deg) {
   return v;
 }
 
-MpvPlayer::ShmViewMode shm_view_mode_for_vr(SdlVideoWindow::ProjectionMode mode, int sbs_eye) {
+MpvPlayer::FrameExportViewMode frame_export_view_mode_for_vr(SdlVideoWindow::ProjectionMode mode, int sbs_eye) {
   if (mode == SdlVideoWindow::ProjectionMode::EquirectSbs) {
-    return sbs_eye == 0 ? MpvPlayer::ShmViewMode::SbsLeft : MpvPlayer::ShmViewMode::SbsRight;
+    return sbs_eye == 0 ? MpvPlayer::FrameExportViewMode::SbsLeft : MpvPlayer::FrameExportViewMode::SbsRight;
   }
-  return MpvPlayer::ShmViewMode::FullFrame;
+  return MpvPlayer::FrameExportViewMode::FullFrame;
 }
 
 }  // namespace
@@ -642,43 +620,19 @@ bool ImPlayerService::start() {
 
   const auto runtime_backend = f8::cppsdk::normalize_runtime_backend_config(cfg_.runtime_backend);
 
-  auto initialize_legacy_shm_sink = [this]() -> bool {
-    shm_ = std::make_shared<VideoSharedMemorySink>();
-    const auto shm_name = f8::cppsdk::shm::video_shm_name(cfg_.service_id);
-    if (!shm_->initialize(shm_name, cfg_.video_shm_bytes, cfg_.video_shm_slots)) {
-      spdlog::error("failed to initialize legacy video SHM sink name={} bytes={} slots={}", shm_name,
-                    cfg_.video_shm_bytes, cfg_.video_shm_slots);
-      shm_.reset();
-      frame_sink_.reset();
-      return false;
-    }
-    frame_sink_ = std::make_shared<ShmVideoFrameSink>(shm_);
-    return true;
-  };
-
-  const bool use_zenoh_video =
-      cfg_.video_backend == f8::cppsdk::VideoTransportBackend::kZenoh ||
-      (cfg_.video_backend == f8::cppsdk::VideoTransportBackend::kAuto &&
-       runtime_backend.bus_backend == f8::cppsdk::BusBackend::kZenoh);
-
-  if (use_zenoh_video) {
-    const std::string key = f8::cppsdk::zenoh_data_key(cfg_.service_id, cfg_.service_id, "video");
-    auto publisher = std::make_shared<f8::cppsdk::ZenohLatestVideoFramePublisher>();
-    if (publisher->open(runtime_backend, key)) {
-      zenoh_video_key_ = key;
-      zenoh_video_publisher_ = publisher;
-      frame_sink_ = std::make_shared<ZenohVideoFrameSink>(publisher);
-      spdlog::info("implayer zenoh video publisher enabled serviceId={} key={}", cfg_.service_id, key);
-    } else {
-      zenoh_video_key_.clear();
-      zenoh_video_publisher_.reset();
-      frame_sink_.reset();
-      spdlog::error("implayer zenoh video publisher unavailable serviceId={} key={}", cfg_.service_id, key);
-      return false;
-    }
-  } else if (!initialize_legacy_shm_sink()) {
+  const std::string key = f8::cppsdk::zenoh_data_key(cfg_.service_id, cfg_.service_id, "video");
+  auto publisher = std::make_shared<f8::cppsdk::ZenohLatestVideoFramePublisher>();
+  if (!publisher->open(runtime_backend, key)) {
+    zenoh_video_key_.clear();
+    zenoh_video_publisher_.reset();
+    frame_sink_.reset();
+    spdlog::error("implayer zenoh video publisher unavailable serviceId={} key={}", cfg_.service_id, key);
     return false;
   }
+  zenoh_video_key_ = key;
+  zenoh_video_publisher_ = publisher;
+  frame_sink_ = std::make_shared<ZenohVideoFrameSink>(publisher);
+  spdlog::info("implayer zenoh video publisher enabled serviceId={} key={}", cfg_.service_id, key);
 
   SdlVideoWindow::Config wcfg;
   wcfg.title = "f8implayer - " + cfg_.service_id;
@@ -745,9 +699,9 @@ bool ImPlayerService::start() {
 
   MpvPlayer::VideoConfig vcfg;
   vcfg.offline = false;
-  vcfg.videoShmMaxWidth = cfg_.video_shm_max_width;
-  vcfg.videoShmMaxHeight = cfg_.video_shm_max_height;
-  vcfg.videoShmMaxFps = cfg_.video_shm_max_fps;
+  vcfg.videoOutputMaxWidth = cfg_.video_output_max_width;
+  vcfg.videoOutputMaxHeight = cfg_.video_output_max_height;
+  vcfg.videoOutputMaxFps = cfg_.video_output_max_fps;
 
   try {
     player_ = std::make_unique<MpvPlayer>(
@@ -803,7 +757,6 @@ bool ImPlayerService::start() {
     zenoh_video_publisher_.reset();
     zenoh_video_key_.clear();
     frame_sink_.reset();
-    shm_.reset();
     return false;
   }
 
@@ -820,8 +773,7 @@ bool ImPlayerService::start() {
   running_.store(true, std::memory_order_release);
   stop_requested_.store(false, std::memory_order_release);
   spdlog::info("implayer started serviceId={} backend={} videoBackend={}", cfg_.service_id,
-               f8::cppsdk::bus_backend_to_string(runtime_backend.bus_backend),
-               f8::cppsdk::video_transport_backend_to_string(cfg_.video_backend));
+               f8::cppsdk::bus_backend_to_string(runtime_backend.bus_backend), "zenoh");
   return true;
 }
 
@@ -859,7 +811,6 @@ void ImPlayerService::stop() {
   zenoh_video_publisher_.reset();
   zenoh_video_key_.clear();
   frame_sink_.reset();
-  shm_.reset();
 }
 
 void ImPlayerService::tick() {
@@ -923,7 +874,7 @@ void ImPlayerService::tick() {
         view_pan_y_ = 0.0f;
         view_panning_ = false;
       }
-      player_->setShmViewMode(shm_view_mode_for_vr(vr_mode_, vr_sbs_eye_));
+      player_->setFrameExportViewMode(frame_export_view_mode_for_vr(vr_mode_, vr_sbs_eye_));
       const bool updated = player_->renderVideoFrame();
 
       // OpenXR is controlled by `openxrMode` state; keep the service running even
@@ -1464,7 +1415,7 @@ bool ImPlayerService::on_set_state(const std::string& node_id, const std::string
       }
       ok = true;
     }
-  } else if (f == "videoShmMaxWidth" || f == "videoShmMaxHeight") {
+  } else if (f == "videoOutputMaxWidth" || f == "videoOutputMaxHeight") {
     if (!value.is_number_integer() && !value.is_number()) {
       err = "value must be a number";
       ok = false;
@@ -1474,16 +1425,16 @@ bool ImPlayerService::on_set_state(const std::string& node_id, const std::string
         err = "value must be >= 0";
         ok = false;
       } else {
-        if (f == "videoShmMaxWidth")
-          cfg_.video_shm_max_width = static_cast<std::uint32_t>(v);
-        if (f == "videoShmMaxHeight")
-          cfg_.video_shm_max_height = static_cast<std::uint32_t>(v);
+        if (f == "videoOutputMaxWidth")
+          cfg_.video_output_max_width = static_cast<std::uint32_t>(v);
+        if (f == "videoOutputMaxHeight")
+          cfg_.video_output_max_height = static_cast<std::uint32_t>(v);
         if (player_)
-          player_->setVideoShmMaxSize(cfg_.video_shm_max_width, cfg_.video_shm_max_height);
+          player_->setVideoOutputMaxSize(cfg_.video_output_max_width, cfg_.video_output_max_height);
         ok = true;
       }
     }
-  } else if (f == "videoShmMaxFps") {
+  } else if (f == "videoOutputMaxFps") {
     if (!value.is_number()) {
       err = "value must be a number";
       ok = false;
@@ -1493,9 +1444,9 @@ bool ImPlayerService::on_set_state(const std::string& node_id, const std::string
         err = "value must be >= 0";
         ok = false;
       } else {
-        cfg_.video_shm_max_fps = fps;
+        cfg_.video_output_max_fps = fps;
         if (player_)
-          player_->setVideoShmMaxFps(cfg_.video_shm_max_fps);
+          player_->setVideoOutputMaxFps(cfg_.video_output_max_fps);
         ok = true;
       }
     }
@@ -1625,12 +1576,12 @@ bool ImPlayerService::on_set_state(const std::string& node_id, const std::string
   } else if (f == "loop") {
     std::lock_guard<std::mutex> lock(state_mu_);
     write_value = loop_;
-  } else if (f == "videoShmMaxWidth") {
-    write_value = cfg_.video_shm_max_width;
-  } else if (f == "videoShmMaxHeight") {
-    write_value = cfg_.video_shm_max_height;
-  } else if (f == "videoShmMaxFps") {
-    write_value = cfg_.video_shm_max_fps;
+  } else if (f == "videoOutputMaxWidth") {
+    write_value = cfg_.video_output_max_width;
+  } else if (f == "videoOutputMaxHeight") {
+    write_value = cfg_.video_output_max_height;
+  } else if (f == "videoOutputMaxFps") {
+    write_value = cfg_.video_output_max_fps;
   } else if (f == "authMode") {
     std::lock_guard<std::mutex> lock(state_mu_);
     write_value = auth_mode_;
@@ -1718,8 +1669,8 @@ bool ImPlayerService::on_set_rungraph(const nlohmann::json& graph_obj, const nlo
         continue;
 
       // Only apply writable fields from rungraph (never seed runtime-owned ro fields).
-      if (field != "active" && field != "mediaUrl" && field != "volume" && field != "videoShmMaxWidth" &&
-          field != "videoShmMaxHeight" && field != "videoShmMaxFps" && field != "authMode" &&
+      if (field != "active" && field != "mediaUrl" && field != "volume" && field != "videoOutputMaxWidth" &&
+          field != "videoOutputMaxHeight" && field != "videoOutputMaxFps" && field != "authMode" &&
           field != "authBrowser") {
         continue;
       }
@@ -2357,18 +2308,12 @@ void ImPlayerService::publish_static_state() {
       updates.emplace_back(field, v);
     };
     want("serviceClass", cfg_.service_class);
-    want("videoShmName", shm_ ? shm_->regionName() : "");
-    want("videoShmEvent", shm_ ? shm_->frameEventName() : "");
-    const bool use_zenoh_video =
-        zenoh_video_publisher_ && zenoh_video_publisher_->valid() && !zenoh_video_key_.empty();
-    want("videoTransport", use_zenoh_video ? "zenoh" : "legacy_shm");
-    want("videoKey", use_zenoh_video ? zenoh_video_key_ : "");
     want("videoFormat", "bgra32");
     want("videoFrameSchemaVersion", 1);
     want("loop", loop_);
-    want("videoShmMaxWidth", cfg_.video_shm_max_width);
-    want("videoShmMaxHeight", cfg_.video_shm_max_height);
-    want("videoShmMaxFps", cfg_.video_shm_max_fps);
+    want("videoOutputMaxWidth", cfg_.video_output_max_width);
+    want("videoOutputMaxHeight", cfg_.video_output_max_height);
+    want("videoOutputMaxFps", cfg_.video_output_max_fps);
     want("authMode", auth_mode_);
     want("authBrowser", auth_browser_);
     want("openxrMode", openxr_mode_);
@@ -2462,19 +2407,15 @@ json ImPlayerService::describe() {
       state_field("volume", schema_number(1.0, 0.0, 1.0), "rw", "Volume", "", true, "slider"),
       state_field("playing", schema_boolean(), "ro", "Playing", "Playback state.", false),
       state_field("duration", schema_number(), "ro", "Duration", "Duration (seconds).", true),
-      state_field("videoShmName", schema_string(), "ro", "Legacy Video SHM",
-                  "Legacy shared memory region name when the legacy_shm fallback is active.", false),
-      state_field("videoShmEvent", schema_string(), "ro", "Video Event", "Optional named event to signal new frames.",
-                  false),
-      state_field("videoTransport", schema_string_enum(std::vector<std::string>{"zenoh", "legacy_shm"}, "zenoh"), "ro",
-                  "Video Transport", "Frame transport backend.", false),
-      state_field("videoKey", schema_string(), "ro", "Video Key", "Zenoh latest-frame key for video output.", true),
       state_field("videoFormat", schema_string_enum({"bgra32", "bgr24", "flow2_f16", "scalar1_f32"}), "ro",
                   "Video Format", "Frame payload format.", false),
       state_field("videoFrameSchemaVersion", schema_integer(), "ro", "Video Schema", "Frame schema version.", false),
-      state_field("videoShmMaxWidth", schema_integer(), "rw", "SHM Max Width", "Downsample limit (0 = auto).", false),
-      state_field("videoShmMaxHeight", schema_integer(), "rw", "SHM Max Height", "Downsample limit (0 = auto).", false),
-      state_field("videoShmMaxFps", schema_number(), "rw", "SHM Max FPS", "Copy rate limit (0 = unlimited).", false),
+      state_field("videoOutputMaxWidth", schema_integer(), "rw", "Output Max Width", "Downsample limit (0 = auto).",
+                  false),
+      state_field("videoOutputMaxHeight", schema_integer(), "rw", "Output Max Height", "Downsample limit (0 = auto).",
+                  false),
+      state_field("videoOutputMaxFps", schema_number(), "rw", "Output Max FPS",
+                  "Frame export rate limit (0 = unlimited).", false),
       state_field("authMode", schema_string_enum({"none", "browser", "cookiesFile"}), "rw", "Auth Mode",
                   "Cookie auth mode: none|browser|cookiesFile (default: none).", false),
       state_field("authBrowser", schema_string_enum({"chrome", "chromium", "edge", "firefox", "safari"}), "rw",
@@ -2496,6 +2437,13 @@ json ImPlayerService::describe() {
   });
 
   service["dataOutPorts"] = json::array({
+      json{{"name", "video"},
+           {"valueSchema", schema_video_frame()},
+           {"description", "Decoded video frame stream."},
+           {"payloadKind", "video_frame"},
+           {"delivery", "latest"},
+           {"required", true},
+           {"showOnNode", true}},
       json{{"name", "playback"},
            {"valueSchema", schema_object(json{{"videoId", schema_string()},
                                               {"position", schema_number()},

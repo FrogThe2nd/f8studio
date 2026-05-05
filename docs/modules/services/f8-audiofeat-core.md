@@ -39,7 +39,7 @@ pixi run -e default f8pyaudiofeat_core
 
 ### Typical Inputs / Outputs
 
-- Data inputs: none
+- Data inputs: `audio`
 - Data outputs: `coreFeatures`, `monitor`
 - Commands: none
 
@@ -47,9 +47,6 @@ pixi run -e default f8pyaudiofeat_core
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `audioShmName` | `rw` | `false` | `false` | `string / default=` | Legacy audio SHM mapping name used only when audioTransport=legacy_shm. |
-| `audioTransport` | `rw` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Audio input transport backend. Use zenoh with audioKey; legacy_shm keeps old audioShmName input. |
-| `audioKey` | `rw` | `true` | `true` | `string / default=` | Zenoh latest-audio key for input chunks. |
 | `channelMode` | `rw` | `true` | `true` | `string / enum[mono_mix, left, right] / default=mono_mix` | Channel selection for analysis. |
 | `windowMs` | `rw` | `true` | `true` | `integer / default=768` | Feature analysis window size in milliseconds. |
 | `hopMs` | `rw` | `true` | `true` | `integer / default=64` | Feature analysis hop size in milliseconds. |
@@ -59,14 +56,12 @@ pixi run -e default f8pyaudiofeat_core
 
 ### Key Fields That Matter
 
-- `audioShmName` (Legacy Audio SHM, `rw`): Legacy audio SHM mapping name used only when audioTransport=legacy_shm. Schema: `string / default=`.
-- `audioTransport` (Audio Transport, `rw`): Audio input transport backend. Use zenoh with audioKey; legacy_shm keeps old audioShmName input. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
-- `audioKey` (Audio Key, `rw`): Zenoh latest-audio key for input chunks. Schema: `string / default=`.
 - `channelMode` (Channel Mode, `rw`): Channel selection for analysis. Schema: `string / enum[mono_mix, left, right] / default=mono_mix`.
 - `windowMs` (Window (ms), `rw`): Feature analysis window size in milliseconds. Schema: `integer / default=768`.
 - `hopMs` (Hop (ms), `rw`): Feature analysis hop size in milliseconds. Schema: `integer / default=64`.
 - `emitEveryHops` (Emit Every Hops, `rw`): Emit one coreFeatures payload every N analysis hops. Schema: `integer / default=1`.
 - `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 
 ### Service Commands
 
@@ -74,7 +69,9 @@ _None_
 
 ### Service Data Input Ports
 
-_None_
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `audio` | `true` | `true` | `object{bytesPerFrame, channels, format, frameIndex, ...}` | Input audio chunk stream from f8.audiocap. |
 
 ### Service Data Output Ports
 
@@ -89,4 +86,4 @@ _None_
 
 ## Related Scenarios
 
-- [Scene 03: Audio Driven TCode](../../scenarios/scene-03-audio_driven.md)
+- No bundled scenario references this node yet.

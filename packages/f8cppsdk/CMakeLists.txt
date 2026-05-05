@@ -8,13 +8,9 @@ add_library(f8cppsdk
   src/rungraph_routes.cpp
   src/time_utils.cpp
   src/f8_naming.cpp
-  src/shm_region.cpp
-  src/shm_event_wait.cpp
   src/describe_builtins.cpp
   src/latest_audio_chunk_transport.cpp
   src/latest_video_frame_transport.cpp
-  src/video_shared_memory_sink.cpp
-  src/audio_shared_memory_sink.cpp
 )
 
 target_include_directories(f8cppsdk

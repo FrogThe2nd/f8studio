@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import pytest
 
 from f8pysdk.audio_transport import (
+    SAMPLE_FORMAT_F32LE,
     ZENOH_AUDIO_CHUNK_MAGIC,
     ZENOH_AUDIO_CHUNK_SCHEMA_VERSION,
     ZenohLatestAudioChunkTransport,
@@ -13,7 +14,6 @@ from f8pysdk.audio_transport import (
     decode_zenoh_audio_chunk,
     encode_zenoh_audio_chunk,
 )
-from f8pysdk.shm.audio import SAMPLE_FORMAT_F32LE
 
 
 class _Session:

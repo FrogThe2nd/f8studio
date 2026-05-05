@@ -4,7 +4,6 @@ import os
 import re
 import sys
 import unittest
-import uuid
 from types import SimpleNamespace
 from typing import Any
 
@@ -18,7 +17,7 @@ for p in (PKG_PYDL, PKG_SDK):
         sys.path.insert(0, p)
 
 from f8pysdk.state import StateRead
-from f8pysdk.shm.video import VIDEO_FORMAT_BGRA32, VIDEO_FORMAT_FLOW2_F16, VIDEO_FORMAT_SCALAR1_F32, VideoShmHeader, VideoShmWriter
+from f8pysdk.video_transport import VIDEO_FORMAT_BGRA32, VIDEO_FORMAT_FLOW2_F16, VIDEO_FORMAT_SCALAR1_F32
 
 from f8pydl.detection_sorter_service_node import (
     DetectionSorterServiceNode,
@@ -77,6 +76,12 @@ class _BusStub:
         del node_id, fingerprint, ts_ms
         self.errors.clear()
 
+    def data_input_zenoh_key(self, node_id: str, port: str) -> str | None:
+        del node_id
+        if str(port) == "score":
+            return "f8/test/detsorter/score"
+        return None
+
 
 def _make_detection_payload(
     detections: list[dict[str, Any]],
@@ -99,31 +104,52 @@ def _make_detection_payload(
     }
 
 
-def _unique_shm_name(prefix: str) -> str:
-    return f"{prefix}.{uuid.uuid4().hex}"
+class _FrameSourceStub:
+    def __init__(self, frame: Any | None) -> None:
+        self._frame = frame
+
+    def close(self) -> None:
+        return
+
+    def reset(self) -> None:
+        return
+
+    def read_latest(self, *, stream_key: str, timeout_ms: int, dedupe: bool = True) -> Any | None:
+        del stream_key, timeout_ms, dedupe
+        return self._frame
 
 
-def _write_scalar_frame(array: np.ndarray) -> tuple[str, VideoShmWriter]:
+def _make_scalar_frame(array: np.ndarray) -> Any:
     values = np.asarray(array, dtype=np.float32)
     height = int(values.shape[0])
     width = int(values.shape[1])
     pitch = width * 4
-    writer = VideoShmWriter(_unique_shm_name("test.scalar"), size=1 << 20)
-    writer.open()
-    writer.write_frame(width=width, height=height, pitch=pitch, payload=values.tobytes(order="C"), fmt=VIDEO_FORMAT_SCALAR1_F32)
-    return writer.shm_name, writer
+    return SimpleNamespace(
+        width=width,
+        height=height,
+        pitch=pitch,
+        fmt=VIDEO_FORMAT_SCALAR1_F32,
+        frame_id=1,
+        ts_ms=1000,
+        payload=memoryview(values.tobytes(order="C")),
+    )
 
 
-def _write_flow_frame(flow: np.ndarray) -> tuple[str, VideoShmWriter]:
+def _make_flow_frame(flow: np.ndarray) -> Any:
     flow_values = np.asarray(flow, dtype=np.float32)
     height = int(flow_values.shape[0])
     width = int(flow_values.shape[1])
     payload = np.ascontiguousarray(flow_values.astype(np.float16).view(np.uint8)).tobytes(order="C")
     pitch = width * 4
-    writer = VideoShmWriter(_unique_shm_name("test.flow"), size=1 << 20)
-    writer.open()
-    writer.write_frame(width=width, height=height, pitch=pitch, payload=payload, fmt=VIDEO_FORMAT_FLOW2_F16)
-    return writer.shm_name, writer
+    return SimpleNamespace(
+        width=width,
+        height=height,
+        pitch=pitch,
+        fmt=VIDEO_FORMAT_FLOW2_F16,
+        frame_id=1,
+        ts_ms=1000,
+        payload=memoryview(payload),
+    )
 
 
 class DetectionSorterHelpersTests(unittest.TestCase):
@@ -354,7 +380,7 @@ class DetectionSorterServiceNodeTests(unittest.IsolatedAsyncioTestCase):
             _ = await node.validate_state("clsWeights", "{", ts_ms=0, meta={})
 
     async def test_service_node_sorts_scalar_map_and_emits(self) -> None:
-        shm_name, writer = _write_scalar_frame(
+        frame = _make_scalar_frame(
             np.asarray(
                 [
                     [1.0, 1.0, 9.0, 9.0],
@@ -365,78 +391,70 @@ class DetectionSorterServiceNodeTests(unittest.IsolatedAsyncioTestCase):
                 dtype=np.float32,
             )
         )
-        try:
-            bus = _BusStub({"scoreTransport": "legacy_shm", "scoreShmName": shm_name})
-            node = DetectionSorterServiceNode(node_id="sorterA", node=SimpleNamespace(stateFields=[]), initial_state=None)
-            node.attach(bus)
-            payload = _make_detection_payload(
-                [
-                    {"cls": "left", "score": 0.3, "bbox": [0, 0, 2, 2]},
-                    {"cls": "right", "score": 0.4, "bbox": [2, 0, 4, 2]},
-                ],
-                frame_id=1,
-            )
+        bus = _BusStub()
+        node = DetectionSorterServiceNode(node_id="sorterA", node=SimpleNamespace(stateFields=[]), initial_state=None)
+        node.attach(bus)
+        node._score_source = _FrameSourceStub(frame)
+        payload = _make_detection_payload(
+            [
+                {"cls": "left", "score": 0.3, "bbox": [0, 0, 2, 2]},
+                {"cls": "right", "score": 0.4, "bbox": [2, 0, 4, 2]},
+            ],
+            frame_id=1,
+        )
 
-            await node.on_data("detections", payload)
+        await node.on_data("detections", payload)
 
-            self.assertEqual(len(bus.emitted), 1)
-            emitted_payload = bus.emitted[0][2]
-            self.assertEqual([item["cls"] for item in emitted_payload["detections"]], ["right", "left"])
-            self.assertEqual(bus.errors, [])
-            node._close_score_reader()
-        finally:
-            writer.close(unlink=True)
+        self.assertEqual(len(bus.emitted), 1)
+        emitted_payload = bus.emitted[0][2]
+        self.assertEqual([item["cls"] for item in emitted_payload["detections"]], ["right", "left"])
+        self.assertEqual(bus.errors, [])
+        node._close_score_reader()
 
     async def test_service_node_inactive_does_not_emit(self) -> None:
-        shm_name, writer = _write_scalar_frame(np.ones((2, 2), dtype=np.float32))
-        try:
-            bus = _BusStub({"scoreTransport": "legacy_shm", "scoreShmName": shm_name})
-            node = DetectionSorterServiceNode(node_id="sorterInactive", node=SimpleNamespace(stateFields=[]), initial_state=None)
-            node.attach(bus)
-            await node.on_lifecycle(False, {})
-            payload = _make_detection_payload(
-                [{"cls": "x", "score": 0.8, "bbox": [0, 0, 2, 2]}],
-                frame_id=1,
-                width=2,
-                height=2,
-            )
+        bus = _BusStub()
+        node = DetectionSorterServiceNode(node_id="sorterInactive", node=SimpleNamespace(stateFields=[]), initial_state=None)
+        node.attach(bus)
+        node._score_source = _FrameSourceStub(_make_scalar_frame(np.ones((2, 2), dtype=np.float32)))
+        await node.on_lifecycle(False, {})
+        payload = _make_detection_payload(
+            [{"cls": "x", "score": 0.8, "bbox": [0, 0, 2, 2]}],
+            frame_id=1,
+            width=2,
+            height=2,
+        )
 
-            await node.on_data("detections", payload)
+        await node.on_data("detections", payload)
 
-            self.assertEqual(bus.emitted, [])
-            self.assertEqual(bus.errors, [])
-            node._close_score_reader()
-        finally:
-            writer.close(unlink=True)
+        self.assertEqual(bus.emitted, [])
+        self.assertEqual(bus.errors, [])
+        node._close_score_reader()
 
     async def test_service_node_supports_flow2f16_magnitude(self) -> None:
         flow = np.zeros((4, 4, 2), dtype=np.float32)
         flow[0:2, 0:2, 0] = 1.0
         flow[2:4, 2:4, 1] = 4.0
-        shm_name, writer = _write_flow_frame(flow)
-        try:
-            bus = _BusStub({"scoreTransport": "legacy_shm", "scoreShmName": shm_name})
-            node = DetectionSorterServiceNode(node_id="sorterB", node=SimpleNamespace(stateFields=[]), initial_state=None)
-            node.attach(bus)
-            payload = _make_detection_payload(
-                [
-                    {"cls": "weak", "score": 0.3, "bbox": [0, 0, 2, 2]},
-                    {"cls": "strong", "score": 0.4, "bbox": [2, 2, 4, 4]},
-                ],
-                frame_id=1,
-            )
+        bus = _BusStub()
+        node = DetectionSorterServiceNode(node_id="sorterB", node=SimpleNamespace(stateFields=[]), initial_state=None)
+        node.attach(bus)
+        node._score_source = _FrameSourceStub(_make_flow_frame(flow))
+        payload = _make_detection_payload(
+            [
+                {"cls": "weak", "score": 0.3, "bbox": [0, 0, 2, 2]},
+                {"cls": "strong", "score": 0.4, "bbox": [2, 2, 4, 4]},
+            ],
+            frame_id=1,
+        )
 
-            await node.on_data("detections", payload)
+        await node.on_data("detections", payload)
 
-            self.assertEqual(len(bus.emitted), 1)
-            emitted_payload = bus.emitted[0][2]
-            self.assertEqual([item["cls"] for item in emitted_payload["detections"]], ["strong", "weak"])
-            node._close_score_reader()
-        finally:
-            writer.close(unlink=True)
+        self.assertEqual(len(bus.emitted), 1)
+        emitted_payload = bus.emitted[0][2]
+        self.assertEqual([item["cls"] for item in emitted_payload["detections"]], ["strong", "weak"])
+        node._close_score_reader()
 
     async def test_service_node_rescales_bboxes(self) -> None:
-        shm_name, writer = _write_scalar_frame(
+        frame = _make_scalar_frame(
             np.asarray(
                 [
                     [0.0, 0.0, 9.0, 9.0],
@@ -445,68 +463,68 @@ class DetectionSorterServiceNodeTests(unittest.IsolatedAsyncioTestCase):
                 dtype=np.float32,
             )
         )
-        try:
-            bus = _BusStub({"scoreTransport": "legacy_shm", "scoreShmName": shm_name})
-            node = DetectionSorterServiceNode(node_id="sorterC", node=SimpleNamespace(stateFields=[]), initial_state=None)
-            node.attach(bus)
-            payload = _make_detection_payload(
-                [
-                    {"cls": "left", "score": 0.3, "bbox": [0, 0, 2, 4]},
-                    {"cls": "right", "score": 0.4, "bbox": [2, 0, 4, 4]},
-                ],
-                frame_id=1,
-                width=4,
-                height=4,
-            )
+        bus = _BusStub()
+        node = DetectionSorterServiceNode(node_id="sorterC", node=SimpleNamespace(stateFields=[]), initial_state=None)
+        node.attach(bus)
+        node._score_source = _FrameSourceStub(frame)
+        payload = _make_detection_payload(
+            [
+                {"cls": "left", "score": 0.3, "bbox": [0, 0, 2, 4]},
+                {"cls": "right", "score": 0.4, "bbox": [2, 0, 4, 4]},
+            ],
+            frame_id=1,
+            width=4,
+            height=4,
+        )
 
-            await node.on_data("detections", payload)
+        await node.on_data("detections", payload)
 
-            self.assertEqual([item["cls"] for item in bus.emitted[0][2]["detections"]], ["right", "left"])
-            node._close_score_reader()
-        finally:
-            writer.close(unlink=True)
+        self.assertEqual([item["cls"] for item in bus.emitted[0][2]["detections"]], ["right", "left"])
+        node._close_score_reader()
 
     async def test_service_node_unsupported_format_sets_last_error(self) -> None:
-        writer = VideoShmWriter(_unique_shm_name("test.unsupported"), size=1 << 20)
-        writer.open()
-        try:
-            bgra = np.zeros((2, 2, 4), dtype=np.uint8)
-            writer.write_frame(width=2, height=2, pitch=8, payload=bgra.tobytes(order="C"), fmt=VIDEO_FORMAT_BGRA32)
-            bus = _BusStub({"scoreTransport": "legacy_shm", "scoreShmName": writer.shm_name})
-            node = DetectionSorterServiceNode(node_id="sorterD", node=SimpleNamespace(stateFields=[]), initial_state=None)
-            node.attach(bus)
-            payload = _make_detection_payload([{"cls": "x", "score": 0.8, "bbox": [0, 0, 2, 2]}], frame_id=1, width=2, height=2)
+        bgra = np.zeros((2, 2, 4), dtype=np.uint8)
+        frame = SimpleNamespace(
+            width=2,
+            height=2,
+            pitch=8,
+            fmt=VIDEO_FORMAT_BGRA32,
+            frame_id=1,
+            ts_ms=1000,
+            payload=memoryview(bgra.tobytes(order="C")),
+        )
+        bus = _BusStub()
+        node = DetectionSorterServiceNode(node_id="sorterD", node=SimpleNamespace(stateFields=[]), initial_state=None)
+        node.attach(bus)
+        node._score_source = _FrameSourceStub(frame)
+        payload = _make_detection_payload([{"cls": "x", "score": 0.8, "bbox": [0, 0, 2, 2]}], frame_id=1, width=2, height=2)
 
-            await node.on_data("detections", payload)
+        await node.on_data("detections", payload)
 
-            self.assertEqual(len(bus.emitted), 1)
-            emitted_payload = bus.emitted[0][2]
-            self.assertEqual([item["cls"] for item in emitted_payload["detections"]], ["x"])
-            self.assertIn("score source unavailable", bus.errors[-1][2])
-            node._close_score_reader()
-        finally:
-            writer.close(unlink=True)
+        self.assertEqual(len(bus.emitted), 1)
+        emitted_payload = bus.emitted[0][2]
+        self.assertEqual([item["cls"] for item in emitted_payload["detections"]], ["x"])
+        self.assertIn("score source unavailable", bus.errors[-1][2])
+        node._close_score_reader()
 
     async def test_service_node_emits_even_when_frame_id_differs(self) -> None:
-        shm_name, writer = _write_scalar_frame(np.ones((2, 2), dtype=np.float32))
-        try:
-            bus = _BusStub({"scoreTransport": "legacy_shm", "scoreShmName": shm_name})
-            node = DetectionSorterServiceNode(node_id="sorterE", node=SimpleNamespace(stateFields=[]), initial_state=None)
-            node.attach(bus)
-            payload = _make_detection_payload([{"cls": "x", "score": 0.8, "bbox": [0, 0, 2, 2]}], frame_id=10, width=2, height=2)
+        bus = _BusStub()
+        node = DetectionSorterServiceNode(node_id="sorterE", node=SimpleNamespace(stateFields=[]), initial_state=None)
+        node.attach(bus)
+        node._score_source = _FrameSourceStub(_make_scalar_frame(np.ones((2, 2), dtype=np.float32)))
+        payload = _make_detection_payload([{"cls": "x", "score": 0.8, "bbox": [0, 0, 2, 2]}], frame_id=10, width=2, height=2)
 
-            await node.on_data("detections", payload)
+        await node.on_data("detections", payload)
 
-            self.assertEqual(len(bus.emitted), 1)
-            self.assertEqual(bus.errors, [])
-            node._close_score_reader()
-        finally:
-            writer.close(unlink=True)
+        self.assertEqual(len(bus.emitted), 1)
+        self.assertEqual(bus.errors, [])
+        node._close_score_reader()
 
-    async def test_service_node_shm_unavailable_pass_through(self) -> None:
-        bus = _BusStub({"scoreTransport": "legacy_shm", "scoreShmName": "shm.this.does.not.exist"})
+    async def test_service_node_score_stream_without_frame_passes_through(self) -> None:
+        bus = _BusStub()
         node = DetectionSorterServiceNode(node_id="sorterF", node=SimpleNamespace(stateFields=[]), initial_state=None)
         node.attach(bus)
+        node._score_source = _FrameSourceStub(None)
         payload = _make_detection_payload(
             [
                 {"cls": "a", "score": 0.1, "bbox": [0, 0, 2, 2]},
@@ -524,71 +542,40 @@ class DetectionSorterServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item["cls"] for item in emitted_payload["detections"]], ["a", "b"])
         self.assertEqual(bus.errors, [])
 
-    async def test_service_node_score_shm_without_frame_passes_through(self) -> None:
-        writer = VideoShmWriter(_unique_shm_name("test.pending"), size=1 << 20)
-        writer.open()
-        try:
-            bus = _BusStub({"scoreTransport": "legacy_shm", "scoreShmName": writer.shm_name})
-            node = DetectionSorterServiceNode(node_id="sorterG", node=SimpleNamespace(stateFields=[]), initial_state=None)
-            node.attach(bus)
-            payload = _make_detection_payload(
-                [
-                    {"cls": "a", "score": 0.1, "bbox": [0, 0, 2, 2]},
-                    {"cls": "b", "score": 0.9, "bbox": [0, 0, 2, 2]},
-                ],
-                frame_id=1,
-                width=2,
-                height=2,
-            )
-
-            await node.on_data("detections", payload)
-
-            self.assertEqual(len(bus.emitted), 1)
-            emitted_payload = bus.emitted[0][2]
-            self.assertEqual([item["cls"] for item in emitted_payload["detections"]], ["a", "b"])
-            self.assertEqual(bus.errors, [])
-            node._close_score_reader()
-        finally:
-            writer.close(unlink=True)
-
-    async def test_service_node_invalid_score_shm_header_sets_last_error(self) -> None:
-        writer = VideoShmWriter(_unique_shm_name("test.invalid_header"), size=1 << 20)
-        writer.open()
-        try:
-            writer.buf[0:4] = b"\x00\x00\x00\x00"
-            bus = _BusStub({"scoreTransport": "legacy_shm", "scoreShmName": writer.shm_name})
-            node = DetectionSorterServiceNode(node_id="sorterH", node=SimpleNamespace(stateFields=[]), initial_state=None)
-            node.attach(bus)
-            payload = _make_detection_payload(
-                [{"cls": "x", "score": 0.8, "bbox": [0, 0, 2, 2]}],
-                frame_id=1,
-                width=2,
-                height=2,
-            )
-
-            await node.on_data("detections", payload)
-
-            self.assertEqual(len(bus.emitted), 1)
-            self.assertIn("score source unavailable", bus.errors[-1][2])
-            node._close_score_reader()
-        finally:
-            writer.close(unlink=True)
-
-    def test_decode_score_map_from_frame_scalar(self) -> None:
-        values = np.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
-        header = VideoShmHeader(
-            magic=1,
-            version=1,
-            slot_count=2,
-            width=2,
+    async def test_service_node_invalid_score_frame_sets_last_error(self) -> None:
+        frame = SimpleNamespace(
+            width=0,
             height=2,
             pitch=8,
             fmt=VIDEO_FORMAT_SCALAR1_F32,
             frame_id=1,
             ts_ms=1000,
-            active_slot=0,
-            payload_capacity=16,
-            notify_seq=1,
+            payload=memoryview(b"\x00" * 16),
+        )
+        bus = _BusStub()
+        node = DetectionSorterServiceNode(node_id="sorterH", node=SimpleNamespace(stateFields=[]), initial_state=None)
+        node.attach(bus)
+        node._score_source = _FrameSourceStub(frame)
+        payload = _make_detection_payload(
+            [{"cls": "x", "score": 0.8, "bbox": [0, 0, 2, 2]}],
+            frame_id=1,
+            width=2,
+            height=2,
+        )
+
+        await node.on_data("detections", payload)
+
+        self.assertEqual(len(bus.emitted), 1)
+        self.assertIn("score source unavailable", bus.errors[-1][2])
+        node._close_score_reader()
+
+    def test_decode_score_map_from_frame_scalar(self) -> None:
+        values = np.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+        header = SimpleNamespace(
+            width=2,
+            height=2,
+            pitch=8,
+            fmt=VIDEO_FORMAT_SCALAR1_F32,
         )
 
         score_map = decode_score_map_from_frame(header=header, payload=memoryview(values.tobytes(order="C")))

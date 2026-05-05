@@ -11,6 +11,80 @@ namespace f8::cppsdk {
 
 using json = nlohmann::json;
 
+namespace {
+
+bool is_stream_payload_kind(const std::string& kind) {
+  return kind == "bytes" || kind == "video_frame" || kind == "audio_chunk";
+}
+
+const json* find_runtime_node(const json& graph_obj, const std::string& node_id) {
+  if (node_id.empty()) {
+    return nullptr;
+  }
+  const auto nodes_it = graph_obj.find("nodes");
+  if (nodes_it == graph_obj.end() || !nodes_it->is_array()) {
+    return nullptr;
+  }
+  for (const auto& node : *nodes_it) {
+    if (!node.is_object()) {
+      continue;
+    }
+    const auto node_id_it = node.find("nodeId");
+    if (node_id_it != node.end() && node_id_it->is_string() && node_id_it->get<std::string>() == node_id) {
+      return &node;
+    }
+  }
+  return nullptr;
+}
+
+std::string port_payload_kind(const json* node, const std::string& port_name, bool output_port) {
+  if (node == nullptr || port_name.empty()) {
+    return "json";
+  }
+  const char* field = output_port ? "dataOutPorts" : "dataInPorts";
+  const auto ports_it = node->find(field);
+  if (ports_it == node->end() || !ports_it->is_array()) {
+    return "json";
+  }
+  for (const auto& port : *ports_it) {
+    if (!port.is_object()) {
+      continue;
+    }
+    const auto name_it = port.find("name");
+    if (name_it == port.end() || !name_it->is_string() || name_it->get<std::string>() != port_name) {
+      continue;
+    }
+    const auto kind_it = port.find("payloadKind");
+    if (kind_it != port.end() && kind_it->is_string()) {
+      return kind_it->get<std::string>();
+    }
+    return "json";
+  }
+  return "json";
+}
+
+bool edge_uses_stream_payload(const json& graph_obj, const generated::F8Edge& edge) {
+  std::string from_node_id = edge.fromOperatorId.value_or("");
+  if (from_node_id.empty()) {
+    from_node_id = edge.fromServiceId;
+  }
+  std::string to_node_id = edge.toOperatorId.value_or("");
+  if (to_node_id.empty()) {
+    to_node_id = edge.toServiceId;
+  }
+  const json* from_node = find_runtime_node(graph_obj, from_node_id);
+  const json* to_node = find_runtime_node(graph_obj, to_node_id);
+  if (is_stream_payload_kind(port_payload_kind(from_node, edge.fromPort, true))) {
+    return true;
+  }
+  if (is_stream_payload_kind(port_payload_kind(to_node, edge.toPort, false))) {
+    return true;
+  }
+  return false;
+}
+
+}  // namespace
+
 std::unordered_map<std::string, std::vector<DataRoute>> parse_cross_service_data_routes(
     const json& graph_obj, const std::string& to_service_id) {
   std::unordered_map<std::string, std::vector<DataRoute>> routes;
@@ -67,6 +141,7 @@ std::unordered_map<std::string, std::vector<DataRoute>> parse_cross_service_data
     r.from_service_id = from_sid;
     r.from_node_id = from_nid;
     r.from_port = from_port;
+    r.stream_payload = edge_uses_stream_payload(graph_obj, edge);
     if (edge.strategy.has_value() && edge.strategy.value() == generated::F8EdgeStrategyEnum::queue) {
       r.strategy = EdgeStrategy::kQueue;
     } else {

@@ -10,13 +10,27 @@
 
 #include "f8cppsdk/runtime_backend.h"
 #include "f8cppsdk/runtime_transport.h"
-#include "f8cppsdk/video_shared_memory_sink.h"
 
 namespace f8::cppsdk {
+
+constexpr std::uint32_t kVideoFormatBgra32 = 1;
+constexpr std::uint32_t kVideoFormatFlow2F16 = 2;
+constexpr std::uint32_t kVideoFormatScalar1F32 = 3;
 
 inline constexpr std::uint32_t kZenohVideoFrameMagic = 0xF85A1001u;
 inline constexpr std::uint32_t kZenohVideoFrameSchemaVersion = 1u;
 inline constexpr std::uint32_t kZenohVideoFrameHeaderBytes = 48u;
+
+struct VideoFrameView {
+  unsigned width = 0;
+  unsigned height = 0;
+  unsigned pitch = 0;
+  std::uint32_t format = 0;
+  std::uint64_t frame_id = 0;
+  std::int64_t ts_ms = 0;
+  const std::byte* payload = nullptr;
+  std::size_t payload_bytes = 0;
+};
 
 struct LatestVideoFrame {
   unsigned width = 0;

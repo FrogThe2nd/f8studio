@@ -39,7 +39,7 @@ pixi run -e onnx f8pydl_detsorter
 
 ### Typical Inputs / Outputs
 
-- Data inputs: `detections`
+- Data inputs: `detections`, `score`
 - Data outputs: `detections`, `monitor`
 - Commands: none
 
@@ -48,9 +48,6 @@ pixi run -e onnx f8pydl_detsorter
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
 | `clsWeights` | `rw` | `true` | `false` | `string / default={}` | JSON map of detection cls -> weight multiplier applied to score-map metric. Keys without a prefix are exact cls matches. Keys with 're:' prefix are Python regex patterns matched via fullmatch(). All matching rules are multiplied together. Unspecified classes default to weight 1.0. Example: {"person": 2.0, "car": 0.7, "re:^dog_.*$": 1.3} |
-| `scoreShmName` | `rw` | `false` | `false` | `string / default=` | Legacy score-map SHM name used only when scoreTransport=legacy_shm. |
-| `scoreTransport` | `rw` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Score-map transport backend. Use zenoh for latest-frame score maps; legacy_shm keeps old SHM input. |
-| `scoreKey` | `rw` | `true` | `true` | `string / default=` | Zenoh latest-frame key for scalar/flow score-map input. |
 | `sortDirection` | `rw` | `true` | `true` | `string / enum[desc, asc] / default=desc` | Prefer larger scores first (desc) or smaller scores first (asc). |
 | `scoreAggregation` | `rw` | `true` | `true` | `string / enum[mean, max, sum, median] / default=mean` | ROI reduction mode used to rank each bbox. |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
@@ -59,9 +56,6 @@ pixi run -e onnx f8pydl_detsorter
 ### Key Fields That Matter
 
 - `clsWeights` (Class Weights, `rw`): JSON map of detection cls -> weight multiplier applied to score-map metric. Keys without a prefix are exact cls matches. Keys with 're:' prefix are Python regex patterns matched via fullmatch(). All matching rules are multiplied together. Unspecified classes default to weight 1.0. Example: {"person": 2.0, "car": 0.7, "re:^dog_.*$": 1.3} Schema: `string / default={}`.
-- `scoreShmName` (Legacy Score SHM, `rw`): Legacy score-map SHM name used only when scoreTransport=legacy_shm. Schema: `string / default=`.
-- `scoreTransport` (Score Transport, `rw`): Score-map transport backend. Use zenoh for latest-frame score maps; legacy_shm keeps old SHM input. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
-- `scoreKey` (Score Key, `rw`): Zenoh latest-frame key for scalar/flow score-map input. Schema: `string / default=`.
 - `sortDirection` (Sort Direction, `rw`): Prefer larger scores first (desc) or smaller scores first (asc). Schema: `string / enum[desc, asc] / default=desc`.
 - `scoreAggregation` (Score Aggregation, `rw`): ROI reduction mode used to rank each bbox. Schema: `string / enum[mean, max, sum, median] / default=mean`.
 - `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
@@ -76,6 +70,7 @@ _None_
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
 | `detections` | `true` | `true` | `object{detections, frameId, height, model, ...}` | Detection input in schema f8visionDetections/1. |
+| `score` | `true` | `true` | `object{format, frameId, height, pitch, ...}` | Scalar or flow score-map frame stream used to rank detections. |
 
 ### Service Data Output Ports
 

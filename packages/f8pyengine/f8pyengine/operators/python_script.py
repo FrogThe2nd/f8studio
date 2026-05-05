@@ -26,11 +26,10 @@ from f8pysdk.capabilities import ClosableNode
 from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import OperatorNode
 from f8pysdk.registry import Registry
-from f8pysdk.shm.video import VIDEO_FORMAT_BGRA32, VIDEO_FORMAT_FLOW2_F16
+from f8pysdk.video_transport import VIDEO_FORMAT_BGRA32, VIDEO_FORMAT_FLOW2_F16
 from f8pysdk.video_transport import (
     LatestVideoFrame,
     LatestVideoFrameTransport,
-    LegacyShmLatestVideoFrameTransport,
     ZenohLatestVideoFrameTransport,
 )
 
@@ -52,18 +51,12 @@ from .script_utils.state_binding import PyEngineStatesView
 OPERATOR_CLASS = "f8.python_script"
 _REPEATING_ERROR_LOG_INTERVAL_MS = 2000
 logger = logging.getLogger(__name__)
-VIDEO_TRANSPORT_LEGACY_SHM = "legacy_shm"
-VIDEO_TRANSPORT_ZENOH = "zenoh"
-
 
 @dataclass
 class _LatestVideoSubscription:
     key: str
-    shm_name: str
-    video_transport: str
-    video_key: str
+    stream_key: str
     decode_mode: str
-    use_event: bool
     reader: LatestVideoFrameTransport | None = None
     task: asyncio.Task[object] | None = None
     latest_packet: dict[str, Any] | None = None
@@ -74,16 +67,7 @@ class _LatestVideoSubscription:
 
 
 def _video_subscription_source_metadata(sub: _LatestVideoSubscription) -> dict[str, Any]:
-    metadata: dict[str, Any] = {
-        "key": sub.key,
-        "transport": sub.video_transport,
-        "videoTransport": sub.video_transport,
-    }
-    if sub.video_transport == VIDEO_TRANSPORT_LEGACY_SHM:
-        metadata["shmName"] = sub.shm_name
-    else:
-        metadata["videoKey"] = sub.video_key
-    return metadata
+    return {"key": sub.key, "transport": "zenoh", "streamKey": sub.stream_key}
 
 
 def _video_subscription_status_metadata(sub: _LatestVideoSubscription) -> dict[str, Any]:
@@ -155,44 +139,25 @@ class PyEngineContext:
     async def read_state(self, field: str) -> Any:
         return await self._node.get_state_value(str(field))
 
-    def subscribe_video_shm(self, key: str, shm_name: str, *, decode: str = "auto", use_event: bool = False) -> None:
-        self.subscribe_video_latest(
-            key,
-            transport=VIDEO_TRANSPORT_LEGACY_SHM,
-            shm_name=shm_name,
-            decode=decode,
-            use_event=use_event,
-        )
-
     def subscribe_video_latest(
         self,
         key: str,
         *,
-        video_key: str = "",
-        transport: str = VIDEO_TRANSPORT_ZENOH,
-        shm_name: str = "",
+        stream_key: str = "",
         decode: str = "auto",
-        use_event: bool = False,
     ) -> None:
         key_name = str(key or "").strip()
-        video_key_text = str(video_key or "").strip()
-        shm = str(shm_name or "").strip()
-        video_transport = self._node._normalize_video_transport(transport, video_key=video_key_text, shm_name=shm)
+        stream_key_text = str(stream_key or "").strip()
         if not key_name:
             return
-        if video_transport == VIDEO_TRANSPORT_ZENOH and not video_key_text:
-            return
-        if video_transport == VIDEO_TRANSPORT_LEGACY_SHM and not shm:
+        if not stream_key_text:
             return
         decode_mode = self._node._normalize_decode_mode(decode)
         self._node._unsubscribe_video_latest_sync(key_name)
         sub = _LatestVideoSubscription(
             key=key_name,
-            shm_name=shm,
-            video_transport=video_transport,
-            video_key=video_key_text,
+            stream_key=stream_key_text,
             decode_mode=decode_mode,
-            use_event=bool(use_event),
         )
         self._node._video_subscriptions[key_name] = sub
         try:
@@ -210,9 +175,6 @@ class PyEngineContext:
             name=f"python_script:video_sub:{self.node_id}:{key_name}",
         )
 
-    def get_video_shm(self, key: str) -> dict[str, Any] | None:
-        return self.get_video_latest(key)
-
     def get_video_latest(self, key: str) -> dict[str, Any] | None:
         key_name = str(key or "").strip()
         if not key_name:
@@ -222,14 +184,8 @@ class PyEngineContext:
             return None
         return self._node._copy_packet_for_script(sub.latest_packet)
 
-    def unsubscribe_video_shm(self, key: str) -> None:
-        self.unsubscribe_video_latest(key)
-
     def unsubscribe_video_latest(self, key: str) -> None:
         self._node._unsubscribe_video_latest_sync(str(key or "").strip())
-
-    def list_video_shm_subscriptions(self) -> list[dict[str, Any]]:
-        return self.list_video_latest_subscriptions()
 
     def list_video_latest_subscriptions(self) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
@@ -268,15 +224,10 @@ DEFAULT_CODE = (
     "#   - example: from f8_dynamic_states import is_state_inputMode\n"
     "#   - then: if is_state_inputMode(value, field): ...\n"
     "# - Video latest-frame helpers:\n"
-    "#   - ctx.subscribe_video_latest(key, video_key='f8/svc/.../data/video', decode='auto')\n"
+    "#   - ctx.subscribe_video_latest(key, stream_key='f8/svc/.../data/video', decode='auto')\n"
     "#   - pkt = ctx.get_video_latest(key)\n"
     "#   - ctx.unsubscribe_video_latest(key)\n"
     "#   - ctx.list_video_latest_subscriptions()\n"
-    "# - Legacy video SHM compatibility helpers:\n"
-    "#   - ctx.subscribe_video_shm(key, shm_name, decode='auto', use_event=False)\n"
-    "#   - pkt = ctx.get_video_shm(key)\n"
-    "#   - ctx.unsubscribe_video_shm(key)\n"
-    "#   - ctx.list_video_shm_subscriptions()\n"
     "#\n"
     "# Return value protocol:\n"
     "# - onMsg: {'outputs': {...}} or any value (emits to 'out' if present)\n"
@@ -548,18 +499,6 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         return "auto"
 
     @staticmethod
-    def _normalize_video_transport(transport: Any, *, video_key: str, shm_name: str) -> str:
-        mode = str(transport or "").strip().lower()
-        _ = shm_name
-        if mode == VIDEO_TRANSPORT_ZENOH:
-            return VIDEO_TRANSPORT_ZENOH
-        if mode in (VIDEO_TRANSPORT_LEGACY_SHM, "shm"):
-            return VIDEO_TRANSPORT_LEGACY_SHM
-        if str(video_key or "").strip():
-            return VIDEO_TRANSPORT_ZENOH
-        return VIDEO_TRANSPORT_ZENOH
-
-    @staticmethod
     def _header_to_dict(frame: LatestVideoFrame) -> dict[str, int]:
         return {
             "frameId": int(frame.frame_id),
@@ -658,12 +597,10 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         sub.last_error_sig = sig
         sub.last_error_ts_ms = now_ms
         logger.error(
-            "[%s:python_script] video latest subscribe failed key=%s transport=%s video_key=%s shm=%s stage=%s",
+            "[%s:python_script] video latest subscribe failed key=%s stream_key=%s stage=%s",
             self.node_id,
             sub.key,
-            sub.video_transport,
-            sub.video_key,
-            sub.shm_name,
+            sub.stream_key,
             stage,
             exc_info=(type(exc), exc, exc.__traceback__),
         )
@@ -677,23 +614,20 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             reader.close()
         except Exception as exc:
             logger.error(
-                "[%s:python_script] video reader close failed key=%s transport=%s",
+                "[%s:python_script] video reader close failed key=%s",
                 self.node_id,
                 sub.key,
-                sub.video_transport,
                 exc_info=exc,
             )
 
     def _open_video_sub_reader(self, sub: _LatestVideoSubscription) -> LatestVideoFrameTransport:
-        if sub.video_transport == VIDEO_TRANSPORT_ZENOH:
-            return ZenohLatestVideoFrameTransport.open_subscriber(
-                sub.video_key,
-                config_path=self._zenoh_config_path,
-                connect=self._zenoh_connect,
-                listen=self._zenoh_listen,
-                shm_pool_bytes=self._zenoh_shm_pool_bytes,
-            )
-        return LegacyShmLatestVideoFrameTransport.open_reader(sub.shm_name, use_event=bool(sub.use_event))
+        return ZenohLatestVideoFrameTransport.open_subscriber(
+            sub.stream_key,
+            config_path=self._zenoh_config_path,
+            connect=self._zenoh_connect,
+            listen=self._zenoh_listen,
+            shm_pool_bytes=self._zenoh_shm_pool_bytes,
+        )
 
     def _unsubscribe_video_latest_sync(self, key: str) -> bool:
         key_name = str(key or "").strip()

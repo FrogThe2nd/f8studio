@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 from f8pysdk.specs import (
-    array_schema,
+    F8DataPortDelivery,
+    F8DataPortPayloadKind,
     F8DataPortSpec,
     F8ServiceSchemaVersion,
     F8ServiceSpec,
     F8StateAccess,
     F8StateSpec,
+    array_schema,
+    any_schema,
     complex_object_schema,
     integer_schema,
     number_schema,
     string_schema,
-    any_schema,
+    video_frame_schema,
 )
 from f8pysdk.registry import Registry, RuntimeNodeRegistry, create_runtime_node_registry, shared_runtime_node_registry
 
@@ -97,33 +100,6 @@ def _skeleton_payload_schema():
 def _state_fields() -> list[F8StateSpec]:
     return [
         F8StateSpec(
-            name="shmName",
-            label="Legacy Video SHM",
-            description="Legacy SHM mapping name used only when videoTransport=legacy_shm.",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.rw,
-            required=False,
-            showOnNode=False,
-        ),
-        F8StateSpec(
-            name="videoTransport",
-            label="Video Transport",
-            description="Video input transport backend. Use zenoh with videoKey; legacy_shm keeps old shmName input.",
-            valueSchema=string_schema(default="zenoh", enum=["zenoh", "legacy_shm"]),
-            access=F8StateAccess.rw,
-            required=True,
-            showOnNode=False,
-        ),
-        F8StateSpec(
-            name="videoKey",
-            label="Video Key",
-            description="Zenoh latest-frame key for video input.",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.rw,
-            required=True,
-            showOnNode=True,
-        ),
-        F8StateSpec(
             name="inferEveryN",
             label="Infer Every N Frames",
             description="Run pose inference every N frames (>=1).",
@@ -194,6 +170,16 @@ def register_specs(registry: Registry) -> Registry:
             tags=["mediapipe", "vision", "human", "pose"],
             rendererClass="default_svc",
             stateFields=_state_fields(),
+            dataInPorts=[
+                F8DataPortSpec(
+                    name="video",
+                    description="Input video frame stream.",
+                    valueSchema=video_frame_schema(),
+                    payloadKind=F8DataPortPayloadKind.video_frame,
+                    delivery=F8DataPortDelivery.latest,
+                    required=True,
+                ),
+            ],
             dataOutPorts=[
                 F8DataPortSpec(
                     name="detections",

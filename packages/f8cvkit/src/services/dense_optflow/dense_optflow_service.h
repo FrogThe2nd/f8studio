@@ -14,7 +14,6 @@
 #include "f8cppsdk/capabilities.h"
 #include "f8cppsdk/latest_video_frame_transport.h"
 #include "f8cppsdk/service_bus.h"
-#include "f8cppsdk/video_shared_memory_sink.h"
 
 namespace f8::cvkit::dense_optflow {
 
@@ -69,26 +68,18 @@ class DenseOptflowService final : public f8::cppsdk::LifecycleNode,
 
   std::mutex flow_mu_;
 
-  // Input video settings.
-  std::string input_shm_name_;
-  std::string input_video_transport_ = "zenoh";
+  // Stream settings.
   std::string input_video_key_;
   int compute_every_n_frames_ = 2;
-  std::string flow_shm_name_;
-  std::string flow_transport_ = "zenoh";
   std::string flow_key_;
-  std::string flow_shm_format_ = "flow2_f16";
   double compute_scale_ = 0.5;
 
   // Video reader state.
-  f8::cppsdk::VideoSharedMemoryReader video_;
   std::unique_ptr<f8::cppsdk::ZenohLatestVideoFrameSubscriber> input_zenoh_video_;
-  f8::cppsdk::VideoSharedMemorySink flow_sink_;
   std::shared_ptr<f8::cppsdk::ZenohLatestVideoFramePublisher> flow_zenoh_publisher_;
   std::vector<std::byte> frame_bgra_;
   std::vector<std::byte> flow_payload_;
   std::uint64_t flow_output_frame_id_ = 0;
-  std::uint32_t last_notify_seq_ = 0;
   std::uint64_t last_frame_id_ = 0;
   std::int64_t last_video_open_attempt_ms_ = 0;
   std::uint64_t frame_counter_ = 0;

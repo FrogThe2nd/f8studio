@@ -42,26 +42,14 @@ class F8PyEngineContext:
     async def read_state(self, field: str) -> Any:
         \"\"\"Read a fresh state value via runtime/state service path.\"\"\"
         ...
-    def subscribe_video_shm(self, key: str, shm_name: str, *, decode: str = 'auto', use_event: bool = False) -> None:
-        \"\"\"Subscribe to a legacy video shared-memory stream by key.\"\"\"
-        ...
-    def subscribe_video_latest(self, key: str, *, video_key: str = '', transport: str = 'zenoh', shm_name: str = '', decode: str = 'auto', use_event: bool = False) -> None:
+    def subscribe_video_latest(self, key: str, *, stream_key: str = '', decode: str = 'auto') -> None:
         \"\"\"Subscribe to a latest-frame video stream by key.\"\"\"
-        ...
-    def get_video_shm(self, key: str) -> dict[str, Any] | None:
-        \"\"\"Get latest cached legacy video packet for a subscription key.\"\"\"
         ...
     def get_video_latest(self, key: str) -> dict[str, Any] | None:
         \"\"\"Get latest cached video packet for a subscription key.\"\"\"
         ...
-    def unsubscribe_video_shm(self, key: str) -> None:
-        \"\"\"Cancel one legacy video shared-memory subscription by key.\"\"\"
-        ...
     def unsubscribe_video_latest(self, key: str) -> None:
         \"\"\"Cancel one latest-frame video subscription by key.\"\"\"
-        ...
-    def list_video_shm_subscriptions(self) -> list[dict[str, Any]]:
-        \"\"\"List active legacy video subscription metadata.\"\"\"
         ...
     def list_video_latest_subscriptions(self) -> list[dict[str, Any]]:
         \"\"\"List active latest-frame video subscription metadata.\"\"\"

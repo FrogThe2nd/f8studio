@@ -59,6 +59,34 @@ inline std::optional<F8CommandError_code_Enum> parse_F8CommandError_code_Enum(co
   return std::nullopt;
 }
 
+enum class F8DataPortDelivery {
+  latest,
+  fifo,
+  reliable,
+};
+
+inline std::optional<F8DataPortDelivery> parse_F8DataPortDelivery(const std::string& s) {
+  if (s == "latest") return F8DataPortDelivery::latest;
+  if (s == "fifo") return F8DataPortDelivery::fifo;
+  if (s == "reliable") return F8DataPortDelivery::reliable;
+  return std::nullopt;
+}
+
+enum class F8DataPortPayloadKind {
+  json,
+  bytes,
+  video_frame,
+  audio_chunk,
+};
+
+inline std::optional<F8DataPortPayloadKind> parse_F8DataPortPayloadKind(const std::string& s) {
+  if (s == "json") return F8DataPortPayloadKind::json;
+  if (s == "bytes") return F8DataPortPayloadKind::bytes;
+  if (s == "video_frame") return F8DataPortPayloadKind::video_frame;
+  if (s == "audio_chunk") return F8DataPortPayloadKind::audio_chunk;
+  return std::nullopt;
+}
+
 enum class F8DynamicBindingsInputsSpec_access_mode_Enum {
   object_and_mapping,
 };
@@ -496,6 +524,8 @@ struct F8DataPortSpec {
   std::optional<std::string> description;
   std::optional<bool> required;
   std::optional<bool> showOnNode;
+  std::optional<F8DataPortPayloadKind> payloadKind;
+  std::optional<F8DataPortDelivery> delivery;
 };
 
 inline bool parse_F8DataPortSpec(const nlohmann::json& j, F8DataPortSpec& out, ParseError& err) {
@@ -506,6 +536,8 @@ inline bool parse_F8DataPortSpec(const nlohmann::json& j, F8DataPortSpec& out, P
   out.description = _get_str_opt(j, "description");
   if (j.contains("required") && j["required"].is_boolean()) out.required = j["required"].get<bool>();
   if (j.contains("showOnNode") && j["showOnNode"].is_boolean()) out.showOnNode = j["showOnNode"].get<bool>();
+  if (auto s2 = _get_str_opt(j, "payloadKind")) out.payloadKind = parse_F8DataPortPayloadKind(*s2);
+  if (auto s2 = _get_str_opt(j, "delivery")) out.delivery = parse_F8DataPortDelivery(*s2);
   return true;
 }
 

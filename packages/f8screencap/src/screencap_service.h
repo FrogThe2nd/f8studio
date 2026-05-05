@@ -12,11 +12,9 @@
 
 #include "f8cppsdk/capabilities.h"
 #include "f8cppsdk/service_bus.h"
-#include "f8cppsdk/shm/video.h"
 
 namespace f8::cppsdk {
 class ZenohLatestVideoFramePublisher;
-class VideoSharedMemorySink;
 }
 
 namespace f8::screencap {
@@ -41,10 +39,6 @@ class ScreenCapService final : public f8::cppsdk::LifecycleNode,
     std::string service_id;
     std::string service_class = "f8.screencap";
     f8::cppsdk::RuntimeBackendConfig runtime_backend;
-    f8::cppsdk::VideoTransportBackend video_backend = f8::cppsdk::VideoTransportBackend::kAuto;
-
-    std::size_t video_shm_bytes = f8::cppsdk::shm::kDefaultVideoShmBytes;
-    std::uint32_t video_shm_slots = f8::cppsdk::shm::kDefaultVideoShmSlots;
 
     std::string mode = "display";  // display|window|region
     double fps = 30.0;
@@ -95,7 +89,6 @@ class ScreenCapService final : public f8::cppsdk::LifecycleNode,
 
   std::unique_ptr<f8::cppsdk::ServiceBus> bus_;
   std::shared_ptr<CaptureFrameSink> frame_sink_;
-  std::shared_ptr<f8::cppsdk::VideoSharedMemorySink> shm_;
   std::shared_ptr<f8::cppsdk::ZenohLatestVideoFramePublisher> zenoh_video_publisher_;
   std::string zenoh_video_key_;
   std::unique_ptr<CaptureBackend> capture_;

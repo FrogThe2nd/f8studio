@@ -3,14 +3,10 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Any, Literal
+from typing import Any
 
 from f8pysdk.bus import ServiceBus, ServiceBusConfig
-from f8pysdk.shm.video import VIDEO_SHM_MAGIC, VIDEO_SHM_VERSION, VideoShmHeader, VideoShmReader
 from f8pysdk.video_transport import LatestVideoFrame, ZenohLatestVideoFrameTransport
-
-VideoSourceTransport = Literal["zenoh", "legacy_shm"]
-
 
 def _env_tuple(name: str) -> tuple[str, ...]:
     raw = os.environ.get(name, "")
@@ -92,47 +88,18 @@ class VideoFramePacket:
         self.release()
 
 
-def select_video_source_transport(*, video_transport: str, video_key: str, shm_name: str) -> VideoSourceTransport:
-    transport = str(video_transport or "").strip().lower()
-    key = str(video_key or "").strip()
-    _ = shm_name
-    if transport == "zenoh":
-        return "zenoh"
-    if transport in ("legacy_shm", "shm"):
-        return "legacy_shm"
-    if key:
-        return "zenoh"
-    return "zenoh"
-
-
-def video_source_metadata(*, video_transport: str, video_key: str, shm_name: str) -> dict[str, str]:
-    selected = select_video_source_transport(
-        video_transport=video_transport,
-        video_key=video_key,
-        shm_name=shm_name,
-    )
-    if selected == "zenoh":
-        return {
-            "videoTransport": "zenoh",
-            "videoKey": str(video_key or "").strip(),
-        }
-    return {
-        "videoTransport": "legacy_shm",
-        "shmName": str(shm_name or "").strip(),
-    }
+def video_source_metadata() -> dict[str, str]:
+    return {"payloadKind": "video_frame"}
 
 
 class LatestVideoFrameSource:
     def __init__(self, *, config: VideoFrameSourceConfig) -> None:
         self._config = config
-        self._shm_reader: VideoShmReader | None = None
-        self._shm_open_name = ""
         self._zenoh_reader: ZenohLatestVideoFrameTransport | None = None
         self._zenoh_open_key = ""
-        self._last_signature: tuple[VideoSourceTransport, str, int, int] | None = None
+        self._last_signature: tuple[str, int, int] | None = None
 
     def close(self) -> None:
-        self._close_shm()
         self._close_zenoh()
         self._last_signature = None
 
@@ -142,34 +109,25 @@ class LatestVideoFrameSource:
     def read_latest(
         self,
         *,
-        video_transport: str,
-        video_key: str,
-        shm_name: str,
+        stream_key: str,
         timeout_ms: int,
         dedupe: bool = True,
     ) -> VideoFramePacket | None:
-        transport = self._select_transport(video_transport=video_transport, video_key=video_key, shm_name=shm_name)
-        if transport == "zenoh":
-            return self._read_zenoh_latest(video_key=str(video_key).strip(), timeout_ms=timeout_ms, dedupe=dedupe)
-        return self._read_shm_latest(shm_name=str(shm_name).strip(), timeout_ms=timeout_ms, dedupe=dedupe)
+        return self._read_zenoh_latest(stream_key=str(stream_key).strip(), timeout_ms=timeout_ms, dedupe=dedupe)
 
-    @staticmethod
-    def _select_transport(*, video_transport: str, video_key: str, shm_name: str) -> VideoSourceTransport:
-        return select_video_source_transport(video_transport=video_transport, video_key=video_key, shm_name=shm_name)
-
-    def _read_zenoh_latest(self, *, video_key: str, timeout_ms: int, dedupe: bool) -> VideoFramePacket | None:
-        if not video_key:
+    def _read_zenoh_latest(self, *, stream_key: str, timeout_ms: int, dedupe: bool) -> VideoFramePacket | None:
+        if not stream_key:
             return None
-        reader = self._ensure_zenoh_reader(video_key)
+        reader = self._ensure_zenoh_reader(stream_key)
         frame = reader.wait_latest(max(0, int(timeout_ms)))
         if frame is None:
             return None
-        return self._packet_from_zenoh(video_key=video_key, frame=frame, dedupe=dedupe)
+        return self._packet_from_zenoh(stream_key=stream_key, frame=frame, dedupe=dedupe)
 
     def _packet_from_zenoh(
-        self, *, video_key: str, frame: LatestVideoFrame, dedupe: bool
+        self, *, stream_key: str, frame: LatestVideoFrame, dedupe: bool
     ) -> VideoFramePacket | None:
-        signature = ("zenoh", str(video_key), int(frame.frame_id), int(frame.ts_ms))
+        signature = (str(stream_key), int(frame.frame_id), int(frame.ts_ms))
         if dedupe and signature == self._last_signature:
             frame.release()
             return None
@@ -183,45 +141,6 @@ class LatestVideoFrameSource:
             frame_id=int(frame.frame_id),
             ts_ms=int(frame.ts_ms),
             payload=frame.payload,
-        )
-
-    def _read_shm_latest(self, *, shm_name: str, timeout_ms: int, dedupe: bool) -> VideoFramePacket | None:
-        if not shm_name:
-            return None
-        reader = self._ensure_shm_reader(shm_name)
-        reader.wait_new_frame(timeout_ms=max(0, int(timeout_ms)))
-        header, payload = reader.read_latest_frame()
-        if header is None or payload is None:
-            current_header = reader.read_header()
-            if current_header is not None and (
-                int(current_header.magic) != VIDEO_SHM_MAGIC or int(current_header.version) != VIDEO_SHM_VERSION
-            ):
-                raise ValueError("video shm header is invalid")
-            return None
-        return self._packet_from_shm(shm_name=shm_name, header=header, payload=payload, dedupe=dedupe)
-
-    def _packet_from_shm(
-        self,
-        *,
-        shm_name: str,
-        header: VideoShmHeader,
-        payload: memoryview,
-        dedupe: bool,
-    ) -> VideoFramePacket | None:
-        signature = ("legacy_shm", str(shm_name), int(header.frame_id), int(header.ts_ms))
-        if dedupe and signature == self._last_signature:
-            payload.release()
-            return None
-        if dedupe:
-            self._last_signature = signature
-        return VideoFramePacket(
-            width=int(header.width),
-            height=int(header.height),
-            pitch=int(header.pitch),
-            fmt=int(header.fmt),
-            frame_id=int(header.frame_id),
-            ts_ms=int(header.ts_ms),
-            payload=payload,
         )
 
     def _ensure_zenoh_reader(self, key_expr: str) -> ZenohLatestVideoFrameTransport:
@@ -241,28 +160,9 @@ class LatestVideoFrameSource:
         self._last_signature = None
         return reader
 
-    def _ensure_shm_reader(self, shm_name: str) -> VideoShmReader:
-        name = str(shm_name or "").strip()
-        if self._shm_reader is not None and self._shm_open_name == name:
-            return self._shm_reader
-        self._close_shm()
-        reader = VideoShmReader(name)
-        reader.open(use_event=True)
-        self._shm_reader = reader
-        self._shm_open_name = name
-        self._last_signature = None
-        return reader
-
     def _close_zenoh(self) -> None:
         reader = self._zenoh_reader
         self._zenoh_reader = None
         self._zenoh_open_key = ""
-        if reader is not None:
-            reader.close()
-
-    def _close_shm(self) -> None:
-        reader = self._shm_reader
-        self._shm_reader = None
-        self._shm_open_name = ""
         if reader is not None:
             reader.close()

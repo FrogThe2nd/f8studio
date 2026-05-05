@@ -13,7 +13,6 @@ import time
 import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Literal
 
 ROOT = Path(__file__).resolve().parents[1]
 PKG_SDK = ROOT / "packages" / "f8pysdk"
@@ -22,19 +21,17 @@ if str(PKG_SDK) not in sys.path:
 
 from f8pysdk.video_transport import (  # noqa: E402
     LatestVideoFrameTransport,
-    LegacyShmLatestVideoFrameTransport,
     ZenohLatestVideoFrameTransport,
 )
 
 
 _FRAME_TS_HEADER = struct.Struct("<q")
-Backend = Literal["legacy_shm", "zenoh"]
 
 
 @dataclass(frozen=True)
 class CrossLangVideoStats:
     name: str
-    backend: Backend
+    backend: str
     channels: int
     width: int
     height: int
@@ -98,13 +95,9 @@ def _wait_for_ready_file(path: Path, proc: subprocess.Popen[str], timeout_s: flo
 
 def _open_consumer(
     *,
-    backend: Backend,
     key_expr: str,
-    shm_name: str,
     shm_pool_bytes: int,
 ) -> LatestVideoFrameTransport:
-    if backend == "legacy_shm":
-        return LegacyShmLatestVideoFrameTransport.open_reader(shm_name, use_event=False)
     return ZenohLatestVideoFrameTransport.open_subscriber(
         key_expr,
         shm_pool_bytes=int(shm_pool_bytes),
@@ -114,9 +107,7 @@ def _open_consumer(
 def _producer_command(
     *,
     producer_bin: Path,
-    backend: Backend,
     key_expr: str,
-    shm_name: str,
     ready_file: Path,
     width: int,
     height: int,
@@ -133,8 +124,6 @@ def _producer_command(
         "-e",
         "cpp",
         str(producer_bin),
-        "--backend",
-        backend,
         "--ready-file",
         str(ready_file),
         "--video-width",
@@ -153,11 +142,9 @@ def _producer_command(
         str(int(start_delay_ms)),
         "--zenoh-shm-pool-bytes",
         str(int(shm_pool_bytes)),
+        "--key",
+        key_expr,
     ]
-    if backend == "legacy_shm":
-        cmd += ["--shm-name", shm_name]
-    else:
-        cmd += ["--key", key_expr]
     return cmd
 
 
@@ -201,7 +188,6 @@ def _collect_frames(
 def _run_one(
     *,
     producer_bin: Path,
-    backend: Backend,
     channels: int,
     width: int,
     height: int,
@@ -212,17 +198,15 @@ def _run_one(
     shm_pool_bytes: int,
 ) -> CrossLangVideoStats:
     run_id = uuid.uuid4().hex
-    key_expr = f"f8/bench/cpp_python/video/{run_id}/{backend}/{channels}"
-    shm_name = f"bench.cpp_python.{run_id}.{channels}"
+    backend = "zenoh"
+    key_expr = f"f8/bench/cpp_python/video/{run_id}/zenoh/{channels}"
     payload_bytes = int(width) * int(height) * int(channels)
 
     with tempfile.TemporaryDirectory(prefix="f8-cpp-python-video-") as temp_raw:
         ready_file = Path(temp_raw) / "publisher.ready"
         cmd = _producer_command(
             producer_bin=producer_bin,
-            backend=backend,
             key_expr=key_expr,
-            shm_name=shm_name,
             ready_file=ready_file,
             width=width,
             height=height,
@@ -246,9 +230,7 @@ def _run_one(
         try:
             _wait_for_ready_file(ready_file, producer, timeout_s=10.0)
             consumer = _open_consumer(
-                backend=backend,
                 key_expr=key_expr,
-                shm_name=shm_name,
                 shm_pool_bytes=shm_pool_bytes,
             )
             latencies_ns, delivered_frame_ids, consumer_elapsed_s = _collect_frames(
@@ -350,7 +332,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup-iterations", type=int, default=10)
     parser.add_argument("--start-delay-ms", type=int, default=500)
     parser.add_argument("--zenoh-shm-pool-bytes", type=int, default=512 * 1024 * 1024)
-    parser.add_argument("--backends", choices=("legacy_shm", "zenoh"), nargs="+", default=["legacy_shm", "zenoh"])
     parser.add_argument("--output-csv", type=Path, default=None)
     parser.add_argument("--output-json", type=Path, default=None)
     return parser.parse_args()
@@ -367,21 +348,19 @@ def main() -> int:
         if int(channels) not in (3, 4):
             raise ValueError("--channels entries must be 3 or 4")
         for fps in args.fps:
-            for backend in args.backends:
-                rows.append(
-                    _run_one(
-                        producer_bin=producer_bin,
-                        backend=backend,
-                        channels=int(channels),
-                        width=int(args.video_width),
-                        height=int(args.video_height),
-                        fps=float(fps),
-                        iterations=int(args.iterations),
-                        warmup_iterations=int(args.warmup_iterations),
-                        start_delay_ms=int(args.start_delay_ms),
-                        shm_pool_bytes=int(args.zenoh_shm_pool_bytes),
-                    )
+            rows.append(
+                _run_one(
+                    producer_bin=producer_bin,
+                    channels=int(channels),
+                    width=int(args.video_width),
+                    height=int(args.video_height),
+                    fps=float(fps),
+                    iterations=int(args.iterations),
+                    warmup_iterations=int(args.warmup_iterations),
+                    start_delay_ms=int(args.start_delay_ms),
+                    shm_pool_bytes=int(args.zenoh_shm_pool_bytes),
                 )
+            )
 
     _print_csv(rows)
     if args.output_csv is not None:

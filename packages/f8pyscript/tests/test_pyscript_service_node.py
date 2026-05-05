@@ -2,7 +2,6 @@ import asyncio
 import os
 import sys
 import unittest
-import uuid
 from types import MethodType
 from unittest.mock import patch
 
@@ -19,10 +18,9 @@ from f8pysdk.specs import F8StateAccess, F8StateSpec, any_schema  # noqa: E402
 from f8pysdk.specs import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
 from f8pysdk.codec import dump_json  # noqa: E402
 from f8pysdk.host import ServiceHost, ServiceHostConfig  # noqa: E402
-from f8pysdk.shm.video import VIDEO_FORMAT_BGRA32, VideoShmWriter  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 from f8pysdk.time_utils import now_ms  # noqa: E402
-from f8pysdk.video_transport import LatestVideoFrame, ZenohLatestVideoFrameTransport  # noqa: E402
+from f8pysdk.video_transport import VIDEO_FORMAT_BGRA32, LatestVideoFrame, ZenohLatestVideoFrameTransport  # noqa: E402
 
 from f8pyscript.constants import SERVICE_CLASS  # noqa: E402
 from f8pyscript.main_script import build_app  # noqa: E402
@@ -282,48 +280,6 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(PermissionError):
             await node.on_command("run_echo", {})
 
-    async def test_video_shm_subscription(self) -> None:
-        harness = ServiceBusHarness()
-        bus = harness.create_bus("svcA")
-        reg = create_pyscript_registry()
-        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
-
-        shm_name = f"test.shm.pyscript.{uuid.uuid4().hex}"
-        writer = VideoShmWriter(shm_name=shm_name, size=1024 * 1024, slot_count=2)
-        writer.open()
-        try:
-            code = (
-                f"def onStart(ctx):\n"
-                f"    ctx.subscribe_video_shm('v', '{shm_name}', decode='none')\n"
-                "\n"
-                "def onCommand(ctx, name, args, meta=None):\n"
-                "    if name != 'video':\n"
-                "        return {'ok': False}\n"
-                "    pkt = ctx.get_video_shm('v')\n"
-                "    if pkt is None:\n"
-                "        return {'frameId': 0}\n"
-                "    header = pkt.get('header') or {}\n"
-                "    return {'frameId': int(header.get('frameId') or 0), 'rawLen': len(pkt.get('raw') or b'')}\n"
-            )
-
-            graph = F8RuntimeGraph(graphId="g5", revision="r1", nodes=[_service_node(code="")], edges=[])
-            await bus.set_rungraph(graph)
-            node = bus.get_node("svcA")
-            assert isinstance(node, PythonScriptServiceNode)
-            await node.on_state("code", code, ts_ms=1)
-
-            payload = bytes((i % 251 for i in range(16)))
-            writer.write_frame_bgra(width=2, height=2, pitch=8, payload=payload)
-
-            await asyncio.sleep(0.1)
-            out = await node.on_command("video", {})
-            out_result = (out or {}).get("result") if isinstance(out, dict) else {}
-            self.assertIsInstance(out_result, dict)
-            self.assertGreater(int((out_result or {}).get("frameId") or 0), 0)
-            self.assertEqual(int((out_result or {}).get("rawLen") or 0), len(payload))
-        finally:
-            writer.close(unlink=True)
-
     async def test_video_latest_subscription_uses_zenoh_transport(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
@@ -339,7 +295,7 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
 
         code = (
             "def onStart(ctx):\n"
-            "    ctx.subscribe_video_latest('v', video_key='f8/test/pyscript/video', decode='none')\n"
+            "    ctx.subscribe_video_latest('v', stream_key='f8/test/pyscript/video', decode='none')\n"
             "\n"
             "def onCommand(ctx, name, args, meta=None):\n"
             "    if name != 'video':\n"
@@ -355,10 +311,9 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
             "        'frameId': int(header.get('frameId') or 0),\n"
             "        'rawLen': len(pkt.get('raw') or b''),\n"
             "        'transport': str(meta.get('transport') or ''),\n"
-            "        'videoKey': str(meta.get('videoKey') or ''),\n"
-            "        'hasShmName': 'shmName' in meta,\n"
+            "        'streamKey': str(meta.get('streamKey') or ''),\n"
             "        'itemTransport': str((items[0] if items else {}).get('transport') or ''),\n"
-            "        'itemHasShmName': 'shmName' in (items[0] if items else {}),\n"
+            "        'itemStreamKey': str((items[0] if items else {}).get('streamKey') or ''),\n"
             "    }\n"
         )
 
@@ -377,20 +332,11 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(int((out_result or {}).get("frameId") or 0), 57)
             self.assertEqual(int((out_result or {}).get("rawLen") or 0), len(payload))
             self.assertEqual(str((out_result or {}).get("transport") or ""), "zenoh")
-            self.assertEqual(str((out_result or {}).get("videoKey") or ""), "f8/test/pyscript/video")
-            self.assertFalse(bool((out_result or {}).get("hasShmName")))
+            self.assertEqual(str((out_result or {}).get("streamKey") or ""), "f8/test/pyscript/video")
             self.assertEqual(str((out_result or {}).get("itemTransport") or ""), "zenoh")
-            self.assertFalse(bool((out_result or {}).get("itemHasShmName")))
+            self.assertEqual(str((out_result or {}).get("itemStreamKey") or ""), "f8/test/pyscript/video")
             self.assertEqual(opened[0][0], "f8/test/pyscript/video")
             await node.close()
-
-    async def test_video_transport_normalization_is_zenoh_first(self) -> None:
-        normalize = PythonScriptServiceNode._normalize_video_transport
-
-        self.assertEqual(normalize("", video_key="", shm_name=""), "zenoh")
-        self.assertEqual(normalize("", video_key="f8/test/pyscript/video", shm_name=""), "zenoh")
-        self.assertEqual(normalize("bad", video_key="", shm_name="shm.video"), "zenoh")
-        self.assertEqual(normalize("legacy_shm", video_key="f8/test/pyscript/video", shm_name=""), "legacy_shm")
 
     async def test_get_state_cached_sync_snapshot(self) -> None:
         harness = ServiceBusHarness()

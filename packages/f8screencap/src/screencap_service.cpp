@@ -14,9 +14,7 @@
 #include "f8cppsdk/describe_schema.h"
 #include "f8cppsdk/f8_naming.h"
 #include "f8cppsdk/latest_video_frame_transport.h"
-#include "f8cppsdk/shm/video.h"
 #include "f8cppsdk/time_utils.h"
-#include "f8cppsdk/video_shared_memory_sink.h"
 #include "f8cppsdk/zenoh_naming.h"
 #include "capture_frame_sink.h"
 
@@ -39,6 +37,7 @@ using f8::cppsdk::describe::schema_number;
 using f8::cppsdk::describe::schema_object;
 using f8::cppsdk::describe::schema_string;
 using f8::cppsdk::describe::schema_string_enum;
+using f8::cppsdk::describe::schema_video_frame;
 using f8::cppsdk::describe::state_field;
 
 namespace {
@@ -46,27 +45,6 @@ namespace {
 bool is_mode_valid(const std::string& m) {
   return m == "display" || m == "window" || m == "region";
 }
-
-class ShmCaptureFrameSink final : public CaptureFrameSink {
- public:
-  explicit ShmCaptureFrameSink(std::shared_ptr<f8::cppsdk::VideoSharedMemorySink> sink) : sink_(std::move(sink)) {}
-
-  bool ensureConfiguration(unsigned width, unsigned height) override {
-    return sink_ && sink_->ensureConfiguration(width, height);
-  }
-
-  bool writeFrame(const void* data, unsigned stride_bytes) override {
-    return sink_ && sink_->writeFrame(data, stride_bytes);
-  }
-
-  unsigned outputWidth() const override { return sink_ ? sink_->outputWidth() : 0; }
-  unsigned outputHeight() const override { return sink_ ? sink_->outputHeight() : 0; }
-  unsigned outputPitch() const override { return sink_ ? sink_->outputPitch() : 0; }
-  std::uint64_t frameId() const override { return sink_ ? sink_->frameId() : 0; }
-
- private:
-  std::shared_ptr<f8::cppsdk::VideoSharedMemorySink> sink_;
-};
 
 class ZenohCaptureFrameSink final : public CaptureFrameSink {
  public:
@@ -242,43 +220,19 @@ bool ScreenCapService::start() {
 
   const auto runtime_backend = f8::cppsdk::normalize_runtime_backend_config(cfg_.runtime_backend);
 
-  auto initialize_legacy_shm_sink = [this]() -> bool {
-    shm_ = std::make_shared<f8::cppsdk::VideoSharedMemorySink>();
-    const auto shm_name = f8::cppsdk::shm::video_shm_name(cfg_.service_id);
-    if (!shm_->initialize(shm_name, cfg_.video_shm_bytes, cfg_.video_shm_slots)) {
-      spdlog::error("failed to initialize legacy video SHM sink name={} bytes={} slots={}", shm_name,
-                    cfg_.video_shm_bytes, cfg_.video_shm_slots);
-      shm_.reset();
-      frame_sink_.reset();
-      return false;
-    }
-    frame_sink_ = std::make_shared<ShmCaptureFrameSink>(shm_);
-    return true;
-  };
-
-  const bool use_zenoh_video =
-      cfg_.video_backend == f8::cppsdk::VideoTransportBackend::kZenoh ||
-      (cfg_.video_backend == f8::cppsdk::VideoTransportBackend::kAuto &&
-       runtime_backend.bus_backend == f8::cppsdk::BusBackend::kZenoh);
-
-  if (use_zenoh_video) {
-    const std::string key = f8::cppsdk::zenoh_data_key(cfg_.service_id, cfg_.service_id, "video");
-    auto publisher = std::make_shared<f8::cppsdk::ZenohLatestVideoFramePublisher>();
-    if (publisher->open(runtime_backend, key)) {
-      zenoh_video_key_ = key;
-      zenoh_video_publisher_ = publisher;
-      frame_sink_ = std::make_shared<ZenohCaptureFrameSink>(publisher);
-      spdlog::info("screencap zenoh video publisher enabled serviceId={} key={}", cfg_.service_id, key);
-    } else {
-      zenoh_video_key_.clear();
-      zenoh_video_publisher_.reset();
-      frame_sink_.reset();
-      spdlog::error("screencap zenoh video publisher unavailable serviceId={} key={}", cfg_.service_id, key);
-      return false;
-    }
-  } else if (!initialize_legacy_shm_sink()) {
+  const std::string key = f8::cppsdk::zenoh_data_key(cfg_.service_id, cfg_.service_id, "video");
+  auto publisher = std::make_shared<f8::cppsdk::ZenohLatestVideoFramePublisher>();
+  if (!publisher->open(runtime_backend, key)) {
+    zenoh_video_key_.clear();
+    zenoh_video_publisher_.reset();
+    frame_sink_.reset();
+    spdlog::error("screencap zenoh video publisher unavailable serviceId={} key={}", cfg_.service_id, key);
     return false;
   }
+  zenoh_video_key_ = key;
+  zenoh_video_publisher_ = publisher;
+  frame_sink_ = std::make_shared<ZenohCaptureFrameSink>(publisher);
+  spdlog::info("screencap zenoh video publisher enabled serviceId={} key={}", cfg_.service_id, key);
 
   f8::cppsdk::ServiceBus::Config bus_cfg;
   bus_cfg.service_id = cfg_.service_id;
@@ -298,7 +252,6 @@ bool ScreenCapService::start() {
     zenoh_video_publisher_.reset();
     zenoh_video_key_.clear();
     frame_sink_.reset();
-    shm_.reset();
     return false;
   }
 
@@ -324,8 +277,7 @@ bool ScreenCapService::start() {
 
   running_.store(true, std::memory_order_release);
   spdlog::info("screencap started serviceId={} backend={} videoBackend={}", cfg_.service_id,
-               f8::cppsdk::bus_backend_to_string(runtime_backend.bus_backend),
-               f8::cppsdk::video_transport_backend_to_string(cfg_.video_backend));
+               f8::cppsdk::bus_backend_to_string(runtime_backend.bus_backend), "zenoh");
   return true;
 }
 
@@ -353,7 +305,6 @@ void ScreenCapService::stop() {
   zenoh_video_publisher_.reset();
   zenoh_video_key_.clear();
   frame_sink_.reset();
-  shm_.reset();
 }
 
 void ScreenCapService::tick() {
@@ -838,12 +789,6 @@ void ScreenCapService::publish_static_state() {
   };
 
   set_if_changed("serviceClass", cfg_.service_class);
-  set_if_changed("videoShmName", shm_ ? shm_->regionName() : "");
-  set_if_changed("videoShmEvent", shm_ ? shm_->frameEventName() : "");
-  const bool use_zenoh_video =
-      zenoh_video_publisher_ && zenoh_video_publisher_->valid() && !zenoh_video_key_.empty();
-  set_if_changed("videoTransport", use_zenoh_video ? "zenoh" : "legacy_shm");
-  set_if_changed("videoKey", use_zenoh_video ? zenoh_video_key_ : "");
   set_if_changed("videoFormat", "bgra32");
   set_if_changed("videoFrameSchemaVersion", 1);
 
@@ -957,12 +902,6 @@ json ScreenCapService::describe() {
   service["rendererClass"] = "default_svc";
   service["tags"] = json::array({"video", "capture", "zenoh"});
   service["stateFields"] = json::array({
-      state_field("videoShmName", schema_string(), "ro", "Legacy Video SHM",
-                  "Legacy shared memory region name when the legacy_shm fallback is active.", false),
-      state_field("videoShmEvent", schema_string(), "ro", "Video Event", "Shared memory event name", false),
-      state_field("videoTransport", schema_string_enum(std::vector<std::string>{"zenoh", "legacy_shm"}, "zenoh"), "ro",
-                  "Video Transport", "Frame transport backend", false),
-      state_field("videoKey", schema_string(), "ro", "Video Key", "Zenoh latest-frame key for video output", true),
       state_field("videoFormat", schema_string_enum({"bgra32", "bgr24", "flow2_f16", "scalar1_f32"}), "ro",
                   "Video Format", "Frame payload format", false),
       state_field("videoFrameSchemaVersion", schema_integer(), "ro", "Video Schema", "Frame schema version", false),
@@ -1006,7 +945,15 @@ json ScreenCapService::describe() {
            {"showOnNode", true}},
   });
   service["dataInPorts"] = json::array();
-  service["dataOutPorts"] = json::array();
+  service["dataOutPorts"] = json::array({
+      json{{"name", "video"},
+           {"valueSchema", schema_video_frame()},
+           {"description", "Captured video frame stream."},
+           {"payloadKind", "video_frame"},
+           {"delivery", "latest"},
+           {"required", true},
+           {"showOnNode", true}},
+  });
 
   json out;
   out["service"] = std::move(service);

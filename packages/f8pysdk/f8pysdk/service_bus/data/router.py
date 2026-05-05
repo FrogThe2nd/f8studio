@@ -27,6 +27,7 @@ DataRouteTarget = tuple[str, str, F8Edge]
 DataOutRoutes = dict[tuple[str, str], tuple[DataRouteTarget, ...]]
 DataCrossInRoutes = dict[str, tuple[DataRouteTarget, ...]]
 DataCrossOutRoutes = dict[tuple[str, str], str]
+DataInputStreamRoutes = dict[tuple[str, str], str]
 DEFAULT_DATA_EMIT_OPTIONS = DataEmitOptions()
 LOCAL_COMPUTE_DATA_EMIT_OPTIONS = DataEmitOptions.local_compute_only()
 
@@ -63,6 +64,7 @@ class DataRouter:
         self._intra_data_in: DataOutRoutes = {}
         self._cross_in_by_subject: DataCrossInRoutes = {}
         self._cross_out_subjects: DataCrossOutRoutes = {}
+        self._input_stream_subjects: DataInputStreamRoutes = {}
         self._inputs: CappedOrderedDict[tuple[str, str], InputBuffer] = CappedOrderedDict(
             max_entries=max(0, int(input_max_buffers))
         )
@@ -99,6 +101,12 @@ class DataRouter:
     def cross_out_subjects(self) -> DataCrossOutRoutes:
         return self._cross_out_subjects
 
+    def input_stream_subject(self, *, node_id: str, port: str) -> str | None:
+        subject = self._input_stream_subjects.get((str(node_id), str(port)))
+        if not subject:
+            return None
+        return str(subject)
+
     def set_cross_publish_policy(self, policy: CrossPublishPolicy) -> None:
         self._cross_publish_policy = policy
 
@@ -128,12 +136,14 @@ class DataRouter:
         intra_data_in: DataOutRoutes,
         cross_in_by_subject: DataCrossInRoutes,
         cross_out_subjects: DataCrossOutRoutes,
+        input_stream_subjects: DataInputStreamRoutes | None = None,
     ) -> None:
         self._inputs.clear()
         self._intra_data_out = dict(intra_data_out)
         self._intra_data_in = dict(intra_data_in)
         self._cross_in_by_subject = dict(cross_in_by_subject)
         self._cross_out_subjects = dict(cross_out_subjects)
+        self._input_stream_subjects = dict(input_stream_subjects or {})
         self.precreate_input_buffers_for_cross_in(self._cross_in_by_subject)
         await self.sync_subscriptions(set(self._cross_in_by_subject.keys()))
 
@@ -150,6 +160,7 @@ class DataRouter:
         self._intra_data_out.clear()
         self._intra_data_in.clear()
         self._cross_out_subjects.clear()
+        self._input_stream_subjects.clear()
         self._inputs.clear()
         self._on_data_push_queue.clear()
         await self._stop_flush_task()

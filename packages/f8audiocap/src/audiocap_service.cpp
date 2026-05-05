@@ -13,7 +13,6 @@
 #include "f8cppsdk/describe_schema.h"
 #include "f8cppsdk/f8_naming.h"
 #include "f8cppsdk/latest_audio_chunk_transport.h"
-#include "f8cppsdk/shm/audio.h"
 #include "f8cppsdk/time_utils.h"
 #include "f8cppsdk/zenoh_naming.h"
 #include "wasapi_loopback_capture.h"
@@ -26,7 +25,7 @@ using f8::cppsdk::describe::schema_integer;
 using f8::cppsdk::describe::schema_number;
 using f8::cppsdk::describe::schema_object;
 using f8::cppsdk::describe::schema_string;
-using f8::cppsdk::describe::schema_string_enum;
+using f8::cppsdk::describe::schema_audio_chunk;
 using f8::cppsdk::describe::state_field;
 
 namespace {
@@ -38,10 +37,6 @@ double clamp01(double v) { return v < 0.0 ? 0.0 : (v > 1.0 ? 1.0 : v); }
 AudioCapService::AudioCapService(Config cfg) : cfg_(std::move(cfg)) {}
 
 AudioCapService::~AudioCapService() { stop(); }
-
-std::string AudioCapService::default_audio_shm_name(const std::string& service_id) {
-  return f8::cppsdk::shm::audio_shm_name(service_id);
-}
 
 namespace {
 
@@ -140,43 +135,21 @@ bool AudioCapService::start() {
   bus_->add_command_node(this, AudioCapService::describe());
   if (!bus_->start()) return false;
 
-  auto initialize_legacy_shm_sink = [this]() -> bool {
-    shm_ = std::make_unique<f8::cppsdk::AudioSharedMemorySink>();
-    const std::string shm_name = f8::cppsdk::shm::audio_shm_name(cfg_.service_id);
-    if (!shm_->initialize(shm_name, cfg_.audio_shm_bytes, cfg_.sample_rate, cfg_.channels,
-                          f8::cppsdk::AudioSharedMemorySink::SampleFormat::kF32LE, cfg_.frames_per_chunk,
-                          cfg_.chunk_count)) {
-      spdlog::error("failed to initialize legacy audio SHM sink name={} bytes={}", shm_name, cfg_.audio_shm_bytes);
-      shm_.reset();
-      return false;
-    }
-    return true;
-  };
-
   zenoh_audio_seq_.store(0, std::memory_order_relaxed);
   zenoh_audio_frame_index_.store(0, std::memory_order_relaxed);
-  const bool use_zenoh_audio =
-      cfg_.audio_backend == f8::cppsdk::AudioTransportBackend::kZenoh ||
-      (cfg_.audio_backend == f8::cppsdk::AudioTransportBackend::kAuto &&
-       runtime_backend.bus_backend == f8::cppsdk::BusBackend::kZenoh);
-  if (use_zenoh_audio) {
-    const std::string key = f8::cppsdk::zenoh_data_key(cfg_.service_id, cfg_.service_id, "audio");
-    auto publisher = std::make_shared<f8::cppsdk::ZenohLatestAudioChunkPublisher>();
-    if (publisher->open(runtime_backend, key)) {
-      zenoh_audio_key_ = key;
-      zenoh_audio_publisher_ = publisher;
-      spdlog::info("audiocap zenoh audio publisher enabled serviceId={} key={}", cfg_.service_id, key);
-    } else {
-      zenoh_audio_key_.clear();
-      zenoh_audio_publisher_.reset();
-      spdlog::error("audiocap zenoh audio publisher unavailable serviceId={} key={}", cfg_.service_id, key);
-      bus_->stop();
-      bus_.reset();
-      return false;
-    }
-  } else if (!initialize_legacy_shm_sink()) {
+  const std::string key = f8::cppsdk::zenoh_data_key(cfg_.service_id, cfg_.service_id, "audio");
+  auto publisher = std::make_shared<f8::cppsdk::ZenohLatestAudioChunkPublisher>();
+  if (!publisher->open(runtime_backend, key)) {
+    zenoh_audio_key_.clear();
+    zenoh_audio_publisher_.reset();
+    spdlog::error("audiocap zenoh audio publisher unavailable serviceId={} key={}", cfg_.service_id, key);
+    bus_->stop();
+    bus_.reset();
     return false;
   }
+  zenoh_audio_key_ = key;
+  zenoh_audio_publisher_ = publisher;
+  spdlog::info("audiocap zenoh audio publisher enabled serviceId={} key={}", cfg_.service_id, key);
 
   chunk_buffer_.assign(static_cast<std::size_t>(cfg_.frames_per_chunk) * cfg_.channels, 0.0f);
   capture_chunk_accum_.assign(static_cast<std::size_t>(cfg_.frames_per_chunk) * cfg_.channels, 0.0f);
@@ -218,8 +191,7 @@ bool AudioCapService::start() {
       running_.store(true, std::memory_order_release);
       stop_requested_.store(false, std::memory_order_release);
       spdlog::info("audiocap started serviceId={} backend={} audioBackend={}", cfg_.service_id,
-                   f8::cppsdk::bus_backend_to_string(runtime_backend.bus_backend),
-                   f8::cppsdk::audio_transport_backend_to_string(cfg_.audio_backend));
+                   f8::cppsdk::bus_backend_to_string(runtime_backend.bus_backend), "zenoh");
       return true;
     }
 
@@ -254,8 +226,7 @@ bool AudioCapService::start() {
   running_.store(true, std::memory_order_release);
   stop_requested_.store(false, std::memory_order_release);
   spdlog::info("audiocap started serviceId={} backend={} audioBackend={}", cfg_.service_id,
-               f8::cppsdk::bus_backend_to_string(runtime_backend.bus_backend),
-               f8::cppsdk::audio_transport_backend_to_string(cfg_.audio_backend));
+               f8::cppsdk::bus_backend_to_string(runtime_backend.bus_backend), "zenoh");
   return true;
 }
 
@@ -279,7 +250,6 @@ void AudioCapService::stop() {
   }
   zenoh_audio_publisher_.reset();
   zenoh_audio_key_.clear();
-  shm_.reset();
   if (bus_) {
     bus_->stop();
   }
@@ -411,11 +381,6 @@ bool AudioCapService::write_audio_chunk_interleaved_f32(const float* samples, st
     return false;
   }
 
-  bool wrote_legacy_shm = false;
-  if (shm_) {
-    wrote_legacy_shm = shm_->write_interleaved_f32(samples, frames, ts_ms);
-  }
-
   bool published_zenoh = false;
   auto publisher = zenoh_audio_publisher_;
   if (publisher && publisher->valid()) {
@@ -426,7 +391,7 @@ bool AudioCapService::write_audio_chunk_interleaved_f32(const float* samples, st
     f8::cppsdk::AudioChunkView chunk;
     chunk.sample_rate = cfg_.sample_rate;
     chunk.channels = static_cast<std::uint32_t>(cfg_.channels);
-    chunk.format = static_cast<std::uint32_t>(f8::cppsdk::AudioSharedMemorySink::SampleFormat::kF32LE);
+    chunk.format = f8::cppsdk::kAudioSampleFormatF32Le;
     chunk.frames = frames;
     chunk.bytes_per_frame = bytes_per_frame;
     chunk.seq = seq;
@@ -437,7 +402,7 @@ bool AudioCapService::write_audio_chunk_interleaved_f32(const float* samples, st
     published_zenoh = publisher->publish_chunk(chunk);
   }
 
-  return wrote_legacy_shm || published_zenoh;
+  return published_zenoh;
 }
 
 void AudioCapService::set_active_local(bool active, const nlohmann::json& meta) {
@@ -508,11 +473,6 @@ void AudioCapService::publish_static_state() {
   };
 
   set_if_changed("serviceClass", cfg_.service_class);
-  set_if_changed("audioShmName", shm_ ? shm_->shm_name() : "");
-  const bool use_zenoh_audio =
-      zenoh_audio_publisher_ && zenoh_audio_publisher_->valid() && !zenoh_audio_key_.empty();
-  set_if_changed("audioTransport", use_zenoh_audio ? "zenoh" : "legacy_shm");
-  set_if_changed("audioKey", use_zenoh_audio ? zenoh_audio_key_ : "");
   set_if_changed("audioDevice", opened_device_name_);
   set_if_changed("audioSampleRate", cfg_.sample_rate);
   set_if_changed("audioChannels", cfg_.channels);
@@ -541,13 +501,6 @@ nlohmann::json AudioCapService::describe() {
       {"tags", json::array({"audio", "capture", "zenoh"})},
       {"stateFields",
        json::array({
-           state_field("audioShmName", schema_string(), "ro", "Legacy Audio SHM",
-                       "Legacy shared memory segment name when the legacy_shm fallback is active.", false),
-           state_field("audioTransport", schema_string_enum(std::vector<std::string>{"zenoh", "legacy_shm"}, "zenoh"),
-                       "ro", "Audio Transport",
-                       "Audio transport backend. Zenoh is the default runtime data path; legacy_shm keeps audioShmName.",
-                       false),
-           state_field("audioKey", schema_string(), "ro", "Audio Key", "Zenoh latest-chunk key for audio output", true),
            state_field("audioDevice", schema_string(), "ro", "Audio Device", "Name of the audio capture device in use", false),
            state_field("audioSampleRate", schema_integer(), "ro", "Audio Sample Rate", "Sample rate of the audio capture device", false),
            state_field("audioChannels", schema_integer(), "ro", "Audio Channels", "Number of audio channels", false),
@@ -562,7 +515,16 @@ nlohmann::json AudioCapService::describe() {
        })},
       {"commands", json::array()},
       {"dataInPorts", json::array()},
-      {"dataOutPorts", json::array()},
+      {"dataOutPorts",
+       json::array({
+           json{{"name", "audio"},
+                {"valueSchema", schema_audio_chunk()},
+                {"description", "Captured audio chunk stream."},
+                {"payloadKind", "audio_chunk"},
+                {"delivery", "latest"},
+                {"required", true},
+                {"showOnNode", true}},
+       })},
   };
   spec["operators"] = json::array();
   return spec;

@@ -18,18 +18,14 @@ class MotionSelectorTemplateTests(unittest.IsolatedAsyncioTestCase):
         state: dict[str, object] = {"flow_packet": flow_packet, "subscribed": None}
 
         async def _get_state(field: str) -> object:
-            if field == "flowTransport":
-                return "zenoh"
-            if field == "flowKey":
+            if field == "flowStreamKey":
                 return "f8/test/flow"
-            if field == "flowShm":
-                return ""
             return ""
 
-        def _subscribe_video_latest(key: str, *, video_key: str, decode: str = "auto") -> None:
+        def _subscribe_video_latest(key: str, *, stream_key: str, decode: str = "auto") -> None:
             state["subscribed"] = {
                 "key": key,
-                "video_key": video_key,
+                "stream_key": stream_key,
                 "decode": decode,
             }
 

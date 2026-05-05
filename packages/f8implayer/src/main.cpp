@@ -44,7 +44,6 @@ extern "C" SDL_AppResult SDLCALL SDL_AppInit(void** appstate, int argc, char* ar
       "openxr-mirror", "Keep SDL mirror window when using --openxr",
       cxxopts::value<bool>()->default_value("true")->implicit_value("true"))("help", "Show help");
   f8::cppsdk::add_runtime_backend_options(options);
-  f8::cppsdk::add_video_transport_backend_option(options);
 
   auto result = options.parse(argc, argv);
   if (result.count("help")) {
@@ -71,16 +70,9 @@ extern "C" SDL_AppResult SDLCALL SDL_AppInit(void** appstate, int argc, char* ar
     std::cerr << runtime_error << "\n";
     return SDL_APP_FAILURE;
   }
-  f8::cppsdk::VideoTransportBackend video_backend = f8::cppsdk::VideoTransportBackend::kAuto;
-  if (!f8::cppsdk::read_video_transport_backend_option(result, video_backend, runtime_error)) {
-    std::cerr << runtime_error << "\n";
-    return SDL_APP_FAILURE;
-  }
-
   f8::implayer::ImPlayerService::Config cfg;
   cfg.service_id = service_id;
   cfg.runtime_backend = runtime_backend;
-  cfg.video_backend = video_backend;
   cfg.initial_media_url = result["media"].as<std::string>();
   cfg.openxr_mirror_window = result["openxr-mirror"].as<bool>();
   cfg.openxr_mode = result["openxr-mode"].as<std::string>();

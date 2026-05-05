@@ -39,17 +39,14 @@ pixi run -e onnx f8pydl_optflow
 
 ### Typical Inputs / Outputs
 
-- Data inputs: none
-- Data outputs: `monitor`
+- Data inputs: `video`
+- Data outputs: `flow`, `monitor`
 - Commands: none
 
 ### Service State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `inputShmName` | `rw` | `false` | `false` | `string / default=` | Legacy input SHM name used only when inputVideoTransport=legacy_shm. |
-| `inputVideoTransport` | `rw` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Input video transport backend. Use zenoh with inputVideoKey; legacy_shm keeps old inputShmName. |
-| `inputVideoKey` | `rw` | `true` | `true` | `string / default=` | Zenoh latest-frame key for input video. |
 | `computeEveryNFrames` | `rw` | `true` | `false` | `integer / default=2` | Compute optical flow once per N new frames. |
 | `weightsDir` | `rw` | `true` | `false` | `string / default=services/f8/dl/weights` | Directory containing *.yaml + *.onnx model files. Reset to the default relative path when exporting publish JSON. |
 | `modelId` | `rw` | `true` | `false` | `string / default=` | Model id selected from weightsDir (ignored if modelYamlPath is set). |
@@ -59,23 +56,20 @@ pixi run -e onnx f8pydl_optflow
 | `availableModels` | `ro` | `true` | `false` | `array[string]` | List of model ids discovered from weightsDir. |
 | `loadedModel` | `ro` | `true` | `false` | `string / default=` | Current loaded model id/task. |
 | `ortActiveProviders` | `ro` | `true` | `false` | `string / default=` | JSON list of active ONNX Runtime providers for this session. |
-| `flowShmName` | `ro` | `false` | `false` | `string / default=` | Legacy output flow SHM name used only when flowTransport=legacy_shm. |
-| `flowTransport` | `ro` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Output flow transport backend. Zenoh is the default latest-frame path; legacy_shm is an explicit fallback. |
-| `flowKey` | `ro` | `true` | `true` | `string / default=` | Zenoh latest-frame key for output flow. |
-| `flowShmFormat` | `ro` | `true` | `false` | `string / default=flow2_f16` | Flow payload format. Fixed to flow2_f16. |
+| `flowFormat` | `ro` | `true` | `false` | `string / enum[flow2_f16] / default=flow2_f16` | Flow payload format. Fixed to flow2_f16. |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
 ### Key Fields That Matter
 
-- `inputShmName` (Legacy Input SHM, `rw`): Legacy input SHM name used only when inputVideoTransport=legacy_shm. Schema: `string / default=`.
-- `inputVideoTransport` (Input Video Transport, `rw`): Input video transport backend. Use zenoh with inputVideoKey; legacy_shm keeps old inputShmName. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
-- `inputVideoKey` (Input Video Key, `rw`): Zenoh latest-frame key for input video. Schema: `string / default=`.
 - `computeEveryNFrames` (Compute Every N Frames, `rw`): Compute optical flow once per N new frames. Schema: `integer / default=2`.
 - `weightsDir` (Weights Dir, `rw`): Directory containing *.yaml + *.onnx model files. Reset to the default relative path when exporting publish JSON. Schema: `string / default=services/f8/dl/weights`.
 - `modelId` (Model Id, `rw`): Model id selected from weightsDir (ignored if modelYamlPath is set). Schema: `string / default=`.
 - `modelYamlPath` (Model YAML Path, `rw`): Optional explicit model yaml path (overrides modelId). Cleared when exporting publish JSON. Schema: `string / default=`.
 - `ortProvider` (ONNX Runtime Provider, `rw`): auto prefers CUDAExecutionProvider when available. Schema: `string / enum[auto, cuda, cpu] / default=auto`.
+- `autoDownloadWeights` (Auto Download Weights, `rw`): When model file is missing, download from onnxUrl in model yaml. Schema: `boolean / default=True`.
+- `availableModels` (Available Models, `ro`): List of model ids discovered from weightsDir. Schema: `array[string]`.
+- `loadedModel` (Loaded Model, `ro`): Current loaded model id/task. Schema: `string / default=`.
 
 ### Service Commands
 
@@ -83,12 +77,15 @@ _None_
 
 ### Service Data Input Ports
 
-_None_
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `video` | `true` | `true` | `object{format, frameId, height, pitch, ...}` | Input video frame stream. |
 
 ### Service Data Output Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
+| `flow` | `true` | `true` | `object{format, frameId, height, pitch, ...}` | Dense optical-flow frame stream. |
 | `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators

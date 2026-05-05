@@ -104,7 +104,54 @@ def complex_object_schema(
     return F8ComplexObjectTypeSchema(properties=properties)
 
 
+def video_frame_schema() -> F8ComplexObjectTypeSchema:
+    """
+    Schema marker for binary video-frame data ports.
+
+    The frame bytes are transported by the runtime stream layer, not by JSON.
+    The object schema documents the decoded envelope metadata exposed by tools.
+    """
+
+    return F8ComplexObjectTypeSchema(
+        properties={
+            "schemaVersion": integer_schema(default=1, minimum=1, maximum=1),
+            "format": string_schema(default="bgra32", enum=["bgra32", "bgr24", "flow2_f16", "scalar1_f32"]),
+            "width": integer_schema(minimum=1),
+            "height": integer_schema(minimum=1),
+            "pitch": integer_schema(minimum=1),
+            "frameId": integer_schema(minimum=1),
+            "tsMs": integer_schema(minimum=0),
+        },
+        field_comment="f8.payloadKind=video_frame",
+    )
+
+
+def audio_chunk_schema() -> F8ComplexObjectTypeSchema:
+    """
+    Schema marker for binary audio-chunk data ports.
+
+    The PCM bytes are transported by the runtime stream layer, not by JSON.
+    The object schema documents the decoded envelope metadata exposed by tools.
+    """
+
+    return F8ComplexObjectTypeSchema(
+        properties={
+            "schemaVersion": integer_schema(default=1, minimum=1, maximum=1),
+            "format": string_schema(default="f32le", enum=["f32le"]),
+            "sampleRate": integer_schema(minimum=1),
+            "channels": integer_schema(minimum=1),
+            "frames": integer_schema(minimum=1),
+            "bytesPerFrame": integer_schema(minimum=1),
+            "seq": integer_schema(minimum=1),
+            "frameIndex": integer_schema(minimum=0),
+            "tsMs": integer_schema(minimum=0),
+        },
+        field_comment="f8.payloadKind=audio_chunk",
+    )
+
+
 __all__ = [
+    "audio_chunk_schema",
     "any_schema",
     "array_schema",
     "boolean_schema",
@@ -114,4 +161,5 @@ __all__ = [
     "schema_default",
     "schema_type",
     "string_schema",
+    "video_frame_schema",
 ]

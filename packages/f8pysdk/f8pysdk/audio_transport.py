@@ -9,12 +9,12 @@ from dataclasses import dataclass, field
 from types import TracebackType
 from typing import Any, Protocol
 
-from .shm.audio import AudioShmReader, SAMPLE_FORMAT_F32LE
 from .zenoh_config import apply_zenoh_shared_memory_config
 
 log = logging.getLogger(__name__)
 _SUBSCRIPTION_SETTLE_S = 0.01
 
+SAMPLE_FORMAT_F32LE = 1
 ZENOH_AUDIO_CHUNK_MAGIC = 0xF85A2001
 ZENOH_AUDIO_CHUNK_SCHEMA_VERSION = 1
 
@@ -78,77 +78,6 @@ class LatestAudioChunkTransport(Protocol):
     def poll_latest(self) -> LatestAudioChunk | None: ...
 
     def wait_latest(self, timeout_ms: int) -> LatestAudioChunk | None: ...
-
-
-class LegacyShmLatestAudioChunkTransport:
-    def __init__(self, *, reader: AudioShmReader) -> None:
-        self._reader = reader
-        self._last_seq = 0
-
-    @classmethod
-    def open_reader(cls, shm_name: str, *, use_event: bool = True) -> "LegacyShmLatestAudioChunkTransport":
-        reader = AudioShmReader(str(shm_name))
-        reader.open(use_event=bool(use_event))
-        return cls(reader=reader)
-
-    @property
-    def reader(self) -> AudioShmReader:
-        return self._reader
-
-    def close(self) -> None:
-        self._reader.close()
-        self._last_seq = 0
-
-    def publish_chunk(
-        self,
-        *,
-        sample_rate: int,
-        channels: int,
-        payload: bytes | bytearray | memoryview,
-        frames: int,
-        fmt: int = SAMPLE_FORMAT_F32LE,
-        ts_ms: int | None = None,
-    ) -> None:
-        del sample_rate, channels, payload, frames, fmt, ts_ms
-        raise RuntimeError("legacy SHM audio transport is not opened for writing")
-
-    def poll_latest(self) -> LatestAudioChunk | None:
-        header = self._reader.read_header()
-        if header is None:
-            return None
-        seq = int(header.write_seq)
-        if seq <= 0 or seq == int(self._last_seq):
-            return None
-        hdr2, chunk_header, payload = self._reader.read_chunk_f32(seq)
-        if hdr2 is None or chunk_header is None or payload is None:
-            return None
-        self._last_seq = seq
-        return LatestAudioChunk(
-            sample_rate=int(hdr2.sample_rate),
-            channels=int(hdr2.channels),
-            fmt=int(hdr2.fmt),
-            frames=int(chunk_header.frames),
-            bytes_per_frame=int(hdr2.bytes_per_frame),
-            seq=int(chunk_header.seq),
-            frame_index=int(hdr2.write_frame_index),
-            ts_ms=int(chunk_header.ts_ms),
-            payload=payload,
-        )
-
-    def wait_latest(self, timeout_ms: int) -> LatestAudioChunk | None:
-        chunk = self.poll_latest()
-        if chunk is not None:
-            return chunk
-        timeout_ms_i = max(0, int(timeout_ms))
-        deadline = time.monotonic() + (float(timeout_ms_i) / 1000.0)
-        while True:
-            remaining_ms = int(max(0.0, (deadline - time.monotonic()) * 1000.0))
-            if remaining_ms <= 0:
-                return None
-            self._reader.wait_new_chunk(timeout_ms=min(remaining_ms, 10))
-            chunk = self.poll_latest()
-            if chunk is not None:
-                return chunk
 
 
 def encode_zenoh_audio_chunk(
@@ -476,7 +405,7 @@ def _declare_zenoh_latest_publisher(session: Any, key_expr: str) -> Any:
 __all__ = [
     "LatestAudioChunk",
     "LatestAudioChunkTransport",
-    "LegacyShmLatestAudioChunkTransport",
+    "SAMPLE_FORMAT_F32LE",
     "ZENOH_AUDIO_CHUNK_MAGIC",
     "ZENOH_AUDIO_CHUNK_SCHEMA_VERSION",
     "ZenohLatestAudioChunkTransport",

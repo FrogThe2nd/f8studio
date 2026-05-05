@@ -91,25 +91,8 @@ class TcnServiceNodeTests(unittest.TestCase):
             bus = _FakeBus()
             RuntimeNode.attach(node, bus)
             await node._ensure_config_loaded()
-            await node._handle_missing_video_input(video_transport="", video_key="", shm_name="")
-            self.assertEqual(bus.errors[-1][2], "missing videoKey")
-
-        asyncio.run(_run())
-
-    def test_missing_legacy_video_input_requests_shm_name(self) -> None:
-        async def _run() -> None:
-            node = OnnxTcnWaveServiceNode(
-                node_id="tcn_node",
-                node=_NodeStub(stateFields=[]),
-                initial_state={},
-                service_class="f8.dl.tcnwave",
-                allowed_tasks={"tcn_wave"},
-            )
-            bus = _FakeBus()
-            RuntimeNode.attach(node, bus)
-            await node._ensure_config_loaded()
-            await node._handle_missing_video_input(video_transport="legacy_shm", video_key="", shm_name="")
-            self.assertEqual(bus.errors[-1][2], "missing shmName")
+            await node._handle_missing_video_input()
+            self.assertEqual(bus.errors[-1][2], "missing video data input")
 
         asyncio.run(_run())
 

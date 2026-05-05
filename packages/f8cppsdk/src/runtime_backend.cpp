@@ -71,64 +71,6 @@ bool parse_bus_backend(std::string_view value, BusBackend& backend) {
   return false;
 }
 
-std::string video_transport_backend_to_string(VideoTransportBackend backend) {
-  switch (backend) {
-    case VideoTransportBackend::kAuto:
-      return "auto";
-    case VideoTransportBackend::kZenoh:
-      return "zenoh";
-    case VideoTransportBackend::kLegacyShm:
-      return "legacy_shm";
-  }
-  return "auto";
-}
-
-bool parse_video_transport_backend(std::string_view value, VideoTransportBackend& backend) {
-  const std::string text = lower_ascii(trim_runtime_string(value));
-  if (text == "auto" || text.empty()) {
-    backend = VideoTransportBackend::kAuto;
-    return true;
-  }
-  if (text == "zenoh") {
-    backend = VideoTransportBackend::kZenoh;
-    return true;
-  }
-  if (text == "legacy_shm" || text == "legacy-shm" || text == "shm") {
-    backend = VideoTransportBackend::kLegacyShm;
-    return true;
-  }
-  return false;
-}
-
-std::string audio_transport_backend_to_string(AudioTransportBackend backend) {
-  switch (backend) {
-    case AudioTransportBackend::kAuto:
-      return "auto";
-    case AudioTransportBackend::kZenoh:
-      return "zenoh";
-    case AudioTransportBackend::kLegacyShm:
-      return "legacy_shm";
-  }
-  return "auto";
-}
-
-bool parse_audio_transport_backend(std::string_view value, AudioTransportBackend& backend) {
-  const std::string text = lower_ascii(trim_runtime_string(value));
-  if (text == "auto" || text.empty()) {
-    backend = AudioTransportBackend::kAuto;
-    return true;
-  }
-  if (text == "zenoh") {
-    backend = AudioTransportBackend::kZenoh;
-    return true;
-  }
-  if (text == "legacy_shm" || text == "legacy-shm" || text == "shm") {
-    backend = AudioTransportBackend::kLegacyShm;
-    return true;
-  }
-  return false;
-}
-
 std::string trim_runtime_string(std::string_view value) {
   std::size_t begin = 0;
   while (begin < value.size()) {
@@ -214,30 +156,6 @@ RuntimeBackendConfig runtime_backend_config_from_env() {
   }
 
   return normalize_runtime_backend_config(std::move(config));
-}
-
-VideoTransportBackend video_transport_backend_from_env() {
-  const char* backend_text = env_value("F8_VIDEO_BACKEND");
-  if (backend_text == nullptr) {
-    return VideoTransportBackend::kAuto;
-  }
-  VideoTransportBackend backend = VideoTransportBackend::kAuto;
-  if (parse_video_transport_backend(backend_text, backend)) {
-    return backend;
-  }
-  return VideoTransportBackend::kAuto;
-}
-
-AudioTransportBackend audio_transport_backend_from_env() {
-  const char* backend_text = env_value("F8_AUDIO_BACKEND");
-  if (backend_text == nullptr) {
-    return AudioTransportBackend::kAuto;
-  }
-  AudioTransportBackend backend = AudioTransportBackend::kAuto;
-  if (parse_audio_transport_backend(backend_text, backend)) {
-    return backend;
-  }
-  return AudioTransportBackend::kAuto;
 }
 
 }  // namespace f8::cppsdk

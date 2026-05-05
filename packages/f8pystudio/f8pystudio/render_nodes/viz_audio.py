@@ -11,10 +11,9 @@ from NodeGraphQt.nodes.base_node import NodeBaseWidget
 
 from f8pysdk.audio_transport import (
     LatestAudioChunkTransport,
-    LegacyShmLatestAudioChunkTransport,
+    SAMPLE_FORMAT_F32LE,
     ZenohLatestAudioChunkTransport,
 )
-from f8pysdk.shm import SAMPLE_FORMAT_F32LE
 
 from ..nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from ..nodegraph.viz_operator_nodeitem import F8StudioVizOperatorNodeItem
@@ -22,18 +21,6 @@ from f8pystudio.contracts.ui_commands import UiCommand
 
 _STATE_UI_UPDATE = "uiUpdate"
 _WIDGET_NAME = "__audio_latest"
-_TRANSPORT_LEGACY_SHM = "legacy_shm"
-_TRANSPORT_ZENOH = "zenoh"
-
-
-def _normalize_audio_transport(value: object, *, audio_key: str, shm_name: str) -> str:
-    transport = str(value or "").strip().lower()
-    _ = shm_name
-    if transport in (_TRANSPORT_LEGACY_SHM, _TRANSPORT_ZENOH):
-        return transport
-    if str(audio_key or "").strip():
-        return _TRANSPORT_ZENOH
-    return _TRANSPORT_ZENOH
 
 
 class _LatestAudioPane(QtWidgets.QWidget):
@@ -115,9 +102,7 @@ class _LatestAudioPane(QtWidgets.QWidget):
         self._timer.setInterval(20)
 
         self._reader: LatestAudioChunkTransport | None = None
-        self._audio_transport = _TRANSPORT_ZENOH
-        self._audio_key = ""
-        self._shm_name = ""
+        self._audio_stream_key = ""
         self._last_seq = 0
 
         self._history_ms = 250
@@ -140,28 +125,18 @@ class _LatestAudioPane(QtWidgets.QWidget):
     def set_config(
         self,
         *,
-        shm_name: str,
-        audio_transport: object,
-        audio_key: str,
+        audio_stream_key: str,
         throttle_ms: int,
         history_ms: int,
         channel: int,
     ) -> None:
-        shm_name = str(shm_name or "").strip()
-        audio_key = str(audio_key or "").strip()
-        audio_transport = _normalize_audio_transport(audio_transport, audio_key=audio_key, shm_name=shm_name)
+        audio_stream_key = str(audio_stream_key or "").strip()
         self._history_ms = max(20, int(history_ms))
         self._channel = max(0, int(channel))
         throttle_ms = max(0, int(throttle_ms))
         self._timer.setInterval(max(1, throttle_ms) if throttle_ms > 0 else 1)
-        if (
-            shm_name != self._shm_name
-            or audio_key != self._audio_key
-            or audio_transport != self._audio_transport
-        ):
-            self._shm_name = shm_name
-            self._audio_key = audio_key
-            self._audio_transport = audio_transport
+        if audio_stream_key != self._audio_stream_key:
+            self._audio_stream_key = audio_stream_key
             self._reset_reader()
         self._sync_timer_with_update_state()
 
@@ -182,8 +157,7 @@ class _LatestAudioPane(QtWidgets.QWidget):
         self._last_seq = 0
 
     def _sync_timer_with_update_state(self) -> None:
-        has_source = bool(self._audio_key) if self._audio_transport == _TRANSPORT_ZENOH else bool(self._shm_name)
-        if self.update_enabled() and has_source:
+        if self.update_enabled() and self._audio_stream_key:
             if not self._timer.isActive():
                 self._timer.start()
             return
@@ -194,14 +168,9 @@ class _LatestAudioPane(QtWidgets.QWidget):
         if self._reader is not None:
             return True
         try:
-            if self._audio_transport == _TRANSPORT_ZENOH:
-                if not self._audio_key:
-                    return False
-                r: LatestAudioChunkTransport = ZenohLatestAudioChunkTransport.open_subscriber(self._audio_key)
-            else:
-                if not self._shm_name:
-                    return False
-                r = LegacyShmLatestAudioChunkTransport.open_reader(self._shm_name, use_event=False)
+            if not self._audio_stream_key:
+                return False
+            r: LatestAudioChunkTransport = ZenohLatestAudioChunkTransport.open_subscriber(self._audio_stream_key)
             self._reader = r
             return True
         except (FileNotFoundError, OSError, RuntimeError, ValueError) as exc:
@@ -310,17 +279,13 @@ class _LatestAudioWidget(NodeBaseWidget):
     def set_config(
         self,
         *,
-        shm_name: str,
-        audio_transport: object,
-        audio_key: str,
+        audio_stream_key: str,
         throttle_ms: int,
         history_ms: int,
         channel: int,
     ) -> None:
         self._pane.set_config(
-            shm_name=shm_name,
-            audio_transport=audio_transport,
-            audio_key=audio_key,
+            audio_stream_key=audio_stream_key,
             throttle_ms=throttle_ms,
             history_ms=history_ms,
             channel=channel,
@@ -382,9 +347,7 @@ class VizAudioRenderNode(F8StudioOperatorBaseNode):
             return
         try:
             payload = dict(cmd.payload or {})
-            shm_name = str(payload.get("shmName") or "").strip()
-            audio_transport = payload.get("audioTransport")
-            audio_key = str(payload.get("audioKey") or "").strip()
+            audio_stream_key = str(payload.get("audioStreamKey") or "").strip()
             throttle_ms = int(payload.get("throttleMs") or 20)
             history_ms = int(payload.get("historyMs") or 250)
             channel = int(payload.get("channel") or 0)
@@ -394,9 +357,7 @@ class VizAudioRenderNode(F8StudioOperatorBaseNode):
         if widget is None:
             return
         widget.set_config(
-            shm_name=shm_name,
-            audio_transport=audio_transport,
-            audio_key=audio_key,
+            audio_stream_key=audio_stream_key,
             throttle_ms=throttle_ms,
             history_ms=history_ms,
             channel=channel,

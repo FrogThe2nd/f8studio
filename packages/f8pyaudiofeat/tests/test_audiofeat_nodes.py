@@ -3,12 +3,9 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-import time
 import unittest
 from dataclasses import dataclass
 from typing import Any
-
-import numpy as np
 
 PKG_AUDIOFEAT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 PKG_SDK = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "f8pysdk"))
@@ -16,13 +13,10 @@ for p in (PKG_AUDIOFEAT, PKG_SDK):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from f8pyaudiofeat.constants import CORE_SCHEMA_VERSION, RHYTHM_SCHEMA_VERSION  # noqa: E402
 from f8pyaudiofeat.core_service_node import AudioCoreFeatureServiceNode  # noqa: E402
 from f8pyaudiofeat.feature_math import librosa_available  # noqa: E402
-from f8pyaudiofeat.rhythm_service_node import AudioRhythmFeatureServiceNode  # noqa: E402
 from f8pysdk.nodes import RuntimeNode  # noqa: E402
 from f8pysdk.state import StateRead  # noqa: E402
-from f8pysdk.shm.audio import AudioShmWriter  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -87,132 +81,13 @@ class _FakeBus:
 
 @unittest.skipUnless(librosa_available(), "librosa is required")
 class AudioFeatNodeTests(unittest.TestCase):
-    def test_audio_transport_defaults_to_zenoh(self) -> None:
-        node = AudioCoreFeatureServiceNode(node_id="audio_core", node=_NodeStub(stateFields=[]), initial_state={})
-        legacy_named_node = AudioCoreFeatureServiceNode(
-            node_id="audio_core",
-            node=_NodeStub(stateFields=[]),
-            initial_state={"audioShmName": "shm.audio"},
-        )
-
-        self.assertEqual(node._selected_audio_transport(), "zenoh")
-        self.assertEqual(legacy_named_node._selected_audio_transport(), "zenoh")
-        self.assertEqual(AudioCoreFeatureServiceNode._coerce_audio_transport(""), "zenoh")
-        self.assertEqual(AudioCoreFeatureServiceNode._coerce_audio_transport("bad"), "zenoh")
-        self.assertEqual(AudioCoreFeatureServiceNode._coerce_audio_transport("legacy_shm"), "legacy_shm")
-
-    def test_missing_audio_key_sets_error(self) -> None:
+    def test_missing_audio_data_input_sets_error(self) -> None:
         async def _run() -> None:
             node = AudioCoreFeatureServiceNode(node_id="audio_core", node=_NodeStub(stateFields=[]), initial_state={})
             bus = _FakeBus()
             RuntimeNode.attach(node, bus)
             await node._step()
-            self.assertEqual(bus.errors[-1][2], "missing audioKey")
-
-        asyncio.run(_run())
-
-    def test_duplicate_frame_is_not_emitted_twice(self) -> None:
-        async def _run() -> None:
-            shm_name = f"shm_test_audiofeat_{int(time.time() * 1000)}"
-            writer = AudioShmWriter(
-                shm_name=shm_name,
-                size=8 * 1024 * 1024,
-                sample_rate=48_000,
-                channels=2,
-                frames_per_chunk=480,
-                chunk_count=200,
-            )
-            writer.open()
-            try:
-                node = AudioCoreFeatureServiceNode(
-                    node_id="audio_core",
-                    node=_NodeStub(stateFields=[]),
-                    initial_state={
-                        "audioTransport": "legacy_shm",
-                        "audioShmName": shm_name,
-                        "windowMs": 64,
-                        "hopMs": 16,
-                    },
-                )
-                bus = _FakeBus()
-                RuntimeNode.attach(node, bus)
-
-                sine = np.sin(2.0 * np.pi * 440.0 * (np.arange(480, dtype=np.float32) / 48_000.0)).astype(np.float32)
-                interleaved = np.empty((480 * 2,), dtype=np.float32)
-                interleaved[0::2] = sine
-                interleaved[1::2] = sine
-                for _ in range(12):
-                    writer.write_chunk_f32(interleaved.tobytes(), frames=480)
-                    await node._step()
-                emit_count_1 = len(bus.emits)
-                self.assertGreaterEqual(emit_count_1, 1)
-
-                for _ in range(3):
-                    await node._step()
-                emit_count_2 = len(bus.emits)
-                self.assertEqual(emit_count_1, emit_count_2)
-            finally:
-                writer.close(unlink=False)
-
-        asyncio.run(_run())
-
-    def test_core_to_rhythm_chain(self) -> None:
-        async def _run() -> None:
-            shm_name = f"shm_test_audiofeat_chain_{int(time.time() * 1000)}"
-            writer = AudioShmWriter(
-                shm_name=shm_name,
-                size=8 * 1024 * 1024,
-                sample_rate=48_000,
-                channels=2,
-                frames_per_chunk=480,
-                chunk_count=200,
-            )
-            writer.open()
-            try:
-                core = AudioCoreFeatureServiceNode(
-                    node_id="audio_core",
-                    node=_NodeStub(stateFields=[]),
-                    initial_state={
-                        "audioTransport": "legacy_shm",
-                        "audioShmName": shm_name,
-                        "windowMs": 64,
-                        "hopMs": 16,
-                    },
-                )
-                rhythm = AudioRhythmFeatureServiceNode(
-                    node_id="audio_rhythm",
-                    node=_NodeStub(stateFields=[]),
-                    initial_state={},
-                )
-                core_bus = _FakeBus()
-                rhythm_bus = _FakeBus()
-                RuntimeNode.attach(core, core_bus)
-                RuntimeNode.attach(rhythm, rhythm_bus)
-
-                for i in range(60):
-                    burst = np.zeros((480,), dtype=np.float32)
-                    if (i % 8) == 0:
-                        burst[:64] = 0.95
-                    interleaved = np.empty((480 * 2,), dtype=np.float32)
-                    interleaved[0::2] = burst
-                    interleaved[1::2] = burst
-                    writer.write_chunk_f32(interleaved.tobytes(), frames=480)
-                    await core._step()
-
-                core_payloads = [item for item in core_bus.emits if item[1] == "coreFeatures"]
-                self.assertGreaterEqual(len(core_payloads), 1)
-                latest_core = core_payloads[-1][2]
-                self.assertEqual(latest_core.get("schemaVersion"), CORE_SCHEMA_VERSION)
-
-                await rhythm.on_data("coreFeatures", latest_core)
-                rhythm_payloads = [item for item in rhythm_bus.emits if item[1] == "rhythmFeatures"]
-                self.assertGreaterEqual(len(rhythm_payloads), 1)
-                latest_rhythm = rhythm_payloads[-1][2]
-                self.assertEqual(latest_rhythm.get("schemaVersion"), RHYTHM_SCHEMA_VERSION)
-                self.assertIn("tempoBpm", latest_rhythm)
-                self.assertIn("pulseClarity", latest_rhythm)
-            finally:
-                writer.close(unlink=False)
+            self.assertEqual(bus.errors[-1][2], "missing audio data input")
 
         asyncio.run(_run())
 

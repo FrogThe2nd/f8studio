@@ -21,6 +21,8 @@ nlohmann::json schema_object(
     const nlohmann::json& props,
     const nlohmann::json& required = nlohmann::json::array());
 nlohmann::json schema_array(const nlohmann::json& item_schema);
+nlohmann::json schema_video_frame();
+nlohmann::json schema_audio_chunk();
 nlohmann::json state_field(
     std::string name,
     const nlohmann::json& value_schema,

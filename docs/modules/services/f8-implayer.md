@@ -40,7 +40,7 @@ linux/f8implayer_service
 ### Typical Inputs / Outputs
 
 - Data inputs: none
-- Data outputs: `playback`, `monitor`
+- Data outputs: `video`, `playback`, `monitor`
 - Commands: `open`, `play`, `pause`, `stop`, `next`, `previous`, `seek`, `setVolume`
 
 ### Service State Fields
@@ -54,15 +54,11 @@ linux/f8implayer_service
 | `volume` | `rw` | `true` | `true` | `number / default=1.0` | Volume |
 | `playing` | `ro` | `true` | `false` | `boolean` | Playback state. |
 | `duration` | `ro` | `true` | `true` | `number` | Duration (seconds). |
-| `videoShmName` | `ro` | `true` | `false` | `string` | Legacy shared memory region name when the legacy_shm fallback is active. |
-| `videoShmEvent` | `ro` | `true` | `false` | `string` | Optional named event to signal new frames. |
-| `videoTransport` | `ro` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Frame transport backend. |
-| `videoKey` | `ro` | `true` | `true` | `string` | Transport-specific video stream key. |
 | `videoFormat` | `ro` | `true` | `false` | `string / enum[bgra32, bgr24, flow2_f16, scalar1_f32]` | Frame payload format. |
 | `videoFrameSchemaVersion` | `ro` | `true` | `false` | `integer` | Frame schema version. |
-| `videoShmMaxWidth` | `rw` | `true` | `false` | `integer` | Downsample limit (0 = auto). |
-| `videoShmMaxHeight` | `rw` | `true` | `false` | `integer` | Downsample limit (0 = auto). |
-| `videoShmMaxFps` | `rw` | `true` | `false` | `number` | Copy rate limit (0 = unlimited). |
+| `videoOutputMaxWidth` | `rw` | `true` | `false` | `integer` | Downsample limit (0 = auto). |
+| `videoOutputMaxHeight` | `rw` | `true` | `false` | `integer` | Downsample limit (0 = auto). |
+| `videoOutputMaxFps` | `rw` | `true` | `false` | `number` | Frame export rate limit (0 = unlimited). |
 | `authMode` | `rw` | `true` | `false` | `string / enum[none, browser, cookiesFile]` | Cookie auth mode: none\|browser\|cookiesFile (default: none). |
 | `authBrowser` | `rw` | `true` | `false` | `string / enum[chrome, chromium, edge, firefox, safari]` | Browser name for authMode=browser: chrome\|chromium\|edge\|firefox\|safari. |
 | `authBrowserProfile` | `rw` | `true` | `false` | `string` | Optional browser profile for authMode=browser. Local-only path-like metadata; cleared when exporting publish JSON. |
@@ -84,7 +80,7 @@ linux/f8implayer_service
 - `volume` (Volume, `rw`): Volume Schema: `number / default=1.0`.
 - `playing` (Playing, `ro`): Playback state. Schema: `boolean`.
 - `duration` (Duration, `ro`): Duration (seconds). Schema: `number`.
-- `videoShmName` (Legacy Video SHM, `ro`): Legacy shared memory region name when the legacy_shm fallback is active. Schema: `string`.
+- `videoFormat` (Video Format, `ro`): Frame payload format. Schema: `string / enum[bgra32, bgr24, flow2_f16, scalar1_f32]`.
 
 ### Service Commands
 
@@ -153,6 +149,7 @@ _None_
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
+| `video` | `true` | `true` | `object{format, frameId, height, pitch, ...}` | Decoded video frame stream. |
 | `playback` | `true` | `false` | `object{duration, playing, position, videoId}` | Playback state stream (position/duration/playing). |
 | `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
@@ -162,4 +159,4 @@ _None_
 
 ## Related Scenarios
 
-- [Scene 01: CVKit Template Tracking](../../scenarios/scene-01-cvkit_template_tracking.md)
+- No bundled scenario references this node yet.

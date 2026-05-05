@@ -39,7 +39,7 @@ No description.
 
 ### Typical Inputs / Outputs
 
-- Data inputs: `initBox`
+- Data inputs: `video`, `initBox`
 - Data outputs: `tracking`, `monitor`
 - Commands: `stopTracking`
 
@@ -47,9 +47,6 @@ No description.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `shmName` | `rw` | `true` | `false` | `string` | Legacy SHM name used only when videoTransport=legacy_shm. |
-| `videoTransport` | `rw` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Video input transport backend. Zenoh is default; legacy_shm keeps old shmName input. |
-| `videoKey` | `rw` | `true` | `true` | `string` | Zenoh latest-frame key for video input. |
 | `initSelect` | `rw` | `true` | `true` | `string / enum[first_box, closest_center, largest_area, highest_score] / default=closest_center` | Init bbox selection strategy: first_box \| closest_center \| largest_area \| highest_score. |
 | `trackerKind` | `rw` | `true` | `true` | `string / enum[csrt, kcf, mil, nano, vit] / default=csrt` | OpenCV tracker backend: csrt \| kcf \| mil \| nano \| vit. |
 | `modelDir` | `rw` | `true` | `false` | `string / default=models` | Directory containing downloaded tracker model files for nano \| vit. |
@@ -63,14 +60,14 @@ No description.
 
 ### Key Fields That Matter
 
-- `shmName` (Legacy Video SHM, `rw`): Legacy SHM name used only when videoTransport=legacy_shm. Schema: `string`.
-- `videoTransport` (Video Transport, `rw`): Video input transport backend. Zenoh is default; legacy_shm keeps old shmName input. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
-- `videoKey` (Video Key, `rw`): Zenoh latest-frame key for video input. Schema: `string`.
 - `initSelect` (Init Select, `rw`): Init bbox selection strategy: first_box | closest_center | largest_area | highest_score. Schema: `string / enum[first_box, closest_center, largest_area, highest_score] / default=closest_center`.
 - `trackerKind` (Tracker Kind, `rw`): OpenCV tracker backend: csrt | kcf | mil | nano | vit. Schema: `string / enum[csrt, kcf, mil, nano, vit] / default=csrt`.
 - `modelDir` (Model Dir, `rw`): Directory containing downloaded tracker model files for nano | vit. Schema: `string / default=models`.
 - `autoDownloadModels` (Auto Download Models, `rw`): Auto-download missing tracker model files when a model-based tracker is selected. Schema: `boolean / default=True`.
 - `maxTrackingFps` (Max Tracking FPS, `rw`): Maximum tracker update rate. Set to 0 to process every incoming video frame. Schema: `number / default=30.0`.
+- `stopTrackingCooldownMs` (Stop Cooldown (ms), `rw`): After stopTracking, ignore initBox for this many ms. Set to 0 to disable. Schema: `integer / default=1000`.
+- `isTracking` (Is Tracking, `ro`): True when tracker is running. Schema: `boolean`.
+- `isNotTracking` (Is Not Tracking, `ro`): Negation of isTracking. Schema: `boolean`.
 
 ### Service Commands
 
@@ -84,6 +81,7 @@ Stop current tracking and return to waiting for initBox.
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
+| `video` | `true` | `true` | `object{format, frameId, height, pitch, ...}` | Input video frame stream. |
 | `initBox` | `true` | `true` | `object{bbox, bottom, conf, confidence, ...}` | Init payload (single bbox or nested detection tree). Recursively extracts bbox candidates and uses the one selected by initSelect. |
 
 ### Service Data Output Ports
@@ -99,4 +97,4 @@ _None_
 
 ## Related Scenarios
 
-- [Scene 01: CVKit Template Tracking](../../scenarios/scene-01-cvkit_template_tracking.md)
+- No bundled scenario references this node yet.

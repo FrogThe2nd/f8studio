@@ -18,7 +18,7 @@ No description.
 
 - A standard chain is `f8.audiocap -> f8.audiofeat.core / f8.audiofeat.rhythm`.
 - During setup, keep a `f8.viz.audio` branch connected so you can confirm that audio is really flowing.
-- If multiple services consume the same stream, keep `audioKey` consistent across the branch. Use `audioShmName` only for explicit `legacy_shm` fallback graphs.
+- If multiple services consume the same stream, connect the producer `audio` data port to each downstream typed audio input.
 
 ## Pitfalls / Gotchas
 
@@ -40,16 +40,13 @@ linux/f8audiocap_service
 ### Typical Inputs / Outputs
 
 - Data inputs: none
-- Data outputs: `monitor`
+- Data outputs: `audio`, `monitor`
 - Commands: none
 
 ### Service State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `audioShmName` | `ro` | `true` | `false` | `string` | Legacy shared memory segment name when the legacy_shm fallback is active. |
-| `audioTransport` | `ro` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Audio transport backend. Zenoh is the default runtime data path; legacy_shm keeps audioShmName. |
-| `audioKey` | `ro` | `true` | `true` | `string` | Transport-specific audio stream key |
 | `audioDevice` | `ro` | `true` | `false` | `string` | Name of the audio capture device in use |
 | `audioSampleRate` | `ro` | `true` | `false` | `integer` | Sample rate of the audio capture device |
 | `audioChannels` | `ro` | `true` | `false` | `integer` | Number of audio channels |
@@ -65,14 +62,14 @@ linux/f8audiocap_service
 
 ### Key Fields That Matter
 
-- `audioShmName` (Legacy Audio SHM, `ro`): Legacy shared memory segment name when the legacy_shm fallback is active. Schema: `string`.
-- `audioTransport` (Audio Transport, `ro`): Audio transport backend. Zenoh is the default runtime data path; legacy_shm keeps audioShmName. Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
-- `audioKey` (Audio Key, `ro`): Transport-specific audio stream key Schema: `string`.
 - `audioDevice` (Audio Device, `ro`): Name of the audio capture device in use Schema: `string`.
 - `audioSampleRate` (Audio Sample Rate, `ro`): Sample rate of the audio capture device Schema: `integer`.
 - `audioChannels` (Audio Channels, `ro`): Number of audio channels Schema: `integer`.
 - `audioFormat` (Audio Format, `ro`): Format of the audio data Schema: `string`.
 - `audioFramesPerChunk` (Audio Frames Per Chunk, `ro`): Number of audio frames per chunk Schema: `integer`.
+- `audioChunkCount` (Audio Chunk Count, `ro`): Number of audio chunks Schema: `integer`.
+- `audioChunkSchemaVersion` (Audio Chunk Schema Version, `ro`): Zenoh audio chunk schema version. Schema: `integer`.
+- `mode` (Mode, `rw`): Current mode of the audio capture service Schema: `string`.
 
 ### Service Commands
 
@@ -86,6 +83,7 @@ _None_
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
+| `audio` | `true` | `true` | `object{bytesPerFrame, channels, format, frameIndex, ...}` | Captured audio chunk stream. |
 | `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators
@@ -94,4 +92,4 @@ _None_
 
 ## Related Scenarios
 
-- [Scene 03: Audio Driven TCode](../../scenarios/scene-03-audio_driven.md)
+- No bundled scenario references this node yet.

@@ -460,6 +460,25 @@ components:
           type: boolean
           default: true
           description: If true, render this port on the node body; otherwise only in the inspector.
+        payloadKind:
+          type: string
+          default: json
+          enum:
+            - json
+            - bytes
+            - video_frame
+            - audio_chunk
+          title: F8DataPortPayloadKind
+          description: Runtime payload class. Media/binary payloads use stream transport and are not JSON-wrapped.
+        delivery:
+          type: string
+          default: fifo
+          enum:
+            - latest
+            - fifo
+            - reliable
+          title: F8DataPortDelivery
+          description: Preferred stream delivery policy for this data port.
       required:
         - name
         - valueSchema

@@ -23,6 +23,7 @@
 #include "f8cppsdk/msg_codec.h"
 #include "f8cppsdk/rungraph_routes.h"
 #include "f8cppsdk/time_utils.h"
+#include "f8cppsdk/zenoh_naming.h"
 #include "f8cppsdk/zenoh_transport.h"
 
 #if defined(__linux__)
@@ -711,12 +712,17 @@ void ServiceBus::apply_data_routes_from_rungraph(const json& graph_obj) {
   // Build new routing snapshot + input buffers.
   auto next_snapshot = std::make_shared<_DataRoutingSnapshot>();
   auto next_inputs = std::unordered_map<_NodePortKey, std::shared_ptr<_InputBuffer>, _NodePortKeyHash>();
+  auto next_stream_subjects = std::unordered_map<_NodePortKey, std::string, _NodePortKeyHash>();
 
   for (const auto& kv : new_routes) {
     const std::string& subject = kv.first;
-    auto& vec = next_snapshot->by_subject[subject];
+    std::vector<_RouteRuntime> vec;
     vec.reserve(kv.second.size());
     for (const auto& r : kv.second) {
+      if (r.stream_payload) {
+        next_stream_subjects[{r.to_node_id, r.to_port}] = subject;
+        continue;
+      }
       _NodePortKey key{r.to_node_id, r.to_port};
       auto it = next_inputs.find(key);
       if (it == next_inputs.end()) {
@@ -744,6 +750,9 @@ void ServiceBus::apply_data_routes_from_rungraph(const json& graph_obj) {
       rr.timeout_ms = r.timeout_ms;
       rr.buf = it->second;
       vec.push_back(std::move(rr));
+    }
+    if (!vec.empty()) {
+      next_snapshot->by_subject.emplace(subject, std::move(vec));
     }
   }
 
@@ -789,6 +798,7 @@ void ServiceBus::apply_data_routes_from_rungraph(const json& graph_obj) {
   }
 
   data_inputs_ = std::move(next_inputs);
+  data_input_stream_subjects_ = std::move(next_stream_subjects);
   std::shared_ptr<const _DataRoutingSnapshot> next_snapshot_const = next_snapshot;
   std::atomic_store(&data_routes_snapshot_, std::move(next_snapshot_const));
 }
@@ -1108,6 +1118,7 @@ void ServiceBus::stop() {
     }
     runtime_data_subs_.clear();
     data_inputs_.clear();
+    data_input_stream_subjects_.clear();
     std::atomic_store(&data_routes_snapshot_, std::shared_ptr<const _DataRoutingSnapshot>{});
   }
   {
@@ -1852,6 +1863,28 @@ std::optional<json> ServiceBus::pull_data(const std::string& node_id, const std:
   if (mut.last_seen_ts_ms <= 0) return std::nullopt;
   if (!mut.last_seen_value) return std::nullopt;
   return *mut.last_seen_value;
+}
+
+std::optional<std::string> ServiceBus::data_input_zenoh_key(const std::string& node_id,
+                                                            const std::string& port_id) const {
+  const std::string nid = ensure_token(node_id, "node_id");
+  const std::string pid = ensure_token(port_id, "port_id");
+  std::lock_guard<std::mutex> lock(data_mu_);
+  const auto it = data_input_stream_subjects_.find({nid, pid});
+  if (it == data_input_stream_subjects_.end() || it->second.empty()) {
+    return std::nullopt;
+  }
+  try {
+    return subject_to_zenoh_key(it->second);
+  } catch (const std::exception& exc) {
+    spdlog::warn("data input key resolve failed serviceId={} node={} port={}: {}", cfg_.service_id, nid, pid,
+                 exc.what());
+    return std::nullopt;
+  } catch (...) {
+    spdlog::warn("data input key resolve failed serviceId={} node={} port={}: unknown error", cfg_.service_id, nid,
+                 pid);
+    return std::nullopt;
+  }
 }
 
 ServiceBus::StateRead ServiceBus::get_state(const std::string& node_id, const std::string& field) {

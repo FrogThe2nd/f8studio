@@ -15,7 +15,6 @@
 #include "audiocap_service.h"
 #include "f8cppsdk/describe_builtins.h"
 #include "f8cppsdk/runtime_cxxopts.h"
-#include "f8cppsdk/shm/sizing.h"
 
 namespace {
 
@@ -32,7 +31,6 @@ int main(int argc, char** argv) {
       "list-devices", "List available recording devices and exit")(
       "backend", "Backend (auto|sdl|wasapi)", cxxopts::value<std::string>()->default_value("auto"))(
       "device", "Recording device selector (index or substring match)", cxxopts::value<std::string>()->default_value(""))(
-      "shm-bytes", "Legacy audio SHM bytes (0=auto)", cxxopts::value<std::size_t>()->default_value(std::to_string(f8::cppsdk::shm::kDefaultAudioShmBytes)))(
       "sample-rate", "Sample rate", cxxopts::value<std::uint32_t>()->default_value("48000"))(
       "channels", "Channels", cxxopts::value<std::uint16_t>()->default_value("2"))(
       "frames-per-chunk", "Frames per chunk", cxxopts::value<std::uint32_t>()->default_value("480"))(
@@ -41,7 +39,6 @@ int main(int argc, char** argv) {
       "tone-hz", "Sine tone Hz (mode=sine)", cxxopts::value<double>()->default_value("440.0"))(
       "gain", "Output gain 0..1", cxxopts::value<double>()->default_value("0.1"))("help", "Show help");
   f8::cppsdk::add_runtime_backend_options(options);
-  f8::cppsdk::add_audio_transport_backend_option(options);
 
   auto result = options.parse(argc, argv);
   if (result.count("help")) {
@@ -99,17 +96,9 @@ int main(int argc, char** argv) {
     std::cerr << runtime_error << "\n";
     return 2;
   }
-  f8::cppsdk::AudioTransportBackend audio_backend = f8::cppsdk::AudioTransportBackend::kAuto;
-  if (!f8::cppsdk::read_audio_transport_backend_option(result, audio_backend, runtime_error)) {
-    std::cerr << runtime_error << "\n";
-    return 2;
-  }
-
   f8::audiocap::AudioCapService::Config cfg;
   cfg.service_id = service_id;
   cfg.runtime_backend = runtime_backend;
-  cfg.audio_backend = audio_backend;
-  cfg.audio_shm_bytes = result["shm-bytes"].as<std::size_t>();
   cfg.sample_rate = result["sample-rate"].as<std::uint32_t>();
   cfg.channels = result["channels"].as<std::uint16_t>();
   cfg.frames_per_chunk = result["frames-per-chunk"].as<std::uint32_t>();
@@ -119,19 +108,6 @@ int main(int argc, char** argv) {
   cfg.device = result["device"].as<std::string>();
   cfg.tone_hz = result["tone-hz"].as<double>();
   cfg.gain = result["gain"].as<double>();
-
-  const std::size_t required = f8::cppsdk::shm::audio_required_bytes(
-      cfg.sample_rate, cfg.channels, cfg.frames_per_chunk, cfg.chunk_count, f8::cppsdk::AudioSharedMemorySink::SampleFormat::kF32LE);
-  const std::size_t recommended =
-      f8::cppsdk::shm::audio_recommended_bytes(cfg.sample_rate, cfg.channels, cfg.frames_per_chunk, cfg.chunk_count,
-                                               f8::cppsdk::AudioSharedMemorySink::SampleFormat::kF32LE);
-  if (cfg.audio_shm_bytes == 0) {
-    cfg.audio_shm_bytes = recommended;
-  } else if (required != 0 && cfg.audio_shm_bytes < required) {
-    std::cerr << "Audio SHM too small: --shm-bytes=" << cfg.audio_shm_bytes << " required>=" << required
-              << " (try --shm-bytes=0 for auto)\n";
-    return 2;
-  }
 
   f8::audiocap::AudioCapService svc(cfg);
   if (!svc.start()) {

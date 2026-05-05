@@ -8,7 +8,16 @@ from typing import Any, TYPE_CHECKING
 
 import msgspec
 
-from ...generated import F8Edge, F8EdgeKindEnum, F8RuntimeGraph, F8RuntimeGraphMeta, F8StateAccess
+from ...generated import (
+    F8DataPortPayloadKind,
+    F8DataPortSpec,
+    F8Edge,
+    F8EdgeKindEnum,
+    F8RuntimeGraph,
+    F8RuntimeGraphMeta,
+    F8RuntimeNode,
+    F8StateAccess,
+)
 from ...codec import unwrap_json_value
 from ...f8_naming import data_subject
 from ...state import StateWriteOrigin, StateWriteSource
@@ -35,6 +44,72 @@ if TYPE_CHECKING:
 
 
 log = logging.getLogger(__name__)
+
+_STREAM_PAYLOAD_KINDS = {"bytes", "video_frame", "audio_chunk"}
+
+
+def _is_unset(value: object) -> bool:
+    return isinstance(value, msgspec.UnsetType)
+
+
+def _payload_kind_text(value: object) -> str:
+    if isinstance(value, F8DataPortPayloadKind):
+        return str(value.value)
+    if value is None or _is_unset(value):
+        return "json"
+    return str(value or "").strip().lower() or "json"
+
+
+def _edge_from_node_id(edge: F8Edge) -> str:
+    node_id = "" if _is_unset(edge.fromOperatorId) else str(edge.fromOperatorId or "").strip()
+    if node_id:
+        return node_id
+    return str(edge.fromServiceId or "").strip()
+
+
+def _edge_to_node_id(edge: F8Edge) -> str:
+    node_id = "" if _is_unset(edge.toOperatorId) else str(edge.toOperatorId or "").strip()
+    if node_id:
+        return node_id
+    return str(edge.toServiceId or "").strip()
+
+
+def _find_runtime_node(graph: F8RuntimeGraph, node_id: str) -> F8RuntimeNode | None:
+    node_id_s = str(node_id or "").strip()
+    if not node_id_s:
+        return None
+    for node in list(graph.nodes or []):
+        if str(node.nodeId or "").strip() == node_id_s:
+            return node
+    return None
+
+
+def _find_data_port(ports: list[F8DataPortSpec] | msgspec.UnsetType, port_name: str) -> F8DataPortSpec | None:
+    if _is_unset(ports):
+        return None
+    port_name_s = str(port_name or "").strip()
+    if not port_name_s:
+        return None
+    for port in list(ports or []):
+        if not isinstance(port, F8DataPortSpec):
+            continue
+        if str(port.name or "").strip() == port_name_s:
+            return port
+    return None
+
+
+def _edge_uses_stream_payload(graph: F8RuntimeGraph, edge: F8Edge) -> bool:
+    from_node_id = _edge_from_node_id(edge)
+    to_node_id = _edge_to_node_id(edge)
+    from_node = _find_runtime_node(graph, from_node_id) if from_node_id else None
+    to_node = _find_runtime_node(graph, to_node_id) if to_node_id else None
+    from_port = _find_data_port(from_node.dataOutPorts, str(edge.fromPort)) if from_node is not None else None
+    if from_port is not None and _payload_kind_text(from_port.payloadKind) in _STREAM_PAYLOAD_KINDS:
+        return True
+    to_port = _find_data_port(to_node.dataInPorts, str(edge.toPort)) if to_node is not None else None
+    if to_port is not None and _payload_kind_text(to_port.payloadKind) in _STREAM_PAYLOAD_KINDS:
+        return True
+    return False
 
 
 def _with_rungraph_ts(graph: F8RuntimeGraph, ts_ms: int) -> F8RuntimeGraph:
@@ -491,17 +566,22 @@ async def rebuild_routes(bus: "ServiceBus") -> None:
     # Intra (in-process) routing: local service -> local service.
     intra: dict[tuple[str, str], list[tuple[str, str, F8Edge]]] = {}
     intra_in: dict[tuple[str, str], list[tuple[str, str, F8Edge]]] = {}
+    input_stream_subjects: dict[tuple[str, str], str] = {}
     for edge in graph.edges:
         if edge.kind != F8EdgeKindEnum.data:
             continue
         if str(edge.fromServiceId) != bus.service_id or str(edge.toServiceId) != bus.service_id:
             continue
-        if not edge.fromOperatorId or not edge.toOperatorId:
+        from_node = _edge_from_node_id(edge)
+        to_node = _edge_to_node_id(edge)
+        if not from_node or not to_node:
             continue
-        intra.setdefault((str(edge.fromOperatorId), str(edge.fromPort)), []).append(
-            (str(edge.toOperatorId), str(edge.toPort), edge)
-        )
-        intra_in.setdefault((str(edge.toOperatorId), str(edge.toPort)), []).append((str(edge.fromOperatorId), str(edge.fromPort), edge))
+        if _edge_uses_stream_payload(graph, edge):
+            subject = data_subject(str(edge.fromServiceId), from_node_id=from_node, port_id=str(edge.fromPort))
+            input_stream_subjects[(to_node, str(edge.toPort))] = subject
+            continue
+        intra.setdefault((from_node, str(edge.fromPort)), []).append((to_node, str(edge.toPort), edge))
+        intra_in.setdefault((to_node, str(edge.toPort)), []).append((from_node, str(edge.fromPort), edge))
     intra_data_out = {k: tuple(v) for k, v in intra.items()}
     intra_data_in = {k: tuple(v) for k, v in intra_in.items()}
 
@@ -525,20 +605,23 @@ async def rebuild_routes(bus: "ServiceBus") -> None:
             continue
         if str(edge.fromServiceId) == str(edge.toServiceId):
             continue
-        if not edge.fromOperatorId:
+        from_node = _edge_from_node_id(edge)
+        to_node = _edge_to_node_id(edge)
+        if not from_node or not to_node:
             continue
 
-        subject = data_subject(str(edge.fromServiceId), from_node_id=str(edge.fromOperatorId), port_id=str(edge.fromPort))
+        subject = data_subject(str(edge.fromServiceId), from_node_id=from_node, port_id=str(edge.fromPort))
 
         if str(edge.toServiceId) == bus.service_id:
-            if not edge.toOperatorId:
+            if _edge_uses_stream_payload(graph, edge):
+                input_stream_subjects[(to_node, str(edge.toPort))] = subject
                 continue
-            to_node = str(edge.toOperatorId)
             cross_in.setdefault(subject, []).append((to_node, str(edge.toPort), edge))
             continue
 
         if str(edge.fromServiceId) == bus.service_id:
-            from_node = str(edge.fromOperatorId)
+            if _edge_uses_stream_payload(graph, edge):
+                continue
             cross_out[(from_node, str(edge.fromPort))] = subject
 
     await data_router.replace_routes(
@@ -546,6 +629,7 @@ async def rebuild_routes(bus: "ServiceBus") -> None:
         intra_data_in=intra_data_in,
         cross_in_by_subject={k: tuple(v) for k, v in cross_in.items()},
         cross_out_subjects=cross_out,
+        input_stream_subjects=input_stream_subjects,
     )
     update_cross_state_bindings(bus, graph)
     await stop_unused_cross_state_watches(bus)

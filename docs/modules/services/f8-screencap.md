@@ -40,17 +40,13 @@ linux/f8screencap_service
 ### Typical Inputs / Outputs
 
 - Data inputs: none
-- Data outputs: `monitor`
+- Data outputs: `video`, `monitor`
 - Commands: `listDisplays`, `pickDisplay`, `pickWindow`, `pickRegion`
 
 ### Service State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `videoShmName` | `ro` | `true` | `false` | `string` | Legacy shared memory region name when the legacy_shm fallback is active. |
-| `videoShmEvent` | `ro` | `true` | `false` | `string` | Shared memory event name |
-| `videoTransport` | `ro` | `true` | `false` | `string / enum[zenoh, legacy_shm] / default=zenoh` | Frame transport backend |
-| `videoKey` | `ro` | `true` | `true` | `string` | Transport-specific video stream key |
 | `videoFormat` | `ro` | `true` | `false` | `string / enum[bgra32, bgr24, flow2_f16, scalar1_f32]` | Frame payload format |
 | `videoFrameSchemaVersion` | `ro` | `true` | `false` | `integer` | Frame schema version |
 | `mode` | `rw` | `true` | `false` | `string / enum[display, window, region]` | display\|window\|region |
@@ -69,14 +65,14 @@ linux/f8screencap_service
 
 ### Key Fields That Matter
 
-- `videoShmName` (Legacy Video SHM, `ro`): Legacy shared memory region name when the legacy_shm fallback is active. Schema: `string`.
-- `videoShmEvent` (Video Event, `ro`): Shared memory event name Schema: `string`.
-- `videoTransport` (Video Transport, `ro`): Frame transport backend Schema: `string / enum[zenoh, legacy_shm] / default=zenoh`.
-- `videoKey` (Video Key, `ro`): Transport-specific video stream key Schema: `string`.
 - `videoFormat` (Video Format, `ro`): Frame payload format Schema: `string / enum[bgra32, bgr24, flow2_f16, scalar1_f32]`.
 - `videoFrameSchemaVersion` (Video Schema, `ro`): Frame schema version Schema: `integer`.
 - `mode` (Mode, `rw`): display|window|region Schema: `string / enum[display, window, region]`.
 - `fps` (FPS, `rw`): Capture rate Schema: `number`.
+- `displayId` (Display ID, `ro`): 0..N-1 (see listDisplays) Schema: `integer`.
+- `windowId` (Window ID, `ro`): backend-specific (e.g. win32:hwnd:0x... or x11:win:0x...) Schema: `string`.
+- `window` (Window, `ro`): Resolved window metadata (best-effort) Schema: `object{backend, id, pid, rect, ...}`.
+- `region` (Region, `ro`): Virtual desktop coordinates Schema: `object{h, w, x, y}`.
 
 ### Service Commands
 
@@ -112,6 +108,7 @@ _None_
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
+| `video` | `true` | `true` | `object{format, frameId, height, pitch, ...}` | Captured video frame stream. |
 | `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators

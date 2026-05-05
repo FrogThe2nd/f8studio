@@ -12,7 +12,7 @@ from typing import Any, Literal
 from f8pysdk.codec import coerce_bool, coerce_float, coerce_int, coerce_str, parse_str_list
 from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
-from f8pysdk.shm.video import VIDEO_FORMAT_BGRA32
+from f8pysdk.video_transport import VIDEO_FORMAT_BGRA32
 
 from .constants import CLASSIFICATION_SCHEMA_VERSION, DETECTION_SCHEMA_VERSION
 from .model_config import ModelSpec, ModelTask, build_model_index, build_model_index_with_errors, load_model_spec
@@ -20,7 +20,6 @@ from .onnx_runtime import OnnxClassifierRuntime, OnnxYoloDetectorRuntime, OnnxYo
 from .video_frame_source import (
     LatestVideoFrameSource,
     VideoFrameSourceConfig,
-    select_video_source_transport,
     video_source_metadata,
 )
 from .vision_utils import clamp_xyxy
@@ -147,9 +146,6 @@ class _Telemetry:
         service_class: str,
         model: ModelSpec | None,
         ort_provider: str,
-        video_transport: str,
-        video_key: str,
-        shm_name: str,
         frame_id_last_seen: int | None,
         frame_id_last_processed: int | None,
     ) -> dict[str, Any]:
@@ -167,11 +163,7 @@ class _Telemetry:
                 "provider": (model.provider if model else ""),
             },
             "windowMs": int(win_ms),
-            "source": video_source_metadata(
-                video_transport=video_transport,
-                video_key=video_key,
-                shm_name=shm_name,
-            ),
+            "source": video_source_metadata(),
             "frameId": {
                 "lastSeen": int(frame_id_last_seen) if frame_id_last_seen is not None else None,
                 "lastProcessed": int(frame_id_last_processed) if frame_id_last_processed is not None else None,
@@ -222,9 +214,6 @@ class OnnxVisionServiceNode(ServiceNode):
         self._conf_override = -1.0
         self._iou_override = -1.0
         self._top_k = 5
-        self._shm_name = ""
-        self._video_transport = ""
-        self._video_key = ""
         self._enabled_classes: list[str] = []
         self._per_class_k = 0
         self._auto_download_weights = True
@@ -324,23 +313,6 @@ class OnnxVisionServiceNode(ServiceNode):
             self._top_k = coerce_int(await self.get_state_value("topK"), default=self._top_k, minimum=1, maximum=100)
             return
 
-        if name == "shmName":
-            self._shm_name = coerce_str(await self.get_state_value("shmName"), default=self._shm_name)
-            self._reset_video_source()
-            return
-
-        if name == "videoTransport":
-            self._video_transport = coerce_str(
-                await self.get_state_value("videoTransport"), default=self._video_transport
-            )
-            self._reset_video_source()
-            return
-
-        if name == "videoKey":
-            self._video_key = coerce_str(await self.get_state_value("videoKey"), default=self._video_key)
-            self._reset_video_source()
-            return
-
         if name == "enabledClasses":
             self._enabled_classes = (
                 parse_str_list(
@@ -425,16 +397,6 @@ class OnnxVisionServiceNode(ServiceNode):
         self._auto_download_weights = coerce_bool(
             await self.get_state_value("autoDownloadWeights"),
             default=bool(self._initial_state.get("autoDownloadWeights", True)),
-        )
-        self._shm_name = coerce_str(
-            await self.get_state_value("shmName"), default=str(self._initial_state.get("shmName") or "")
-        )
-        self._video_transport = coerce_str(
-            await self.get_state_value("videoTransport"),
-            default=str(self._initial_state.get("videoTransport") or ""),
-        )
-        self._video_key = coerce_str(
-            await self.get_state_value("videoKey"), default=str(self._initial_state.get("videoKey") or "")
         )
         self._config_loaded = True
         await self._publish_model_index()
@@ -546,17 +508,8 @@ class OnnxVisionServiceNode(ServiceNode):
         if self._model_index_warning:
             await self._set_last_error(self._model_index_warning)
 
-    def _resolve_shm_name(self) -> str:
-        shm = str(self._shm_name or "").strip()
-        if shm:
-            return shm
-        return ""
-
-    def _resolve_video_transport(self) -> str:
-        return str(self._video_transport or "").strip()
-
-    def _resolve_video_key(self) -> str:
-        return str(self._video_key or "").strip()
+    def _resolve_video_stream_key(self) -> str:
+        return self.input_zenoh_key("video")
 
     def _normalize_enabled_classes(self, values: list[str], *, allowed_classes: list[str] | None = None) -> list[str]:
         if allowed_classes is not None:
@@ -827,28 +780,14 @@ class OnnxVisionServiceNode(ServiceNode):
                     continue
 
                 source = self._ensure_video_source()
-                video_key = self._resolve_video_key()
-                shm_name = self._resolve_shm_name()
-                video_transport = self._resolve_video_transport()
-                selected_transport = select_video_source_transport(
-                    video_transport=video_transport,
-                    video_key=video_key,
-                    shm_name=shm_name,
-                )
-                if (selected_transport == "zenoh" and not video_key) or (
-                    selected_transport == "legacy_shm" and not shm_name
-                ):
+                video_stream_key = self._resolve_video_stream_key()
+                if not video_stream_key:
                     await asyncio.sleep(0.05)
                     continue
 
                 t0 = time.perf_counter()
                 try:
-                    frame = source.read_latest(
-                        video_transport=video_transport,
-                        video_key=video_key,
-                        shm_name=shm_name,
-                        timeout_ms=10,
-                    )
+                    frame = source.read_latest(stream_key=video_stream_key, timeout_ms=10)
                 except Exception as exc:
                     await self._record_exception(where="open_video_source", exc=exc)
                     await asyncio.sleep(0.1)

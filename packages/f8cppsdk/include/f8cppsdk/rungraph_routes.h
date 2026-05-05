@@ -22,6 +22,7 @@ struct DataRoute {
   std::string from_port;
   EdgeStrategy strategy = EdgeStrategy::kLatest;
   std::int64_t timeout_ms = 0;
+  bool stream_payload = false;
 };
 
 // Parse a rungraph JSON object and extract cross-service data routes targeting `to_service_id`.
