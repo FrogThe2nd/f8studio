@@ -6,6 +6,8 @@ Raw data:
 
 - Python/control/video benchmark: `benchmark_results/runtime_transport_bench_2026-05-05.json`
 - C++ latest-video benchmark: `benchmark_results/cpp_latest_video_bench_2026-05-05.csv`
+- C++ producer -> Python consumer BGR benchmark: `benchmark_results/cpp_python_video_bench_2026-05-05.csv`
+- C++ producer -> Python consumer BGRA benchmark: `benchmark_results/cpp_python_video_bgra_bench_2026-05-05.csv`
 
 Benchmark harness: `scripts/bench_runtime_transports.py`
 
@@ -16,14 +18,14 @@ Benchmark harness: `scripts/bench_runtime_transports.py`
 - **Zenoh 可以继续作为 runtime 控制面默认后端推进**：本机 pub/sub 延迟低，KV/state update publish 快，liveliness 服务发现非常快，符合逐步替代 NATS 控制面和服务发现的方向。
 - **NATS core 在 Python request/reply 上明显更快**：NATS request/reply p95 约 0.30-0.58 ms；当前 Zenoh query/request path p95 约 2.57-2.62 ms，吞吐约 400 req/s。生命周期控制、低频命令、状态设置可以接受；高频 RPC 不应依赖当前 Python Zenoh query path。
 - **JetStream KV 的远端 get 仍然更强**：NATS JS KV remote get 约 3.7k-5.1k ops/s，p95 约 0.26-0.35 ms；Zenoh state queryable remote get 约 400 ops/s，p95 约 2.58 ms。Zenoh 方案胜在本地 service-owned state dict 读极快，且不需要 storage plugin；但它不是 JetStream KV 的集中存储等价替代。
-- **Video 结论需要区分 Python bytes 路径和优化后的 C++ SHM 路径**：Python 1080p BGR24 下 legacy SHM roundtrip p95 0.74 ms，Zenoh Python roundtrip p95 12.34 ms，不能作为本地高帧率默认。优化后的 C++ Zenoh latest-frame path 已经达到 1080p BGR24 p95 2.03 ms、BGRA32 p95 2.14 ms，满足 `p95 < 5 ms` 的本机 video 目标，可进入 C++ video 默认候选；legacy SHM 仍应保留为 fallback 和回归基准。
+- **Video 结论需要区分 producer/consumer 语言边界**：Python 自己做 Zenoh video publish/consume 时，1080p BGR24 roundtrip p95 12.34 ms，不能作为本地高帧率默认。优化后的 C++ Zenoh latest-frame path 达到 1080p BGR24 p95 2.03 ms、BGRA32 p95 2.14 ms；更关键的是新增的 C++ producer -> Python consumer benchmark 也通过目标：BGR24 120fps p95 2.10 ms，BGRA32 120fps p95 2.36 ms，均无丢帧。legacy SHM 仍略快，并应保留为 fallback 和回归基准。
 - **NATS 不能直接承载 1080p BGR frame 默认 payload**：默认 `nats-server` 直接 publish 6,220,800 bytes 的 1080p BGR24 payload 失败，错误为 `MaxPayloadError: nats: maximum payload exceeded`。这验证了当前 “NATS 控制面 + 自制 SHM 视频数据面” 设计的历史合理性。
 
 推荐迁移策略：
 
 1. **继续 Zenoh-first 控制面**：服务发现、普通 data pub/sub、state update、service endpoint 都可以默认走 Zenoh。
 2. **保留 NATS fallback**：尤其是需要极低延迟 request/reply 或 JetStream KV 集中存储语义的路径。
-3. **C++ video 数据面可以继续推进 Zenoh 默认化，但 Python 直接 video path 不应默认**：当前优化后的 C++ Zenoh SHM path 已满足 1080p BGR/BGRA p95 < 5 ms；Python Zenoh video path 仍明显慢于 legacy SHM。迁移时应让高率 video 生产/消费优先走 C++/native latest-frame transport，并保留 legacy SHM fallback。
+3. **C++ video 数据面可以继续推进 Zenoh 默认化；Python 消费 C++ producer 已通过 1080p 测试**：当前优化后的 C++ Zenoh SHM path 已满足 1080p BGR/BGRA p95 < 5 ms；C++ producer -> Python consumer 也满足 60/120fps、0 backlog。Python 直接 producer path 仍明显慢于 legacy SHM，迁移时应让高率 video producer 优先走 C++/native latest-frame transport，并保留 legacy SHM fallback。
 
 ## Environment
 
@@ -247,6 +249,55 @@ C++ interpretation:
 - Firehose behavior confirms latest-frame semantics: the benchmark publishes 180 frames and reads one latest slot afterward; old frames are intentionally skipped rather than backlogged.
 - The public C++ subscriber still copies the delivered frame into an owned `LatestVideoFrame.payload`. A future borrowed-frame API could reduce the final consumer-side copy, but it is no longer required to pass 1080p BGR/BGRA p95 < 5 ms in this benchmark.
 
+### C++ Producer -> Python Consumer
+
+Benchmark command:
+
+```bash
+pixi run python scripts/bench_cpp_python_video.py \
+  --video-width 1920 \
+  --video-height 1080 \
+  --channels 3 \
+  --fps 60 120 \
+  --iterations 240 \
+  --warmup-iterations 10 \
+  --zenoh-shm-pool-bytes 536870912 \
+  --output-csv benchmark_results/cpp_python_video_bench_2026-05-05.csv \
+  --output-json benchmark_results/cpp_python_video_bench_2026-05-05.json
+
+pixi run python scripts/bench_cpp_python_video.py \
+  --video-width 1920 \
+  --video-height 1080 \
+  --channels 4 \
+  --fps 60 120 \
+  --iterations 240 \
+  --warmup-iterations 10 \
+  --zenoh-shm-pool-bytes 536870912 \
+  --output-csv benchmark_results/cpp_python_video_bgra_bench_2026-05-05.csv \
+  --output-json benchmark_results/cpp_python_video_bgra_bench_2026-05-05.json
+```
+
+This benchmark starts a C++ publisher process and a Python latest-frame consumer in another process. The C++ publisher writes a monotonic timestamp into the first 8 payload bytes; Python reads only those 8 bytes from the received frame to avoid adding an extra full-frame copy in the benchmark itself. The Python Zenoh subscriber still pays the current Python callback/decode cost (`bytes(sample.payload)` in the transport).
+
+| Backend | Format | Target fps | Delivered | Lost | p50 ms | p95 ms | p99 ms | Max ms |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| Legacy SHM C++ -> Python | BGR24 | 60 | 240 | 0 | 0.923 | 1.327 | 1.723 | 2.818 |
+| Zenoh C++ -> Python | BGR24 | 60 | 240 | 0 | 1.581 | 1.895 | 2.361 | 3.347 |
+| Legacy SHM C++ -> Python | BGR24 | 120 | 240 | 0 | 1.055 | 1.475 | 2.117 | 2.687 |
+| Zenoh C++ -> Python | BGR24 | 120 | 240 | 0 | 1.612 | 2.100 | 2.376 | 2.566 |
+| Legacy SHM C++ -> Python | BGRA32 | 60 | 240 | 0 | 1.215 | 1.583 | 1.795 | 2.135 |
+| Zenoh C++ -> Python | BGRA32 | 60 | 240 | 0 | 1.918 | 2.429 | 3.928 | 5.719 |
+| Legacy SHM C++ -> Python | BGRA32 | 120 | 240 | 0 | 1.114 | 1.340 | 1.493 | 1.714 |
+| Zenoh C++ -> Python | BGRA32 | 120 | 240 | 0 | 1.965 | 2.361 | 3.070 | 4.055 |
+
+Cross-language interpretation:
+
+- This is the closest benchmark so far to `f8implayer`/`f8screencap` -> Python pydl/PyStudio consumers.
+- Zenoh is consistently slower than legacy SHM by roughly 0.5-1.1 ms at p95, but still comfortably below the 5 ms target for 1080p BGR24 and BGRA32 at both 60fps and 120fps.
+- No backlog was observed in this paced producer test: every measured frame was delivered for both backends.
+- The previous poor Python Zenoh video result is therefore mainly a Python producer / Python roundtrip limitation, not a blocker for C++ video producers feeding Python consumers.
+- For pydl algorithms, the actual model preprocessing/inference time will dominate. The transport adds roughly 2 ms p95 for Zenoh in this benchmark before the algorithm touches the full frame.
+
 ## Migration Decision Matrix
 
 | Area | Replace NATS / legacy now? | Reason |
@@ -259,7 +310,8 @@ C++ interpretation:
 | Remote KV get hot path | Not as a direct JS KV replacement | Zenoh queryable remote get is much slower than JS KV. Avoid hot polling. |
 | Durable / centralized KV storage | No | Planned Zenoh model is service-owned latest state, not storage-manager-backed durability. |
 | 1080p local C++ video | Yes, with legacy fallback | Optimized Zenoh C++ latest-frame path passes p95 < 5 ms for BGR24 and BGRA32 on this host. |
-| Python direct video bytes path | No | Python Zenoh video still misses p95 < 5 ms and is much slower than legacy SHM. |
+| C++ producer -> Python consumer video | Yes, with legacy fallback | Zenoh passes 1080p BGR/BGRA 60/120fps with zero lost frames and p95 about 1.9-2.4 ms. |
+| Python producer / direct Python roundtrip video | No | Python Zenoh video still misses p95 < 5 ms and is much slower than legacy SHM. |
 | 4K local video | Not yet | Needs fresh 4K BGR/BGRA benchmark after the optimized C++ SHM path and explicit pool sizing tests. |
 | Cross-machine video | Experimental | Needs dedicated benchmark with actual topology and the optimized C++ loaned-buffer path. |
 
@@ -273,20 +325,20 @@ Keep NATS as an explicit fallback during migration, especially for:
 - JetStream KV centralized storage semantics;
 - regression testing against the previous backend.
 
-For local high-rate video, start migrating C++ producers/consumers toward Zenoh latest-frame transport by default, with legacy SHM kept as an explicit fallback. Before removing legacy SHM or making Python consumers rely on direct Zenoh bytes, still require:
+For local high-rate video, start migrating C++ producers and Python/C++ consumers toward Zenoh latest-frame transport by default, with legacy SHM kept as an explicit fallback. Before removing legacy SHM or making Python producers rely on direct Zenoh bytes, still require:
 
 1. 4K BGR/BGRA benchmark results with the optimized C++ SHM path.
 2. Real screencap/camera producer and PyStudio consumer benchmarks, not only synthetic frame loops.
 3. A clear pool-too-small error/log path for 4K and multi-stream scenarios.
 4. CPU usage and memory bandwidth measurements while video plus control traffic run concurrently.
-5. A Python/PyStudio consumption strategy that avoids the slow pure-Python large-payload path for high-rate local video.
+5. A Python/PyStudio producer strategy that avoids the slow pure-Python large-payload publish path for high-rate local video.
 
 The practical near-term architecture should therefore be:
 
 - **Zenoh default for control/state/discovery/pub-sub edges.**
 - **NATS fallback for compatibility and specific KV/RPC cases.**
 - **Zenoh C++ latest-frame default candidate for local 1080p high-rate video, with legacy SHM fallback.**
-- **Python Zenoh video remains preview unless backed by the native latest-frame path.**
+- **Python consumers can accept C++ Zenoh producers for 1080p 60/120fps; Python producers remain preview for high-rate video.**
 
 ## Follow-Up Benchmarks
 
