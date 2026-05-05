@@ -37,6 +37,23 @@ def zenoh_cmd_key(service_id: str) -> str:
     return f"{_F8_PREFIX}/svc/{sid}/cmd"
 
 
+def zenoh_command_key(service_id: str, command: str) -> str:
+    sid = ensure_token(service_id, label="service_id")
+    cmd = ensure_token(command, label="command")
+    return f"{_F8_PREFIX}/cmd/svc/{sid}/{cmd}"
+
+
+def zenoh_reply_key(service_id: str, req_id: str) -> str:
+    sid = ensure_token(service_id, label="service_id")
+    rid = ensure_token(req_id, label="req_id")
+    return f"{_F8_PREFIX}/reply/{sid}/{rid}"
+
+
+def zenoh_reply_pattern(service_id: str) -> str:
+    sid = ensure_token(service_id, label="service_id")
+    return f"{_F8_PREFIX}/reply/{sid}/**"
+
+
 def zenoh_service_liveliness_key(service_id: str) -> str:
     sid = ensure_token(service_id, label="service_id")
     return f"{_F8_PREFIX}/live/svc/{sid}"
@@ -124,6 +141,19 @@ def subject_to_zenoh_key(subject: str) -> str:
     return text.replace(".", "/")
 
 
+def subject_to_zenoh_command_key(subject: str) -> str:
+    text = str(subject or "").strip(".")
+    parts = text.split(".")
+    if len(parts) == 3 and parts[0] == "svc" and parts[2] == "cmd":
+        return zenoh_command_key(parts[1], "cmd")
+    if len(parts) == 3 and parts[0] == "svc":
+        return zenoh_command_key(parts[1], parts[2])
+    key_path = "/".join(part for part in parts if part)
+    if not key_path:
+        raise ValueError("subject must be non-empty")
+    return f"{_F8_PREFIX}/cmd/raw/{key_path}"
+
+
 def zenoh_key_to_subject(key: str) -> str:
     text = str(key or "").strip("/")
     parts = text.split("/")
@@ -140,13 +170,17 @@ def zenoh_key_to_subject(key: str) -> str:
 __all__ = [
     "kv_bucket_to_service_id",
     "subject_to_zenoh_key",
+    "subject_to_zenoh_command_key",
     "zenoh_cmd_key",
+    "zenoh_command_key",
     "zenoh_data_key",
     "zenoh_endpoint_key",
     "zenoh_key_to_kv_key",
     "zenoh_key_to_subject",
     "zenoh_kv_key",
     "zenoh_kv_pattern",
+    "zenoh_reply_key",
+    "zenoh_reply_pattern",
     "zenoh_service_liveliness_key",
     "zenoh_state_key",
     "zenoh_studio_liveliness_key",

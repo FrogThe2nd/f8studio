@@ -103,3 +103,8 @@ add_executable(f8cpp_crosslang_video_publisher EXCLUDE_FROM_ALL
   bench/crosslang_video_publisher.cpp
 )
 target_link_libraries(f8cpp_crosslang_video_publisher PRIVATE f8cppsdk)
+
+add_executable(f8cpp_crosslang_runtime_probe EXCLUDE_FROM_ALL
+  bench/crosslang_runtime_probe.cpp
+)
+target_link_libraries(f8cpp_crosslang_runtime_probe PRIVATE f8cppsdk)

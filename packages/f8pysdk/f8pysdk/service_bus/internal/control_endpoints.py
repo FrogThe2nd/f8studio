@@ -33,8 +33,8 @@ class RuntimeTransportServiceControlEndpointServer:
     Backend-neutral control endpoint server using RuntimeTransport request/serve.
 
     It reuses the canonical request handlers from the NATS fallback endpoint
-    owner so NATS micro and Zenoh queryables preserve identical wire payload
-    semantics.
+    owner so NATS micro and Zenoh command streams preserve identical wire
+    payload semantics.
     """
 
     def __init__(self, bus: Any) -> None:

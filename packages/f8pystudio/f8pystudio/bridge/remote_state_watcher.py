@@ -227,6 +227,8 @@ class RemoteStateWatcher:
 
             if (bucket, pattern) not in changed_patterns:
                 continue
+            if self._bus_backend == "zenoh":
+                continue
             # Initial sync per declared field (best-effort).
             for field in list(t.fields or ()):
                 f = str(field or "").strip()

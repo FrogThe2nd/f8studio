@@ -2383,69 +2383,73 @@ void ServiceBus::apply_rungraph_local(const json& graph_obj, std::string& error_
     }
   }
 
-  // Initial sync for cross-state targets: best-effort pull current remote values once.
-  const bool bounded_initial_sync = cfg_.bus_backend != BusBackend::kNats;
-  const auto initial_sync_started_at = std::chrono::steady_clock::now();
-  std::size_t initial_sync_hits = 0;
-  std::size_t initial_sync_misses = 0;
-  std::size_t initial_sync_skipped = 0;
-  for (std::size_t i = 0; i < cross_state_initial_reads.size(); ++i) {
-    if (bounded_initial_sync) {
-      const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-          std::chrono::steady_clock::now() - initial_sync_started_at);
-      if (elapsed >= kZenohCrossStateInitialSyncBudget) {
-        initial_sync_skipped += cross_state_initial_reads.size() - i;
-        break;
+  // Initial sync for cross-state targets: NATS legacy pulls current remote
+  // values once. Zenoh gets the current value through retained state history on
+  // the watcher itself, so it does not issue remote KV gets.
+  if (cfg_.bus_backend != BusBackend::kZenoh) {
+    const bool bounded_initial_sync = cfg_.bus_backend != BusBackend::kNats;
+    const auto initial_sync_started_at = std::chrono::steady_clock::now();
+    std::size_t initial_sync_hits = 0;
+    std::size_t initial_sync_misses = 0;
+    std::size_t initial_sync_skipped = 0;
+    for (std::size_t i = 0; i < cross_state_initial_reads.size(); ++i) {
+      if (bounded_initial_sync) {
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - initial_sync_started_at);
+        if (elapsed >= kZenohCrossStateInitialSyncBudget) {
+          initial_sync_skipped += cross_state_initial_reads.size() - i;
+          break;
+        }
       }
-    }
 
-    const _RemoteStateKey& remote_state_key = cross_state_initial_reads[i];
-    const std::string& peer = remote_state_key.peer_service_id;
-    const std::string& remote_node_id = remote_state_key.remote_node_id;
-    const std::string& remote_field = remote_state_key.remote_field;
-    std::string remote_key;
-    try {
-      remote_key = kv_key_node_state(remote_node_id, remote_field);
-    } catch (const std::exception& exc) {
-      spdlog::warn("cross-state initial key build failed serviceId={} peer={}: {}", cfg_.service_id, peer, exc.what());
-      continue;
-    } catch (...) {
-      spdlog::warn("cross-state initial key build failed serviceId={} peer={}: unknown error", cfg_.service_id, peer);
-      continue;
-    }
-
-    std::chrono::milliseconds get_timeout = kRuntimeKvGetDefaultTimeout;
-    if (bounded_initial_sync) {
-      const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-          std::chrono::steady_clock::now() - initial_sync_started_at);
-      const auto remaining = kZenohCrossStateInitialSyncBudget - elapsed;
-      if (remaining <= std::chrono::milliseconds(0)) {
-        initial_sync_skipped += cross_state_initial_reads.size() - i;
-        break;
+      const _RemoteStateKey& remote_state_key = cross_state_initial_reads[i];
+      const std::string& peer = remote_state_key.peer_service_id;
+      const std::string& remote_node_id = remote_state_key.remote_node_id;
+      const std::string& remote_field = remote_state_key.remote_field;
+      std::string remote_key;
+      try {
+        remote_key = kv_key_node_state(remote_node_id, remote_field);
+      } catch (const std::exception& exc) {
+        spdlog::warn("cross-state initial key build failed serviceId={} peer={}: {}", cfg_.service_id, peer, exc.what());
+        continue;
+      } catch (...) {
+        spdlog::warn("cross-state initial key build failed serviceId={} peer={}: unknown error", cfg_.service_id, peer);
+        continue;
       }
-      get_timeout = std::min(kZenohCrossStateInitialGetTimeout, remaining);
-    }
 
-    const auto raw = runtime_kv_get_in_bucket(kv_bucket_for_service(peer), remote_key, get_timeout);
-    if (!raw.has_value()) {
-      ++initial_sync_misses;
+      std::chrono::milliseconds get_timeout = kRuntimeKvGetDefaultTimeout;
+      if (bounded_initial_sync) {
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - initial_sync_started_at);
+        const auto remaining = kZenohCrossStateInitialSyncBudget - elapsed;
+        if (remaining <= std::chrono::milliseconds(0)) {
+          initial_sync_skipped += cross_state_initial_reads.size() - i;
+          break;
+        }
+        get_timeout = std::min(kZenohCrossStateInitialGetTimeout, remaining);
+      }
+
+      const auto raw = runtime_kv_get_in_bucket(kv_bucket_for_service(peer), remote_key, get_timeout);
+      if (!raw.has_value()) {
+        ++initial_sync_misses;
+        if (state_debug_enabled()) {
+          spdlog::info("state_debug[{}] cross_state_initial_miss peer={} key={}", cfg_.service_id, peer, remote_key);
+        }
+        continue;
+      }
+      ++initial_sync_hits;
       if (state_debug_enabled()) {
-        spdlog::info("state_debug[{}] cross_state_initial_miss peer={} key={}", cfg_.service_id, peer, remote_key);
+        spdlog::info("state_debug[{}] cross_state_initial_hit peer={} key={} bytes={}", cfg_.service_id, peer,
+                     remote_key, raw->size());
       }
-      continue;
+      handle_peer_state_payload(peer, remote_key, *raw);
     }
-    ++initial_sync_hits;
-    if (state_debug_enabled()) {
-      spdlog::info("state_debug[{}] cross_state_initial_hit peer={} key={} bytes={}", cfg_.service_id, peer,
-                   remote_key, raw->size());
+    if (bounded_initial_sync && initial_sync_skipped > 0) {
+      spdlog::info(
+          "cross-state initial sync budget exhausted serviceId={} reads={} hits={} misses={} skipped={} budgetMs={}",
+          cfg_.service_id, cross_state_initial_reads.size(), initial_sync_hits, initial_sync_misses,
+          initial_sync_skipped, kZenohCrossStateInitialSyncBudget.count());
     }
-    handle_peer_state_payload(peer, remote_key, *raw);
-  }
-  if (bounded_initial_sync && initial_sync_skipped > 0) {
-    spdlog::info(
-        "cross-state initial sync budget exhausted serviceId={} reads={} hits={} misses={} skipped={} budgetMs={}",
-        cfg_.service_id, cross_state_initial_reads.size(), initial_sync_hits, initial_sync_misses,
-        initial_sync_skipped, kZenohCrossStateInitialSyncBudget.count());
   }
 
   // Apply per-node stateValues (best-effort reconcile using rungraph meta.ts).

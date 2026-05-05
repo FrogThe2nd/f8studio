@@ -14,7 +14,11 @@ class RuntimeTransport(Protocol):
     Explicit runtime transport contract used by ServiceBus.
 
     The contract is intentionally small and concrete: pub/sub for transient data,
-    request/serve for control endpoints, and a latest-value KV facade for state.
+    request/serve for sparse control endpoints, and a latest-value state facade.
+
+    The method names retain legacy NATS wording for compatibility. The Zenoh
+    backend implements them with native command streams and retained state
+    streams, not NATS micro or hot-path queryables.
     """
 
     async def connect(self) -> None: ...

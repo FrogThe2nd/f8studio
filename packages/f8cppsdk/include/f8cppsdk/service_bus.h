@@ -34,8 +34,8 @@ namespace f8::cppsdk {
 // Minimal, protocol-compatible service bus for C++ services.
 //
 // Zenoh is the default runtime path:
-// - control endpoints use RuntimeTransport request/serve queryables
-// - service-owned state is exposed through latest-value KV/queryable semantics
+// - control endpoints use Zenoh command streams with correlated replies
+// - service-owned state is exposed through retained latest-value state streams
 // - pub/sub data edges map to the shared f8/svc/... Zenoh keyspace
 // NATS + JetStream KV + Micro remain as explicit fallback for --bus-backend nats.
 class ServiceBus final : public ServiceControlHandler {

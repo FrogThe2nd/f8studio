@@ -9,7 +9,7 @@ from f8pysdk.runtime_transport import RuntimeTransport
 from f8pysdk.transport import NatsTransport, NatsTransportConfig
 from f8pysdk.testing import InMemoryCluster, InMemoryTransport
 from f8pysdk.zenoh_config import apply_zenoh_shared_memory_config
-from f8pysdk.zenoh_naming import subject_to_zenoh_key, zenoh_key_to_kv_key, zenoh_kv_pattern
+from f8pysdk.zenoh_naming import subject_to_zenoh_key, zenoh_key_to_kv_key, zenoh_kv_key, zenoh_kv_pattern
 from f8pysdk.zenoh_transport import ZenohTransport, ZenohTransportConfig
 
 
@@ -79,6 +79,13 @@ def test_zenoh_kv_pattern_maps_node_state_wildcards_to_state_keyspace() -> None:
 def test_zenoh_transport_puts_use_latest_drop_qos() -> None:
     import zenoh  # type: ignore[import-not-found]
 
+    class _FakeRetainedPublisher:
+        def __init__(self) -> None:
+            self.put_calls: list[bytes] = []
+
+        def put(self, payload: bytes) -> None:
+            self.put_calls.append(bytes(payload))
+
     class _FakeSession:
         def __init__(self) -> None:
             self.put_calls: list[tuple[str, bytes, dict[str, Any]]] = []
@@ -88,11 +95,14 @@ def test_zenoh_transport_puts_use_latest_drop_qos() -> None:
 
     async def _run() -> None:
         session = _FakeSession()
+        retained_publisher = _FakeRetainedPublisher()
         transport = ZenohTransport(ZenohTransportConfig(service_id="svc_demo"))
         transport._session = session
 
+        key = kv_key_node_state(node_id="node", field="value")
+        transport._state_publishers[zenoh_kv_key("svc_demo", key)] = retained_publisher
         await transport.publish("svc.svc_demo.nodes.node.data.out", b"payload")
-        await transport.kv_put(kv_key_node_state(node_id="node", field="value"), b"state")
+        await transport.kv_put(key, b"state")
 
         assert session.put_calls == [
             (
@@ -104,16 +114,9 @@ def test_zenoh_transport_puts_use_latest_drop_qos() -> None:
                     "express": True,
                 },
             ),
-            (
-                "f8/svc/svc_demo/state/nodes/node/state/value",
-                b"state",
-                {
-                    "congestion_control": zenoh.CongestionControl.DROP,
-                    "priority": zenoh.Priority.REAL_TIME,
-                    "express": True,
-                },
-            ),
         ]
+        assert retained_publisher.put_calls == [b"state"]
+        assert await transport.kv_get(key) == b"state"
 
     asyncio.run(_run())
 
@@ -179,7 +182,24 @@ def test_zenoh_transport_state_watch_get_and_request_roundtrip() -> None:
                     break
                 await asyncio.sleep(0.001)
             assert seen == [(key, b"state-bytes")]
-            assert await b.kv_get_in_bucket(kv_bucket_for_service(service_a), key) == b"state-bytes"
+            assert await b.kv_get_in_bucket(kv_bucket_for_service(service_a), key) is None
+
+            late_seen: list[tuple[str, bytes]] = []
+
+            async def _on_late_state(key: str, value: bytes) -> None:
+                late_seen.append((key, value))
+
+            late_watch = await b.kv_watch_in_bucket(
+                kv_bucket_for_service(service_a),
+                key,
+                cb=_on_late_state,
+            )
+            for _ in range(1000):
+                if late_seen:
+                    break
+                await asyncio.sleep(0.001)
+            assert late_seen == [(key, b"state-bytes")]
+            await late_watch.unsubscribe()
 
             async def _handler(payload: bytes) -> bytes:
                 return b"echo:" + bytes(payload)

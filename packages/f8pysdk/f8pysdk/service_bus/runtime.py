@@ -263,6 +263,7 @@ class ServiceBus:
         self._rungraph_apply_error_once: set[str] = set()
         # Generic error dedupe for high-frequency paths (watchers/fanout/loops).
         self._error_once: set[str] = set()
+        self._state_publish_seq = 0
 
         # Process-level termination request (set via `svc.<serviceId>.terminate`).
         # Service entrypoints may `await bus.wait_terminate()` to exit gracefully.
@@ -303,6 +304,10 @@ class ServiceBus:
 
     async def wait_terminate(self) -> None:
         await self._terminate_event.wait()
+
+    def _next_state_publish_seq(self) -> int:
+        self._state_publish_seq += 1
+        return int(self._state_publish_seq)
 
     @staticmethod
     def _noop_record_emit(node_id: str, port: str, ts: int) -> None:

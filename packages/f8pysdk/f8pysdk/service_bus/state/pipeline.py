@@ -35,6 +35,7 @@ class _StateUpdate:
     source: str
     actor: str
     meta: dict[str, Any]
+    seq: int
 
 
 def origin_allows_access(origin: StateWriteOrigin, access: F8StateAccess) -> bool:
@@ -96,9 +97,10 @@ def _build_state_payload(update: _StateUpdate) -> dict[str, Any]:
         "tsMs": int(update.ts_ms),
         "source": update.source,
         "origin": update.origin.value,
+        "seq": int(update.seq),
     }
     for k, v in dict(update.meta or {}).items():
-        if k in ("value", "actor", "tsMs", "source", "origin"):
+        if k in ("value", "actor", "tsMs", "source", "origin", "seq"):
             continue
         payload[k] = v
     return payload
@@ -331,6 +333,7 @@ async def publish_state(
         source=ctx.resolved_source,
         actor=bus.service_id,
         meta=payload_meta,
+        seq=bus._next_state_publish_seq(),
     )
     payload = _build_state_payload(update)
     update.value = await validate_state_update(

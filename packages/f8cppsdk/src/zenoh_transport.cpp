@@ -1,14 +1,18 @@
 #include "f8cppsdk/zenoh_transport.h"
 
 #include "f8cppsdk/f8_naming.h"
+#include "f8cppsdk/msg_codec.h"
+#include "f8cppsdk/time_utils.h"
 #include "f8cppsdk/zenoh_naming.h"
 
 #include "zenoh_config_internal.h"
 
 #include <chrono>
 #include <condition_variable>
+#include <atomic>
 #include <mutex>
 #include <optional>
+#include <cstdint>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -20,6 +24,7 @@
 
 #if F8_WITH_ZENOH
 #include <zenoh.hxx>
+#include <zenoh/api/ext/session_ext.hxx>
 #endif
 
 namespace f8::cppsdk {
@@ -36,6 +41,115 @@ zenoh::Bytes bytes_to_payload(const RuntimeBytes& payload) {
   return zenoh::Bytes(payload);
 }
 
+struct CommandEnvelope {
+  std::string req_id;
+  std::string actor;
+  std::int64_t ts_ms = 0;
+  RuntimeBytes payload;
+  std::string reply_key;
+};
+
+struct CommandReply {
+  std::string req_id;
+  bool ok = false;
+  RuntimeBytes payload;
+  std::string error;
+};
+
+RuntimeBytes json_binary_to_bytes(const nlohmann::json& value) {
+  if (value.is_binary()) {
+    const auto& binary = value.get_binary();
+    return RuntimeBytes(binary.begin(), binary.end());
+  }
+  if (value.is_array()) {
+    RuntimeBytes out;
+    out.reserve(value.size());
+    for (const auto& item : value) {
+      out.push_back(static_cast<std::uint8_t>(item.get<int>()));
+    }
+    return out;
+  }
+  return {};
+}
+
+std::string new_runtime_req_id() {
+  static std::atomic<std::uint64_t> seq{0};
+  const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
+  return std::to_string(static_cast<long long>(ticks)) + "_" + std::to_string(seq.fetch_add(1));
+}
+
+RuntimeBytes encode_command_envelope(const CommandEnvelope& envelope) {
+  nlohmann::json payload = nlohmann::json::object();
+  payload["v"] = 1;
+  payload["reqId"] = envelope.req_id;
+  payload["actor"] = envelope.actor;
+  payload["tsMs"] = envelope.ts_ms;
+  payload["payload"] = nlohmann::json::binary(envelope.payload);
+  payload["replyKey"] = envelope.reply_key;
+  return encode_json(payload);
+}
+
+std::optional<CommandEnvelope> decode_command_envelope(const RuntimeBytes& bytes) {
+  nlohmann::json payload;
+  if (!decode_json(bytes.data(), bytes.size(), payload) || !payload.is_object()) {
+    return std::nullopt;
+  }
+  CommandEnvelope envelope;
+  if (payload.contains("reqId") && payload["reqId"].is_string()) {
+    envelope.req_id = payload["reqId"].get<std::string>();
+  }
+  if (envelope.req_id.empty()) {
+    return std::nullopt;
+  }
+  if (payload.contains("actor") && payload["actor"].is_string()) {
+    envelope.actor = payload["actor"].get<std::string>();
+  }
+  if (payload.contains("tsMs") && payload["tsMs"].is_number_integer()) {
+    envelope.ts_ms = payload["tsMs"].get<std::int64_t>();
+  }
+  if (payload.contains("payload")) {
+    envelope.payload = json_binary_to_bytes(payload["payload"]);
+  }
+  if (payload.contains("replyKey") && payload["replyKey"].is_string()) {
+    envelope.reply_key = payload["replyKey"].get<std::string>();
+  }
+  return envelope;
+}
+
+RuntimeBytes encode_command_reply(const CommandReply& reply) {
+  nlohmann::json payload = nlohmann::json::object();
+  payload["v"] = 1;
+  payload["reqId"] = reply.req_id;
+  payload["ok"] = reply.ok;
+  payload["payload"] = nlohmann::json::binary(reply.payload);
+  payload["error"] = reply.error;
+  return encode_json(payload);
+}
+
+std::optional<CommandReply> decode_command_reply(const RuntimeBytes& bytes) {
+  nlohmann::json payload;
+  if (!decode_json(bytes.data(), bytes.size(), payload) || !payload.is_object()) {
+    return std::nullopt;
+  }
+  CommandReply reply;
+  if (payload.contains("reqId") && payload["reqId"].is_string()) {
+    reply.req_id = payload["reqId"].get<std::string>();
+  }
+  if (reply.req_id.empty()) {
+    return std::nullopt;
+  }
+  if (payload.contains("ok") && payload["ok"].is_boolean()) {
+    reply.ok = payload["ok"].get<bool>();
+  }
+  if (payload.contains("payload")) {
+    reply.payload = json_binary_to_bytes(payload["payload"]);
+  }
+  if (payload.contains("error") && payload["error"].is_string()) {
+    reply.error = payload["error"].get<std::string>();
+  }
+  return reply;
+}
+
 zenoh::Session::PutOptions realtime_drop_options() {
   zenoh::Session::PutOptions options = zenoh::Session::PutOptions::create_default();
   options.congestion_control = Z_CONGESTION_CONTROL_DROP;
@@ -45,13 +159,39 @@ zenoh::Session::PutOptions realtime_drop_options() {
   return options;
 }
 
-zenoh::Session::GetOptions request_options(const RuntimeBytes& payload, std::chrono::milliseconds timeout) {
-  zenoh::Session::GetOptions options = zenoh::Session::GetOptions::create_default();
-  options.payload = bytes_to_payload(payload);
-  options.timeout_ms = static_cast<std::uint64_t>(timeout.count() > 0 ? timeout.count() : 1);
+zenoh::Session::PutOptions command_put_options() {
+  zenoh::Session::PutOptions options = zenoh::Session::PutOptions::create_default();
   options.congestion_control = Z_CONGESTION_CONTROL_BLOCK;
   options.priority = Z_PRIORITY_INTERACTIVE_HIGH;
+  options.reliability = Z_RELIABILITY_RELIABLE;
   options.is_express = true;
+  return options;
+}
+
+zenoh::ext::SessionExt::AdvancedPublisherOptions retained_state_publisher_options() {
+  zenoh::ext::SessionExt::AdvancedPublisherOptions options =
+      zenoh::ext::SessionExt::AdvancedPublisherOptions::create_default();
+  options.publisher_options.congestion_control = Z_CONGESTION_CONTROL_BLOCK;
+  options.publisher_options.priority = Z_PRIORITY_INTERACTIVE_HIGH;
+  options.publisher_options.reliability = Z_RELIABILITY_RELIABLE;
+  options.publisher_options.is_express = true;
+  auto cache = zenoh::ext::SessionExt::AdvancedPublisherOptions::CacheOptions::create_default();
+  cache.max_samples = 1;
+  cache.congestion_control = Z_CONGESTION_CONTROL_BLOCK;
+  cache.priority = Z_PRIORITY_INTERACTIVE_HIGH;
+  cache.is_express = true;
+  options.cache = cache;
+  options.publisher_detection = true;
+  return options;
+}
+
+zenoh::ext::SessionExt::AdvancedSubscriberOptions retained_state_subscriber_options() {
+  zenoh::ext::SessionExt::AdvancedSubscriberOptions options =
+      zenoh::ext::SessionExt::AdvancedSubscriberOptions::create_default();
+  auto history = zenoh::ext::SessionExt::AdvancedSubscriberOptions::HistoryOptions::create_default();
+  history.detect_late_publishers = true;
+  history.max_samples = 1;
+  options.history = history;
   return options;
 }
 
@@ -89,34 +229,35 @@ class ZenohSubscriberHandle final : public RuntimeSubscription {
   std::optional<zenoh::Subscriber<void>> subscriber_;
 };
 
-class ZenohQueryableHandle final : public RuntimeSubscription {
+class ZenohAdvancedSubscriberHandle final : public RuntimeSubscription {
  public:
-  explicit ZenohQueryableHandle(zenoh::Queryable<void>&& queryable) : queryable_(std::move(queryable)) {}
-  ~ZenohQueryableHandle() override { stop(); }
+  explicit ZenohAdvancedSubscriberHandle(zenoh::ext::AdvancedSubscriber<void>&& subscriber)
+      : subscriber_(std::move(subscriber)) {}
+  ~ZenohAdvancedSubscriberHandle() override { stop(); }
 
   void stop() override {
     std::lock_guard<std::mutex> lock(mu_);
-    if (!queryable_.has_value()) {
+    if (!subscriber_.has_value()) {
       return;
     }
     try {
-      std::move(*queryable_).undeclare();
+      std::move(*subscriber_).undeclare();
     } catch (const std::exception& exc) {
-      spdlog::warn("zenoh queryable undeclare failed: {}", exc.what());
+      spdlog::warn("zenoh advanced subscriber undeclare failed: {}", exc.what());
     } catch (...) {
-      spdlog::warn("zenoh queryable undeclare failed: unknown error");
+      spdlog::warn("zenoh advanced subscriber undeclare failed: unknown error");
     }
-    queryable_.reset();
+    subscriber_.reset();
   }
 
   bool valid() const override {
     std::lock_guard<std::mutex> lock(mu_);
-    return queryable_.has_value();
+    return subscriber_.has_value();
   }
 
  private:
   mutable std::mutex mu_;
-  std::optional<zenoh::Queryable<void>> queryable_;
+  std::optional<zenoh::ext::AdvancedSubscriber<void>> subscriber_;
 };
 #endif
 
@@ -142,12 +283,12 @@ class ZenohTransport::Impl final {
         zenoh_config.insert_json5("listen/endpoints", json_array_for_endpoints(config_.zenoh_listen));
       }
       zenoh_internal::apply_shared_memory_config(zenoh_config, config_.zenoh_shm_pool_bytes, service_id_);
+      zenoh_internal::apply_timestamping_config(zenoh_config, service_id_);
 
       auto session = std::make_unique<zenoh::Session>(zenoh::Session::open(std::move(zenoh_config)));
       session_ = std::move(session);
       liveliness_token_ =
           session_->liveliness_declare_token(zenoh::KeyExpr(zenoh_service_liveliness_key(service_id_)));
-      start_kv_queryables_locked();
       return true;
     } catch (const std::exception& exc) {
       spdlog::error("zenoh transport connect failed serviceId={}: {}", service_id_, exc.what());
@@ -239,49 +380,86 @@ class ZenohTransport::Impl final {
       std::mutex mu;
       std::condition_variable cv;
       bool done = false;
+      bool ok = false;
       std::optional<RuntimeBytes> reply;
+      std::string error;
     };
 
     auto state = std::make_shared<RequestState>();
+    std::optional<zenoh::Subscriber<void>> reply_subscriber;
     try {
+      const std::string req_id = new_runtime_req_id();
+      const std::string reply_key = zenoh_reply_key(service_id_, req_id);
+      const std::string command_key = subject_to_zenoh_command_key(subject);
+      const RuntimeBytes envelope = encode_command_envelope(
+          CommandEnvelope{req_id, service_id_, static_cast<std::int64_t>(now_ms()), payload, reply_key});
       {
         std::lock_guard<std::mutex> lock(mu_);
         if (!session_) {
           return std::nullopt;
         }
-        session_->get(
-            zenoh::KeyExpr(subject_to_zenoh_key(subject)), "",
-            [state](zenoh::Reply& reply) {
-              if (!reply.is_ok()) {
+        reply_subscriber = session_->declare_subscriber(
+            zenoh::KeyExpr(reply_key),
+            [state, req_id](zenoh::Sample& sample) {
+              const auto decoded = decode_command_reply(payload_to_bytes(sample.get_payload()));
+              if (!decoded.has_value() || decoded->req_id != req_id) {
                 return;
               }
               {
                 std::lock_guard<std::mutex> state_lock(state->mu);
-                if (!state->reply.has_value()) {
-                  state->reply = payload_to_bytes(reply.get_ok().get_payload());
-                }
-              }
-              state->cv.notify_all();
-            },
-            [state]() {
-              {
-                std::lock_guard<std::mutex> state_lock(state->mu);
                 state->done = true;
+                state->ok = decoded->ok;
+                state->reply = decoded->payload;
+                state->error = decoded->error;
               }
               state->cv.notify_all();
             },
-            request_options(payload, timeout));
+            []() {});
+        std::this_thread::sleep_for(kSubscriptionSettle);
+        session_->put(zenoh::KeyExpr(command_key), bytes_to_payload(envelope), command_put_options());
       }
 
-      std::unique_lock<std::mutex> state_lock(state->mu);
       const auto wait_timeout = timeout.count() > 0 ? timeout : std::chrono::milliseconds(1);
-      (void)state->cv.wait_for(state_lock, wait_timeout,
-                               [state]() { return state->done || state->reply.has_value(); });
-      return state->reply;
+      bool done = false;
+      bool ok = false;
+      std::optional<RuntimeBytes> reply;
+      std::string error;
+      {
+        std::unique_lock<std::mutex> state_lock(state->mu);
+        (void)state->cv.wait_for(state_lock, wait_timeout, [state]() { return state->done; });
+        done = state->done;
+        ok = state->ok;
+        reply = state->reply;
+        error = state->error;
+      }
+      if (reply_subscriber.has_value()) {
+        std::move(*reply_subscriber).undeclare();
+      }
+      if (!done || !ok) {
+        if (!error.empty()) {
+          spdlog::debug("zenoh command request returned error subject={}: {}", subject, error);
+        }
+        return std::nullopt;
+      }
+      return reply.value_or(RuntimeBytes{});
     } catch (const std::exception& exc) {
+      if (reply_subscriber.has_value()) {
+        try {
+          std::move(*reply_subscriber).undeclare();
+        } catch (const std::exception& undeclare_exc) {
+          spdlog::warn("zenoh command reply subscriber undeclare failed: {}", undeclare_exc.what());
+        }
+      }
       spdlog::error("zenoh request failed subject={}: {}", subject, exc.what());
       return std::nullopt;
     } catch (...) {
+      if (reply_subscriber.has_value()) {
+        try {
+          std::move(*reply_subscriber).undeclare();
+        } catch (...) {
+          spdlog::warn("zenoh command reply subscriber undeclare failed: unknown error");
+        }
+      }
       spdlog::error("zenoh request failed subject={}: unknown error", subject);
       return std::nullopt;
     }
@@ -300,37 +478,37 @@ class ZenohTransport::Impl final {
       return nullptr;
     }
     try {
-      auto queryable = session_->declare_queryable(
-          zenoh::KeyExpr(subject_to_zenoh_key(subject)),
-          [handler = std::move(handler)](zenoh::Query& query) {
+      auto subscriber = session_->declare_subscriber(
+          zenoh::KeyExpr(subject_to_zenoh_command_key(subject)),
+          [this, subject, handler = std::move(handler)](zenoh::Sample& sample) {
+            const auto envelope = decode_command_envelope(payload_to_bytes(sample.get_payload()));
+            if (!envelope.has_value()) {
+              spdlog::error("zenoh command envelope decode failed subject={}", subject);
+              return;
+            }
             try {
               RuntimeMessage msg;
-              msg.subject = zenoh_key_to_subject(std::string(query.get_keyexpr().as_string_view()));
-              const auto payload = query.get_payload();
-              if (payload.has_value()) {
-                msg.payload = payload_to_bytes(payload->get());
-              }
+              msg.subject = subject;
+              msg.payload = envelope->payload;
               RuntimeBytes response = handler(msg);
-              query.reply(query.get_keyexpr(), bytes_to_payload(response));
+              publish_command_reply(
+                  envelope->reply_key,
+                  CommandReply{envelope->req_id, true, response, std::string{}});
             } catch (const std::exception& exc) {
-              spdlog::error("zenoh queryable callback failed: {}", exc.what());
-              try {
-                query.reply_err(zenoh::Bytes(std::string(exc.what())));
-              } catch (const std::exception& reply_exc) {
-                spdlog::warn("zenoh queryable error reply failed: {}", reply_exc.what());
-              }
+              spdlog::error("zenoh command callback failed subject={}: {}", subject, exc.what());
+              publish_command_reply(
+                  envelope->reply_key,
+                  CommandReply{envelope->req_id, false, RuntimeBytes{}, std::string("command handler failed")});
             } catch (...) {
-              spdlog::error("zenoh queryable callback failed: unknown error");
-              try {
-                query.reply_err(zenoh::Bytes("unknown error"));
-              } catch (const std::exception& reply_exc) {
-                spdlog::warn("zenoh queryable error reply failed: {}", reply_exc.what());
-              }
+              spdlog::error("zenoh command callback failed subject={}: unknown error", subject);
+              publish_command_reply(
+                  envelope->reply_key,
+                  CommandReply{envelope->req_id, false, RuntimeBytes{}, std::string("command handler failed")});
             }
           },
           []() {});
       std::this_thread::sleep_for(kSubscriptionSettle);
-      return std::make_unique<ZenohQueryableHandle>(std::move(queryable));
+      return std::make_unique<ZenohSubscriberHandle>(std::move(subscriber));
     } catch (const std::exception& exc) {
       spdlog::error("zenoh serve failed subject={}: {}", subject, exc.what());
       return nullptr;
@@ -354,8 +532,17 @@ class ZenohTransport::Impl final {
         return false;
       }
       kv_[normalized_key] = payload;
-      session_->put(zenoh::KeyExpr(zenoh_kv_key(service_id_, normalized_key)), bytes_to_payload(payload),
-                    realtime_drop_options());
+      const std::string zenoh_key = zenoh_kv_key(service_id_, normalized_key);
+      auto publisher_it = retained_state_publishers_.find(zenoh_key);
+      if (publisher_it == retained_state_publishers_.end()) {
+        zenoh::ext::SessionExt ext(*session_);
+        auto publisher = ext.declare_advanced_publisher(zenoh::KeyExpr(zenoh_key), retained_state_publisher_options());
+        publisher_it = retained_state_publishers_
+                           .emplace(zenoh_key, std::make_unique<zenoh::ext::AdvancedPublisher>(std::move(publisher)))
+                           .first;
+        std::this_thread::sleep_for(kSubscriptionSettle);
+      }
+      publisher_it->second->put(bytes_to_payload(payload));
       return true;
     } catch (const std::exception& exc) {
       spdlog::error("zenoh kv_put failed key={}: {}", key, exc.what());
@@ -393,63 +580,12 @@ class ZenohTransport::Impl final {
       }
       return it->second;
     }
-    const std::string selector = zenoh_kv_key(peer_service_id, key);
-    struct RequestState {
-      std::mutex mu;
-      std::condition_variable cv;
-      bool done = false;
-      std::optional<RuntimeBytes> reply;
-    };
-
-    auto state = std::make_shared<RequestState>();
-    try {
-      const auto wait_timeout = timeout.count() > 0 ? timeout : std::chrono::milliseconds(1);
-      {
-        std::lock_guard<std::mutex> lock(mu_);
-        if (!session_) {
-          return std::nullopt;
-        }
-        zenoh::Session::GetOptions options = zenoh::Session::GetOptions::create_default();
-        options.timeout_ms = static_cast<std::uint64_t>(wait_timeout.count());
-        options.is_express = true;
-        session_->get(
-            zenoh::KeyExpr(selector), "",
-            [state](zenoh::Reply& reply) {
-              if (!reply.is_ok()) {
-                return;
-              }
-              {
-                std::lock_guard<std::mutex> state_lock(state->mu);
-                if (!state->reply.has_value()) {
-                  state->reply = payload_to_bytes(reply.get_ok().get_payload());
-                }
-              }
-              state->cv.notify_all();
-            },
-            [state]() {
-              {
-                std::lock_guard<std::mutex> state_lock(state->mu);
-                state->done = true;
-              }
-              state->cv.notify_all();
-            },
-            std::move(options));
-      }
-
-      std::unique_lock<std::mutex> state_lock(state->mu);
-      (void)state->cv.wait_for(state_lock, wait_timeout,
-                               [state]() { return state->done || state->reply.has_value(); });
-      return state->reply;
-    } catch (const std::exception& exc) {
-      spdlog::error("zenoh kv_get_in_bucket failed bucket={} key={}: {}", bucket, key, exc.what());
-      return std::nullopt;
-    } catch (...) {
-      spdlog::error("zenoh kv_get_in_bucket failed bucket={} key={}: unknown error", bucket, key);
-      return std::nullopt;
-    }
+    (void)timeout;
+    return std::nullopt;
 #else
     (void)bucket;
     (void)key;
+    (void)timeout;
     return std::nullopt;
 #endif
   }
@@ -464,9 +600,10 @@ class ZenohTransport::Impl final {
       return nullptr;
     }
     try {
-      auto subscriber = session_->declare_subscriber(
+      zenoh::ext::SessionExt ext(*session_);
+      auto subscriber = ext.declare_advanced_subscriber(
           zenoh::KeyExpr(key_expr),
-          [handler = std::move(handler)](zenoh::Sample& sample) {
+          [handler = std::move(handler)](const zenoh::Sample& sample) {
             try {
               const auto kv_key = zenoh_key_to_kv_key(std::string(sample.get_keyexpr().as_string_view()));
               if (!kv_key.has_value()) {
@@ -479,9 +616,9 @@ class ZenohTransport::Impl final {
               spdlog::error("zenoh kv watcher callback failed: unknown error");
             }
           },
-          []() {});
+          []() {}, retained_state_subscriber_options());
       std::this_thread::sleep_for(kSubscriptionSettle);
-      return std::make_unique<ZenohSubscriberHandle>(std::move(subscriber));
+      return std::make_unique<ZenohAdvancedSubscriberHandle>(std::move(subscriber));
     } catch (const std::exception& exc) {
       spdlog::error("zenoh kv_watch_in_bucket failed bucket={} pattern={}: {}", bucket, pattern, exc.what());
       return nullptr;
@@ -498,9 +635,31 @@ class ZenohTransport::Impl final {
   }
 
  private:
+  void publish_command_reply(const std::string& reply_key, const CommandReply& reply) {
+#if F8_WITH_ZENOH
+    if (reply_key.empty()) {
+      return;
+    }
+    try {
+      std::lock_guard<std::mutex> lock(mu_);
+      if (!session_) {
+        return;
+      }
+      session_->put(zenoh::KeyExpr(reply_key), bytes_to_payload(encode_command_reply(reply)), command_put_options());
+    } catch (const std::exception& exc) {
+      spdlog::error("zenoh command reply publish failed key={}: {}", reply_key, exc.what());
+    } catch (...) {
+      spdlog::error("zenoh command reply publish failed key={}: unknown error", reply_key);
+    }
+#else
+    (void)reply_key;
+    (void)reply;
+#endif
+  }
+
   void close_locked() {
 #if F8_WITH_ZENOH
-    internal_queryables_.clear();
+    retained_state_publishers_.clear();
     if (liveliness_token_.has_value()) {
       try {
         std::move(*liveliness_token_).undeclare();
@@ -526,62 +685,6 @@ class ZenohTransport::Impl final {
     service_id_.clear();
   }
 
-  void start_kv_queryables_locked() {
-#if F8_WITH_ZENOH
-    if (!session_) {
-      return;
-    }
-    auto state_queryable = session_->declare_queryable(
-        zenoh::KeyExpr(std::string("f8/svc/") + service_id_ + "/state/**"),
-        [this](zenoh::Query& query) { reply_to_kv_query(query); }, []() {});
-    internal_queryables_.push_back(std::make_unique<ZenohQueryableHandle>(std::move(state_queryable)));
-    std::this_thread::sleep_for(kSubscriptionSettle);
-
-    auto kv_queryable = session_->declare_queryable(
-        zenoh::KeyExpr(std::string("f8/svc/") + service_id_ + "/kv/**"),
-        [this](zenoh::Query& query) { reply_to_kv_query(query); }, []() {});
-    internal_queryables_.push_back(std::make_unique<ZenohQueryableHandle>(std::move(kv_queryable)));
-    std::this_thread::sleep_for(kSubscriptionSettle);
-#endif
-  }
-
-#if F8_WITH_ZENOH
-  void reply_to_kv_query(zenoh::Query& query) {
-    try {
-      const auto key = zenoh_key_to_kv_key(std::string(query.get_keyexpr().as_string_view()));
-      if (!key.has_value()) {
-        query.reply_err(zenoh::Bytes("invalid kv key"));
-        return;
-      }
-      std::optional<RuntimeBytes> value;
-      {
-        std::lock_guard<std::mutex> lock(mu_);
-        const auto it = kv_.find(*key);
-        if (it != kv_.end()) {
-          value = it->second;
-        }
-      }
-      if (value.has_value()) {
-        query.reply(query.get_keyexpr(), bytes_to_payload(*value));
-      }
-    } catch (const std::exception& exc) {
-      spdlog::error("zenoh kv query reply failed: {}", exc.what());
-      try {
-        query.reply_err(zenoh::Bytes(std::string(exc.what())));
-      } catch (const std::exception& reply_exc) {
-        spdlog::warn("zenoh kv query error reply failed: {}", reply_exc.what());
-      }
-    } catch (...) {
-      spdlog::error("zenoh kv query reply failed: unknown error");
-      try {
-        query.reply_err(zenoh::Bytes("unknown error"));
-      } catch (const std::exception& reply_exc) {
-        spdlog::warn("zenoh kv query error reply failed: {}", reply_exc.what());
-      }
-    }
-  }
-#endif
-
   std::mutex mu_;
   RuntimeBackendConfig config_;
   std::string service_id_;
@@ -589,7 +692,7 @@ class ZenohTransport::Impl final {
 #if F8_WITH_ZENOH
   std::unique_ptr<zenoh::Session> session_;
   std::optional<zenoh::LivelinessToken> liveliness_token_;
-  std::vector<std::unique_ptr<RuntimeSubscription>> internal_queryables_;
+  std::unordered_map<std::string, std::unique_ptr<zenoh::ext::AdvancedPublisher>> retained_state_publishers_;
 #endif
 };
 

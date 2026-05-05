@@ -32,5 +32,9 @@ inline void apply_shared_memory_config(zenoh::Config& config, std::uint64_t pool
   insert_optional_json5(config, "transport/shared_memory/pool_size", pool_json, context);
 }
 
+inline void apply_timestamping_config(zenoh::Config& config, std::string_view context) {
+  insert_optional_json5(config, "timestamping/enabled", "true", context);
+}
+
 }  // namespace f8::cppsdk::zenoh_internal
 #endif

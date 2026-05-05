@@ -96,6 +96,20 @@ std::string zenoh_cmd_key(const std::string& service_id) {
   return std::string(kF8Prefix) + "/svc/" + ensure_token(service_id, "service_id") + "/cmd";
 }
 
+std::string zenoh_command_key(const std::string& service_id, const std::string& command) {
+  return std::string(kF8Prefix) + "/cmd/svc/" + ensure_token(service_id, "service_id") + "/" +
+         ensure_token(command, "command");
+}
+
+std::string zenoh_reply_key(const std::string& service_id, const std::string& req_id) {
+  return std::string(kF8Prefix) + "/reply/" + ensure_token(service_id, "service_id") + "/" +
+         ensure_token(req_id, "req_id");
+}
+
+std::string zenoh_reply_pattern(const std::string& service_id) {
+  return std::string(kF8Prefix) + "/reply/" + ensure_token(service_id, "service_id") + "/**";
+}
+
 std::string zenoh_service_liveliness_key(const std::string& service_id) {
   return std::string(kF8Prefix) + "/live/svc/" + ensure_token(service_id, "service_id");
 }
@@ -196,6 +210,21 @@ std::string subject_to_zenoh_key(const std::string& subject) {
     }
   }
   return out;
+}
+
+std::string subject_to_zenoh_command_key(const std::string& subject) {
+  const auto parts = split_non_empty(subject, '.');
+  if (parts.size() == 3 && parts[0] == "svc" && parts[2] == "cmd") {
+    return zenoh_command_key(parts[1], "cmd");
+  }
+  if (parts.size() == 3 && parts[0] == "svc") {
+    return zenoh_command_key(parts[1], parts[2]);
+  }
+  const std::string path = join_parts(parts, '/');
+  if (path.empty()) {
+    throw std::invalid_argument("subject must be non-empty");
+  }
+  return std::string(kF8Prefix) + "/cmd/raw/" + path;
 }
 
 std::string zenoh_key_to_subject(const std::string& key) {

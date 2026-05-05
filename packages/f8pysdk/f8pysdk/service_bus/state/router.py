@@ -128,7 +128,8 @@ class StateRouter:
                     )
                     continue
 
-            initial_sync_jobs.append((peer, bucket, remote_key))
+            if self._bus.bus_backend != "zenoh":
+                initial_sync_jobs.append((peer, bucket, remote_key))
 
         if not initial_sync_jobs:
             return

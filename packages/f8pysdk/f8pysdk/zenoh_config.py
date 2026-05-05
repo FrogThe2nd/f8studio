@@ -51,6 +51,16 @@ def apply_zenoh_shared_memory_config(
     )
 
 
+def apply_zenoh_timestamping_config(config: Any, *, zenoh_module: Any, log_context: str) -> None:
+    """
+    Enable Zenoh timestamps required by advanced publisher cache/history.
+
+    Advanced retained-state publishers use Zenoh's sequencing metadata. Current
+    Zenoh versions reject advanced publishers unless timestamping is enabled.
+    """
+    _insert_optional_json5(config, zenoh_module, "timestamping/enabled", "true", log_context)
+
+
 def _insert_optional_json5(config: Any, zenoh_module: Any, key: str, value: str, log_context: str) -> None:
     try:
         config.insert_json5(str(key), str(value))
@@ -58,4 +68,4 @@ def _insert_optional_json5(config: Any, zenoh_module: Any, key: str, value: str,
         log.debug("zenoh config key unavailable context=%s key=%s", log_context, key, exc_info=exc)
 
 
-__all__ = ["apply_zenoh_shared_memory_config"]
+__all__ = ["apply_zenoh_shared_memory_config", "apply_zenoh_timestamping_config"]
