@@ -19,7 +19,7 @@ from f8pysdk.zenoh_naming import zenoh_data_key
 
 from .model_config import ModelSpec, ModelTask, build_model_index, build_model_index_with_errors, load_model_spec
 from .onnx_runtime import OnnxNeuFlowRuntime
-from .video_frame_source import LatestVideoFrameSource, VideoFrameSourceConfig
+from .video_frame_source import LatestVideoFrameSource, VideoFrameSourceConfig, video_source_metadata
 from .weights_downloader import ensure_onnx_file, onnx_file_matches_sha256
 
 
@@ -135,6 +135,8 @@ class _Telemetry:
         service_class: str,
         model: ModelSpec | None,
         ort_provider: str,
+        video_transport: str,
+        video_key: str,
         shm_name: str,
         frame_id_last_seen: int | None,
         frame_id_last_processed: int | None,
@@ -153,7 +155,11 @@ class _Telemetry:
                 "provider": (model.provider if model else ""),
             },
             "windowMs": int(win_ms),
-            "source": {"shmName": str(shm_name)},
+            "source": video_source_metadata(
+                video_transport=video_transport,
+                video_key=video_key,
+                shm_name=shm_name,
+            ),
             "frameId": {
                 "lastSeen": int(frame_id_last_seen) if frame_id_last_seen is not None else None,
                 "lastProcessed": int(frame_id_last_processed) if frame_id_last_processed is not None else None,
@@ -830,6 +836,7 @@ class OnnxOptflowServiceNode(ServiceNode):
                 await self._sync_input_source_if_missing()
                 input_video_key = self._resolve_input_video_key()
                 input_shm_name = self._resolve_input_shm_name()
+                input_video_transport = self._resolve_input_video_transport()
                 if not input_video_key and not input_shm_name:
                     await asyncio.sleep(0.05)
                     continue
@@ -846,7 +853,7 @@ class OnnxOptflowServiceNode(ServiceNode):
                 t0 = time.perf_counter()
                 try:
                     frame = source.read_latest(
-                        video_transport=self._resolve_input_video_transport(),
+                        video_transport=input_video_transport,
                         video_key=input_video_key,
                         shm_name=input_shm_name,
                         timeout_ms=10,

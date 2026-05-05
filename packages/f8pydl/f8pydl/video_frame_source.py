@@ -107,6 +107,23 @@ def select_video_source_transport(*, video_transport: str, video_key: str, shm_n
     return "zenoh"
 
 
+def video_source_metadata(*, video_transport: str, video_key: str, shm_name: str) -> dict[str, str]:
+    selected = select_video_source_transport(
+        video_transport=video_transport,
+        video_key=video_key,
+        shm_name=shm_name,
+    )
+    if selected == "zenoh":
+        return {
+            "videoTransport": "zenoh",
+            "videoKey": str(video_key or "").strip(),
+        }
+    return {
+        "videoTransport": "legacy_shm",
+        "shmName": str(shm_name or "").strip(),
+    }
+
+
 class LatestVideoFrameSource:
     def __init__(self, *, config: VideoFrameSourceConfig) -> None:
         self._config = config

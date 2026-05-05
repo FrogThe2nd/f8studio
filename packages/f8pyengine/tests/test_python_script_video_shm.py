@@ -119,7 +119,9 @@ class PythonScriptVideoShmTests(unittest.IsolatedAsyncioTestCase):
             "        'rawLen': len(pkt.get('raw') or b''),\n"
             "        'transport': str(meta.get('transport') or ''),\n"
             "        'videoKey': str(meta.get('videoKey') or ''),\n"
+            "        'hasShmName': 'shmName' in meta,\n"
             "        'itemTransport': str((items[0] if items else {}).get('transport') or ''),\n"
+            "        'itemHasShmName': 'shmName' in (items[0] if items else {}),\n"
             "    }}}\n"
         )
 
@@ -140,7 +142,9 @@ class PythonScriptVideoShmTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(int(out.get("rawLen") or 0), len(payload))
             self.assertEqual(str(out.get("transport") or ""), "zenoh")
             self.assertEqual(str(out.get("videoKey") or ""), "f8/test/video")
+            self.assertFalse(bool(out.get("hasShmName")))
             self.assertEqual(str(out.get("itemTransport") or ""), "zenoh")
+            self.assertFalse(bool(out.get("itemHasShmName")))
             self.assertEqual(opened[0][0], "f8/test/video")
             await node.close()
 

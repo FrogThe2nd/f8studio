@@ -356,7 +356,9 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
             "        'rawLen': len(pkt.get('raw') or b''),\n"
             "        'transport': str(meta.get('transport') or ''),\n"
             "        'videoKey': str(meta.get('videoKey') or ''),\n"
+            "        'hasShmName': 'shmName' in meta,\n"
             "        'itemTransport': str((items[0] if items else {}).get('transport') or ''),\n"
+            "        'itemHasShmName': 'shmName' in (items[0] if items else {}),\n"
             "    }\n"
         )
 
@@ -376,7 +378,9 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(int((out_result or {}).get("rawLen") or 0), len(payload))
             self.assertEqual(str((out_result or {}).get("transport") or ""), "zenoh")
             self.assertEqual(str((out_result or {}).get("videoKey") or ""), "f8/test/pyscript/video")
+            self.assertFalse(bool((out_result or {}).get("hasShmName")))
             self.assertEqual(str((out_result or {}).get("itemTransport") or ""), "zenoh")
+            self.assertFalse(bool((out_result or {}).get("itemHasShmName")))
             self.assertEqual(opened[0][0], "f8/test/pyscript/video")
             await node.close()
 

@@ -148,6 +148,28 @@ class _LatestVideoSubscription:
     error_count: int = 0
 
 
+def _video_subscription_source_metadata(sub: _LatestVideoSubscription) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "key": sub.key,
+        "transport": sub.video_transport,
+        "videoTransport": sub.video_transport,
+    }
+    if sub.video_transport == VIDEO_TRANSPORT_LEGACY_SHM:
+        metadata["shmName"] = sub.shm_name
+    else:
+        metadata["videoKey"] = sub.video_key
+    return metadata
+
+
+def _video_subscription_status_metadata(sub: _LatestVideoSubscription) -> dict[str, Any]:
+    metadata = _video_subscription_source_metadata(sub)
+    metadata["decodeMode"] = sub.decode_mode
+    metadata["hasPacket"] = sub.latest_packet is not None
+    metadata["lastFrameId"] = int(sub.last_frame_id)
+    metadata["errorCount"] = int(sub.error_count)
+    return metadata
+
+
 @dataclass(slots=True)
 class PyScriptPermissionContext:
     local_exec_granted: bool
@@ -282,19 +304,7 @@ class PyScriptServiceContext:
             sub = self._node._video_subscriptions.get(key_name)
             if sub is None:
                 continue
-            items.append(
-                {
-                    "key": sub.key,
-                    "transport": sub.video_transport,
-                    "videoTransport": sub.video_transport,
-                    "videoKey": sub.video_key,
-                    "shmName": sub.shm_name,
-                    "decodeMode": sub.decode_mode,
-                    "hasPacket": sub.latest_packet is not None,
-                    "lastFrameId": int(sub.last_frame_id),
-                    "errorCount": int(sub.error_count),
-                }
-            )
+            items.append(_video_subscription_status_metadata(sub))
         return items
 
     async def exec_local(
@@ -1030,12 +1040,8 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
                             "header": header_dict,
                             "raw": raw,
                             "decoded": decoded,
-                            "meta": {
-                                "key": sub.key,
-                                "transport": sub.video_transport,
-                                "videoTransport": sub.video_transport,
-                                "videoKey": sub.video_key,
-                                "shmName": sub.shm_name,
+                            "meta": _video_subscription_source_metadata(sub)
+                            | {
                                 "decodeMode": sub.decode_mode,
                                 "lastUpdateMs": self._now_ms(),
                             },
