@@ -78,14 +78,10 @@ int main(int argc, char** argv) {
     std::cerr << runtime_error << "\n";
     return 2;
   }
-  if (f8::cppsdk::should_warn_ignored_nats_url(result, runtime_backend)) {
-    spdlog::warn("--nats-url is deprecated and ignored by the Zenoh runtime");
-  }
 
   f8::cvkit::tracking::TrackingService::Config cfg;
   cfg.service_id = service_id;
   cfg.runtime_backend = runtime_backend;
-  cfg.nats_url = runtime_backend.nats_url;
   cfg.shm_name = result["shm-name"].as<std::string>();
   cfg.tracker_kind = result["tracker-kind"].as<std::string>();
   cfg.model_dir = result["model-dir"].as<std::string>();

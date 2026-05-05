@@ -68,7 +68,6 @@ class F8Build(ConanFile):
 
     def requirements(self):
         # core runtime dependencies
-        self.requires("cnats/3.11.0")
         self.requires("nlohmann_json/3.12.0")
         self.requires("openssl/3.6.0")
         self.requires("cxxopts/3.3.1")

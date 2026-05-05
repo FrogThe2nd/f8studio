@@ -56,12 +56,6 @@ class RuntimeSessionControllerMixin:
             return "mem"
         return "zenoh"
 
-    def _runtime_nats_url(self) -> str:
-        cfg = self._cfg
-        if cfg is None:
-            return "nats://127.0.0.1:4222"
-        return str(cfg.nats_url).strip() or "nats://127.0.0.1:4222"
-
     def _runtime_zenoh_config_path(self) -> str | None:
         cfg = self._cfg
         if cfg is None:
@@ -294,11 +288,9 @@ class RuntimeSessionControllerMixin:
         self._monitor_center.update_service_status(service_id=str(service_id), ready=False)
 
     async def _start_after_preflight_async(self) -> str | None:
-        nats_url = self._runtime_nats_url()
         try:
             cfg = PyStudioServiceConfig(
                 bus_backend=self._runtime_bus_backend(),
-                nats_url=nats_url,
                 zenoh_config_path=self._runtime_zenoh_config_path(),
                 zenoh_connect=self._runtime_zenoh_connect(),
                 zenoh_listen=self._runtime_zenoh_listen(),
@@ -344,7 +336,6 @@ class RuntimeSessionControllerMixin:
 
             try:
                 self._remote_state_watcher = RemoteStateWatcher(
-                    nats_url=nats_url,
                     studio_service_id=self.studio_service_id,
                     on_state=_on_state,
                     bus_backend=self._runtime_bus_backend(),

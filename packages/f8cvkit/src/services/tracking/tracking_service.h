@@ -51,7 +51,6 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
     std::string service_id;
     std::string service_class = "f8.cvkit.tracking";
     f8::cppsdk::RuntimeBackendConfig runtime_backend;
-    std::string nats_url = f8::cppsdk::kDefaultNatsUrl;
     std::string shm_name;
     std::string tracker_kind = "csrt";
     std::string model_dir = "models";

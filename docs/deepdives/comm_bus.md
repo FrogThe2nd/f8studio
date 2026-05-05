@@ -1,6 +1,6 @@
 # Comm Bus Deep Dive: Zenoh Runtime, Data Streams, and State Sync
 
-> Current status: the runtime is Zenoh-first. NATS Core, JetStream KV, and NATS Micro remain as explicit fallback implementations for `--bus-backend nats`; older NATS-specific terminology below should be read as the fallback mapping, not the default runtime path.
+> Current status: the runtime is Zenoh-only for production paths. Local tests may still use the in-memory backend where supported, but service discovery, control, state propagation, pub/sub data, and media streams are designed around Zenoh.
 
 This document explains the **Comm Bus** design shared across:
 
@@ -31,12 +31,12 @@ We split “communication” into three planes, each optimized for a different c
 - **Data Plane (high-throughput stream):** Zenoh pub/sub and latest-frame/latest-chunk transports
   Goal: throughput + low latency + fan-out.
   Contract: samples may be dropped or skipped; latest-frame consumers can skip stale frames rather than building backlog.
-- **State Plane (reliable, inspectable state):** service-owned latest state with Zenoh queryables and update publishes
+- **State Plane (reliable, inspectable state):** service-owned latest state with retained Zenoh state publishes
   Goal: “current value”, watchable, readable on demand, editable from Studio.
-  Contract: “register-like” state keys with a strict write pipeline and topology constraints. NATS fallback maps this to JetStream KV.
-- **Control Plane (request/reply, rejectable):** Zenoh queryables
+  Contract: “register-like” state keys with a strict write pipeline and topology constraints.
+- **Control Plane (request/reply, rejectable):** Zenoh command streams with correlated replies
   Goal: deploy/control operations must validate and **return a decision**.
-  Examples: `set_rungraph`, `set_state`, `activate/deactivate/status/terminate`, `cmd`. NATS fallback maps this to NATS Micro endpoints.
+  Examples: `set_rungraph`, `set_state`, `activate/deactivate/status/terminate`, `cmd`.
 
 ### 2) Topology constraints instead of general conflict merging
 
@@ -64,7 +64,8 @@ flowchart TB
   Studio["PyStudio (UI)"]:::studio
   subgraph Zenoh["Zenoh Runtime Fabric"]
     PubSub["Pub/Sub<br/>(data + state updates)"]:::zenoh
-    Query["Queryables<br/>(state + control endpoints)"]:::zenoh
+    Retained["Retained State<br/>(latest values)"]:::zenoh
+    Command["Command Streams<br/>(correlated replies)"]:::zenoh
     Live["Liveliness<br/>(service/studio presence)"]:::zenoh
   end
 
@@ -78,14 +79,14 @@ flowchart TB
   end
 
   %% Control plane
-  Studio -->|"deploy/control<br/>f8/svc/{serviceId}/endpoint/{endpoint}"| Query
-  Query -->|"set_rungraph / set_state / status / ..."| BusA
+  Studio -->|"deploy/control<br/>f8/cmd/svc/{serviceId}/{command}"| Command
+  Command -->|"set_rungraph / set_state / status / ..."| BusA
 
   %% State plane
-  BusA <-->|"query local current state<br/>+ publish update keys"| Query
+  BusA -->|"publish retained state"| Retained
   BusA -->|"state updates<br/>f8/svc/{serviceId}/state/..."| PubSub
-  BusB -->|"query/watch peer state<br/>(cross-service binding)"| Query
-  Studio -->|"query/watch state<br/>(state/properties panels)"| Query
+  BusB -->|"watch retained peer state<br/>(cross-service binding)"| Retained
+  Studio -->|"watch retained state<br/>(state/properties panels)"| Retained
 
   %% Data plane
   BusA -->|"publish<br/>f8/svc/{serviceId}/nodes/{nodeId}/data/{portId}"| PubSub
@@ -110,8 +111,8 @@ flowchart TB
 flowchart LR
   S1["f8/svc/{serviceId}/nodes/{nodeId}/data/{portId}"] -->|"Data Plane<br/>fan-out key"| D[Data]
   S2["f8/svc/{serviceId}/state/nodes/{nodeId}/state/{field...}"] -->|"State Plane<br/>update key"| S[State Update]
-  S3["f8/svc/{serviceId}/endpoint/{endpoint}"] -->|"Control Plane<br/>queryable endpoint"| E[Endpoint]
-  S4["f8/svc/{serviceId}/cmd"] -->|"Control Plane<br/>command stream"| C[Cmd]
+  S3["f8/cmd/svc/{serviceId}/{command}"] -->|"Control Plane<br/>command stream"| C[Cmd]
+  S4["f8/reply/{clientServiceId}/{reqId}"] -->|"Control Plane<br/>reply stream"| R[Reply]
   S5["f8/live/svc/{serviceId}"] -->|"Liveliness<br/>service presence"| L[Live]
 ```
 
@@ -119,19 +120,6 @@ Cross-language implementations (must stay consistent):
 
 - Python: `packages/f8pysdk/f8pysdk/zenoh_naming.py`
 - C++: `packages/f8cppsdk/include/f8cppsdk/zenoh_naming.h`
-
-### NATS fallback mapping
-
-When `--bus-backend nats` is selected explicitly, the same runtime API maps to:
-
-- data subjects: `svc.{serviceId}.nodes.{nodeId}.data.{portId}`
-- micro endpoints: `svc.{serviceId}.{endpoint}`
-- command subject: `svc.{serviceId}.cmd`
-- per-service JetStream KV bucket: `svc_{serviceId}`
-
-The fallback naming helpers live in `packages/f8pysdk/f8pysdk/nats_naming.py`.
-
----
 
 ## Data Plane (High-Throughput Message Fan-Out)
 
@@ -184,12 +172,12 @@ sequenceDiagram
 
 ### State is service-owned current value, not external storage
 
-Each service owns its latest state in local runtime memory and exposes it through Zenoh queryables plus update publishes. For any state field, the runtime transport API still provides:
+Each service owns its latest state in local runtime memory and exposes it through retained Zenoh state updates. For any state field, the runtime transport API still provides:
 
 - `kv_get`: fetch current value (initial sync, reconnect, UI open)
 - `kv_watch`: subscribe to updates (real-time UI + cross-service bindings)
 
-The `kv_*` names are the stable transport-neutral API. Zenoh implements them with service-owned current state, queryables, and state-update key expressions; the explicit NATS fallback implements them with JetStream KV.
+The `kv_*` names are legacy facade names over the retained-state runtime. They do not imply an external database.
 
 ### State write pipeline (Python reference implementation)
 
@@ -199,7 +187,7 @@ The `publish_state(...)` pipeline (see `packages/f8pysdk/f8pysdk/service_bus/dom
 2. **Node validation hook** via `node.validate_state(...)` (accept/transform/reject with `StateWriteError`)
 3. **Value normalization** (`coerce_state_value(...)`) to keep KV JSON-friendly (and stable across languages)
 4. **Value dedupe** (identical values are not re-published)
-5. **Persist/update current state**: `kv_put(nodes.{nodeId}.state.{field})`
+5. **Persist/update current state for the service lifetime**: publish retained state for `nodes.{nodeId}.state.{field}`
 6. **Immediate local apply** (critical UX): do not wait for a watch round-trip; apply locally right away:
    - `node.on_state(...)`
    - intra-service state fanout (state edges)
@@ -326,7 +314,7 @@ then **no**: our state system is not a general CRDT framework.
 
 Why:
 
-1. We rely on **Zenoh queryables + update publishes** as the default transport and per-service current-state substrate.
+1. We rely on **Zenoh retained state publishes + update subscriptions** as the transport and per-service current-state substrate.
 2. Updates are **whole-value writes** to service-owned state keys, not a CRDT operation set with a merge function.
 3. We avoid conflicts primarily through **rungraph constraints** (no cycles, single-upstream), rather than general merge.
 
@@ -335,7 +323,7 @@ What is “CRDT-like”:
 - Each state field behaves similarly to an **LWW register** in the sense that observers converge to the service-owned “current value”.
 - Cross-state binding adds **out-of-order guards** to improve stability for downstream consumers.
 
-More accurate description: a distributed state replication system with **service-owned latest state as the source of truth**, plus rungraph-enforced topology constraints and watch-based synchronization. The NATS fallback maps the same API to JetStream KV.
+More accurate description: a distributed state replication system with **service-owned latest state as the source of truth**, plus rungraph-enforced topology constraints and watch-based synchronization.
 
 ---
 
@@ -381,7 +369,7 @@ Solution stack:
 Solution:
 
 - State watchers handle missing peer services by retrying in the background rather than failing permanently.
-  Zenoh uses peer queryables/update subscriptions; the NATS fallback uses bucket watches.
+  Zenoh uses retained state history/update subscriptions so late subscribers can receive current values.
 
 ### 6) Exceptions in high-frequency paths
 
@@ -424,7 +412,7 @@ flowchart TB
   WF["workflow/ (rungraph + cross-state + lifecycle)"]
   DOM["domain/ (state write policy/pipeline)"]
   ROUTE["routing/ (data flow + buffers + subscriptions)"]
-  AD["adapters/ (infra integration, e.g. Zenoh/NATS fallback)"]
+  AD["adapters/ (Zenoh infra integration)"]
 
   API --> WF
   API --> DOM
@@ -452,17 +440,14 @@ flowchart TB
 - Rungraph apply (validate + rebuild + init sync): `packages/f8pysdk/f8pysdk/service_bus/workflow/rungraph.py`
 - Transport interface: `packages/f8pysdk/f8pysdk/runtime_transport.py`
 - Zenoh transport: `packages/f8pysdk/f8pysdk/zenoh_transport.py`
-- NATS fallback transport: `packages/f8pysdk/f8pysdk/nats_transport.py`
 - Naming (Zenoh keys): `packages/f8pysdk/f8pysdk/zenoh_naming.py`
 - Control endpoints: `packages/f8pysdk/f8pysdk/service_bus/internal/control_endpoints.py`
 
 ### C++ (`f8cppsdk`)
 
 - Zenoh naming (must match Python): `packages/f8cppsdk/include/f8cppsdk/zenoh_naming.h`
-- NATS fallback naming: `packages/f8cppsdk/src/f8_naming.cpp`
-- State writes + ready flag: `packages/f8cppsdk/src/state_kv.cpp`
 - Data publish: `packages/f8cppsdk/src/data_bus.cpp`
-- Control plane (Zenoh queryables + NATS fallback endpoints): `packages/f8cppsdk/src/service_bus.cpp`
+- Control plane, state writes, and ready flag: `packages/f8cppsdk/src/service_bus.cpp`
 - Rungraph + cross-state logic: `packages/f8cppsdk/src/service_bus.cpp`
 
 ### Studio (`f8pystudio`)
@@ -511,11 +496,11 @@ Multiple receivers subscribe to the same subject.
 ### How can users view and edit state?
 
 - View: Studio watches service state updates via `RemoteStateWatcher`.
-- Edit: Studio queries `f8/svc/{serviceId}/endpoint/set_state`. The runtime validates and either rejects or updates current state, then applies locally immediately.
+- Edit: Studio sends a correlated command to `f8/cmd/svc/{serviceId}/set_state`. The runtime validates and either rejects or updates current state, then applies locally immediately.
 
 ### Is this a “decentralized CRDT on Zenoh state”?
 
-Not in the standard CRDT sense. Each service owns its current state and publishes/query-serves it through Zenoh; we avoid multi-writer merges via rungraph topology constraints. The explicit NATS fallback maps the same API to JetStream KV.
+Not in the standard CRDT sense. Each service owns its current state and publishes retained updates through Zenoh; we avoid multi-writer merges via rungraph topology constraints.
 
 ### What are the main hard parts in this design?
 

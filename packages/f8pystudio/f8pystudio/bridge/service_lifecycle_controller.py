@@ -20,9 +20,6 @@ class ServiceLifecycleControllerMixin:
     def _runtime_bus_backend(self) -> BusBackend:
         return "zenoh"
 
-    def _runtime_nats_url(self) -> str:
-        return "nats://127.0.0.1:4222"
-
     def _runtime_zenoh_config_path(self) -> str | None:
         return None
 
@@ -297,7 +294,6 @@ class ServiceLifecycleControllerMixin:
                         service_class=str(svc_class),
                         service_id=sid,
                         bus_backend=self._runtime_bus_backend(),
-                        nats_url=self._runtime_nats_url(),
                         zenoh_config_path=self._runtime_zenoh_config_path(),
                         zenoh_connect=self._runtime_zenoh_connect(),
                         zenoh_listen=self._runtime_zenoh_listen(),

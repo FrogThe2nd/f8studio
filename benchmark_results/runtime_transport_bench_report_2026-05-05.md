@@ -1,5 +1,7 @@
 # Runtime Transport Benchmark Report: NATS / JetStream KV / Legacy SHM / Zenoh
 
+> Superseded migration note, May 5, 2026: after this benchmark the runtime migration target changed to Zenoh-only. The NATS fallback recommendations below are historical context for the benchmark comparison, not the current architecture direction.
+
 Date: 2026-05-05
 
 Raw data:

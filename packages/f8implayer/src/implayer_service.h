@@ -41,7 +41,6 @@ class ImPlayerService final : public f8::cppsdk::LifecycleNode,
     std::string service_id;
     std::string service_class = "f8.implayer";
     f8::cppsdk::RuntimeBackendConfig runtime_backend;
-    std::string nats_url = f8::cppsdk::kDefaultNatsUrl;
     f8::cppsdk::VideoTransportBackend video_backend = f8::cppsdk::VideoTransportBackend::kAuto;
 
     std::size_t video_shm_bytes = f8::cppsdk::shm::kDefaultVideoShmBytes;

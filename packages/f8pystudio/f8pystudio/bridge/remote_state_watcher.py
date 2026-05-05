@@ -71,16 +71,15 @@ class WatchTarget:
 
 class RemoteStateWatcher:
     """
-    Studio-side remote KV watcher.
+    Studio-side remote state watcher.
 
-    Watches per-service KV buckets for node state updates and reports them via a
+    Watches per-service retained state updates and reports them via a
     callback so the UI can reflect runtime state without installing a monitor node.
     """
 
     def __init__(
         self,
         *,
-        nats_url: str,
         studio_service_id: str,
         on_state: Callable[[str, str, str, Any, int, dict[str, Any]], Awaitable[None] | None],
         bus_backend: BusBackend = "zenoh",
@@ -89,7 +88,6 @@ class RemoteStateWatcher:
         zenoh_listen: tuple[str, ...] = (),
         zenoh_shm_pool_bytes: int = 256 * 1024 * 1024,
     ) -> None:
-        self._nats_url = str(nats_url or "").strip() or "nats://127.0.0.1:4222"
         self._bus_backend = bus_backend
         self._zenoh_config_path = str(zenoh_config_path).strip() if zenoh_config_path else None
         self._zenoh_connect = tuple(str(item).strip() for item in zenoh_connect if str(item).strip())
@@ -123,7 +121,7 @@ class RemoteStateWatcher:
                 kv_bucket=kv_bucket_for_service(self._studio_service_id),
             )
         if self._bus_backend != "zenoh":
-            raise ValueError("NATS remote state watcher has been removed; use bus_backend='zenoh' or 'mem'.")
+            raise ValueError("Unsupported remote state watcher backend; use bus_backend='zenoh' or 'mem'.")
         return ZenohTransport(
             ZenohTransportConfig(
                 service_id=self._studio_service_id,

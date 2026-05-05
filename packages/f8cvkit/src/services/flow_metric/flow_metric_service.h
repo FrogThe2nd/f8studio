@@ -26,7 +26,6 @@ class FlowMetricService final : public f8::cppsdk::LifecycleNode,
     std::string service_id;
     std::string service_class = "f8.cvkit.flowmetric";
     f8::cppsdk::RuntimeBackendConfig runtime_backend;
-    std::string nats_url = f8::cppsdk::kDefaultNatsUrl;
   };
 
   explicit FlowMetricService(Config cfg);

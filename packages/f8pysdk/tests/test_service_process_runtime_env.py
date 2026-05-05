@@ -42,7 +42,6 @@ def _write_service_entry(tmp_path: Path) -> Path:
                 "  command: python",
                 "  args: ['-m', 'f8_test_service']",
                 "  env:",
-                "    F8_NATS_URL: nats://launch.invalid:4222",
                 "    F8_ZENOH_CONNECT: tcp/launch-stale",
                 "  workdir: .",
                 "",
@@ -53,7 +52,7 @@ def _write_service_entry(tmp_path: Path) -> Path:
     return entry_path
 
 
-def test_process_manager_zenoh_env_does_not_inherit_nats_url(
+def test_process_manager_zenoh_env_installs_zenoh_values(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -65,7 +64,6 @@ def test_process_manager_zenoh_env_does_not_inherit_nats_url(
         captured["env"] = kwargs["env"]
         return _FakeProcess()
 
-    monkeypatch.setenv("F8_NATS_URL", "nats://parent.invalid:4222")
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
 
     manager = ServiceProcessManager(_Catalog(entry_path))
@@ -74,7 +72,6 @@ def test_process_manager_zenoh_env_does_not_inherit_nats_url(
             service_class="f8.test",
             service_id="svc1",
             bus_backend="zenoh",
-            nats_url="nats://ignored.invalid:4222",
             zenoh_config_path="/tmp/zenoh.json5",
             zenoh_connect=("tcp/127.0.0.1:7447",),
             zenoh_listen=("tcp/0.0.0.0:0",),
@@ -87,8 +84,6 @@ def test_process_manager_zenoh_env_does_not_inherit_nats_url(
     env = captured["env"]
     assert "--bus-backend" in cmd
     assert cmd[cmd.index("--bus-backend") + 1] == "zenoh"
-    assert "--nats-url" not in cmd
-    assert "F8_NATS_URL" not in env
     assert env["F8_BUS_BACKEND"] == "zenoh"
     assert env["F8_ZENOH_CONFIG"] == "/tmp/zenoh.json5"
     assert env["F8_ZENOH_CONNECT"] == "tcp/127.0.0.1:7447"
@@ -96,20 +91,19 @@ def test_process_manager_zenoh_env_does_not_inherit_nats_url(
     assert env["F8_ZENOH_SHM_POOL_BYTES"] == "123456"
 
 
-def test_process_manager_rejects_removed_nats_backend(
+def test_process_manager_rejects_invalid_backend(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     entry_path = _write_service_entry(tmp_path)
 
     manager = ServiceProcessManager(_Catalog(entry_path))
-    with pytest.raises(ValueError, match="NATS process backend has been removed"):
+    with pytest.raises(ValueError, match="Invalid process bus_backend"):
         manager.start(
             ServiceProcessConfig(
                 service_class="f8.test",
                 service_id="svc1",
-                bus_backend="nats",
-                nats_url="nats://127.0.0.1:4333",
+                bus_backend="invalid",
                 purge_kv_bucket_on_start=False,
             )
         )
@@ -127,7 +121,6 @@ def test_process_manager_mem_env_clears_transport_specific_values(
         captured["env"] = kwargs["env"]
         return _FakeProcess()
 
-    monkeypatch.setenv("F8_NATS_URL", "nats://parent.invalid:4222")
     monkeypatch.setenv("F8_ZENOH_CONFIG", "/tmp/stale.json5")
     monkeypatch.setenv("F8_ZENOH_CONNECT", "tcp/parent-stale")
     monkeypatch.setenv("F8_ZENOH_LISTEN", "tcp/parent-listen-stale")
@@ -140,7 +133,6 @@ def test_process_manager_mem_env_clears_transport_specific_values(
             service_class="f8.test",
             service_id="svc1",
             bus_backend="mem",
-            nats_url="nats://ignored.invalid:4222",
             zenoh_config_path="/tmp/ignored.json5",
             zenoh_connect=("tcp/ignored",),
             zenoh_listen=("tcp/ignored-listen",),
@@ -153,13 +145,11 @@ def test_process_manager_mem_env_clears_transport_specific_values(
     env = captured["env"]
     assert "--bus-backend" in cmd
     assert cmd[cmd.index("--bus-backend") + 1] == "mem"
-    assert "--nats-url" not in cmd
     assert "--zenoh-config" not in cmd
     assert "--zenoh-connect" not in cmd
     assert "--zenoh-listen" not in cmd
     assert "--zenoh-shm-pool-bytes" not in cmd
     assert env["F8_BUS_BACKEND"] == "mem"
-    assert "F8_NATS_URL" not in env
     assert "F8_ZENOH_CONFIG" not in env
     assert "F8_ZENOH_CONNECT" not in env
     assert "F8_ZENOH_LISTEN" not in env

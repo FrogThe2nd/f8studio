@@ -71,9 +71,6 @@ int main(int argc, char** argv) {
     std::cerr << runtime_error << "\n";
     return 2;
   }
-  if (f8::cppsdk::should_warn_ignored_nats_url(result, runtime_backend)) {
-    spdlog::warn("--nats-url is deprecated and ignored by the Zenoh runtime");
-  }
   f8::cppsdk::VideoTransportBackend video_backend = f8::cppsdk::VideoTransportBackend::kAuto;
   if (!f8::cppsdk::read_video_transport_backend_option(result, video_backend, runtime_error)) {
     std::cerr << runtime_error << "\n";
@@ -83,7 +80,6 @@ int main(int argc, char** argv) {
   f8::screencap::ScreenCapService::Config cfg;
   cfg.service_id = service_id;
   cfg.runtime_backend = runtime_backend;
-  cfg.nats_url = runtime_backend.nats_url;
   cfg.video_backend = video_backend;
   cfg.video_shm_bytes = result["shm-bytes"].as<std::size_t>();
   cfg.video_shm_slots = result["shm-slots"].as<std::uint32_t>();

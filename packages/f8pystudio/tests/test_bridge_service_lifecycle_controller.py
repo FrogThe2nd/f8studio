@@ -65,7 +65,7 @@ class _ProcessActions:
 
 class _Harness(ServiceLifecycleControllerMixin):
     def __init__(self) -> None:
-        self._cfg = SimpleNamespace(nats_url="nats://127.0.0.1:4222")
+        self._cfg = SimpleNamespace()
         self.studio_service_id = "studio_default"
         self._managed_active = True
         self._managed_service_ids: set[str] = set()
@@ -81,7 +81,7 @@ class _Harness(ServiceLifecycleControllerMixin):
         self.logs: list[str] = []
         self.exceptions: list[str] = []
         self.emitted_states: list[tuple[str, bool]] = []
-        self._ensure_nc_value: object | None = object()
+        self._ensure_requester_value: object | None = object()
 
     def _emit_log_line(self, line: str) -> None:
         self.logs.append(str(line))
@@ -96,8 +96,8 @@ class _Harness(ServiceLifecycleControllerMixin):
         self._submitted.append((coro, str(context)))
         return True
 
-    async def _ensure_nc(self) -> object | None:
-        return self._ensure_nc_value
+    async def _ensure_requester(self) -> object | None:
+        return self._ensure_requester_value
 
 
 def test_request_service_status_dedupes_inflight(monkeypatch) -> None:

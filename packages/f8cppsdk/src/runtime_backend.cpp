@@ -176,23 +176,10 @@ std::vector<std::string> parse_endpoint_list(std::string_view value) {
 }
 
 RuntimeBackendConfig normalize_runtime_backend_config(RuntimeBackendConfig config) {
-  config.nats_url = trim_runtime_string(config.nats_url);
-  if (config.nats_url.empty()) {
-    config.nats_url = kDefaultNatsUrl;
-  }
   config.zenoh_config_path = trim_runtime_string(config.zenoh_config_path);
   config.zenoh_connect = normalize_endpoint_list(config.zenoh_connect);
   config.zenoh_listen = normalize_endpoint_list(config.zenoh_listen);
   return config;
-}
-
-RuntimeBackendConfig runtime_backend_config_with_legacy_nats_url(RuntimeBackendConfig config,
-                                                                std::string_view legacy_nats_url) {
-  const std::string legacy = trim_runtime_string(legacy_nats_url);
-  if (!legacy.empty() && config.nats_url == kDefaultNatsUrl && legacy != kDefaultNatsUrl) {
-    config.nats_url = legacy;
-  }
-  return normalize_runtime_backend_config(std::move(config));
 }
 
 RuntimeBackendConfig runtime_backend_config_from_env() {
@@ -204,11 +191,6 @@ RuntimeBackendConfig runtime_backend_config_from_env() {
     if (parse_bus_backend(backend_text, parsed)) {
       config.bus_backend = parsed;
     }
-  }
-
-  const char* nats_url = env_value("F8_NATS_URL");
-  if (nats_url != nullptr) {
-    config.nats_url = nats_url;
   }
 
   const char* zenoh_config = env_value("F8_ZENOH_CONFIG");

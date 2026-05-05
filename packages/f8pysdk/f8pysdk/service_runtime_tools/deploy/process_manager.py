@@ -25,8 +25,6 @@ class ServiceProcessConfig:
     service_class: str
     service_id: str
     bus_backend: BusBackend = "zenoh"
-    # Deprecated compatibility field. It is ignored by Zenoh-only process launch.
-    nats_url: str = "nats://127.0.0.1:4222"
     zenoh_config_path: str | None = None
     zenoh_connect: tuple[str, ...] = ()
     zenoh_listen: tuple[str, ...] = ()
@@ -158,8 +156,8 @@ class ServiceProcessManager:
         service_class = str(cfg.service_class).strip()
         service_id = str(cfg.service_id).strip()
         bus_backend = str(cfg.bus_backend or "zenoh").strip().lower()
-        if bus_backend == "nats":
-            raise ValueError("NATS process backend has been removed; use bus_backend='zenoh' or 'mem'.")
+        if bus_backend not in {"zenoh", "mem"}:
+            raise ValueError("Invalid process bus_backend; expected 'zenoh' or 'mem'.")
 
         entry_path = self._catalog.service_entry_path(service_class)
         if entry_path is None:
@@ -199,7 +197,6 @@ class ServiceProcessManager:
         env["F8_SERVICE_ID"] = service_id
         env["F8_BUS_BACKEND"] = bus_backend
         if bus_backend == "zenoh":
-            env.pop("F8_NATS_URL", None)
             zenoh_config_path = str(cfg.zenoh_config_path or "").strip()
             if zenoh_config_path:
                 env["F8_ZENOH_CONFIG"] = zenoh_config_path
@@ -215,7 +212,6 @@ class ServiceProcessManager:
                 env.pop("F8_ZENOH_LISTEN", None)
             env["F8_ZENOH_SHM_POOL_BYTES"] = str(max(0, int(cfg.zenoh_shm_pool_bytes)))
         else:
-            env.pop("F8_NATS_URL", None)
             env.pop("F8_ZENOH_CONFIG", None)
             env.pop("F8_ZENOH_CONNECT", None)
             env.pop("F8_ZENOH_LISTEN", None)

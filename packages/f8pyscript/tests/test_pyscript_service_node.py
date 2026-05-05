@@ -138,7 +138,7 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
 
     def test_program_defaults_data_delivery_to_callback(self) -> None:
         app = build_app()
-        cfg = app.build_runtime_config(service_id="svcA", nats_url="mem://")
+        cfg = app.build_runtime_config(service_id="svcA")
         self.assertEqual(str(cfg.bus.data_delivery), "callback")
 
     async def _build_runtime(self) -> tuple[object, object, PythonScriptServiceNode]:

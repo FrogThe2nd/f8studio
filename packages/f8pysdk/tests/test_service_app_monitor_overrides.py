@@ -24,18 +24,15 @@ class _CaptureApp(ServiceApp):
     def __init__(self) -> None:
         super().__init__(service_class="f8.tests.capture", registry=Registry())
         self.last_service_id = ""
-        self.last_nats_url = ""
         self.last_monitor_overrides: MonitorRuntimeOverrides | None = None
 
     def run(
         self,
         *,
         service_id: str,
-        nats_url: str | None = None,
         monitor_overrides: MonitorRuntimeOverrides | None = None,
     ) -> None:
         self.last_service_id = str(service_id)
-        self.last_nats_url = str(nats_url or "")
         self.last_monitor_overrides = monitor_overrides
 
 
@@ -55,8 +52,6 @@ def test_cli_monitor_overrides_from_args() -> None:
         [
             "--service-id",
             "svcA",
-            "--nats-url",
-            "nats://127.0.0.1:4222",
             "--monitor-enabled",
             "true",
             "--monitor-interval-ms",
@@ -69,7 +64,6 @@ def test_cli_monitor_overrides_from_args() -> None:
     )
     assert code == 0
     assert app.last_service_id == "svcA"
-    assert app.last_nats_url == "nats://127.0.0.1:4222"
     assert app.last_monitor_overrides is not None
     assert app.last_monitor_overrides.enabled is True
     assert app.last_monitor_overrides.interval_ms == 250
@@ -84,7 +78,7 @@ def test_cli_monitor_overrides_from_env(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("F8_MONITOR_GPU_ENABLED", "0")
 
     app = _CaptureApp()
-    code = app.cli(["--service-id", "svcB", "--nats-url", "nats://127.0.0.1:4222"])
+    code = app.cli(["--service-id", "svcB"])
     assert code == 0
     assert app.last_monitor_overrides is not None
     assert app.last_monitor_overrides.enabled is False
@@ -99,8 +93,6 @@ def test_cli_monitor_overrides_clamp_lower_bounds() -> None:
         [
             "--service-id",
             "svcC",
-            "--nats-url",
-            "nats://127.0.0.1:4222",
             "--monitor-interval-ms",
             "1",
             "--monitor-window-ms",

@@ -63,7 +63,7 @@ class PyExprServiceNodeTests(unittest.IsolatedAsyncioTestCase):
 
     def test_program_defaults_data_delivery_to_callback(self) -> None:
         app = build_app()
-        cfg = app.build_runtime_config(service_id="svcExpr", nats_url="mem://")
+        cfg = app.build_runtime_config(service_id="svcExpr")
         self.assertEqual(str(cfg.bus.data_delivery), "callback")
 
     def test_expr_spec_placeholder_ports_not_required(self) -> None:

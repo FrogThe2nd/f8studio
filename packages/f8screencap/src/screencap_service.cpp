@@ -240,8 +240,7 @@ bool ScreenCapService::start() {
     return false;
   }
 
-  const auto runtime_backend =
-      f8::cppsdk::runtime_backend_config_with_legacy_nats_url(cfg_.runtime_backend, cfg_.nats_url);
+  const auto runtime_backend = f8::cppsdk::normalize_runtime_backend_config(cfg_.runtime_backend);
 
   auto initialize_legacy_shm_sink = [this]() -> bool {
     shm_ = std::make_shared<f8::cppsdk::VideoSharedMemorySink>();
@@ -324,9 +323,9 @@ bool ScreenCapService::start() {
   publish_dynamic_state();
 
   running_.store(true, std::memory_order_release);
-  spdlog::info("screencap started serviceId={} backend={} videoBackend={} natsUrl={}", cfg_.service_id,
+  spdlog::info("screencap started serviceId={} backend={} videoBackend={}", cfg_.service_id,
                f8::cppsdk::bus_backend_to_string(runtime_backend.bus_backend),
-               f8::cppsdk::video_transport_backend_to_string(cfg_.video_backend), runtime_backend.nats_url);
+               f8::cppsdk::video_transport_backend_to_string(cfg_.video_backend));
   return true;
 }
 

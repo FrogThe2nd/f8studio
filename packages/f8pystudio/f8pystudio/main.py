@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import warnings
 from typing import cast
 
 from f8pysdk.bus import BusBackend
@@ -55,7 +54,6 @@ def _env_tuple(default: tuple[str, ...], name: str) -> tuple[str, ...]:
 def _build_bridge_config(args: argparse.Namespace) -> PyStudioServiceBridgeConfig:
     return PyStudioServiceBridgeConfig(
         bus_backend=cast(BusBackend, str(args.bus_backend)),
-        nats_url=str(args.nats_url or "").strip() or "nats://127.0.0.1:4222",
         zenoh_config_path=str(args.zenoh_config or "").strip() or None,
         zenoh_connect=_split_endpoint_values(list(args.zenoh_connect or [])),
         zenoh_listen=_split_endpoint_values(list(args.zenoh_listen or [])),
@@ -74,13 +72,11 @@ def _set_env_or_clear(name: str, value: str | None) -> None:
 def _install_runtime_env(config: PyStudioServiceBridgeConfig) -> None:
     os.environ["F8_BUS_BACKEND"] = str(config.bus_backend)
     if config.bus_backend == "zenoh":
-        os.environ.pop("F8_NATS_URL", None)
         _set_env_or_clear("F8_ZENOH_CONFIG", config.zenoh_config_path)
         _set_env_or_clear("F8_ZENOH_CONNECT", ",".join(config.zenoh_connect))
         _set_env_or_clear("F8_ZENOH_LISTEN", ",".join(config.zenoh_listen))
         os.environ["F8_ZENOH_SHM_POOL_BYTES"] = str(max(0, int(config.zenoh_shm_pool_bytes)))
         return
-    os.environ.pop("F8_NATS_URL", None)
     os.environ.pop("F8_ZENOH_CONFIG", None)
     os.environ.pop("F8_ZENOH_CONNECT", None)
     os.environ.pop("F8_ZENOH_LISTEN", None)
@@ -89,15 +85,6 @@ def _install_runtime_env(config: PyStudioServiceBridgeConfig) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     configure_root_logging_from_env()
-
-    argv_for_warning = list(argv if argv is not None else [])
-    if argv is None:
-        import sys
-
-        argv_for_warning = list(sys.argv[1:])
-    nats_url_supplied = bool(os.environ.get("F8_NATS_URL")) or any(
-        item == "--nats-url" or item.startswith("--nats-url=") for item in argv_for_warning
-    )
 
     parser = argparse.ArgumentParser(description="F8PyStudio")
     parser.add_argument("--describe", action="store_true", help="Output the service description in JSON format")
@@ -111,11 +98,6 @@ def main(argv: list[str] | None = None) -> int:
         choices=("zenoh", "mem"),
         default=_env_backend("zenoh", "F8_BUS_BACKEND"),
         help="Runtime bus backend (env: F8_BUS_BACKEND, default: zenoh).",
-    )
-    parser.add_argument(
-        "--nats-url",
-        default=_env_or("nats://127.0.0.1:4222", "F8_NATS_URL"),
-        help="Deprecated compatibility option. Ignored by the Zenoh runtime.",
     )
     parser.add_argument(
         "--zenoh-config",
@@ -148,12 +130,6 @@ def main(argv: list[str] | None = None) -> int:
         os.environ["F8_DISCOVERY_DISABLE_STATIC_DESCRIBE"] = "1"
 
     config = _build_bridge_config(args)
-    if nats_url_supplied:
-        warnings.warn(
-            "--nats-url/F8_NATS_URL is deprecated and ignored by the Zenoh runtime.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
     _install_runtime_env(config)
     prog = PyStudioProgram(config)
     if args.describe:

@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class PyStudioServiceConfig:
     bus_backend: BusBackend = "zenoh"
-    nats_url: str = "nats://127.0.0.1:4222"
     zenoh_config_path: str | None = None
     zenoh_connect: tuple[str, ...] = ()
     zenoh_listen: tuple[str, ...] = ()
@@ -84,7 +83,6 @@ class PyStudioService:
                 service_id=str(self._cfg.studio_service_id),
                 service_class=SERVICE_CLASS,
                 bus_backend=self._cfg.bus_backend,
-                nats_url=str(self._cfg.nats_url),
                 zenoh_config_path=self._cfg.zenoh_config_path,
                 zenoh_connect=self._cfg.zenoh_connect,
                 zenoh_listen=self._cfg.zenoh_listen,

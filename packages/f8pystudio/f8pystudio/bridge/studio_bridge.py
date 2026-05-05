@@ -182,7 +182,7 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
 
             return InMemoryTransport(cluster=InMemoryCluster(), kv_bucket=kv_bucket_for_service(self.studio_service_id))
         if self._cfg.bus_backend != "zenoh":
-            raise ValueError("NATS runtime transport has been removed; use bus_backend='zenoh' or 'mem'.")
+            raise ValueError("Unsupported runtime transport backend; use bus_backend='zenoh' or 'mem'.")
         return ZenohTransport(
             ZenohTransportConfig(
                 service_id=self.studio_service_id,
@@ -415,7 +415,6 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
                 self._process_gateway.stop(StopServiceRequest(service_id=sid))
             except Exception as exc:
                 self._report_exception(f"stop service process failed serviceId={sid}", exc)
-
 
 
 

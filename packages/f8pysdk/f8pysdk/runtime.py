@@ -37,10 +37,6 @@ class ServiceRuntimeConfig:
         return str(self.bus.service_class or "")
 
     @property
-    def nats_url(self) -> str:
-        return str(self.bus.nats_url)
-
-    @property
     def bus_backend(self) -> str:
         return str(self.bus.bus_backend)
 

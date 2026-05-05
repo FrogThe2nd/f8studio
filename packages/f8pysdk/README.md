@@ -73,10 +73,9 @@ Lifecycle contract:
 Prefer `ServiceApp` plus `Registry` for new services:
 - one explicit owner object for describe/build/run/CLI
 - one explicit registry owner for specs and runtime node factories
-- standard CLI: `--describe`, `--service-id`, `--bus-backend`, Zenoh options, and deprecated `--nats-url`
+- standard CLI: `--describe`, `--service-id`, `--bus-backend`, and Zenoh options
 - default backend: `zenoh`
 - explicit local-test fallback: `--bus-backend mem`
-- `--nats-url` / `F8_NATS_URL` are deprecated compatibility inputs and are ignored by the Zenoh runtime
 
 Minimal example:
 

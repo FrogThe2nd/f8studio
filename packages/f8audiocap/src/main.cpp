@@ -99,9 +99,6 @@ int main(int argc, char** argv) {
     std::cerr << runtime_error << "\n";
     return 2;
   }
-  if (f8::cppsdk::should_warn_ignored_nats_url(result, runtime_backend)) {
-    spdlog::warn("--nats-url is deprecated and ignored by the Zenoh runtime");
-  }
   f8::cppsdk::AudioTransportBackend audio_backend = f8::cppsdk::AudioTransportBackend::kAuto;
   if (!f8::cppsdk::read_audio_transport_backend_option(result, audio_backend, runtime_error)) {
     std::cerr << runtime_error << "\n";
@@ -111,7 +108,6 @@ int main(int argc, char** argv) {
   f8::audiocap::AudioCapService::Config cfg;
   cfg.service_id = service_id;
   cfg.runtime_backend = runtime_backend;
-  cfg.nats_url = runtime_backend.nats_url;
   cfg.audio_backend = audio_backend;
   cfg.audio_shm_bytes = result["shm-bytes"].as<std::size_t>();
   cfg.sample_rate = result["sample-rate"].as<std::uint32_t>();

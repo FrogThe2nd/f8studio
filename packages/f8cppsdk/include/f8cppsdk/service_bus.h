@@ -53,7 +53,6 @@ class ServiceBus final : public ServiceControlHandler {
   struct Config {
     std::string service_id;
     BusBackend bus_backend = BusBackend::kZenoh;
-    std::string nats_url = kDefaultNatsUrl;
     std::string zenoh_config_path;
     std::vector<std::string> zenoh_connect;
     std::vector<std::string> zenoh_listen;
@@ -69,7 +68,6 @@ class ServiceBus final : public ServiceControlHandler {
 
     void apply_runtime_backend(const RuntimeBackendConfig& runtime_backend) {
       bus_backend = runtime_backend.bus_backend;
-      nats_url = runtime_backend.nats_url;
       zenoh_config_path = runtime_backend.zenoh_config_path;
       zenoh_connect = runtime_backend.zenoh_connect;
       zenoh_listen = runtime_backend.zenoh_listen;
@@ -79,7 +77,6 @@ class ServiceBus final : public ServiceControlHandler {
     RuntimeBackendConfig runtime_backend_config() const {
       RuntimeBackendConfig runtime_backend;
       runtime_backend.bus_backend = bus_backend;
-      runtime_backend.nats_url = nats_url;
       runtime_backend.zenoh_config_path = zenoh_config_path;
       runtime_backend.zenoh_connect = zenoh_connect;
       runtime_backend.zenoh_listen = zenoh_listen;

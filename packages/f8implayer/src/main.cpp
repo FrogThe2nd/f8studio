@@ -71,9 +71,6 @@ extern "C" SDL_AppResult SDLCALL SDL_AppInit(void** appstate, int argc, char* ar
     std::cerr << runtime_error << "\n";
     return SDL_APP_FAILURE;
   }
-  if (f8::cppsdk::should_warn_ignored_nats_url(result, runtime_backend)) {
-    spdlog::warn("--nats-url is deprecated and ignored by the Zenoh runtime");
-  }
   f8::cppsdk::VideoTransportBackend video_backend = f8::cppsdk::VideoTransportBackend::kAuto;
   if (!f8::cppsdk::read_video_transport_backend_option(result, video_backend, runtime_error)) {
     std::cerr << runtime_error << "\n";
@@ -83,7 +80,6 @@ extern "C" SDL_AppResult SDLCALL SDL_AppInit(void** appstate, int argc, char* ar
   f8::implayer::ImPlayerService::Config cfg;
   cfg.service_id = service_id;
   cfg.runtime_backend = runtime_backend;
-  cfg.nats_url = runtime_backend.nats_url;
   cfg.video_backend = video_backend;
   cfg.initial_media_url = result["media"].as<std::string>();
   cfg.openxr_mirror_window = result["openxr-mirror"].as<bool>();

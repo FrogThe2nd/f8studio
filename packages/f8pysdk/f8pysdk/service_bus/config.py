@@ -22,8 +22,6 @@ def _normalize_backend(value: str) -> BusBackend:
         return "zenoh"
     if text == "mem":
         return "mem"
-    if text == "nats":
-        raise ValueError("NATS runtime backend has been removed; use 'zenoh' or 'mem'.")
     raise ValueError(f"Invalid bus_backend={value!r}; expected 'zenoh' or 'mem'.")
 
 
@@ -33,8 +31,6 @@ class ServiceBusConfig:
     service_name: str | None = None
     service_class: str | None = None
     bus_backend: BusBackend = "zenoh"
-    # Deprecated compatibility field. It is ignored by the Zenoh-native runtime.
-    nats_url: str = "nats://127.0.0.1:4222"
     zenoh_config_path: str | None = None
     zenoh_connect: tuple[str, ...] = ()
     zenoh_listen: tuple[str, ...] = ()
@@ -66,7 +62,6 @@ class ServiceBusConfig:
             service_name=service_name,
             service_class=service_class,
             bus_backend=_normalize_backend(self.bus_backend),
-            nats_url=str(self.nats_url or "").strip() or "nats://127.0.0.1:4222",
             zenoh_config_path=zenoh_config_path,
             zenoh_connect=tuple(str(item).strip() for item in self.zenoh_connect if str(item).strip()),
             zenoh_listen=tuple(str(item).strip() for item in self.zenoh_listen if str(item).strip()),
@@ -92,19 +87,16 @@ class ServiceBusConfig:
         service_id: str,
         service_class: str,
         bus_backend: BusBackend | str | None = None,
-        nats_url: str | None = None,
         zenoh_config_path: str | None = None,
         zenoh_connect: tuple[str, ...] | None = None,
         zenoh_listen: tuple[str, ...] | None = None,
         zenoh_shm_pool_bytes: int | None = None,
     ) -> "ServiceBusConfig":
-        resolved_nats_url = self.nats_url if nats_url is None else str(nats_url)
         return replace(
             self,
             service_id=str(service_id),
             service_class=str(service_class),
             bus_backend=self.bus_backend if bus_backend is None else _normalize_backend(str(bus_backend)),
-            nats_url=resolved_nats_url,
             zenoh_config_path=self.zenoh_config_path if zenoh_config_path is None else str(zenoh_config_path),
             zenoh_connect=self.zenoh_connect if zenoh_connect is None else tuple(zenoh_connect),
             zenoh_listen=self.zenoh_listen if zenoh_listen is None else tuple(zenoh_listen),

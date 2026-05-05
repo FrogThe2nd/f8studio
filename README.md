@@ -2,7 +2,6 @@
 
 Runtime workspace for Feel8 Studio. The current runtime is Zenoh-first:
 - control plane, service discovery, pub/sub, and service-owned state use Zenoh by default
-- NATS remains as an explicit fallback via `--bus-backend nats`
 - video/audio data defaults to Zenoh latest-frame/latest-chunk transports
 - legacy SHM remains available only through explicit `legacy_shm` transport fields or old compatibility helpers
 
@@ -11,15 +10,14 @@ Runtime workspace for Feel8 Studio. The current runtime is Zenoh-first:
 - `api/bindings` — shared envelope/error models and binding notes.
 - `profiles` — platform/feature profile schemas and examples.
 - `docs/flows` — sequence/state docs for connection, config, playback, degrade/recover.
-- `packages/f8pysdk` — Python runtime SDK, Zenoh/NATS/mem transports, ServiceApp helpers.
-- `packages/f8cppsdk` — C++ runtime SDK, Zenoh/NATS transports, latest video/audio transports.
+- `packages/f8pysdk` — Python runtime SDK, Zenoh/mem transports, ServiceApp helpers.
+- `packages/f8cppsdk` — C++ runtime SDK, Zenoh transport and latest video/audio transports.
 - `packages/f8pystudio` — Studio UI and bridge.
 - `services` — service manifests, static `describe.json`, and deployed C++ runtime binaries.
 - `scripts` — codegen, describe regeneration, benchmarks, and migration tooling.
 
 ## Runtime Backend
 - Default: `--bus-backend zenoh`
-- Optional fallback: `--bus-backend nats --nats-url nats://127.0.0.1:4222`
 - Local tests may use `--bus-backend mem` where supported.
 - Zenoh options are available through `--zenoh-config`, `--zenoh-connect`, `--zenoh-listen`, and `--zenoh-shm-pool-bytes`.
 

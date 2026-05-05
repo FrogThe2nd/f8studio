@@ -24,7 +24,6 @@ class DemoService final : public f8::cppsdk::LifecycleNode,
     std::string service_id;
     std::string service_class = "f8.sdk_demo";
     f8::cppsdk::RuntimeBackendConfig runtime_backend;
-    std::string nats_url = f8::cppsdk::kDefaultNatsUrl;
   };
 
   explicit DemoService(Config cfg);

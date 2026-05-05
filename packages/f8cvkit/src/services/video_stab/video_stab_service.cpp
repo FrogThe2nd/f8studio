@@ -131,8 +131,7 @@ bool VideoStabService::start() {
 
   f8::cppsdk::ServiceBus::Config bus_cfg;
   bus_cfg.service_id = cfg_.service_id;
-  const auto runtime_backend =
-      f8::cppsdk::runtime_backend_config_with_legacy_nats_url(cfg_.runtime_backend, cfg_.nats_url);
+  const auto runtime_backend = f8::cppsdk::normalize_runtime_backend_config(cfg_.runtime_backend);
   bus_cfg.apply_runtime_backend(runtime_backend);
   bus_cfg.service_class = cfg_.service_class;
   bus_cfg.service_name = "CVKit Video Stabilizer";
@@ -226,8 +225,8 @@ bool VideoStabService::start() {
 
   running_.store(true, std::memory_order_release);
   stop_requested_.store(false, std::memory_order_release);
-  spdlog::info("cvkit_video_stab started serviceId={} backend={} natsUrl={}", cfg_.service_id,
-               f8::cppsdk::bus_backend_to_string(runtime_backend.bus_backend), runtime_backend.nats_url);
+  spdlog::info("cvkit_video_stab started serviceId={} backend={}", cfg_.service_id,
+               f8::cppsdk::bus_backend_to_string(runtime_backend.bus_backend));
   return true;
 }
 
@@ -644,8 +643,7 @@ bool VideoStabService::ensure_input_open() {
     }
 
     auto subscriber = std::make_unique<f8::cppsdk::ZenohLatestVideoFrameSubscriber>();
-    const auto runtime_backend =
-        f8::cppsdk::runtime_backend_config_with_legacy_nats_url(cfg_.runtime_backend, cfg_.nats_url);
+    const auto runtime_backend = f8::cppsdk::normalize_runtime_backend_config(cfg_.runtime_backend);
     if (!subscriber->open(runtime_backend, input_video_key_)) {
       publish_error_if_changed("zenoh video subscribe failed: " + input_video_key_, "runtime", json::object());
       return false;

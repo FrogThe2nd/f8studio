@@ -99,7 +99,6 @@ def test_runtime_session_returns_block_message_when_singleton_detected(monkeypat
     controller = _Controller()
     controller._cfg = SimpleNamespace(
         bus_backend="zenoh",
-        nats_url="nats://127.0.0.1:4222",
         zenoh_config_path=None,
         zenoh_connect=(),
         zenoh_listen=(),
@@ -127,7 +126,7 @@ def test_runtime_session_mem_preflight_skips_zenoh(monkeypatch) -> None:
 
     monkeypatch.setitem(sys.modules, "zenoh", _FakeZenoh)
     controller = _Controller()
-    controller._cfg = SimpleNamespace(bus_backend="mem", nats_url="nats://127.0.0.1:4222")
+    controller._cfg = SimpleNamespace(bus_backend="mem")
 
     result = asyncio.run(controller._run_startup_preflight_async())
 
@@ -177,7 +176,6 @@ def test_zenoh_singleton_guard_allows_start_when_liveliness_query_drains(monkeyp
     controller = _Controller()
     controller._cfg = SimpleNamespace(
         bus_backend="zenoh",
-        nats_url="nats://127.0.0.1:4222",
         zenoh_config_path=None,
         zenoh_connect=(),
         zenoh_listen=(),
@@ -241,7 +239,6 @@ def test_zenoh_service_liveliness_watch_updates_alive_cache(monkeypatch) -> None
         controller = _Controller()
         controller._cfg = SimpleNamespace(
             bus_backend="zenoh",
-            nats_url="nats://127.0.0.1:4222",
             zenoh_config_path=None,
             zenoh_connect=(),
             zenoh_listen=(),

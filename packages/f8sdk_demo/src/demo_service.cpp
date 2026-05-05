@@ -20,8 +20,7 @@ bool DemoService::start() {
 
   f8::cppsdk::ServiceBus::Config bus_cfg;
   bus_cfg.service_id = cfg_.service_id;
-  const auto runtime_backend =
-      f8::cppsdk::runtime_backend_config_with_legacy_nats_url(cfg_.runtime_backend, cfg_.nats_url);
+  const auto runtime_backend = f8::cppsdk::normalize_runtime_backend_config(cfg_.runtime_backend);
   bus_cfg.apply_runtime_backend(runtime_backend);
   bus_ = std::make_unique<f8::cppsdk::ServiceBus>(bus_cfg);
   bus_->add_lifecycle_node(this);
@@ -44,8 +43,8 @@ bool DemoService::start() {
 
   running_.store(true, std::memory_order_release);
   stop_requested_.store(false, std::memory_order_release);
-  spdlog::info("sdk_demo started serviceId={} backend={} natsUrl={}", cfg_.service_id,
-               f8::cppsdk::bus_backend_to_string(runtime_backend.bus_backend), runtime_backend.nats_url);
+  spdlog::info("sdk_demo started serviceId={} backend={}", cfg_.service_id,
+               f8::cppsdk::bus_backend_to_string(runtime_backend.bus_backend));
   return true;
 }
 

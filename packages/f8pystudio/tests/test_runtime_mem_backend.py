@@ -39,7 +39,6 @@ def test_runtime_rungraph_gateway_mem_uses_in_memory_transport() -> None:
 
 def test_remote_state_watcher_mem_uses_in_memory_transport() -> None:
     watcher = RemoteStateWatcher(
-        nats_url="nats://127.0.0.1:4222",
         studio_service_id="studio",
         on_state=_noop_state,
         bus_backend="mem",
@@ -62,7 +61,6 @@ def test_remote_state_watcher_accepts_cpp_ts_field() -> None:
         calls.append((service_id, node_id, field, value, ts_ms))
 
     watcher = RemoteStateWatcher(
-        nats_url="nats://127.0.0.1:4222",
         studio_service_id="studio",
         on_state=_on_state,
         bus_backend="mem",

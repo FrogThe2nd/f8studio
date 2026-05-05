@@ -35,7 +35,7 @@ class _FakeServiceRuntime:
 class PyStudioServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_start_uses_callback_data_delivery_for_viz_nodes(self) -> None:
         _FakeServiceRuntime.instances.clear()
-        service = PyStudioService(PyStudioServiceConfig(nats_url="nats://127.0.0.1:4222"))
+        service = PyStudioService(PyStudioServiceConfig())
 
         with (
             patch("f8pystudio.bridge.studio_service.ServiceRuntime", _FakeServiceRuntime),

@@ -30,7 +30,6 @@ class _FakeProgram:
 def _clear_runtime_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in (
         "F8_BUS_BACKEND",
-        "F8_NATS_URL",
         "F8_ZENOH_CONFIG",
         "F8_ZENOH_CONNECT",
         "F8_ZENOH_LISTEN",
@@ -57,13 +56,11 @@ def test_main_defaults_to_zenoh_and_installs_zenoh_env(monkeypatch: pytest.Monke
     cfg = _FakeProgram.last_config
     assert cfg is not None
     assert cfg.bus_backend == "zenoh"
-    assert cfg.nats_url == "nats://127.0.0.1:4222"
     assert cfg.zenoh_config_path is None
     assert cfg.zenoh_connect == ()
     assert cfg.zenoh_listen == ()
     assert cfg.zenoh_shm_pool_bytes == DEFAULT_ZENOH_SHM_POOL_BYTES
     assert os.environ["F8_BUS_BACKEND"] == "zenoh"
-    assert "F8_NATS_URL" not in os.environ
     assert os.environ["F8_ZENOH_SHM_POOL_BYTES"] == str(DEFAULT_ZENOH_SHM_POOL_BYTES)
 
 
@@ -100,52 +97,33 @@ def test_main_parses_zenoh_cli_and_repeated_endpoints(monkeypatch: pytest.Monkey
     assert os.environ["F8_ZENOH_SHM_POOL_BYTES"] == "123456"
 
 
-def test_main_requires_explicit_nats_backend_for_nats_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    _clear_runtime_env(monkeypatch)
-    _install_fake_program(monkeypatch)
-
-    with pytest.warns(DeprecationWarning, match="ignored"):
-        exit_code = studio_main.main(["--nats-url", "nats://example.invalid:4222"])
-
-    assert exit_code == 17
-    cfg = _FakeProgram.last_config
-    assert cfg is not None
-    assert cfg.bus_backend == "zenoh"
-    assert cfg.nats_url == "nats://example.invalid:4222"
-    assert "F8_NATS_URL" not in os.environ
-
-
-def test_main_rejects_removed_nats_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_main_rejects_unknown_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_runtime_env(monkeypatch)
     monkeypatch.setenv("F8_ZENOH_CONNECT", "tcp/stale")
     monkeypatch.setenv("F8_ZENOH_SHM_POOL_BYTES", "999")
     _install_fake_program(monkeypatch)
 
     with pytest.raises(SystemExit) as exc_info:
-        studio_main.main(["--bus-backend", "nats", "--nats-url", "nats://127.0.0.1:4333"])
+        studio_main.main(["--bus-backend", "unknown"])
 
     assert exc_info.value.code == 2
     assert _FakeProgram.run_called is False
     assert "F8_BUS_BACKEND" not in os.environ
-    assert "F8_NATS_URL" not in os.environ
 
 
 def test_main_mem_backend_clears_transport_specific_env(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_runtime_env(monkeypatch)
-    monkeypatch.setenv("F8_NATS_URL", "nats://stale.invalid:4222")
     monkeypatch.setenv("F8_ZENOH_CONNECT", "tcp/stale")
     monkeypatch.setenv("F8_ZENOH_SHM_POOL_BYTES", "999")
     _install_fake_program(monkeypatch)
 
-    with pytest.warns(DeprecationWarning, match="ignored"):
-        exit_code = studio_main.main(["--bus-backend", "mem"])
+    exit_code = studio_main.main(["--bus-backend", "mem"])
 
     assert exit_code == 17
     cfg = _FakeProgram.last_config
     assert cfg is not None
     assert cfg.bus_backend == "mem"
     assert os.environ["F8_BUS_BACKEND"] == "mem"
-    assert "F8_NATS_URL" not in os.environ
     assert "F8_ZENOH_CONFIG" not in os.environ
     assert "F8_ZENOH_CONNECT" not in os.environ
     assert "F8_ZENOH_LISTEN" not in os.environ

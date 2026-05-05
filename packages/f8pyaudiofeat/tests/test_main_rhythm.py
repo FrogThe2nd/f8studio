@@ -17,7 +17,7 @@ from f8pyaudiofeat.main_rhythm import build_app  # noqa: E402
 class AudioFeatureRhythmServiceTests(unittest.TestCase):
     def test_program_defaults_data_delivery_to_callback(self) -> None:
         app = build_app()
-        cfg = app.build_runtime_config(service_id="svcA", nats_url="mem://")
+        cfg = app.build_runtime_config(service_id="svcA")
         self.assertEqual(str(cfg.bus.data_delivery), "callback")
 
 

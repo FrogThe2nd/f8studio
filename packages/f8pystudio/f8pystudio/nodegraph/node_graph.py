@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -38,6 +39,7 @@ from f8pysdk.specs import F8VariantRecord
 
 MISSING_SERVICE_NODE_TYPE = "svc.f8.missing.service"
 MISSING_OPERATOR_NODE_TYPE = "svc.f8.missing.operator"
+logger = logging.getLogger(__name__)
 
 
 class F8StudioGraph(

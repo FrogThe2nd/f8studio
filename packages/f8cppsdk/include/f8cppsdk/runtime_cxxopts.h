@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstdlib>
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -18,8 +17,6 @@ inline void add_runtime_backend_options(cxxopts::Options& options,
   options.add_options()(
       "bus-backend", "Runtime bus backend: zenoh|mem (env: F8_BUS_BACKEND, default: zenoh)",
       cxxopts::value<std::string>()->default_value(bus_backend_to_string(normalized.bus_backend)))(
-      "nats-url", "Deprecated compatibility option. Ignored by the Zenoh runtime (env: F8_NATS_URL)",
-      cxxopts::value<std::string>()->default_value(normalized.nats_url))(
       "zenoh-config", "Zenoh config file path (env: F8_ZENOH_CONFIG)",
       cxxopts::value<std::string>()->default_value(normalized.zenoh_config_path))(
       "zenoh-connect", "Zenoh endpoint to connect to; repeatable or comma-separated (env: F8_ZENOH_CONNECT)",
@@ -41,7 +38,6 @@ inline bool read_runtime_backend_options(const cxxopts::ParseResult& result, Run
     return false;
   }
   out.bus_backend = parsed_backend;
-  out.nats_url = result["nats-url"].as<std::string>();
   out.zenoh_config_path = result["zenoh-config"].as<std::string>();
 
   if (result.count("zenoh-connect") > 0) {
@@ -99,19 +95,6 @@ inline bool read_audio_transport_backend_option(const cxxopts::ParseResult& resu
   backend = parsed;
   error_message.clear();
   return true;
-}
-
-inline bool runtime_nats_url_was_supplied(const cxxopts::ParseResult& result) {
-  if (result.count("nats-url") > 0) {
-    return true;
-  }
-  const char* raw = std::getenv("F8_NATS_URL");
-  return raw != nullptr && !trim_runtime_string(raw).empty();
-}
-
-inline bool should_warn_ignored_nats_url(const cxxopts::ParseResult& result,
-                                         const RuntimeBackendConfig&) {
-  return runtime_nats_url_was_supplied(result);
 }
 
 }  // namespace f8::cppsdk
