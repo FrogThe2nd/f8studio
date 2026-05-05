@@ -26,6 +26,14 @@ class _FakeConnectionManager:
         return NatsSingletonGuardResult(should_start=False, connection=None)
 
 
+class _FakeMonitorCenter:
+    def __init__(self) -> None:
+        self.ready_updates: list[tuple[str, bool]] = []
+
+    def update_service_status(self, *, service_id: str, ready: bool) -> None:
+        self.ready_updates.append((str(service_id), bool(ready)))
+
+
 class _Controller(RuntimeSessionControllerMixin):
     def __init__(self) -> None:
         self._nats_connection_manager = _FakeConnectionManager()
@@ -44,6 +52,7 @@ class _Controller(RuntimeSessionControllerMixin):
         self.alive_updates: list[tuple[str, bool]] = []
         self.active_updates: list[tuple[str, bool | None]] = []
         self.status_requests: list[str] = []
+        self._monitor_center = _FakeMonitorCenter()
         self.studio_service_id = "studio"
 
     def _emit_log_line(self, line: str) -> None:
@@ -245,4 +254,5 @@ def test_zenoh_service_liveliness_watch_updates_alive_cache(monkeypatch) -> None
     assert controller.alive_updates == [("engine", True), ("engine", False)]
     assert controller.status_requests == ["engine"]
     assert controller.active_updates == [("engine", None)]
+    assert controller._monitor_center.ready_updates == [("engine", False)]
     assert controller.reported == []
