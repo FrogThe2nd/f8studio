@@ -5,12 +5,10 @@ import asyncio
 import concurrent.futures
 import logging
 import threading
-from dataclasses import dataclass
 from typing import Any, Callable
 
 from qtpy import QtCore
 
-from f8pysdk.bus import BusBackend
 from f8pysdk.runtime_transport import RuntimeTransport
 from f8pysdk.transport import NatsTransport, NatsTransportConfig
 from f8pysdk.specs import F8RuntimeGraph
@@ -23,7 +21,7 @@ from f8pystudio.diagnostics.error_reporting import ExceptionLogOnce, report_exce
 from f8pystudio.monitoring import MonitorCenter
 from f8pystudio.monitoring.service_rows import ServiceMonitorRow, build_service_monitor_rows, collect_known_service_ids
 from f8pystudio.nodegraph.runtime_compiler import CompiledRuntimeGraphs
-from f8pystudio.studio_specs.registry import SERVICE_CLASS, STUDIO_SERVICE_ID
+from f8pystudio.studio_specs.registry import SERVICE_CLASS
 
 from .async_runtime import AsyncRuntimeThread
 from .command_client import CommandRequest, NatsCommandGateway, RuntimeCommandGateway, RuntimeCommandGatewayConfig
@@ -53,6 +51,7 @@ from .runtime_graph_projection import (
     build_remote_watch_targets,
     build_studio_runtime_graph,
 )
+from .runtime_config import PyStudioServiceBridgeConfig
 from .runtime_session_controller import PendingMonitorUpdate, RuntimeSessionControllerMixin
 from .service_endpoint_client import (
     request_service_status,
@@ -72,17 +71,6 @@ from .deploy_state_controller import DeployStateControllerMixin
 
 logger = logging.getLogger(__name__)
 STARTUP_GATE_TIMEOUT_S = 6.0
-
-
-@dataclass(frozen=True)
-class PyStudioServiceBridgeConfig:
-    bus_backend: BusBackend = "zenoh"
-    nats_url: str = "nats://127.0.0.1:4222"
-    zenoh_config_path: str | None = None
-    zenoh_connect: tuple[str, ...] = ()
-    zenoh_listen: tuple[str, ...] = ()
-    zenoh_shm_pool_bytes: int = 256 * 1024 * 1024
-    studio_service_id: str = STUDIO_SERVICE_ID
 
 
 class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleControllerMixin, DeployStateControllerMixin, RemoteCommandControllerMixin, QtCore.QObject):
@@ -444,8 +432,6 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
                 self._process_gateway.stop(StopServiceRequest(service_id=sid))
             except Exception as exc:
                 self._report_exception(f"stop service process failed serviceId={sid}", exc)
-
-
 
 
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdlib>
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -54,6 +55,19 @@ inline bool read_runtime_backend_options(const cxxopts::ParseResult& result, Run
   config = normalize_runtime_backend_config(std::move(out));
   error_message.clear();
   return true;
+}
+
+inline bool runtime_nats_url_was_supplied(const cxxopts::ParseResult& result) {
+  if (result.count("nats-url") > 0) {
+    return true;
+  }
+  const char* raw = std::getenv("F8_NATS_URL");
+  return raw != nullptr && !trim_runtime_string(raw).empty();
+}
+
+inline bool should_warn_ignored_nats_url(const cxxopts::ParseResult& result,
+                                         const RuntimeBackendConfig& config) {
+  return config.bus_backend != BusBackend::kNats && runtime_nats_url_was_supplied(result);
 }
 
 }  // namespace f8::cppsdk

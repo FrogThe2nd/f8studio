@@ -51,7 +51,8 @@ from .studio_runtime_flow import (
     install_studio_runtime_graph,
     wait_for_studio_runtime_ready,
 )
-from .studio_bridge import PyStudioServiceBridge, PyStudioServiceBridgeConfig, STARTUP_GATE_TIMEOUT_S
+from .runtime_config import PyStudioServiceBridgeConfig
+from .studio_bridge import PyStudioServiceBridge, STARTUP_GATE_TIMEOUT_S
 from .studio_service import PyStudioService, PyStudioServiceConfig
 from .service_endpoint_client import (
     SetStateRequestResult,

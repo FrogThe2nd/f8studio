@@ -1,6 +1,8 @@
 # f8screencap_service
 
-Screen capture service that publishes BGRA frames into shared memory.
+Screen capture service that publishes BGRA frames through the Zenoh latest-frame
+transport by default. Legacy shared memory remains available only when the graph
+selects `videoTransport=legacy_shm`.
 
 ## Backends
 

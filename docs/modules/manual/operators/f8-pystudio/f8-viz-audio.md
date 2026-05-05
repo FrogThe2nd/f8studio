@@ -6,7 +6,7 @@
 
 ## Common Wiring Patterns
 
-- **Parallel Monitoring**: Attach it to audio SHM or feature outputs in parallel with the real processing branch so you can inspect the signal without changing the runtime signal path.
+- **Parallel Monitoring**: Attach it to Zenoh audio streams or feature outputs in parallel with the real processing branch so you can inspect the signal without changing the runtime signal path.
 - **Threshold Work**: Use it when setting noise floors or onset thresholds to see the signal peaks and valleys clearly.
 - **Spectrum Analysis**: Use the spectrogram view to identify specific noise sources or frequency-based patterns that you want to trigger on using `f8-audiofeat-core`.
 

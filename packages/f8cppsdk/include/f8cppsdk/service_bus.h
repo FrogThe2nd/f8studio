@@ -33,11 +33,11 @@ namespace f8::cppsdk {
 
 // Minimal, protocol-compatible service bus for C++ services.
 //
-// Goals (phase 1):
-// - Own NATS+KV connections and lifecycle state (`active`).
-// - Expose built-in micro endpoints via `ServiceControlPlaneServer`.
-// - Provide a terminate/quit latch to let services exit gracefully.
-// - Keep wire protocol compatible with f8pysdk (KV keys, endpoint subjects, payload schema).
+// Zenoh is the default runtime path:
+// - control endpoints use RuntimeTransport request/serve queryables
+// - service-owned state is exposed through latest-value KV/queryable semantics
+// - pub/sub data edges map to the shared f8/svc/... Zenoh keyspace
+// NATS + JetStream KV + Micro remain as explicit fallback for --bus-backend nats.
 class ServiceBus final : public ServiceControlHandler {
  public:
   using json = nlohmann::json;

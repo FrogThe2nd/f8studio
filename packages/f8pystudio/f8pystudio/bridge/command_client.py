@@ -12,8 +12,7 @@ from f8pysdk.transport import NatsTransport, NatsTransportConfig
 from f8pysdk.zenoh_transport import ZenohTransport, ZenohTransportConfig
 
 from .json_codec import coerce_json_value
-from .nats_request import request_typed
-from .runtime_request import RuntimeTransportRequester
+from .runtime_request import RuntimeRequester, RuntimeTransportRequester, request_typed
 
 
 class CommandGateway(Protocol):
@@ -120,7 +119,7 @@ class NatsCommandGateway:
         return await _request_command_with_requester(await self.ensure_connected(), req)
 
 
-async def _request_command_with_requester(requester: Any, req: CommandRequest) -> CommandResponse:
+async def _request_command_with_requester(requester: RuntimeRequester, req: CommandRequest) -> CommandResponse:
     sid = ensure_token(str(req.service_id), label="service_id")
     call_name = str(req.call or "").strip()
     if not call_name:

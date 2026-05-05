@@ -48,11 +48,11 @@ flowchart TB
         n8["Buttplug.io"]
         n9["TheHandy API"]
   end
-    MS -- "Shared Memory<br>Zero-copy (SHM)" --> ALGO
-    ALGO == NATS ==> PROCESSOR
+    MS -- "Zenoh latest-frame/audio<br>SHM when local" --> ALGO
+    ALGO == Zenoh pub/sub ==> PROCESSOR
     EIS == UDP ==> PROCESSOR
     PROCESSOR == WS / API / Series Port ==> DEVICE
-    STUDIO <-. NATS .-> DS & ALGO & PROCESSOR
+    STUDIO <-. Zenoh control/state .-> DS & ALGO & PROCESSOR
 
     style PROCESSOR fill:#BBDEFB
     style DEVICE fill:#C8E6C9

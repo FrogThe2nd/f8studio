@@ -33,7 +33,7 @@ from .payloads import (
     should_run_inference,
 )
 from .runtime import PoseRuntimeConfig, create_pose_runtime, tasks_model_spec_for_complexity
-from .video_input import FrameContext, VideoShmInput, frame_rgb_from_context
+from .video_input import FrameContext, LatestVideoInput, frame_rgb_from_context
 
 log = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ class MediaPipePoseServiceNode(ServiceNode):
         self._config = PoseServiceConfig()
         self._apply_config(self._config)
 
-        self._video_input = VideoShmInput()
+        self._video_input = LatestVideoInput()
         self._pose_runtime: Any | None = None
         self._zenoh_config_path: str | None = None
         self._zenoh_connect: tuple[str, ...] = ()
@@ -371,7 +371,7 @@ class MediaPipePoseServiceNode(ServiceNode):
         try:
             self._video_input.close()
         except Exception as exc:
-            log.exception("video shm close failed", exc_info=exc)
+            log.exception("video input close failed", exc_info=exc)
 
     def _accept_frame_for_processing(self, frame_id: int) -> bool:
         if self._last_processed_frame_id is not None and frame_id == int(self._last_processed_frame_id):

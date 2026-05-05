@@ -191,7 +191,7 @@ class ServiceProcessManager:
         cmd += ["--service-id", service_id, "--bus-backend", bus_backend]
         if bus_backend == "nats":
             cmd += ["--nats-url", nats_url]
-        else:
+        elif bus_backend == "zenoh":
             zenoh_config_path = str(cfg.zenoh_config_path or "").strip()
             if zenoh_config_path:
                 cmd += ["--zenoh-config", zenoh_config_path]
@@ -212,15 +212,32 @@ class ServiceProcessManager:
         env["F8_BUS_BACKEND"] = bus_backend
         if bus_backend == "nats":
             env["F8_NATS_URL"] = nats_url
-        else:
+            env.pop("F8_ZENOH_CONFIG", None)
+            env.pop("F8_ZENOH_CONNECT", None)
+            env.pop("F8_ZENOH_LISTEN", None)
+            env.pop("F8_ZENOH_SHM_POOL_BYTES", None)
+        elif bus_backend == "zenoh":
+            env.pop("F8_NATS_URL", None)
             zenoh_config_path = str(cfg.zenoh_config_path or "").strip()
             if zenoh_config_path:
                 env["F8_ZENOH_CONFIG"] = zenoh_config_path
+            else:
+                env.pop("F8_ZENOH_CONFIG", None)
             if cfg.zenoh_connect:
                 env["F8_ZENOH_CONNECT"] = ",".join(str(item).strip() for item in cfg.zenoh_connect if str(item).strip())
+            else:
+                env.pop("F8_ZENOH_CONNECT", None)
             if cfg.zenoh_listen:
                 env["F8_ZENOH_LISTEN"] = ",".join(str(item).strip() for item in cfg.zenoh_listen if str(item).strip())
+            else:
+                env.pop("F8_ZENOH_LISTEN", None)
             env["F8_ZENOH_SHM_POOL_BYTES"] = str(max(0, int(cfg.zenoh_shm_pool_bytes)))
+        else:
+            env.pop("F8_NATS_URL", None)
+            env.pop("F8_ZENOH_CONFIG", None)
+            env.pop("F8_ZENOH_CONNECT", None)
+            env.pop("F8_ZENOH_LISTEN", None)
+            env.pop("F8_ZENOH_SHM_POOL_BYTES", None)
         env.setdefault("PYTHONUNBUFFERED", "1")
         env.setdefault("PYTHONIOENCODING", "utf-8")
 

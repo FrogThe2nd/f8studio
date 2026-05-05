@@ -22,7 +22,7 @@ void on_signal(int) { g_stop.store(true, std::memory_order_release); }
 }  // namespace
 
 int main(int argc, char** argv) {
-  cxxopts::Options options("f8screencap_service", "F8 screen capture (platform backend) -> video SHM service");
+  cxxopts::Options options("f8screencap_service", "F8 screen capture (platform backend) -> Zenoh video service");
   options.add_options()("describe", "Print service spec JSON and exit")(
       "service-id", "Service instance id (required unless --describe)", cxxopts::value<std::string>()->default_value(""))(
       "shm-bytes", "Video SHM bytes", cxxopts::value<std::size_t>()->default_value(std::to_string(f8::cppsdk::shm::kDefaultVideoShmBytes)))(
@@ -70,7 +70,7 @@ int main(int argc, char** argv) {
     std::cerr << runtime_error << "\n";
     return 2;
   }
-  if (runtime_backend.bus_backend != f8::cppsdk::BusBackend::kNats && result.count("nats-url") > 0) {
+  if (f8::cppsdk::should_warn_ignored_nats_url(result, runtime_backend)) {
     spdlog::warn("--nats-url is ignored unless --bus-backend nats");
   }
 

@@ -48,7 +48,7 @@ int main(int argc, char** argv) {
     std::cerr << runtime_error << "\n";
     return 2;
   }
-  if (runtime_backend.bus_backend != f8::cppsdk::BusBackend::kNats && result.count("nats-url") > 0) {
+  if (f8::cppsdk::should_warn_ignored_nats_url(result, runtime_backend)) {
     spdlog::warn("--nats-url is ignored unless --bus-backend nats");
   }
 

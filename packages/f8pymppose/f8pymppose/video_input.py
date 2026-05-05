@@ -21,7 +21,7 @@ class FrameContext:
     payload: bytes
 
 
-class VideoShmInput:
+class LatestVideoInput:
     def __init__(self) -> None:
         self._reader: LatestVideoFrameTransport | None = None
         self._open_transport = ""
@@ -109,6 +109,9 @@ class VideoShmInput:
             )
         finally:
             frame.release()
+
+
+VideoShmInput = LatestVideoInput
 
 
 def frame_rgb_from_context(frame: FrameContext, *, np_module: Any) -> Any:

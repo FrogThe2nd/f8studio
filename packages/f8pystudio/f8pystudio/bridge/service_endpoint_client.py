@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -22,7 +23,9 @@ from f8pysdk.specs import (
 from f8pysdk.nats_naming import ensure_token, new_id, svc_endpoint_subject
 from f8pysdk.codec import decode_as, encode_obj
 
-from .nats_request import NatsRequester
+from .runtime_request import RuntimeRequester
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -57,7 +60,7 @@ def _error_code(error: F8CommandError | None | msgspec.UnsetType) -> str:
 
 
 async def request_service_status(
-    requester: NatsRequester,
+    requester: RuntimeRequester,
     *,
     service_id: str,
     timeout_s: float = 0.4,
@@ -72,7 +75,8 @@ async def request_service_status(
     )
     try:
         message = await requester.request(svc_endpoint_subject(sid, "status"), payload, timeout=float(timeout_s))
-    except Exception:
+    except Exception as exc:
+        logger.debug("service status request failed service_id=%s", service_id, exc_info=exc)
         return None
     raw = message_data_bytes(message)
     if not raw:
@@ -92,7 +96,7 @@ async def request_service_status(
 
 
 async def request_set_service_active(
-    requester: NatsRequester,
+    requester: RuntimeRequester,
     *,
     service_id: str,
     active: bool,
@@ -118,14 +122,15 @@ async def request_set_service_active(
                 response = decode_as(data, F8ActiveReply)
                 if response.ok:
                     return True
-        except Exception:
+        except Exception as exc:
+            logger.debug("set service active request failed service_id=%s active=%s", service_id, active, exc_info=exc)
             await asyncio.sleep(float(retry_sleep_s))
             continue
     return False
 
 
 async def request_service_terminate(
-    requester: NatsRequester,
+    requester: RuntimeRequester,
     *,
     service_id: str,
     attempts: int,
@@ -151,14 +156,15 @@ async def request_service_terminate(
             if response.ok:
                 return True
             return False
-        except Exception:
+        except Exception as exc:
+            logger.debug("service terminate request failed service_id=%s", service_id, exc_info=exc)
             await asyncio.sleep(float(retry_sleep_s))
             continue
     return False
 
 
 async def request_set_remote_state(
-    requester: NatsRequester,
+    requester: RuntimeRequester,
     *,
     service_id: str,
     node_id: str,
@@ -208,7 +214,14 @@ async def request_set_remote_state(
                     reject_code=_error_code(error),
                     reject_message=_error_message(error),
                 )
-        except Exception:
+        except Exception as exc:
+            logger.debug(
+                "set remote state request failed service_id=%s node_id=%s field=%s",
+                service_id,
+                node_id,
+                field,
+                exc_info=exc,
+            )
             await asyncio.sleep(float(retry_sleep_s))
             continue
     return SetStateRequestResult(

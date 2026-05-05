@@ -26,7 +26,8 @@ from f8pystudio.studio_specs.registry import (
     shared_pystudio_registry,
 )
 from f8pystudio.nodegraph.node_type_ids import SERVICE_NODE_IDENTIFIER
-from f8pystudio.bridge.studio_bridge import STARTUP_GATE_TIMEOUT_S, PyStudioServiceBridge, PyStudioServiceBridgeConfig
+from f8pystudio.bridge.runtime_config import PyStudioServiceBridgeConfig
+from f8pystudio.bridge.studio_bridge import STARTUP_GATE_TIMEOUT_S, PyStudioServiceBridge
 from f8pystudio.ui.support.ui_resources import studio_logo_path
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,9 @@ LAUNCH_DISMISS_FILE_ENV = "F8STUDIO_LAUNCH_DISMISS_FILE"
 
 
 class PyStudioProgram:
+    def __init__(self, bridge_config: PyStudioServiceBridgeConfig | None = None) -> None:
+        self._bridge_config = bridge_config if bridge_config is not None else PyStudioServiceBridgeConfig()
+
     @staticmethod
     def _write_launcher_signal(*, env_name: str, content: str) -> None:
         signal_file_raw = (os.environ.get(env_name) or "").strip()
@@ -248,7 +252,7 @@ class PyStudioProgram:
             app_icon = QtGui.QIcon(str(icon_path))
             if not app_icon.isNull():
                 app.setWindowIcon(app_icon)
-        bridge = PyStudioServiceBridge(PyStudioServiceBridgeConfig())
+        bridge = PyStudioServiceBridge(self._bridge_config)
         startup_blocked_message = bridge.wait_for_startup_preflight(timeout_s=STARTUP_GATE_TIMEOUT_S)
         if startup_blocked_message is not None:
             self._dismiss_launcher_for_dialog()
