@@ -8,7 +8,6 @@ add_library(f8cppsdk
   src/zenoh_naming.cpp
   src/zenoh_transport.cpp
   src/state_kv.cpp
-  src/data_bus.cpp
   src/msg_codec.cpp
   src/rungraph_routes.cpp
   src/time_utils.cpp
