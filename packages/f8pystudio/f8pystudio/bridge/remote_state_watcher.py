@@ -54,7 +54,13 @@ def _coerce_inbound_ts_ms(ts_raw: Any, *, default: int) -> int:
 
 
 def _extract_ts_field(payload: dict[str, Any]) -> Any:
-    return payload.get("tsMs")
+    if "tsMs" in payload:
+        return payload.get("tsMs")
+    if "ts" in payload:
+        return payload.get("ts")
+    if "ts_ms" in payload:
+        return payload.get("ts_ms")
+    return None
 
 
 @dataclass(frozen=True)

@@ -18,7 +18,9 @@ from f8pydl.optflow_service_node import (  # noqa: E402
     PreparedFlowFrame,
     pack_flow2_f16_payload,
 )
+from f8pysdk.bus import ServiceBus, ServiceBusConfig  # noqa: E402
 from f8pysdk.state import StateRead  # noqa: E402
+from f8pysdk.zenoh_naming import zenoh_data_key  # noqa: E402
 
 
 class _BusStub:
@@ -191,6 +193,25 @@ class OptflowServiceNodeErrorTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(node._last_error, "")
         self.assertEqual(bus.clear_count, 1)
+
+    async def test_attach_uses_service_id_for_flow_zenoh_key(self) -> None:
+        bus = ServiceBus(ServiceBusConfig(service_id="dl_service", bus_backend="mem"))
+        node = OnnxOptflowServiceNode(
+            node_id="optflowF",
+            node=SimpleNamespace(stateFields=[]),
+            initial_state=None,
+            service_class="f8.dl.optflow",
+            allowed_tasks={"optflow_neuflowv2"},
+        )
+
+        node.attach(bus)
+        try:
+            self.assertEqual(
+                node._flow_key,
+                zenoh_data_key("dl_service", node_id="optflowF", port_id="flow"),
+            )
+        finally:
+            await node.close()
 
 
 if __name__ == "__main__":

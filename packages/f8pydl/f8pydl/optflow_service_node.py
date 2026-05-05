@@ -285,6 +285,7 @@ class OnnxOptflowServiceNode(ServiceNode):
         self._video_source = LatestVideoFrameSource(config=self._video_config)
         if isinstance(bus, ServiceBus):
             self._bus_backend = str(bus.bus_backend)
+            self._flow_key = zenoh_data_key(bus.service_id, node_id=self.node_id, port_id="flow")
         loop = asyncio.get_running_loop()
         loop.create_task(self._ensure_config_loaded(), name=f"f8dl-optflow:init:{self.node_id}")
         self._task = loop.create_task(self._loop(), name=f"f8dl-optflow:loop:{self.node_id}")
