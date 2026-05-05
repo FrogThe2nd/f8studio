@@ -252,7 +252,7 @@ class ServiceLifecycleControllerMixin:
         """
         Ask a running service process to exit itself (graceful).
 
-        This is best-effort and may fail if the service isn't connected to NATS yet.
+        This is best-effort and may fail if the service is not connected to the runtime bus yet.
         """
         sid = ""
         try:

@@ -436,24 +436,12 @@ class RuntimeSessionControllerMixin:
                     )
 
             try:
-                if self._runtime_bus_backend() == "nats":
-                    nc = await self._ensure_nc()
+                transport = await self._ensure_runtime_transport()
 
-                    async def _on_monitor_msg(msg: Any) -> None:
-                        try:
-                            raw = bytes(msg.data or b"")
-                        except (AttributeError, TypeError, ValueError):
-                            return
-                        await _on_monitor_payload(raw)
+                async def _on_monitor_sample(_subject: str, payload: bytes) -> None:
+                    await _on_monitor_payload(bytes(payload))
 
-                    self._monitor_sub = await nc.subscribe("svc.*.nodes.*.data.monitor", cb=_on_monitor_msg)
-                else:
-                    transport = await self._ensure_runtime_transport()
-
-                    async def _on_monitor_sample(_subject: str, payload: bytes) -> None:
-                        await _on_monitor_payload(bytes(payload))
-
-                    self._monitor_sub = await transport.subscribe("svc.*.nodes.*.data.monitor", cb=_on_monitor_sample)
+                self._monitor_sub = await transport.subscribe("svc.*.nodes.*.data.monitor", cb=_on_monitor_sample)
             except Exception as exc:
                 self._report_exception("subscribe monitor stream failed", exc)
 
@@ -562,7 +550,7 @@ class RuntimeSessionControllerMixin:
 
     async def _ensure_nc(self) -> Any | None:
         """
-        Ensure a NATS connection exists for command channel requests.
+        Ensure a NATS connection exists for explicit NATS singleton/bootstrap fallback.
         """
         if self._nc is not None:
             return self._nc
@@ -579,7 +567,5 @@ class RuntimeSessionControllerMixin:
         return transport
 
     async def _ensure_requester(self) -> Any | None:
-        if self._runtime_bus_backend() == "nats":
-            return await self._ensure_nc()
         transport = await self._ensure_runtime_transport()
         return RuntimeTransportRequester(transport=transport)
