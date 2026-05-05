@@ -508,7 +508,7 @@ void AudioCapService::publish_static_state() {
   const bool use_zenoh_audio =
       zenoh_audio_publisher_ && zenoh_audio_publisher_->valid() && !zenoh_audio_key_.empty();
   set_if_changed("audioTransport", use_zenoh_audio ? "zenoh" : "legacy_shm");
-  set_if_changed("audioKey", use_zenoh_audio ? zenoh_audio_key_ : (shm_ ? shm_->shm_name() : ""));
+  set_if_changed("audioKey", use_zenoh_audio ? zenoh_audio_key_ : "");
   set_if_changed("audioDevice", opened_device_name_);
   set_if_changed("audioSampleRate", cfg_.sample_rate);
   set_if_changed("audioChannels", cfg_.channels);
@@ -543,7 +543,7 @@ nlohmann::json AudioCapService::describe() {
                        "ro", "Audio Transport",
                        "Audio transport backend. Zenoh is the default runtime data path; legacy_shm keeps audioShmName.",
                        false),
-           state_field("audioKey", schema_string(), "ro", "Audio Key", "Transport-specific audio stream key", true),
+           state_field("audioKey", schema_string(), "ro", "Audio Key", "Zenoh latest-chunk key for audio output", true),
            state_field("audioDevice", schema_string(), "ro", "Audio Device", "Name of the audio capture device in use", false),
            state_field("audioSampleRate", schema_integer(), "ro", "Audio Sample Rate", "Sample rate of the audio capture device", false),
            state_field("audioChannels", schema_integer(), "ro", "Audio Channels", "Number of audio channels", false),

@@ -2358,7 +2358,7 @@ void ImPlayerService::publish_static_state() {
     const bool use_zenoh_video =
         zenoh_video_publisher_ && zenoh_video_publisher_->valid() && !zenoh_video_key_.empty();
     want("videoTransport", use_zenoh_video ? "zenoh" : "legacy_shm");
-    want("videoKey", use_zenoh_video ? zenoh_video_key_ : (shm_ ? shm_->regionName() : ""));
+    want("videoKey", use_zenoh_video ? zenoh_video_key_ : "");
     want("videoFormat", "bgra32");
     want("videoFrameSchemaVersion", 1);
     want("loop", loop_);
@@ -2464,7 +2464,7 @@ json ImPlayerService::describe() {
                   false),
       state_field("videoTransport", schema_string_enum(std::vector<std::string>{"zenoh", "legacy_shm"}, "zenoh"), "ro",
                   "Video Transport", "Frame transport backend.", false),
-      state_field("videoKey", schema_string(), "ro", "Video Key", "Transport-specific video stream key.", true),
+      state_field("videoKey", schema_string(), "ro", "Video Key", "Zenoh latest-frame key for video output.", true),
       state_field("videoFormat", schema_string_enum({"bgra32", "bgr24", "flow2_f16", "scalar1_f32"}), "ro",
                   "Video Format", "Frame payload format.", false),
       state_field("videoFrameSchemaVersion", schema_integer(), "ro", "Video Schema", "Frame schema version.", false),
