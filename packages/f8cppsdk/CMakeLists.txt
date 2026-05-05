@@ -93,3 +93,8 @@ target_link_libraries(f8cppsdk
     nlohmann_json::nlohmann_json
     spdlog::spdlog
 )
+
+add_executable(f8cpp_bench_latest_video_transport EXCLUDE_FROM_ALL
+  bench/bench_latest_video_transport.cpp
+)
+target_link_libraries(f8cpp_bench_latest_video_transport PRIVATE f8cppsdk)

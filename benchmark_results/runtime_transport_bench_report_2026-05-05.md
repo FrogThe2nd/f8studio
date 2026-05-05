@@ -2,7 +2,10 @@
 
 Date: 2026-05-05
 
-Raw data: `benchmark_results/runtime_transport_bench_2026-05-05.json`
+Raw data:
+
+- Python/control/video benchmark: `benchmark_results/runtime_transport_bench_2026-05-05.json`
+- C++ latest-video benchmark: `benchmark_results/cpp_latest_video_bench_2026-05-05.csv`
 
 Benchmark harness: `scripts/bench_runtime_transports.py`
 
@@ -13,14 +16,14 @@ Benchmark harness: `scripts/bench_runtime_transports.py`
 - **Zenoh 可以继续作为 runtime 控制面默认后端推进**：本机 pub/sub 延迟低，KV/state update publish 快，liveliness 服务发现非常快，符合逐步替代 NATS 控制面和服务发现的方向。
 - **NATS core 在 Python request/reply 上明显更快**：NATS request/reply p95 约 0.30-0.58 ms；当前 Zenoh query/request path p95 约 2.57-2.62 ms，吞吐约 400 req/s。生命周期控制、低频命令、状态设置可以接受；高频 RPC 不应依赖当前 Python Zenoh query path。
 - **JetStream KV 的远端 get 仍然更强**：NATS JS KV remote get 约 3.7k-5.1k ops/s，p95 约 0.26-0.35 ms；Zenoh state queryable remote get 约 400 ops/s，p95 约 2.58 ms。Zenoh 方案胜在本地 service-owned state dict 读极快，且不需要 storage plugin；但它不是 JetStream KV 的集中存储等价替代。
-- **Legacy SHM 目前不能删除，也不建议把生产 video 默认切到当前 Python Zenoh video path**：1080p BGR24 下 legacy SHM roundtrip p95 0.74 ms，Zenoh roundtrip p95 12.34 ms。Zenoh BGR24 firehose 发布约 91 fps，刚过 60 fps 但低于 120 fps，且 latest latency 约 21 ms；不满足原先 `p95 < 5 ms` 的 video 目标。
+- **Legacy SHM 目前不能删除，也不建议把生产 video 默认切到当前 Zenoh video path**：Python 1080p BGR24 下 legacy SHM roundtrip p95 0.74 ms，Zenoh roundtrip p95 12.34 ms。C++ 当前实现提升明显，1080p BGR24 Zenoh roundtrip 达到约 121 fps，但 p95 仍为 9.50 ms，未达到 `p95 < 5 ms` 的 video 目标。
 - **NATS 不能直接承载 1080p BGR frame 默认 payload**：默认 `nats-server` 直接 publish 6,220,800 bytes 的 1080p BGR24 payload 失败，错误为 `MaxPayloadError: nats: maximum payload exceeded`。这验证了当前 “NATS 控制面 + 自制 SHM 视频数据面” 设计的历史合理性。
 
 推荐迁移策略：
 
 1. **继续 Zenoh-first 控制面**：服务发现、普通 data pub/sub、state update、service endpoint 都可以默认走 Zenoh。
 2. **保留 NATS fallback**：尤其是需要极低延迟 request/reply 或 JetStream KV 集中存储语义的路径。
-3. **video 数据面继续默认 legacy SHM，Zenoh video 作为 preview/实验路径**：等 C++ zenoh-cpp / zenoh-c SHM loaned sample path benchmark 通过 1080p60/120、p95 < 5 ms、无 backlog 后，再考虑切默认。
+3. **video 数据面继续默认 legacy SHM，Zenoh video 作为 preview/实验路径**：等 C++ zenoh-cpp / zenoh-c SHM loaned sample path benchmark 通过 1080p60/120、p95 < 5 ms、无 backlog 后，再考虑切默认。当前 C++ benchmark 测到的是 repo 现有编码/解码实现，不是 loaned zero-copy path。
 
 ## Environment
 
@@ -58,6 +61,19 @@ pixi run python scripts/bench_runtime_transports.py \
   --output benchmark_results/runtime_transport_bench_2026-05-05.json
 ```
 
+C++ latest-video command:
+
+```bash
+pixi run cpp_bench_latest_video \
+  --video-width 1920 \
+  --video-height 1080 \
+  --video-iterations 120 \
+  --video-firehose-iterations 180 \
+  --video-warmup-iterations 5 \
+  --zenoh-shm-pool-bytes 536870912 \
+  > benchmark_results/cpp_latest_video_bench_2026-05-05.csv
+```
+
 Notes:
 
 - NATS uses a local ephemeral `nats-server -js` with JetStream enabled.
@@ -70,6 +86,7 @@ Notes:
   - BGR24: 1920 x 1080 x 3 = 6,220,800 bytes
   - BGRA32: 1920 x 1080 x 4 = 8,294,400 bytes
 - Video firehose tests intentionally publish many frames and read only the latest slot afterward. `delivered=1` is expected there; use publish throughput for that scenario.
+- The C++ Zenoh video benchmark measures the current repo implementation: frame metadata is encoded into `RuntimeBytes`, `zenoh::Session::put` publishes that payload, and the subscriber decodes into `LatestVideoFrame.payload`. It is not yet a loaned-buffer / zero-copy Zenoh SHM benchmark.
 
 ## Core Pub/Sub
 
@@ -205,6 +222,32 @@ Interpretation:
 - The current Zenoh video implementation is acceptable for preview/monitor/low-rate streams, but not proven enough for primary local high-rate camera/video transport.
 - The result likely includes Python payload construction/copy and does not prove the limit of Zenoh's C/C++ SHM loaned-buffer path.
 
+### C++ Latest-Frame Roundtrip
+
+| Backend | Format | Payload | fps equivalent | MiB/s | p50 ms | p95 ms | p99 ms |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Legacy SHM C++ | BGR24 | 6,220,800 B | 668 | 3,964 | 1.445 | 1.919 | 2.474 |
+| Zenoh C++ current | BGR24 | 6,220,800 B | 121 | 717 | 8.245 | 9.498 | 9.880 |
+| Legacy SHM C++ | BGRA32 | 8,294,400 B | 635 | 5,025 | 1.510 | 2.035 | 2.144 |
+| Zenoh C++ current | BGRA32 | 8,294,400 B | 90 | 714 | 10.733 | 13.087 | 15.126 |
+
+### C++ Latest-Frame Firehose Publish
+
+| Backend | Format | Published frames | Publish fps | Publish MiB/s | Latest latency ms |
+|---|---|---:|---:|---:|---:|
+| Legacy SHM C++ | BGR24 | 180 | 1,123 | 6,661 | 1.186 |
+| Zenoh C++ current | BGR24 | 180 | 136 | 805 | 18.314 |
+| Legacy SHM C++ | BGRA32 | 180 | 997 | 7,887 | 1.472 |
+| Zenoh C++ current | BGRA32 | 180 | 106 | 836 | 22.659 |
+
+C++ interpretation:
+
+- C++ Zenoh is much better than the Python Zenoh video path for 1080p BGR24: roundtrip improves from about 63 fps / p95 12.34 ms to about 121 fps / p95 9.50 ms.
+- It still does not match legacy SHM latency. Legacy SHM C++ p95 is about 1.9-2.0 ms; current Zenoh C++ is about 9.5 ms for BGR24 and 13.1 ms for BGRA32.
+- Current C++ Zenoh BGR24 can roughly satisfy 120 fps throughput in this roundtrip loop, but it does not satisfy the original p95 < 5 ms latency target.
+- Current C++ Zenoh BGRA32 is below 120 fps and p95 is above one 120 fps frame interval.
+- The next meaningful optimization is to remove the extra encode/copy/decode path and benchmark a Zenoh SHM loaned-buffer API or a borrowed sample API with frame-view lifetime semantics.
+
 ## Migration Decision Matrix
 
 | Area | Replace NATS / legacy now? | Reason |
@@ -216,8 +259,8 @@ Interpretation:
 | State update watch | Yes | Zenoh watch throughput is good; service-owned state model fits runtime state. |
 | Remote KV get hot path | Not as a direct JS KV replacement | Zenoh queryable remote get is much slower than JS KV. Avoid hot polling. |
 | Durable / centralized KV storage | No | Planned Zenoh model is service-owned latest state, not storage-manager-backed durability. |
-| 1080p/4K local video | No | Legacy SHM is an order of magnitude better on latency and throughput. |
-| Cross-machine video | Experimental | Needs dedicated benchmark with actual topology and C++ path. |
+| 1080p/4K local video | No | Legacy SHM remains much better on latency; current C++ Zenoh BGR24 reaches 120 fps throughput but misses p95 < 5 ms. |
+| Cross-machine video | Experimental | Needs dedicated benchmark with actual topology and the optimized C++ loaned-buffer path. |
 
 ## Recommendation
 
@@ -241,8 +284,8 @@ The practical near-term architecture should therefore be:
 
 - **Zenoh default for control/state/discovery/pub-sub edges.**
 - **NATS fallback for compatibility and specific KV/RPC cases.**
-- **Legacy SHM default for local video data plane.**
-- **Zenoh video behind an opt-in flag until C++ SHM benchmark proves parity.**
+- **Legacy SHM default for local high-rate video data plane.**
+- **Zenoh video behind an opt-in flag until the C++ loaned-buffer benchmark proves latency parity.**
 
 ## Follow-Up Benchmarks
 
@@ -253,4 +296,3 @@ Recommended next measurements:
 3. 1080p/4K video with real camera/screencap producers and PyStudio consumers.
 4. CPU utilization and memory bandwidth while running video plus control traffic concurrently.
 5. Slow-consumer latest-frame test that asserts skipped old frames and bounded queue depth under actual service code.
-

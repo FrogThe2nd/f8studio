@@ -228,6 +228,25 @@ def _build() -> None:
     )
 
 
+def _build_target(target: str) -> None:
+    target_s = str(target or "").strip()
+    if not target_s:
+        raise ValueError("target must be non-empty")
+    conan_presets = _select_conan_release_presets()
+    _run(
+        [
+            _cpp_tool("cmake"),
+            "--build",
+            "--preset",
+            conan_presets.build_preset_name,
+            "--target",
+            target_s,
+            "--parallel",
+        ],
+        use_pixi_cpp_paths=True,
+    )
+
+
 def _lock_refresh() -> None:
     _run([_cpp_tool("conan"), "profile", "detect", "--force"], use_host_pkg_config=True)
     if LOCKFILE_PATH.is_file():
@@ -252,9 +271,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="C++ CI entrypoint for Conan + CMake.")
     parser.add_argument(
         "command",
-        choices=("bootstrap", "configure", "build", "lock-refresh"),
+        choices=("bootstrap", "configure", "build", "build-target", "lock-refresh"),
         help="Action to run.",
     )
+    parser.add_argument("target", nargs="?", help="CMake target for the build-target command.")
     return parser
 
 
@@ -266,6 +286,10 @@ def main() -> int:
         _configure()
     elif args.command == "build":
         _build()
+    elif args.command == "build-target":
+        if not args.target:
+            raise SystemExit("Missing target for build-target")
+        _build_target(str(args.target))
     elif args.command == "lock-refresh":
         _lock_refresh()
     return 0
