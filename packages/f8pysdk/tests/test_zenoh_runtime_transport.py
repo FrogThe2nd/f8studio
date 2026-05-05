@@ -4,9 +4,8 @@ import asyncio
 from typing import Any
 
 from f8pysdk.bus import ServiceBus, ServiceBusConfig
-from f8pysdk.nats_naming import kv_bucket_for_service, kv_key_node_state, new_id, svc_endpoint_subject
+from f8pysdk.f8_naming import kv_bucket_for_service, kv_key_node_state, new_id, svc_endpoint_subject
 from f8pysdk.runtime_transport import RuntimeTransport
-from f8pysdk.transport import NatsTransport, NatsTransportConfig
 from f8pysdk.testing import InMemoryCluster, InMemoryTransport
 from f8pysdk.zenoh_config import apply_zenoh_shared_memory_config
 from f8pysdk.zenoh_naming import subject_to_zenoh_key, zenoh_key_to_kv_key, zenoh_kv_key, zenoh_kv_pattern
@@ -46,11 +45,9 @@ def test_service_bus_config_defaults_to_zenoh_backend() -> None:
 
 
 def test_runtime_transport_protocol_is_explicitly_satisfied() -> None:
-    nats_transport = NatsTransport(NatsTransportConfig(url="nats://127.0.0.1:4222", kv_bucket="svc_demo"))
     mem_transport = InMemoryTransport(cluster=InMemoryCluster(), kv_bucket="svc_demo")
     zenoh_transport = ZenohTransport(ZenohTransportConfig(service_id="svc_demo"))
 
-    assert isinstance(nats_transport, RuntimeTransport)
     assert isinstance(mem_transport, RuntimeTransport)
     assert isinstance(zenoh_transport, RuntimeTransport)
 

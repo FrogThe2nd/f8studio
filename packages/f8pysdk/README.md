@@ -21,12 +21,11 @@ Core stable public modules:
 - `f8pysdk.state`: canonical state read/write types
 - `f8pysdk.runtime_transport`: backend-neutral transport protocol
 - `f8pysdk.zenoh_transport`: default Zenoh runtime transport
-- `f8pysdk.transport`: explicit NATS fallback transport façade
 - `f8pysdk.testing`: in-memory harness plus emit/pull/buffer test helpers
 
 Additional stable utility modules:
 - `f8pysdk.zenoh_naming`: canonical Zenoh key-expression helpers
-- `f8pysdk.nats_naming`: canonical NATS fallback subject / KV naming helpers
+- `f8pysdk.f8_naming`: canonical runtime token, subject, and state-key helpers
 - `f8pysdk.capabilities`: explicit runtime node capability protocols and mixins
 - `f8pysdk.shm`: shared-memory naming and audio/video helpers
 - `f8pysdk.rungraph_validation`: rungraph validation helpers used by Studio/runtime tooling
@@ -46,9 +45,9 @@ Explicit internal-only modules:
 
 Removed deep legacy paths:
 - old `f8pysdk.service_bus.*` compatibility shims such as `bus`, `codec`, `command_runtime`, `cross_state`, `domain.state_pipeline`, `error_utils`, `lifecycle`, `metadata`, `micro`, `payload`, `routing.data_*`, `routing_data`, `rungraph_apply`, `runtime_collections`, `state_publish`, `state_router`, and `state_store` have been removed from this repo
-- historical top-level implementation paths such as `f8pysdk.runtime_node`, `f8pysdk.runtime_node_registry`, `f8pysdk.service_host`, `f8pysdk.service_runtime`, `f8pysdk.msgspec_codec`, `f8pysdk.nats_transport`, `f8pysdk.command_state`, `f8pysdk.json_unwrap`, and `f8pysdk.monitor_schema` have been removed in favor of stable owner modules like `f8pysdk.nodes`, `f8pysdk.registry`, `f8pysdk.host`, `f8pysdk.runtime`, `f8pysdk.codec`, `f8pysdk.transport`, `f8pysdk.command`, and `f8pysdk.monitoring`
+- historical top-level implementation paths such as `f8pysdk.runtime_node`, `f8pysdk.runtime_node_registry`, `f8pysdk.service_host`, `f8pysdk.service_runtime`, `f8pysdk.msgspec_codec`, `f8pysdk.nats_transport`, `f8pysdk.command_state`, `f8pysdk.json_unwrap`, and `f8pysdk.monitor_schema` have been removed in favor of stable owner modules like `f8pysdk.nodes`, `f8pysdk.registry`, `f8pysdk.host`, `f8pysdk.runtime`, `f8pysdk.codec`, `f8pysdk.command`, and `f8pysdk.monitoring`
 - top-level helper modules `f8pysdk.builtin_state_fields`, `f8pysdk.service_ready`, and `f8pysdk.nats_server_bootstrap` have been removed
-  use `f8pysdk._specs.builtin_fields`, `f8pysdk.service_runtime_tools.deploy.readiness`, and `f8pysdk.service_runtime_tools.deploy.nats_bootstrap` instead
+  use `f8pysdk._specs.builtin_fields` and `f8pysdk.service_runtime_tools.deploy.readiness` instead
 - repo code should import stable SDK modules such as `f8pysdk.bus`, `f8pysdk.specs`, `f8pysdk.command`, `f8pysdk.data`, `f8pysdk.state`, `f8pysdk.codec`, and `f8pysdk.testing` directly
 - package root `f8pysdk` no longer wildcard-reexports generated types or helper functions; import from explicit owner modules instead
 
@@ -76,8 +75,8 @@ Prefer `ServiceApp` plus `Registry` for new services:
 - one explicit registry owner for specs and runtime node factories
 - standard CLI: `--describe`, `--service-id`, `--bus-backend`, Zenoh options, and deprecated `--nats-url`
 - default backend: `zenoh`
-- explicit fallbacks: `--bus-backend nats` or `--bus-backend mem`
-- `--nats-url` / `F8_NATS_URL` are used only when `--bus-backend nats`
+- explicit local-test fallback: `--bus-backend mem`
+- `--nats-url` / `F8_NATS_URL` are deprecated compatibility inputs and are ignored by the Zenoh runtime
 
 Minimal example:
 
@@ -105,8 +104,8 @@ app = ServiceApp(
 
 app.run(service_id="svc-a")
 
-# Explicit NATS fallback:
-# app.run(service_id="svc-a", bus_backend="nats", nats_url="nats://127.0.0.1:4222")
+# Local in-memory tests:
+# app.run(service_id="svc-a", bus_backend="mem")
 ```
 
 Registry contract:
@@ -157,7 +156,6 @@ Stable helper modules:
 - `f8pysdk.registry`: author-facing registry, low-level runtime registry, and registry errors
 - `f8pysdk.runtime_transport`: backend-neutral runtime transport protocol
 - `f8pysdk.zenoh_transport`: default Zenoh runtime transport
-- `f8pysdk.transport`: explicit NATS fallback transport façade and KV reset helpers
 - `f8pysdk.testing`: in-memory harness plus emit/pull/buffer helpers for tests
 
 Coercion contract:

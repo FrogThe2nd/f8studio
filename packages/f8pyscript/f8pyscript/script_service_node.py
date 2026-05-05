@@ -13,7 +13,7 @@ from typing import Any, Callable
 from f8pysdk.bus import ServiceBus
 from f8pysdk.capabilities import ClosableNode, CommandableNode
 from f8pysdk.codec import unwrap_json_value
-from f8pysdk.nats_naming import ensure_token
+from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
 from f8pysdk.shm.video import VIDEO_FORMAT_BGRA32, VIDEO_FORMAT_FLOW2_F16
 from f8pysdk.video_transport import (

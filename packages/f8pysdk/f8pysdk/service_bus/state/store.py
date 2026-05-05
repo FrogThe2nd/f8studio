@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ...generated import F8StateAccess
-from ...nats_naming import ensure_token, kv_key_node_state
+from ...f8_naming import ensure_token, kv_key_node_state
 from ...state import StateRead
 from ...codec import decode_obj
 from ..internal.cache import CappedOrderedDict

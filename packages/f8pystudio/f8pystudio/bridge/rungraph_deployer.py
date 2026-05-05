@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Protocol
 
 import msgspec
@@ -9,9 +9,8 @@ from f8pysdk.bus import BusBackend
 from f8pysdk.specs import F8RuntimeGraph
 from f8pysdk.specs import F8SetRungraphArgs, F8SetRungraphReply, F8SetRungraphRequest
 from f8pysdk.codec import copy_model
-from f8pysdk.nats_naming import kv_bucket_for_service, new_id, svc_endpoint_subject
+from f8pysdk.f8_naming import kv_bucket_for_service, new_id, svc_endpoint_subject
 from f8pysdk.runtime_transport import RuntimeTransport
-from f8pysdk.transport import NatsTransport, NatsTransportConfig
 from f8pysdk.zenoh_transport import ZenohTransport, ZenohTransportConfig
 from f8pysdk.service_runtime_tools.deploy.readiness import wait_service_ready
 from f8pysdk.codec import decode_as, encode_obj
@@ -23,7 +22,6 @@ class RungraphGateway(Protocol):
 
 @dataclass(frozen=True)
 class RungraphDeployConfig:
-    nats_url: str
     ready_timeout_s: float = 6.0
     request_timeout_s: float = 2.0
     bus_backend: BusBackend = "zenoh"
@@ -67,10 +65,6 @@ class RuntimeRungraphGateway:
         return copy_model(graph, update={"nodes": normalized_nodes})
 
     def _build_transport(self, service_id: str) -> RuntimeTransport:
-        if self.config.bus_backend == "nats":
-            return NatsTransport(
-                NatsTransportConfig(url=str(self.config.nats_url), kv_bucket=kv_bucket_for_service(service_id))
-            )
         if self.config.bus_backend == "mem":
             from f8pysdk.testing import InMemoryCluster, InMemoryTransport
 
@@ -78,6 +72,8 @@ class RuntimeRungraphGateway:
                 cluster=InMemoryCluster(),
                 kv_bucket=kv_bucket_for_service(str(self.config.client_service_id)),
             )
+        if self.config.bus_backend != "zenoh":
+            raise ValueError("Runtime rungraph deployment supports only bus_backend='zenoh' or 'mem'.")
         return ZenohTransport(
             ZenohTransportConfig(
                 service_id=str(self.config.client_service_id),
@@ -98,7 +94,7 @@ class RuntimeRungraphGateway:
                 await wait_service_ready(
                     transport,
                     timeout_s=float(self.config.ready_timeout_s),
-                    bucket=(bucket if self.config.bus_backend != "nats" else None),
+                    bucket=bucket,
                 )
             except asyncio.TimeoutError:
                 return RungraphDeployResult(
@@ -135,24 +131,3 @@ class RuntimeRungraphGateway:
             )
         finally:
             await transport.close()
-
-
-@dataclass(frozen=True)
-class NatsRungraphGateway:
-    """
-    Backward-compatible NATS fallback gateway.
-
-    New code should use `RuntimeRungraphGateway` with an explicit backend. This
-    wrapper preserves the old import while routing through the same
-    RuntimeTransport abstraction as the Zenoh-first path.
-    """
-
-    config: RungraphDeployConfig
-
-    @staticmethod
-    def _normalize_graph_for_request(graph: F8RuntimeGraph) -> F8RuntimeGraph:
-        return RuntimeRungraphGateway._normalize_graph_for_request(graph)
-
-    async def deploy_runtime_graph(self, req: RungraphDeployRequest) -> RungraphDeployResult:
-        nats_config = replace(self.config, bus_backend="nats")
-        return await RuntimeRungraphGateway(nats_config).deploy_runtime_graph(req)

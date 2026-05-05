@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from f8pysdk.codec import coerce_bool, coerce_float, coerce_int, coerce_str, parse_str_list
-from f8pysdk.nats_naming import ensure_token
+from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
 from f8pysdk.shm.video import VIDEO_FORMAT_BGRA32
 

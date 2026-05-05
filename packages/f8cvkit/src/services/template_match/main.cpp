@@ -68,7 +68,7 @@ int main(int argc, char** argv) {
     return 2;
   }
   if (f8::cppsdk::should_warn_ignored_nats_url(result, runtime_backend)) {
-    spdlog::warn("--nats-url is ignored unless --bus-backend nats");
+    spdlog::warn("--nats-url is deprecated and ignored by the Zenoh runtime");
   }
 
   f8::cvkit::template_match::TemplateMatchService::Config cfg;

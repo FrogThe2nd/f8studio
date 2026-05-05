@@ -20,7 +20,7 @@ def _env_or(default: str, name: str) -> str:
 
 def _env_backend(default: BusBackend, name: str) -> BusBackend:
     text = str(os.environ.get(name, "") or "").strip().lower()
-    if text in ("zenoh", "nats", "mem"):
+    if text in ("zenoh", "mem"):
         return cast(BusBackend, text)
     return default
 
@@ -73,13 +73,6 @@ def _set_env_or_clear(name: str, value: str | None) -> None:
 
 def _install_runtime_env(config: PyStudioServiceBridgeConfig) -> None:
     os.environ["F8_BUS_BACKEND"] = str(config.bus_backend)
-    if config.bus_backend == "nats":
-        os.environ["F8_NATS_URL"] = str(config.nats_url)
-        os.environ.pop("F8_ZENOH_CONFIG", None)
-        os.environ.pop("F8_ZENOH_CONNECT", None)
-        os.environ.pop("F8_ZENOH_LISTEN", None)
-        os.environ.pop("F8_ZENOH_SHM_POOL_BYTES", None)
-        return
     if config.bus_backend == "zenoh":
         os.environ.pop("F8_NATS_URL", None)
         _set_env_or_clear("F8_ZENOH_CONFIG", config.zenoh_config_path)
@@ -115,14 +108,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--bus-backend",
-        choices=("zenoh", "nats", "mem"),
+        choices=("zenoh", "mem"),
         default=_env_backend("zenoh", "F8_BUS_BACKEND"),
         help="Runtime bus backend (env: F8_BUS_BACKEND, default: zenoh).",
     )
     parser.add_argument(
         "--nats-url",
         default=_env_or("nats://127.0.0.1:4222", "F8_NATS_URL"),
-        help="Deprecated: NATS server URL, only used with --bus-backend nats.",
+        help="Deprecated compatibility option. Ignored by the Zenoh runtime.",
     )
     parser.add_argument(
         "--zenoh-config",
@@ -155,9 +148,9 @@ def main(argv: list[str] | None = None) -> int:
         os.environ["F8_DISCOVERY_DISABLE_STATIC_DESCRIBE"] = "1"
 
     config = _build_bridge_config(args)
-    if config.bus_backend != "nats" and nats_url_supplied:
+    if nats_url_supplied:
         warnings.warn(
-            "--nats-url/F8_NATS_URL is deprecated for non-NATS backends and will be ignored.",
+            "--nats-url/F8_NATS_URL is deprecated and ignored by the Zenoh runtime.",
             DeprecationWarning,
             stacklevel=2,
         )

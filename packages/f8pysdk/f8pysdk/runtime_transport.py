@@ -16,9 +16,9 @@ class RuntimeTransport(Protocol):
     The contract is intentionally small and concrete: pub/sub for transient data,
     request/serve for sparse control endpoints, and a latest-value state facade.
 
-    The method names retain legacy NATS wording for compatibility. The Zenoh
-    backend implements them with native command streams and retained state
-    streams, not NATS micro or hot-path queryables.
+    The Zenoh backend implements request/serve with native command streams and
+    state reads/watches with retained state streams, keeping queryables off the
+    control and state hot paths.
     """
 
     async def connect(self) -> None: ...

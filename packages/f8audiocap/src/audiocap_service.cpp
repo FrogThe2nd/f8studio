@@ -133,7 +133,6 @@ bool AudioCapService::start() {
   const auto runtime_backend =
       f8::cppsdk::runtime_backend_config_with_legacy_nats_url(cfg_.runtime_backend, cfg_.nats_url);
   bus_cfg.apply_runtime_backend(runtime_backend);
-  bus_cfg.kv_memory_storage = true;
   bus_ = std::make_unique<f8::cppsdk::ServiceBus>(bus_cfg);
   bus_->add_lifecycle_node(this);
   bus_->add_stateful_node(this);

@@ -5,7 +5,7 @@ import logging
 from typing import Any
 
 from ...codec import decode_obj
-from ...nats_naming import kv_key_ready
+from ...f8_naming import kv_key_ready
 from ...runtime_transport import RuntimeTransport
 from ...time_utils import now_ms
 

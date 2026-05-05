@@ -52,8 +52,6 @@ std::string bus_backend_to_string(BusBackend backend) {
   switch (backend) {
     case BusBackend::kZenoh:
       return "zenoh";
-    case BusBackend::kNats:
-      return "nats";
     case BusBackend::kMem:
       return "mem";
   }
@@ -64,10 +62,6 @@ bool parse_bus_backend(std::string_view value, BusBackend& backend) {
   const std::string text = lower_ascii(trim_runtime_string(value));
   if (text == "zenoh") {
     backend = BusBackend::kZenoh;
-    return true;
-  }
-  if (text == "nats") {
-    backend = BusBackend::kNats;
     return true;
   }
   if (text == "mem") {

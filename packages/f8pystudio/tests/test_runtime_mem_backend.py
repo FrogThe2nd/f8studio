@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from f8pysdk.codec import encode_obj
-from f8pysdk.nats_naming import kv_key_node_state
+from f8pysdk.f8_naming import kv_key_node_state
 from f8pysdk.testing import InMemoryTransport
 from f8pystudio.bridge.command_client import RuntimeCommandGatewayConfig
 from f8pystudio.bridge.command_client import _build_runtime_transport as build_command_transport
@@ -29,7 +29,6 @@ def test_runtime_command_gateway_mem_uses_in_memory_transport() -> None:
 def test_runtime_rungraph_gateway_mem_uses_in_memory_transport() -> None:
     gateway = RuntimeRungraphGateway(
         RungraphDeployConfig(
-            nats_url="nats://127.0.0.1:4222",
             bus_backend="mem",
             client_service_id="studio",
         )

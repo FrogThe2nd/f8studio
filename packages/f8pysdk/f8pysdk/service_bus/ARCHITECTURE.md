@@ -23,7 +23,7 @@ The long-term plan is tracked in `packages/f8pysdk/SDK_REFACTOR_PLAN.md`.
 - `internal/`: non-public typed command/data/runtime infrastructure helpers
 
 The runtime is Zenoh-first through the explicit `RuntimeTransport` protocol.
-NATS remains as an explicit compatibility backend. State is service-owned:
+State is service-owned:
 each service keeps its latest local state snapshot, exposes it through the
 transport KV/query facade, and publishes state update samples for watchers.
 
@@ -86,7 +86,7 @@ Slice D notes:
    - hidden command dispatch for hidden command input fields
    - `node.on_state(...)` for normal state fields
    - intra-service state-edge fanout
-6. cross-service state propagation is handled separately by remote state/KV watch in `workflow/cross_state.py`
+6. cross-service state propagation is handled separately by retained remote state watch in `state/router.py`
 
 ### Command Invoke Chain
 
@@ -98,8 +98,7 @@ There are still two command entry adapters, but they now share one `CommandGatew
    - argument normalization via `map_command_args(...)`
    - `execute_command(...)`
 2. request/reply control endpoint adapter
-   - Zenoh queryable `cmd` endpoint by default
-   - NATS micro `cmd` endpoint for explicit NATS fallback
+   - Zenoh command-stream `cmd` endpoint
    - request decode / argument validation
    - `execute_command(...)` / `CommandGateway.invoke(...)`
    - direct reply payload

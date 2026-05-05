@@ -12,7 +12,6 @@ inline constexpr std::uint64_t kDefaultZenohShmPoolBytes = 256ULL * 1024ULL * 10
 
 enum class BusBackend {
   kZenoh,
-  kNats,
   kMem,
 };
 

@@ -72,7 +72,7 @@ extern "C" SDL_AppResult SDLCALL SDL_AppInit(void** appstate, int argc, char* ar
     return SDL_APP_FAILURE;
   }
   if (f8::cppsdk::should_warn_ignored_nats_url(result, runtime_backend)) {
-    spdlog::warn("--nats-url is ignored unless --bus-backend nats");
+    spdlog::warn("--nats-url is deprecated and ignored by the Zenoh runtime");
   }
   f8::cppsdk::VideoTransportBackend video_backend = f8::cppsdk::VideoTransportBackend::kAuto;
   if (!f8::cppsdk::read_video_transport_backend_option(result, video_backend, runtime_error)) {

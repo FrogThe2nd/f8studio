@@ -10,7 +10,7 @@ import msgspec
 
 from ...generated import F8Edge, F8EdgeKindEnum, F8RuntimeGraph, F8RuntimeGraphMeta, F8StateAccess
 from ...codec import unwrap_json_value
-from ...nats_naming import data_subject
+from ...f8_naming import data_subject
 from ...state import StateWriteOrigin, StateWriteSource
 from ..internal.logging import log_error_once
 from ..state.helpers import build_intra_state_route_meta

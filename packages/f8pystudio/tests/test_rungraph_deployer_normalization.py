@@ -5,7 +5,7 @@ import msgspec
 from f8pysdk.specs import F8RuntimeGraph, F8RuntimeNode
 from f8pysdk.codec import dump_json
 
-from f8pystudio.bridge.rungraph_deployer import NatsRungraphGateway, RungraphDeployConfig
+from f8pystudio.bridge.rungraph_deployer import RuntimeRungraphGateway, RungraphDeployConfig
 
 
 def test_normalize_graph_for_request_omits_null_operator_class_for_service_nodes() -> None:
@@ -18,7 +18,7 @@ def test_normalize_graph_for_request_omits_null_operator_class_for_service_nodes
         ],
         edges=[],
     )
-    gateway = NatsRungraphGateway(RungraphDeployConfig(nats_url="nats://127.0.0.1:4222"))
+    gateway = RuntimeRungraphGateway(RungraphDeployConfig())
     normalized = gateway._normalize_graph_for_request(graph)
 
     assert isinstance(normalized.nodes[0].operatorClass, msgspec.UnsetType)
@@ -28,4 +28,3 @@ def test_normalize_graph_for_request_omits_null_operator_class_for_service_nodes
     assert isinstance(nodes_payload, list)
     assert "operatorClass" not in nodes_payload[0]
     assert nodes_payload[1].get("operatorClass") == "svc.a.op"
-

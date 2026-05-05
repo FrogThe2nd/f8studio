@@ -5,7 +5,7 @@ import logging
 from typing import Any, TYPE_CHECKING
 
 from ...generated import F8Edge, F8EdgeKindEnum, F8RuntimeGraph, F8StateAccess
-from ...nats_naming import ensure_token, kv_bucket_for_service, kv_key_node_state, parse_kv_key_node_state
+from ...f8_naming import ensure_token, kv_bucket_for_service, kv_key_node_state, parse_kv_key_node_state
 from ...time_utils import now_ms
 from ...codec import decode_obj
 from ...state import StateWriteContext, StateWriteError, StateWriteOrigin, StateWriteSource

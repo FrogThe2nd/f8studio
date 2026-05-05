@@ -16,9 +16,9 @@ inline void add_runtime_backend_options(cxxopts::Options& options,
                                         const RuntimeBackendConfig& defaults = runtime_backend_config_from_env()) {
   const RuntimeBackendConfig normalized = normalize_runtime_backend_config(defaults);
   options.add_options()(
-      "bus-backend", "Runtime bus backend: zenoh|nats|mem (env: F8_BUS_BACKEND, default: zenoh)",
+      "bus-backend", "Runtime bus backend: zenoh|mem (env: F8_BUS_BACKEND, default: zenoh)",
       cxxopts::value<std::string>()->default_value(bus_backend_to_string(normalized.bus_backend)))(
-      "nats-url", "Deprecated: NATS server URL; only used with --bus-backend nats (env: F8_NATS_URL)",
+      "nats-url", "Deprecated compatibility option. Ignored by the Zenoh runtime (env: F8_NATS_URL)",
       cxxopts::value<std::string>()->default_value(normalized.nats_url))(
       "zenoh-config", "Zenoh config file path (env: F8_ZENOH_CONFIG)",
       cxxopts::value<std::string>()->default_value(normalized.zenoh_config_path))(
@@ -37,7 +37,7 @@ inline bool read_runtime_backend_options(const cxxopts::ParseResult& result, Run
   BusBackend parsed_backend = BusBackend::kZenoh;
   const std::string backend_text = result["bus-backend"].as<std::string>();
   if (!parse_bus_backend(backend_text, parsed_backend)) {
-    error_message = "Invalid --bus-backend: " + backend_text + " (expected zenoh, nats, or mem)";
+    error_message = "Invalid --bus-backend: " + backend_text + " (expected zenoh or mem)";
     return false;
   }
   out.bus_backend = parsed_backend;
@@ -110,8 +110,8 @@ inline bool runtime_nats_url_was_supplied(const cxxopts::ParseResult& result) {
 }
 
 inline bool should_warn_ignored_nats_url(const cxxopts::ParseResult& result,
-                                         const RuntimeBackendConfig& config) {
-  return config.bus_backend != BusBackend::kNats && runtime_nats_url_was_supplied(result);
+                                         const RuntimeBackendConfig&) {
+  return runtime_nats_url_was_supplied(result);
 }
 
 }  // namespace f8::cppsdk

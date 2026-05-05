@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from f8pysdk.nats_naming import ensure_token
+from f8pysdk.f8_naming import ensure_token
 
 from ..nodegraph.runtime_compiler import CompiledRuntimeGraphs
 from .rungraph_deployer import RungraphDeployRequest, RungraphGateway

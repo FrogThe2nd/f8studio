@@ -9,7 +9,7 @@ from typing import Any, TYPE_CHECKING
 
 from ...generated import F8StateAccess
 from ...codec import parse_bool, unwrap_json_value
-from ...nats_naming import ensure_token, kv_key_node_state
+from ...f8_naming import ensure_token, kv_key_node_state
 from ...state import StateWriteContext, StateWriteError, StateWriteOrigin, StateWriteSource
 from ..internal.logging import log_error_once
 from .helpers import build_intra_state_route_meta

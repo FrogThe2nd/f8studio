@@ -4,26 +4,11 @@ import asyncio
 import sys
 from types import SimpleNamespace
 
-from f8pystudio.bridge.runtime_lifecycle import RuntimeSingletonGuardResult, SINGLETON_GUARD_DIALOG_MESSAGE
+from f8pystudio.bridge.runtime_lifecycle import SINGLETON_GUARD_DIALOG_MESSAGE
 from f8pystudio.bridge.runtime_session_controller import (
     RuntimeSessionControllerMixin,
     _service_id_from_zenoh_liveliness_key,
 )
-
-
-class _FakeConnectionManager:
-    nats_url = "nats://127.0.0.1:4222"
-
-    async def connect(self, *, context: str, allow_reconnect: bool = True):
-        assert context == "connect nats for singleton guard failed"
-        assert allow_reconnect is False
-        return "connection"
-
-    async def singleton_guard(self, connection, *, studio_service_id: str, ping_timeout_s: float):
-        assert connection == "connection"
-        assert studio_service_id == "studio"
-        assert ping_timeout_s == 0.2
-        return RuntimeSingletonGuardResult(should_start=False, connection=None)
 
 
 class _FakeMonitorCenter:
@@ -36,9 +21,6 @@ class _FakeMonitorCenter:
 
 class _Controller(RuntimeSessionControllerMixin):
     def __init__(self) -> None:
-        self._runtime_connection_manager = _FakeConnectionManager()
-        self._owned_nats_server_pid = None
-        self._nc = None
         self._svc = None
         self._remote_state_watcher = None
         self._remote_state_gateway = None
@@ -80,27 +62,55 @@ def test_zenoh_liveliness_key_extracts_service_id() -> None:
 
 
 def test_runtime_session_returns_block_message_when_singleton_detected(monkeypatch) -> None:
-    ensured_urls: list[str] = []
+    class _FakeConfig:
+        pass
 
-    async def _no_owned_pid(*_args, **_kwargs):
-        if _args:
-            ensured_urls.append(str(_args[0]))
-        return None
+    class _FakeReplies:
+        def __init__(self) -> None:
+            self._delivered = False
 
-    monkeypatch.setattr(
-        "f8pystudio.bridge.runtime_session_controller.ensure_nats_server_owned_pid",
-        _no_owned_pid,
-    )
+        def try_recv(self):
+            if self._delivered:
+                return None
+            self._delivered = True
+            return SimpleNamespace(ok=object())
+
+    class _FakeLiveliness:
+        def get(self, key: str, *, timeout: float):
+            assert key == "f8/live/studio/studio"
+            assert timeout == 0.2
+            return _FakeReplies()
+
+    class _FakeSession:
+        def __init__(self) -> None:
+            self.liveliness_api = _FakeLiveliness()
+            self.closed = False
+
+        def liveliness(self) -> _FakeLiveliness:
+            return self.liveliness_api
+
+        def close(self) -> None:
+            self.closed = True
+
+    fake_session = _FakeSession()
+    fake_zenoh = SimpleNamespace(Config=_FakeConfig, open=lambda _config: fake_session)
+    monkeypatch.setitem(sys.modules, "zenoh", fake_zenoh)
 
     controller = _Controller()
-    controller._cfg = SimpleNamespace(bus_backend="nats", nats_url="nats://127.0.0.1:4222")
+    controller._cfg = SimpleNamespace(
+        bus_backend="zenoh",
+        nats_url="nats://127.0.0.1:4222",
+        zenoh_config_path=None,
+        zenoh_connect=(),
+        zenoh_listen=(),
+        zenoh_shm_pool_bytes=256 * 1024 * 1024,
+    )
 
-    result = asyncio.run(controller._start_async())
+    result = asyncio.run(controller._run_startup_preflight_async())
 
     assert controller._svc is None
-    assert controller._nc is None
-    assert ensured_urls == ["nats://127.0.0.1:4222"]
     assert result == SINGLETON_GUARD_DIALOG_MESSAGE
+    assert fake_session.closed is True
 
 
 def test_runtime_session_defaults_to_zenoh_backend() -> None:

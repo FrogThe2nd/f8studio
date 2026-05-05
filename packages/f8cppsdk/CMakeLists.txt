@@ -1,13 +1,9 @@
 add_library(f8cppsdk
   src/describe_schema.cpp
-  src/nats_client.cpp
-  src/kv_store.cpp
-  src/service_control_plane.cpp
   src/service_bus.cpp
   src/runtime_backend.cpp
   src/zenoh_naming.cpp
   src/zenoh_transport.cpp
-  src/state_kv.cpp
   src/msg_codec.cpp
   src/rungraph_routes.cpp
   src/time_utils.cpp
@@ -50,7 +46,6 @@ add_custom_command(
 add_custom_target(f8cppsdk_codegen_protocol_models DEPENDS ${F8CPP_PROTOCOL_MODELS_OUT})
 add_dependencies(f8cppsdk f8cppsdk_codegen_protocol_models)
 
-find_package(cnats REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(spdlog REQUIRED)
 
@@ -89,7 +84,6 @@ endif()
 
 target_link_libraries(f8cppsdk
   PUBLIC
-    cnats::nats_static
     nlohmann_json::nlohmann_json
     spdlog::spdlog
 )

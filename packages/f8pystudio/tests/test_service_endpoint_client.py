@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from f8pysdk.nats_naming import svc_endpoint_subject
+from f8pysdk.f8_naming import svc_endpoint_subject
 from f8pysdk.codec import encode_obj
 
 from f8pystudio.bridge.service_endpoint_client import (

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Internal-only NATS micro endpoint owner for `service_bus`."""
+"""Internal-only service control endpoint handlers for `service_bus`."""
 
 import logging
 from dataclasses import dataclass
@@ -31,7 +31,7 @@ from ...generated import (
     F8TerminateReplyResult,
     F8TerminateRequest,
 )
-from ...nats_naming import cmd_channel_subject, ensure_token, new_id, svc_endpoint_subject, svc_micro_name
+from ...f8_naming import ensure_token, new_id
 from ...state import StateWriteError, StateWriteSource
 from .command import (
     CommandExecutionErrorKind,
@@ -56,44 +56,15 @@ class _DecodedCommandRequest:
     meta: dict[str, Any]
 
 
-class ServiceBusMicroEndpoints:
+class ServiceBusControlHandlers:
     def __init__(self, bus: "ServiceBus") -> None:
         self._bus = bus
-        self._micro: Any | None = None
 
     async def start(self) -> Any:
-        from nats.micro import ServiceConfig, add_service  # type: ignore[import-not-found]
-
-        nc = await self._bus._transport.require_client()
-        service_name = str(self._bus._service_name or "") or self._bus.service_id
-        service_class = str(self._bus._service_class or "")
-        description_parts = [f"serviceName={service_name}", f"serviceId={self._bus.service_id}"]
-        if service_class:
-            description_parts.insert(1, f"serviceClass={service_class}")
-        description = "F8 service runtime control plane (%s)." % ", ".join(description_parts)
-        metadata: dict[str, Any] = {"serviceId": self._bus.service_id, "serviceName": service_name}
-        if service_class:
-            metadata["serviceClass"] = service_class
-        self._micro = await add_service(
-            nc,
-            ServiceConfig(
-                name=svc_micro_name(self._bus.service_id),
-                version="0.0.1",
-                description=description,
-                metadata=metadata,
-            ),
-        )
-        await self._register_endpoints()
-        return self._micro
+        return self
 
     async def stop(self) -> None:
-        if self._micro is None:
-            return
-        try:
-            await self._micro.stop()
-        except Exception as exc:
-            log.error("failed to stop micro service service_id=%s", self._bus.service_id, exc_info=exc)
-        self._micro = None
+        return None
 
     @staticmethod
     def _req_id(req_id: str) -> str:
@@ -464,85 +435,7 @@ class ServiceBusMicroEndpoints:
             )
         )
 
-    async def _register_endpoints(self) -> None:
-        from nats.micro.service import EndpointConfig  # type: ignore[import-not-found]
-
-        micro = self._micro
-        if micro is None:
-            return
-        sid = self._bus.service_id
-        await micro.add_endpoint(
-            EndpointConfig(
-                name="activate",
-                subject=svc_endpoint_subject(sid, "activate"),
-                handler=self._activate,
-                metadata={"builtin": "true"},
-            )
-        )
-        await micro.add_endpoint(
-            EndpointConfig(
-                name="deactivate",
-                subject=svc_endpoint_subject(sid, "deactivate"),
-                handler=self._deactivate,
-                metadata={"builtin": "true"},
-            )
-        )
-        await micro.add_endpoint(
-            EndpointConfig(
-                name="set_active",
-                subject=svc_endpoint_subject(sid, "set_active"),
-                handler=self._set_active,
-                metadata={"builtin": "true"},
-            )
-        )
-        await micro.add_endpoint(
-            EndpointConfig(
-                name="status",
-                subject=svc_endpoint_subject(sid, "status"),
-                handler=self._status,
-                metadata={"builtin": "true"},
-            )
-        )
-        await micro.add_endpoint(
-            EndpointConfig(
-                name="terminate",
-                subject=svc_endpoint_subject(sid, "terminate"),
-                handler=self._terminate,
-                metadata={"builtin": "true"},
-            )
-        )
-        await micro.add_endpoint(
-            EndpointConfig(
-                name="quit",
-                subject=svc_endpoint_subject(sid, "quit"),
-                handler=self._terminate,
-                metadata={"builtin": "true"},
-            )
-        )
-        await micro.add_endpoint(
-            EndpointConfig(
-                name="cmd",
-                subject=cmd_channel_subject(sid),
-                handler=self._cmd,
-                metadata={"builtin": "false"},
-            )
-        )
-        await micro.add_endpoint(
-            EndpointConfig(
-                name="set_state",
-                subject=svc_endpoint_subject(sid, "set_state"),
-                handler=self._set_state,
-                metadata={"builtin": "true"},
-            )
-        )
-        await micro.add_endpoint(
-            EndpointConfig(
-                name="set_rungraph",
-                subject=svc_endpoint_subject(sid, "set_rungraph"),
-                handler=self._set_rungraph,
-                metadata={"builtin": "true"},
-            )
-        )
+ServiceBusMicroEndpoints = ServiceBusControlHandlers
 
 
-__all__ = ["ServiceBusMicroEndpoints"]
+__all__ = ["ServiceBusControlHandlers", "ServiceBusMicroEndpoints"]

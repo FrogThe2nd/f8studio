@@ -24,10 +24,7 @@
 #include "f8cppsdk/rungraph_routes.h"
 #include "f8cppsdk/runtime_backend.h"
 #include "f8cppsdk/runtime_transport.h"
-#include "f8cppsdk/kv_store.h"
-#include "f8cppsdk/nats_client.h"
 #include "f8cppsdk/service_control_plane.h"
-#include "f8cppsdk/service_control_plane_server.h"
 
 namespace f8::cppsdk {
 
@@ -37,7 +34,6 @@ namespace f8::cppsdk {
 // - control endpoints use Zenoh command streams with correlated replies
 // - service-owned state is exposed through retained latest-value state streams
 // - pub/sub data edges map to the shared f8/svc/... Zenoh keyspace
-// NATS + JetStream KV + Micro remain as explicit fallback for --bus-backend nats.
 class ServiceBus final : public ServiceControlHandler {
  public:
   using json = nlohmann::json;
@@ -62,7 +58,6 @@ class ServiceBus final : public ServiceControlHandler {
     std::vector<std::string> zenoh_connect;
     std::vector<std::string> zenoh_listen;
     std::uint64_t zenoh_shm_pool_bytes = kDefaultZenohShmPoolBytes;
-    bool kv_memory_storage = true;
     std::string service_name;
     std::string service_class;
     bool publish_all_data = true;
@@ -122,12 +117,6 @@ class ServiceBus final : public ServiceControlHandler {
   // Block until terminate/quit is requested.
   void wait_terminate();
 
-  // Expose underlying transports for high-performance services.
-  NatsClient& nats() { return nats_; }
-  const NatsClient& nats() const { return nats_; }
-  KvStore& kv() { return kv_; }
-  const KvStore& kv() const { return kv_; }
-
   // Pump tasks that must run on the service main/tick thread.
   std::size_t drain_main_thread(std::size_t max_tasks = 0);
 
@@ -162,7 +151,6 @@ class ServiceBus final : public ServiceControlHandler {
                   std::string& error_message) override;
 
  private:
-  bool start_nats_backend();
   bool start_zenoh_backend();
   bool start_runtime_control_endpoints();
   void stop_runtime_control_endpoints();
@@ -171,9 +159,6 @@ class ServiceBus final : public ServiceControlHandler {
                             std::int64_t ts_ms = 0);
   bool runtime_kv_put(const std::string& key, const RuntimeBytes& bytes);
   std::optional<RuntimeBytes> runtime_kv_get(const std::string& key);
-  std::optional<RuntimeBytes> runtime_kv_get_in_bucket(
-      const std::string& bucket, const std::string& key,
-      std::chrono::milliseconds timeout = std::chrono::milliseconds(1000));
   bool runtime_set_ready(bool ready, const std::string& reason = "", std::int64_t ts_ms = 0);
   bool runtime_set_node_state(const std::string& node_id, const std::string& field, const json& value,
                               const std::string& source = "runtime",
@@ -219,9 +204,6 @@ class ServiceBus final : public ServiceControlHandler {
   mutable std::mutex term_mu_;
   std::condition_variable term_cv_;
 
-  NatsClient nats_;
-  KvStore kv_;
-  std::unique_ptr<ServiceControlPlaneServer> ctrl_;
   std::unique_ptr<RuntimeTransport> runtime_transport_;
   std::vector<std::unique_ptr<RuntimeSubscription>> runtime_control_endpoints_;
 
@@ -306,7 +288,6 @@ class ServiceBus final : public ServiceControlHandler {
   };
 
   mutable std::mutex data_mu_;
-  std::unordered_map<std::string, NatsSubscription> data_subs_;
   std::unordered_map<std::string, std::unique_ptr<RuntimeSubscription>> runtime_data_subs_;
   std::unordered_map<_NodePortKey, std::shared_ptr<_InputBuffer>, _NodePortKeyHash> data_inputs_;
 
@@ -337,7 +318,6 @@ class ServiceBus final : public ServiceControlHandler {
   std::unordered_map<_NodeFieldKey, _CommandDispatchState, _NodeFieldKeyHash> command_dispatch_;
   std::unordered_map<_RemoteStateKey, std::vector<_NodeFieldKey>, _RemoteStateKeyHash> cross_state_in_;
   std::unordered_set<_NodeFieldKey, _NodeFieldKeyHash> cross_state_targets_;
-  std::unordered_map<std::string, std::unique_ptr<KvStore>> peer_kv_by_service_id_;
   std::unordered_map<std::string, std::unique_ptr<RuntimeSubscription>> peer_state_subs_by_service_id_;
   bool has_rungraph_ = false;
 

@@ -20,7 +20,7 @@ from f8pysdk.specs import (
     string_schema,
 )
 from f8pysdk._specs.builtin_fields import OPERATOR_ID_FIELD_NAME, SVC_ID_FIELD_NAME
-from f8pysdk.nats_naming import ensure_token
+from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import OperatorNode
 from f8pysdk.registry import Registry
 

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from .codec import decode_obj, encode_obj
-from .nats_naming import kv_bucket_for_service, new_id
+from .f8_naming import kv_bucket_for_service, new_id
 from .runtime_transport import RequestHandler, TransportCallback
 from .time_utils import now_ms
 from .zenoh_config import apply_zenoh_shared_memory_config, apply_zenoh_timestamping_config
@@ -139,7 +139,7 @@ class ZenohTransport:
             except ImportError as exc:
                 raise RuntimeError(
                     "Zenoh backend requires the `eclipse-zenoh` Python package. "
-                    "Install repo dependencies or choose --bus-backend nats."
+                    "Install repo dependencies or use --bus-backend mem for local tests."
                 ) from exc
 
             config = self._build_config(zenoh)

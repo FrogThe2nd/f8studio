@@ -4,12 +4,11 @@ import os
 from dataclasses import dataclass, replace
 from typing import Literal
 
-from nats.js.api import StorageType  # type: ignore[import-not-found]
-
 from ..data import CrossPublishPolicy, DataDeliveryMode
 
 
-BusBackend = Literal["zenoh", "nats", "mem"]
+BusBackend = Literal["zenoh", "mem"]
+KvStorage = Literal["memory", "file"]
 DEFAULT_ZENOH_SHM_POOL_BYTES = 256 * 1024 * 1024
 
 
@@ -21,11 +20,11 @@ def _normalize_backend(value: str) -> BusBackend:
     text = str(value or "").strip().lower()
     if text == "zenoh":
         return "zenoh"
-    if text == "nats":
-        return "nats"
     if text == "mem":
         return "mem"
-    raise ValueError(f"Invalid bus_backend={value!r}; expected 'zenoh', 'nats', or 'mem'.")
+    if text == "nats":
+        raise ValueError("NATS runtime backend has been removed; use 'zenoh' or 'mem'.")
+    raise ValueError(f"Invalid bus_backend={value!r}; expected 'zenoh' or 'mem'.")
 
 
 @dataclass(frozen=True)
@@ -34,13 +33,15 @@ class ServiceBusConfig:
     service_name: str | None = None
     service_class: str | None = None
     bus_backend: BusBackend = "zenoh"
+    # Deprecated compatibility field. It is ignored by the Zenoh-native runtime.
     nats_url: str = "nats://127.0.0.1:4222"
     zenoh_config_path: str | None = None
     zenoh_connect: tuple[str, ...] = ()
     zenoh_listen: tuple[str, ...] = ()
     zenoh_shm_pool_bytes: int = DEFAULT_ZENOH_SHM_POOL_BYTES
     cross_publish_policy: CrossPublishPolicy = "routed"
-    kv_storage: StorageType = StorageType.MEMORY
+    # Deprecated compatibility fields kept so older config constructors do not fail.
+    kv_storage: KvStorage = "memory"
     delete_bucket_on_start: bool = False
     delete_bucket_on_stop: bool = False
     # Canonical local delivery semantics:
@@ -113,4 +114,4 @@ class ServiceBusConfig:
         ).normalized()
 
 
-__all__ = ["BusBackend", "DEFAULT_ZENOH_SHM_POOL_BYTES", "ServiceBusConfig", "_debug_state_enabled"]
+__all__ = ["BusBackend", "DEFAULT_ZENOH_SHM_POOL_BYTES", "KvStorage", "ServiceBusConfig", "_debug_state_enabled"]

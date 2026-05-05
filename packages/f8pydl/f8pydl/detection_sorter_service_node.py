@@ -10,7 +10,7 @@ from typing import Any, Literal, Protocol
 import numpy as np
 
 from f8pysdk.codec import coerce_int, coerce_str
-from f8pysdk.nats_naming import ensure_token
+from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
 from f8pysdk.shm.video import (
     VIDEO_FORMAT_FLOW2_F16,

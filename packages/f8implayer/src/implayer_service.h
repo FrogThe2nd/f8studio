@@ -13,7 +13,6 @@
 #include <nlohmann/json_fwd.hpp>
 
 #include "f8cppsdk/capabilities.h"
-#include "f8cppsdk/kv_store.h"
 #include "f8cppsdk/service_bus.h"
 #include "f8cppsdk/shm/video.h"
 #include "implayer_playback_state.h"

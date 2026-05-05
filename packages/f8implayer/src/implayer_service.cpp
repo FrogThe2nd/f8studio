@@ -790,7 +790,6 @@ bool ImPlayerService::start() {
   f8::cppsdk::ServiceBus::Config bus_cfg;
   bus_cfg.service_id = cfg_.service_id;
   bus_cfg.apply_runtime_backend(runtime_backend);
-  bus_cfg.kv_memory_storage = true;
   bus_ = std::make_unique<f8::cppsdk::ServiceBus>(bus_cfg);
   bus_->add_lifecycle_node(this);
   bus_->add_stateful_node(this);

@@ -5,15 +5,15 @@ import uuid
 
 def ensure_token(value: str, *, label: str) -> str:
     """
-    Ensure a string is safe to use as a single NATS subject token.
+    Ensure a string is safe to use as a single runtime path token.
 
-    We use "." as the separator across the project, so ids must not contain ".".
+    We use "." and "/" as transport path separators, so ids must not contain them.
     """
     value = str(value).strip()
     if not value:
         raise ValueError(f"{label} must be non-empty")
-    if "." in value:
-        raise ValueError(f'{label} must not contain "." (got {value!r}).')
+    if "." in value or "/" in value:
+        raise ValueError(f'{label} must not contain "." or "/" (got {value!r}).')
     return value
 
 
@@ -87,21 +87,11 @@ def svc_endpoint_subject(service_id: str, endpoint: str) -> str:
     """
     Compatibility subject for built-in lifecycle/control endpoints.
 
-    Zenoh backends map this subject onto `f8/svc/{serviceId}/endpoint/{endpoint}`;
-    the NATS backend uses it directly for NATS micro endpoints.
+    Zenoh maps this subject onto `f8/svc/{serviceId}/endpoint/{endpoint}`.
     """
     service_id = ensure_token(service_id, label="service_id")
     endpoint = ensure_token(str(endpoint), label="endpoint")
     return f"svc.{service_id}.{endpoint}"
-
-
-def svc_micro_name(service_id: str) -> str:
-    """
-    NATS micro service name for a service instance.
-
-    Micro service names cannot contain ".", so we use `svc_<serviceId>`.
-    """
-    return kv_bucket_for_service(ensure_token(service_id, label="service_id"))
 
 
 def new_id() -> str:

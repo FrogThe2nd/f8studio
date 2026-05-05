@@ -104,8 +104,6 @@ def _env_backend(default: BusBackend, key: str) -> BusBackend:
         return default
     if raw == "zenoh":
         return "zenoh"
-    if raw == "nats":
-        return "nats"
     if raw == "mem":
         return "mem"
     return default
@@ -406,14 +404,14 @@ class ServiceApp:
         parser.add_argument("--service-id", default=_env_or("", "F8_SERVICE_ID"), help="Service instance id (required)")
         parser.add_argument(
             "--bus-backend",
-            choices=("zenoh", "nats", "mem"),
+            choices=("zenoh", "mem"),
             default=_env_backend(self._defaults.bus.bus_backend, "F8_BUS_BACKEND"),
             help="Runtime bus backend (env: F8_BUS_BACKEND, default: zenoh).",
         )
         parser.add_argument(
             "--nats-url",
             default=_env_or(self._defaults.bus.nats_url, "F8_NATS_URL"),
-            help="Deprecated: NATS server URL, only used with --bus-backend nats.",
+            help="Deprecated compatibility option. Ignored by the Zenoh runtime.",
         )
         parser.add_argument(
             "--zenoh-config",
@@ -478,9 +476,9 @@ class ServiceApp:
             window_ms=int(args.monitor_window_ms),
             gpu_enabled=bool(args.monitor_gpu_enabled),
         )
-        if str(args.bus_backend) != "nats" and nats_url_supplied:
+        if nats_url_supplied:
             warnings.warn(
-                "--nats-url/F8_NATS_URL is deprecated for non-NATS backends and will be ignored.",
+                "--nats-url/F8_NATS_URL is deprecated and ignored by the Zenoh runtime.",
                 DeprecationWarning,
                 stacklevel=2,
             )

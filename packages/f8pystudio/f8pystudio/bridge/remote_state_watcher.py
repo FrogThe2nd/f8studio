@@ -6,14 +6,13 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 from f8pysdk.bus import BusBackend
-from f8pysdk.nats_naming import (
+from f8pysdk.f8_naming import (
     ensure_token,
     kv_bucket_for_service,
     kv_key_node_state,
     parse_kv_key_node_state,
 )
 from f8pysdk.runtime_transport import RuntimeTransport
-from f8pysdk.transport import NatsTransport, NatsTransportConfig
 from f8pysdk.zenoh_transport import ZenohTransport, ZenohTransportConfig
 from f8pysdk.time_utils import now_ms
 from f8pysdk.codec import decode_obj
@@ -116,10 +115,6 @@ class RemoteStateWatcher:
         self._callback_error_once: set[tuple[str, str, str, str]] = set()
 
     def _build_transport(self) -> RuntimeTransport:
-        if self._bus_backend == "nats":
-            return NatsTransport(
-                NatsTransportConfig(url=self._nats_url, kv_bucket=kv_bucket_for_service(self._studio_service_id))
-            )
         if self._bus_backend == "mem":
             from f8pysdk.testing import InMemoryCluster, InMemoryTransport
 
@@ -127,6 +122,8 @@ class RemoteStateWatcher:
                 cluster=InMemoryCluster(),
                 kv_bucket=kv_bucket_for_service(self._studio_service_id),
             )
+        if self._bus_backend != "zenoh":
+            raise ValueError("NATS remote state watcher has been removed; use bus_backend='zenoh' or 'mem'.")
         return ZenohTransport(
             ZenohTransportConfig(
                 service_id=self._studio_service_id,

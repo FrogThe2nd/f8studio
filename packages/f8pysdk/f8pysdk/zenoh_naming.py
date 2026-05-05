@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .nats_naming import ensure_token, parse_kv_key_node_state
+from .f8_naming import ensure_token, parse_kv_key_node_state
 
 _F8_PREFIX = "f8"
 

@@ -11,7 +11,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from f8pysdk.specs import F8RuntimeGraph, F8RuntimeNode, F8ServiceSpec  # noqa: E402
-from f8pysdk.nats_naming import data_subject  # noqa: E402
+from f8pysdk.f8_naming import data_subject  # noqa: E402
 from f8pysdk.nodes import ServiceNode  # noqa: E402
 from f8pysdk.registry import (  # noqa: E402
     create_runtime_node_registry,

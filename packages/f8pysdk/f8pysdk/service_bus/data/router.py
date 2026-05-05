@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 from ...capabilities import ComputableNode, DataReceivableNode
 from ...data import CrossPublishPolicy, DataDeliveryMode
 from ...generated import F8Edge, F8EdgeStrategyEnum
-from ...nats_naming import data_subject
+from ...f8_naming import data_subject
 from ...time_utils import now_ms
 from ...codec import decode_obj, encode_obj
 from ..internal.cache import CappedOrderedDict

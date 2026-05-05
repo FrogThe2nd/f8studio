@@ -25,6 +25,7 @@ class ServiceProcessConfig:
     service_class: str
     service_id: str
     bus_backend: BusBackend = "zenoh"
+    # Deprecated compatibility field. It is ignored by Zenoh-only process launch.
     nats_url: str = "nats://127.0.0.1:4222"
     zenoh_config_path: str | None = None
     zenoh_connect: tuple[str, ...] = ()
@@ -157,7 +158,8 @@ class ServiceProcessManager:
         service_class = str(cfg.service_class).strip()
         service_id = str(cfg.service_id).strip()
         bus_backend = str(cfg.bus_backend or "zenoh").strip().lower()
-        nats_url = str(cfg.nats_url).strip()
+        if bus_backend == "nats":
+            raise ValueError("NATS process backend has been removed; use bus_backend='zenoh' or 'mem'.")
 
         entry_path = self._catalog.service_entry_path(service_class)
         if entry_path is None:
@@ -174,24 +176,10 @@ class ServiceProcessManager:
             return
         self._cleanup_entry(service_id)
 
-        if cfg.purge_kv_bucket_on_start and bus_backend == "nats":
-            try:
-                from f8pysdk.nats_naming import kv_bucket_for_service
-                from f8pysdk.transport import reset_kv_bucket_sync
-
-                reset_kv_bucket_sync(url=nats_url, kv_bucket=kv_bucket_for_service(service_id), timeout_s=2.5)
-                if on_output is not None:
-                    on_output(service_id, "[kv] purged bucket on start\n")
-            except Exception as exc:
-                if on_output is not None:
-                    on_output(service_id, f"[kv] purge bucket failed (ignored): {exc}\n")
-
         launch = entry.launch
         cmd = [str(launch.command), *[str(a) for a in (launch.args or [])]]
         cmd += ["--service-id", service_id, "--bus-backend", bus_backend]
-        if bus_backend == "nats":
-            cmd += ["--nats-url", nats_url]
-        elif bus_backend == "zenoh":
+        if bus_backend == "zenoh":
             zenoh_config_path = str(cfg.zenoh_config_path or "").strip()
             if zenoh_config_path:
                 cmd += ["--zenoh-config", zenoh_config_path]
@@ -210,13 +198,7 @@ class ServiceProcessManager:
                 pass
         env["F8_SERVICE_ID"] = service_id
         env["F8_BUS_BACKEND"] = bus_backend
-        if bus_backend == "nats":
-            env["F8_NATS_URL"] = nats_url
-            env.pop("F8_ZENOH_CONFIG", None)
-            env.pop("F8_ZENOH_CONNECT", None)
-            env.pop("F8_ZENOH_LISTEN", None)
-            env.pop("F8_ZENOH_SHM_POOL_BYTES", None)
-        elif bus_backend == "zenoh":
+        if bus_backend == "zenoh":
             env.pop("F8_NATS_URL", None)
             zenoh_config_path = str(cfg.zenoh_config_path or "").strip()
             if zenoh_config_path:

@@ -23,7 +23,7 @@ from f8pysdk.specs import (
 )
 from f8pysdk.bus import ServiceBus
 from f8pysdk.capabilities import ClosableNode
-from f8pysdk.nats_naming import ensure_token
+from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import OperatorNode
 from f8pysdk.registry import Registry
 from f8pysdk.shm.video import VIDEO_FORMAT_BGRA32, VIDEO_FORMAT_FLOW2_F16

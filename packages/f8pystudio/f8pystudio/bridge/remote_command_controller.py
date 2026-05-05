@@ -4,7 +4,7 @@ from typing import Any, Callable
 
 from qtpy import QtCore
 
-from f8pysdk.nats_naming import ensure_token, new_id
+from f8pysdk.f8_naming import ensure_token, new_id
 
 from .command_client import CommandRequest
 

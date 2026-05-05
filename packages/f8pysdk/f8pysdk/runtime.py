@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from nats.js.api import StorageType  # type: ignore[import-not-found]
-
 from .bus import ServiceBus, ServiceBusConfig
 from .data import CrossPublishPolicy
 from .host import ServiceHost
 from .registry import RuntimeNodeRegistry, create_runtime_node_registry
+from .service_bus.config import KvStorage
 
 
 @dataclass(frozen=True)
@@ -50,7 +49,7 @@ class ServiceRuntimeConfig:
         return self.bus.cross_publish_policy
 
     @property
-    def kv_storage(self) -> StorageType:
+    def kv_storage(self) -> KvStorage:
         return self.bus.kv_storage
 
     @property

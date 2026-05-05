@@ -4,7 +4,7 @@ from typing import Callable
 
 from f8pysdk.specs import F8RuntimeGraph, F8RuntimeGraphMeta
 from f8pysdk.command import is_hidden_command_state_field
-from f8pysdk.nats_naming import ensure_token
+from f8pysdk.f8_naming import ensure_token
 
 from ..nodegraph.runtime_compiler import CompiledRuntimeGraphs
 from f8pystudio.bridge.remote_state_watcher import WatchTarget

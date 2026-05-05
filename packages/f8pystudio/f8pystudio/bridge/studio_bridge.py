@@ -10,9 +10,8 @@ from typing import Any, Callable
 from qtpy import QtCore
 
 from f8pysdk.runtime_transport import RuntimeTransport
-from f8pysdk.transport import NatsTransport, NatsTransportConfig
 from f8pysdk.specs import F8RuntimeGraph
-from f8pysdk.nats_naming import ensure_token, kv_bucket_for_service, new_id
+from f8pysdk.f8_naming import ensure_token, kv_bucket_for_service, new_id
 from f8pysdk.zenoh_transport import ZenohTransport, ZenohTransportConfig
 from f8pysdk.registry import RuntimeNodeRegistry
 from f8pysdk.state import StateWriteError
@@ -27,9 +26,6 @@ from .async_runtime import AsyncRuntimeThread
 from .command_client import CommandRequest, RuntimeCommandGateway, RuntimeCommandGatewayConfig
 from .json_codec import coerce_json_value
 from .managed_service_inventory import collect_managed_service_inventory
-from .runtime_lifecycle import (
-    RuntimeConnectionManager,
-)
 from .process_action_scheduler import ServiceProcessActionScheduler
 from .process_lifecycle import (
     LocalServiceProcessGateway,
@@ -75,7 +71,7 @@ STARTUP_GATE_TIMEOUT_S = 6.0
 class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleControllerMixin, DeployStateControllerMixin, RemoteCommandControllerMixin, QtCore.QObject):
     """
     Orchestrate:
-    - singleton studio presence (Zenoh liveliness by default; NATS micro for explicit NATS fallback)
+    - singleton studio presence (Zenoh liveliness)
     - start service processes
     - deploy per-service rungraphs
     - monitor remote state via Studio-side KV watches (UI reflection)
@@ -102,11 +98,6 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
         )
         self._command_gateway = self._build_command_gateway()
         self._exception_log_once = ExceptionLogOnce()
-        self._runtime_connection_manager = RuntimeConnectionManager(
-            nats_url=str(self._cfg.nats_url).strip() or "nats://127.0.0.1:4222",
-            emit_log=self._emit_log_line,
-            report_exception=self._report_exception,
-        )
         self._managed_service_ids: set[str] = set()
         self._managed_service_classes: dict[str, str] = {}  # serviceId -> serviceClass
         self._managed_active: bool = True
@@ -133,13 +124,11 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
         self._monitor_ui_last_emit_s_by_service: dict[str, float] = {}
         self._monitor_ui_pending_by_service: dict[str, PendingMonitorUpdate] = {}
         self._monitor_ui_flush_task: asyncio.Task[object] | None = None
-        self._nc: Any = None
         self._runtime_transport: RuntimeTransport | None = None
         self._zenoh_singleton_session: Any = None
         self._zenoh_singleton_token: Any = None
         self._zenoh_service_liveliness_session: Any = None
         self._zenoh_service_liveliness_sub: Any = None
-        self._owned_nats_server_pid: int | None = None
         self._pending_remote_command_cbs: dict[str, Callable[[dict[str, Any] | None, str | None], None]] = {}
         self._async_started: bool = False
         self._startup_future: concurrent.futures.Future[Any] | None = None
@@ -163,7 +152,6 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
 
     def _build_rungraph_config(self) -> RungraphDeployConfig:
         return RungraphDeployConfig(
-            nats_url=str(self._cfg.nats_url),
             bus_backend=self._cfg.bus_backend,
             client_service_id=self.studio_service_id,
             zenoh_config_path=self._cfg.zenoh_config_path,
@@ -180,7 +168,6 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
         return RuntimeCommandGateway(
             RuntimeCommandGatewayConfig(
                 bus_backend=self._cfg.bus_backend,
-                nats_url=str(self._cfg.nats_url),
                 client_service_id=self.studio_service_id,
                 zenoh_config_path=self._cfg.zenoh_config_path,
                 zenoh_connect=self._cfg.zenoh_connect,
@@ -190,17 +177,12 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
         )
 
     def _build_runtime_transport(self) -> RuntimeTransport:
-        if self._cfg.bus_backend == "nats":
-            return NatsTransport(
-                NatsTransportConfig(
-                    url=str(self._cfg.nats_url),
-                    kv_bucket=kv_bucket_for_service(self.studio_service_id),
-                )
-            )
         if self._cfg.bus_backend == "mem":
             from f8pysdk.testing import InMemoryCluster, InMemoryTransport
 
             return InMemoryTransport(cluster=InMemoryCluster(), kv_bucket=kv_bucket_for_service(self.studio_service_id))
+        if self._cfg.bus_backend != "zenoh":
+            raise ValueError("NATS runtime transport has been removed; use bus_backend='zenoh' or 'mem'.")
         return ZenohTransport(
             ZenohTransportConfig(
                 service_id=self.studio_service_id,
@@ -433,9 +415,6 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
                 self._process_gateway.stop(StopServiceRequest(service_id=sid))
             except Exception as exc:
                 self._report_exception(f"stop service process failed serviceId={sid}", exc)
-
-
-
 
 
 

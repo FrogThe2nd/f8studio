@@ -16,9 +16,8 @@ from ..capabilities import (
 from ..command import CommandExecutionResult, CommandOutputPolicy
 from ..data import CrossPublishPolicy, DataDeliveryMode
 from ..generated import F8RuntimeGraph
-from ..nats_naming import ensure_token, kv_bucket_for_service, kv_key_ready, kv_key_rungraph
+from ..f8_naming import ensure_token, kv_bucket_for_service, kv_key_ready, kv_key_rungraph
 from ..runtime_transport import RuntimeTransport
-from ..transport import NatsTransport, NatsTransportConfig
 from ..zenoh_transport import ZenohTransport, ZenohTransportConfig
 from ..state import StateRead, StateWriteOrigin, StateWriteSource
 from ..time_utils import now_ms
@@ -164,7 +163,7 @@ class ServiceBus:
     """
     Service bus (clean, protocol-first).
 
-    - Shared RuntimeTransport connection (Zenoh by default; NATS and mem are explicit backends).
+    - Shared RuntimeTransport connection (Zenoh by default; mem is for tests).
     - Rungraph, lifecycle, and command requests are applied via backend-neutral control endpoints.
     - Builds intra/cross routing tables for data edges.
     - Provides a latest-value state API backed by service-owned KV/state snapshots.
@@ -203,17 +202,7 @@ class ServiceBus:
 
         bucket = kv_bucket_for_service(self.service_id)
         if transport is None:
-            if config.bus_backend == "nats":
-                self._transport = NatsTransport(
-                    NatsTransportConfig(
-                        url=str(config.nats_url),
-                        kv_bucket=str(bucket),
-                        kv_storage=config.kv_storage,
-                        delete_bucket_on_connect=bool(config.delete_bucket_on_start),
-                        delete_bucket_on_close=bool(config.delete_bucket_on_stop),
-                    )
-                )
-            elif config.bus_backend == "zenoh":
+            if config.bus_backend == "zenoh":
                 self._transport = ZenohTransport(
                     ZenohTransportConfig(
                         service_id=self.service_id,
@@ -228,9 +217,7 @@ class ServiceBus:
 
                 self._transport = InMemoryTransport(cluster=InMemoryCluster(), kv_bucket=str(bucket))
             else:
-                raise ValueError(
-                    f"Invalid bus_backend={config.bus_backend!r}; expected 'zenoh', 'nats', or 'mem'."
-                )
+                raise ValueError(f"Invalid bus_backend={config.bus_backend!r}; expected 'zenoh' or 'mem'.")
         else:
             self._transport = transport
 

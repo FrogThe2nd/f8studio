@@ -22,7 +22,6 @@
 #include "f8cppsdk/generated/protocol_models.h"
 #include "f8cppsdk/msg_codec.h"
 #include "f8cppsdk/rungraph_routes.h"
-#include "f8cppsdk/state_kv.h"
 #include "f8cppsdk/time_utils.h"
 #include "f8cppsdk/zenoh_transport.h"
 
@@ -35,10 +34,6 @@ namespace f8::cppsdk {
 using json = nlohmann::json;
 
 namespace {
-
-constexpr std::chrono::milliseconds kRuntimeKvGetDefaultTimeout{1000};
-constexpr std::chrono::milliseconds kZenohCrossStateInitialGetTimeout{80};
-constexpr std::chrono::milliseconds kZenohCrossStateInitialSyncBudget{300};
 
 bool state_debug_enabled() {
   const char* v = std::getenv("F8_STATE_DEBUG");
@@ -753,20 +748,6 @@ void ServiceBus::apply_data_routes_from_rungraph(const json& graph_obj) {
   }
 
   // Unsubscribe removed subjects.
-  for (auto it = data_subs_.begin(); it != data_subs_.end();) {
-    if (next_snapshot->by_subject.find(it->first) != next_snapshot->by_subject.end()) {
-      ++it;
-      continue;
-    }
-    try {
-      it->second.unsubscribe();
-    } catch (const std::exception& exc) {
-      spdlog::warn("NATS data unsubscribe failed serviceId={} subject={}: {}", cfg_.service_id, it->first, exc.what());
-    } catch (...) {
-      spdlog::warn("NATS data unsubscribe failed serviceId={} subject={}: unknown error", cfg_.service_id, it->first);
-    }
-    it = data_subs_.erase(it);
-  }
   for (auto it = runtime_data_subs_.begin(); it != runtime_data_subs_.end();) {
     if (next_snapshot->by_subject.find(it->first) != next_snapshot->by_subject.end()) {
       ++it;
@@ -789,25 +770,6 @@ void ServiceBus::apply_data_routes_from_rungraph(const json& graph_obj) {
   // Subscribe new subjects.
   for (const auto& kv : next_snapshot->by_subject) {
     const std::string& subject = kv.first;
-    if (cfg_.bus_backend == BusBackend::kNats) {
-      if (data_subs_.find(subject) != data_subs_.end()) {
-        continue;
-      }
-      auto sub = nats_.subscribe(subject, [this, subject](natsMsg* msg) {
-        if (msg == nullptr) return;
-        const void* data = natsMsg_GetData(msg);
-        const int len = natsMsg_GetDataLength(msg);
-        if (data == nullptr || len < 0) return;
-        RuntimeBytes bytes(static_cast<std::size_t>(len));
-        std::memcpy(bytes.data(), data, static_cast<std::size_t>(len));
-        handle_data_payload(subject, bytes);
-      });
-      if (sub.valid()) {
-        data_subs_.emplace(subject, std::move(sub));
-      }
-      continue;
-    }
-
     if (runtime_data_subs_.find(subject) != runtime_data_subs_.end()) {
       continue;
     }
@@ -842,9 +804,6 @@ bool ServiceBus::start() {
   terminate_.store(false, std::memory_order_release);
   ready_.store(false, std::memory_order_release);
 
-  if (cfg_.bus_backend == BusBackend::kNats) {
-    return start_nats_backend();
-  }
   if (cfg_.bus_backend == BusBackend::kZenoh) {
     return start_zenoh_backend();
   }
@@ -852,118 +811,6 @@ bool ServiceBus::start() {
   spdlog::error("service_bus backend={} is not implemented for C++ serviceId={}",
                 bus_backend_to_string(cfg_.bus_backend), cfg_.service_id);
   return false;
-}
-
-bool ServiceBus::start_nats_backend() {
-  if (!nats_.connect(cfg_.nats_url)) {
-    return false;
-  }
-
-  KvConfig kvc;
-  kvc.bucket = kv_bucket_for_service(cfg_.service_id);
-  kvc.memory_storage = cfg_.kv_memory_storage;
-  if (!kv_.open_or_create(nats_.jetstream(), kvc)) {
-    nats_.close();
-    return false;
-  }
-
-  ctrl_ = std::make_unique<ServiceControlPlaneServer>(
-      ServiceControlPlaneServer::Config{cfg_.service_id, cfg_.nats_url, cfg_.service_name, cfg_.service_class}, &nats_,
-      &kv_, this);
-  if (!ctrl_->start()) {
-    ctrl_.reset();
-    kv_.close();
-    nats_.close();
-    return false;
-  }
-
-  load_active_from_kv();
-
-  // Clear any stale ready flag from a previous run as early as possible.
-  (void)kv_set_ready(kv_, cfg_.service_id, false, "starting");
-  ready_.store(false, std::memory_order_release);
-
-  // Watch node state changes and forward to stateful nodes (best-effort).
-  // Key format: nodes.<node_id>.state.<field>
-  (void)kv_.watch(
-      "nodes.>",
-      [this](const std::string& key, const std::vector<std::uint8_t>& bytes) {
-        constexpr const char* kPrefix = "nodes.";
-        constexpr const char* kStateMarker = ".state.";
-
-        if (key.rfind(kPrefix, 0) != 0) return;
-        const std::size_t marker = key.find(kStateMarker);
-        if (marker == std::string::npos) return;
-
-        const std::size_t node_begin = std::strlen(kPrefix);
-        const std::size_t node_end = marker;
-        if (node_end <= node_begin) return;
-        const std::string node_id = key.substr(node_begin, node_end - node_begin);
-
-        const std::size_t field_begin = marker + std::strlen(kStateMarker);
-        if (field_begin >= key.size()) return;
-        const std::string field = key.substr(field_begin);
-
-        nlohmann::json payload = nlohmann::json::object();
-        if (!decode_json(bytes.data(), bytes.size(), payload)) {
-          return;
-        }
-        if (!payload.is_object()) return;
-
-        // Avoid loopback: ignore updates authored by this service process.
-        // External state changes (other actors) still flow through.
-        if (payload.contains("actor") && payload["actor"].is_string()) {
-          const std::string actor = payload["actor"].get<std::string>();
-          if (!actor.empty() && actor == cfg_.service_id) {
-            return;
-          }
-        }
-
-        const nlohmann::json value = payload.contains("value") ? payload["value"] : nlohmann::json();
-        const std::int64_t ts_ms = coerce_inbound_ts_ms(payload, 0);
-        nlohmann::json meta = payload;
-        if (meta.is_object()) {
-          meta.erase("value");
-        } else {
-          meta = nlohmann::json::object();
-        }
-
-        {
-          std::lock_guard<std::mutex> lock(state_mu_);
-          state_cache_[{node_id, field}] = {value, ts_ms};
-        }
-
-        main_thread_.post([this, node_id, field, value, ts_ms, meta]() {
-          deliver_state_local(node_id, field, value, ts_ms, meta, true);
-        });
-      },
-      true);
-
-  // Seed identity fields (best-effort). Specs should declare these as readonly.
-  try {
-    (void)kv_set_node_state(kv_, cfg_.service_id, cfg_.service_id, "svcId", cfg_.service_id, "system",
-                            json{{"builtin", true}}, 0, "system");
-  } catch (const std::exception& exc) {
-    spdlog::warn("seed svcId state failed serviceId={}: {}", cfg_.service_id, exc.what());
-  } catch (...) {
-    spdlog::warn("seed svcId state failed serviceId={}: unknown error", cfg_.service_id);
-  }
-  try {
-    (void)kv_set_node_state(kv_, cfg_.service_id, cfg_.service_id, "active", active_.load(std::memory_order_acquire),
-                            "system", json{{"builtin", true}, {"bootstrap", true}}, 0, "runtime");
-  } catch (const std::exception& exc) {
-    spdlog::warn("seed active state failed serviceId={}: {}", cfg_.service_id, exc.what());
-  } catch (...) {
-    spdlog::warn("seed active state failed serviceId={}: unknown error", cfg_.service_id);
-  }
-
-  // Announce readiness after endpoints are up.
-  (void)kv_set_ready(kv_, cfg_.service_id, true, "start");
-  ready_.store(true, std::memory_order_release);
-  start_monitor_thread();
-  spdlog::info("service_bus started serviceId={} backend={} natsUrl={}", cfg_.service_id,
-               bus_backend_to_string(cfg_.bus_backend), cfg_.nats_url);
-  return true;
 }
 
 bool ServiceBus::start_zenoh_backend() {
@@ -1184,9 +1031,6 @@ bool ServiceBus::runtime_publish_data(const std::string& from_node_id, const std
                                       std::int64_t ts_ms) {
   const auto subject = data_subject(cfg_.service_id, from_node_id, port_id);
   const auto bytes = encode_data_payload(value, ts_ms);
-  if (cfg_.bus_backend == BusBackend::kNats) {
-    return nats_.publish(subject, bytes.data(), bytes.size());
-  }
   if (runtime_transport_) {
     return runtime_transport_->publish(subject, bytes);
   }
@@ -1194,9 +1038,6 @@ bool ServiceBus::runtime_publish_data(const std::string& from_node_id, const std
 }
 
 bool ServiceBus::runtime_kv_put(const std::string& key, const RuntimeBytes& bytes) {
-  if (cfg_.bus_backend == BusBackend::kNats) {
-    return kv_.put(key, bytes.data(), bytes.size());
-  }
   if (runtime_transport_) {
     return runtime_transport_->kv_put(key, bytes);
   }
@@ -1204,37 +1045,8 @@ bool ServiceBus::runtime_kv_put(const std::string& key, const RuntimeBytes& byte
 }
 
 std::optional<RuntimeBytes> ServiceBus::runtime_kv_get(const std::string& key) {
-  if (cfg_.bus_backend == BusBackend::kNats) {
-    return kv_.get(key);
-  }
   if (runtime_transport_) {
     return runtime_transport_->kv_get(key);
-  }
-  return std::nullopt;
-}
-
-std::optional<RuntimeBytes> ServiceBus::runtime_kv_get_in_bucket(const std::string& bucket, const std::string& key,
-                                                                 std::chrono::milliseconds timeout) {
-  if (cfg_.bus_backend == BusBackend::kNats) {
-    (void)timeout;
-    if (bucket == kv_bucket_for_service(cfg_.service_id)) {
-      return kv_.get(key);
-    }
-    std::lock_guard<std::mutex> lock(state_mu_);
-    constexpr const char* kBucketPrefix = "svc_";
-    if (bucket.rfind(kBucketPrefix, 0) != 0) {
-      spdlog::warn("unsupported runtime KV bucket serviceId={} bucket={}", cfg_.service_id, bucket);
-      return std::nullopt;
-    }
-    const auto peer_service_id = bucket.substr(std::string(kBucketPrefix).size());
-    const auto it = peer_kv_by_service_id_.find(peer_service_id);
-    if (it != peer_kv_by_service_id_.end() && it->second) {
-      return it->second->get(key);
-    }
-    return std::nullopt;
-  }
-  if (runtime_transport_) {
-    return runtime_transport_->kv_get_in_bucket(bucket, key, timeout);
   }
   return std::nullopt;
 }
@@ -1254,27 +1066,12 @@ bool ServiceBus::runtime_set_node_state(const std::string& node_id, const std::s
 void ServiceBus::stop() {
   ready_.store(false, std::memory_order_release);
   stop_monitor_thread();
-  if (kv_.valid()) {
-    (void)kv_set_ready(kv_, cfg_.service_id, false, "stop");
-  } else if (runtime_transport_ && !cfg_.service_id.empty()) {
+  if (runtime_transport_ && !cfg_.service_id.empty()) {
     (void)runtime_set_ready(false, "stop");
   }
 
   {
     std::lock_guard<std::mutex> lock(state_mu_);
-    for (auto& kv : peer_kv_by_service_id_) {
-      try {
-        if (kv.second) {
-          kv.second->stop_watch();
-          kv.second->close();
-        }
-      } catch (const std::exception& exc) {
-        spdlog::warn("peer KV stop failed serviceId={} peer={}: {}", cfg_.service_id, kv.first, exc.what());
-      } catch (...) {
-        spdlog::warn("peer KV stop failed serviceId={} peer={}: unknown error", cfg_.service_id, kv.first);
-      }
-    }
-    peer_kv_by_service_id_.clear();
     for (auto& kv : peer_state_subs_by_service_id_) {
       try {
         if (kv.second) {
@@ -1293,39 +1090,9 @@ void ServiceBus::stop() {
     cross_state_targets_.clear();
   }
 
-  if (ctrl_) {
-    try {
-      ctrl_->stop();
-    } catch (const std::exception& exc) {
-      spdlog::warn("control plane stop failed serviceId={}: {}", cfg_.service_id, exc.what());
-    } catch (...) {
-      spdlog::warn("control plane stop failed serviceId={}: unknown error", cfg_.service_id);
-    }
-  }
-  ctrl_.reset();
   stop_runtime_control_endpoints();
-
-  try {
-    kv_.stop_watch();
-  } catch (const std::exception& exc) {
-    spdlog::warn("KV watch stop failed serviceId={}: {}", cfg_.service_id, exc.what());
-  } catch (...) {
-    spdlog::warn("KV watch stop failed serviceId={}: unknown error", cfg_.service_id);
-  }
   {
     std::lock_guard<std::mutex> lock(data_mu_);
-    for (auto& kv : data_subs_) {
-      try {
-        kv.second.unsubscribe();
-      } catch (const std::exception& exc) {
-        spdlog::warn("NATS data subscription stop failed serviceId={} subject={}: {}", cfg_.service_id, kv.first,
-                     exc.what());
-      } catch (...) {
-        spdlog::warn("NATS data subscription stop failed serviceId={} subject={}: unknown error", cfg_.service_id,
-                     kv.first);
-      }
-    }
-    data_subs_.clear();
     for (auto& kv : runtime_data_subs_) {
       try {
         if (kv.second) {
@@ -1359,8 +1126,6 @@ void ServiceBus::stop() {
   } catch (...) {
     spdlog::warn("main-thread queue clear failed serviceId={}: unknown error", cfg_.service_id);
   }
-  kv_.close();
-  nats_.close();
   if (runtime_transport_) {
     runtime_transport_->close();
     runtime_transport_.reset();
@@ -2261,196 +2026,67 @@ void ServiceBus::apply_rungraph_local(const json& graph_obj, std::string& error_
 
   apply_data_routes_from_rungraph(graph_obj);
 
-  // Ensure peer state watches are running for any cross-state dependencies.
-  // This mirrors f8pysdk's cross-service state routing (remote watch + initial sync).
+  // Ensure retained peer state watches are running for any cross-state dependencies.
   std::unordered_set<std::string> want_peers;
   for (const auto& remote_state_key : cross_state_initial_reads) {
     want_peers.insert(remote_state_key.peer_service_id);
   }
 
-  if (cfg_.bus_backend == BusBackend::kNats) {
-    {
-      std::lock_guard<std::mutex> lock(state_mu_);
-      for (auto it = peer_kv_by_service_id_.begin(); it != peer_kv_by_service_id_.end();) {
-        if (want_peers.find(it->first) != want_peers.end()) {
-          ++it;
-          continue;
-        }
-        try {
-          if (it->second) {
-            it->second->stop_watch();
-            it->second->close();
-          }
-        } catch (const std::exception& exc) {
-          spdlog::warn("peer KV close failed serviceId={} peer={}: {}", cfg_.service_id, it->first, exc.what());
-        } catch (...) {
-          spdlog::warn("peer KV close failed serviceId={} peer={}: unknown error", cfg_.service_id, it->first);
-        }
-        it = peer_kv_by_service_id_.erase(it);
-      }
-    }
-
-    for (const auto& peer : want_peers) {
-      bool has_peer = false;
-      {
-        std::lock_guard<std::mutex> lock(state_mu_);
-        has_peer = (peer_kv_by_service_id_.find(peer) != peer_kv_by_service_id_.end());
-      }
-      if (has_peer) continue;
-
-      auto kv_peer = std::make_unique<KvStore>();
-      KvConfig kvc;
-      kvc.bucket = kv_bucket_for_service(peer);
-      kvc.memory_storage = true;
-      kvc.history = 1;
-      if (!kv_peer->open_or_create(nats_.jetstream(), kvc)) {
-        spdlog::warn("peer KV open failed bucket={} peer={}", kvc.bucket, peer);
+  {
+    std::lock_guard<std::mutex> lock(state_mu_);
+    for (auto it = peer_state_subs_by_service_id_.begin(); it != peer_state_subs_by_service_id_.end();) {
+      if (want_peers.find(it->first) != want_peers.end()) {
+        ++it;
         continue;
       }
-
-      const bool ok = kv_peer->watch(
-          "nodes.>",
-          [this, peer](const std::string& key, const std::vector<std::uint8_t>& bytes) {
-            handle_peer_state_payload(peer, key, bytes);
-          },
-          true);
-
-      if (!ok) {
-        kv_peer->close();
-        continue;
-      }
-      {
-        std::lock_guard<std::mutex> lock(state_mu_);
-        peer_kv_by_service_id_[peer] = std::move(kv_peer);
-      }
-      if (state_debug_enabled()) {
-        spdlog::info("state_debug[{}] cross_state_watch_started peer={} bucket={}", cfg_.service_id, peer, kvc.bucket);
-      }
-    }
-  } else {
-    {
-      std::lock_guard<std::mutex> lock(state_mu_);
-      for (auto it = peer_state_subs_by_service_id_.begin(); it != peer_state_subs_by_service_id_.end();) {
-        if (want_peers.find(it->first) != want_peers.end()) {
-          ++it;
-          continue;
-        }
-        try {
-          if (it->second) {
-            it->second->stop();
-          }
-        } catch (const std::exception& exc) {
-          spdlog::warn("peer state subscription stop failed serviceId={} peer={}: {}", cfg_.service_id, it->first,
-                       exc.what());
-        } catch (...) {
-          spdlog::warn("peer state subscription stop failed serviceId={} peer={}: unknown error", cfg_.service_id,
-                       it->first);
-        }
-        it = peer_state_subs_by_service_id_.erase(it);
-      }
-    }
-
-    for (const auto& peer : want_peers) {
-      bool has_peer = false;
-      {
-        std::lock_guard<std::mutex> lock(state_mu_);
-        has_peer = (peer_state_subs_by_service_id_.find(peer) != peer_state_subs_by_service_id_.end());
-      }
-      if (has_peer) continue;
-      if (!runtime_transport_) {
-        spdlog::warn("peer state subscription skipped without runtime transport serviceId={} peer={}", cfg_.service_id,
-                     peer);
-        continue;
-      }
-
-      const std::string bucket = kv_bucket_for_service(peer);
-      auto sub = runtime_transport_->kv_watch_in_bucket(
-          bucket, "nodes.>",
-          [this, peer](const std::string& key, const RuntimeBytes& bytes) {
-            handle_peer_state_payload(peer, key, bytes);
-          });
-      if (!sub || !sub->valid()) {
-        spdlog::warn("peer state subscription failed serviceId={} peer={} bucket={}", cfg_.service_id, peer, bucket);
-        continue;
-      }
-      {
-        std::lock_guard<std::mutex> lock(state_mu_);
-        peer_state_subs_by_service_id_[peer] = std::move(sub);
-      }
-      if (state_debug_enabled()) {
-        spdlog::info("state_debug[{}] cross_state_watch_started peer={} bucket={}", cfg_.service_id, peer, bucket);
-      }
-    }
-  }
-
-  // Initial sync for cross-state targets: NATS legacy pulls current remote
-  // values once. Zenoh gets the current value through retained state history on
-  // the watcher itself, so it does not issue remote KV gets.
-  if (cfg_.bus_backend != BusBackend::kZenoh) {
-    const bool bounded_initial_sync = cfg_.bus_backend != BusBackend::kNats;
-    const auto initial_sync_started_at = std::chrono::steady_clock::now();
-    std::size_t initial_sync_hits = 0;
-    std::size_t initial_sync_misses = 0;
-    std::size_t initial_sync_skipped = 0;
-    for (std::size_t i = 0; i < cross_state_initial_reads.size(); ++i) {
-      if (bounded_initial_sync) {
-        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - initial_sync_started_at);
-        if (elapsed >= kZenohCrossStateInitialSyncBudget) {
-          initial_sync_skipped += cross_state_initial_reads.size() - i;
-          break;
-        }
-      }
-
-      const _RemoteStateKey& remote_state_key = cross_state_initial_reads[i];
-      const std::string& peer = remote_state_key.peer_service_id;
-      const std::string& remote_node_id = remote_state_key.remote_node_id;
-      const std::string& remote_field = remote_state_key.remote_field;
-      std::string remote_key;
       try {
-        remote_key = kv_key_node_state(remote_node_id, remote_field);
+        if (it->second) {
+          it->second->stop();
+        }
       } catch (const std::exception& exc) {
-        spdlog::warn("cross-state initial key build failed serviceId={} peer={}: {}", cfg_.service_id, peer, exc.what());
-        continue;
+        spdlog::warn("peer state subscription stop failed serviceId={} peer={}: {}", cfg_.service_id, it->first,
+                     exc.what());
       } catch (...) {
-        spdlog::warn("cross-state initial key build failed serviceId={} peer={}: unknown error", cfg_.service_id, peer);
-        continue;
+        spdlog::warn("peer state subscription stop failed serviceId={} peer={}: unknown error", cfg_.service_id,
+                     it->first);
       }
-
-      std::chrono::milliseconds get_timeout = kRuntimeKvGetDefaultTimeout;
-      if (bounded_initial_sync) {
-        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - initial_sync_started_at);
-        const auto remaining = kZenohCrossStateInitialSyncBudget - elapsed;
-        if (remaining <= std::chrono::milliseconds(0)) {
-          initial_sync_skipped += cross_state_initial_reads.size() - i;
-          break;
-        }
-        get_timeout = std::min(kZenohCrossStateInitialGetTimeout, remaining);
-      }
-
-      const auto raw = runtime_kv_get_in_bucket(kv_bucket_for_service(peer), remote_key, get_timeout);
-      if (!raw.has_value()) {
-        ++initial_sync_misses;
-        if (state_debug_enabled()) {
-          spdlog::info("state_debug[{}] cross_state_initial_miss peer={} key={}", cfg_.service_id, peer, remote_key);
-        }
-        continue;
-      }
-      ++initial_sync_hits;
-      if (state_debug_enabled()) {
-        spdlog::info("state_debug[{}] cross_state_initial_hit peer={} key={} bytes={}", cfg_.service_id, peer,
-                     remote_key, raw->size());
-      }
-      handle_peer_state_payload(peer, remote_key, *raw);
-    }
-    if (bounded_initial_sync && initial_sync_skipped > 0) {
-      spdlog::info(
-          "cross-state initial sync budget exhausted serviceId={} reads={} hits={} misses={} skipped={} budgetMs={}",
-          cfg_.service_id, cross_state_initial_reads.size(), initial_sync_hits, initial_sync_misses,
-          initial_sync_skipped, kZenohCrossStateInitialSyncBudget.count());
+      it = peer_state_subs_by_service_id_.erase(it);
     }
   }
+
+  for (const auto& peer : want_peers) {
+    bool has_peer = false;
+    {
+      std::lock_guard<std::mutex> lock(state_mu_);
+      has_peer = (peer_state_subs_by_service_id_.find(peer) != peer_state_subs_by_service_id_.end());
+    }
+    if (has_peer) continue;
+    if (!runtime_transport_) {
+      spdlog::warn("peer state subscription skipped without runtime transport serviceId={} peer={}", cfg_.service_id,
+                   peer);
+      continue;
+    }
+
+    const std::string bucket = kv_bucket_for_service(peer);
+    auto sub = runtime_transport_->kv_watch_in_bucket(
+        bucket, "nodes.>",
+        [this, peer](const std::string& key, const RuntimeBytes& bytes) {
+          handle_peer_state_payload(peer, key, bytes);
+        });
+    if (!sub || !sub->valid()) {
+      spdlog::warn("peer state subscription failed serviceId={} peer={} bucket={}", cfg_.service_id, peer, bucket);
+      continue;
+    }
+    {
+      std::lock_guard<std::mutex> lock(state_mu_);
+      peer_state_subs_by_service_id_[peer] = std::move(sub);
+    }
+    if (state_debug_enabled()) {
+      spdlog::info("state_debug[{}] cross_state_watch_started peer={} bucket={}", cfg_.service_id, peer, bucket);
+    }
+  }
+
+  // Zenoh retained state history delivers current peer values through the watch itself.
 
   // Apply per-node stateValues (best-effort reconcile using rungraph meta.ts).
   std::int64_t rungraph_ts = 0;

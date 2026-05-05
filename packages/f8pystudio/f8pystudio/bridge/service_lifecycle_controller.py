@@ -7,7 +7,7 @@ from typing import Any
 from qtpy import QtCore
 
 from f8pysdk.bus import BusBackend
-from f8pysdk.nats_naming import ensure_token
+from f8pysdk.f8_naming import ensure_token
 
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
 from .process_lifecycle import StartServiceRequest, StopServiceRequest
@@ -18,7 +18,7 @@ from f8pystudio.nodegraph.runtime_compiler import CompiledRuntimeGraphs
 
 class ServiceLifecycleControllerMixin:
     def _runtime_bus_backend(self) -> BusBackend:
-        return "nats"
+        return "zenoh"
 
     def _runtime_nats_url(self) -> str:
         return "nats://127.0.0.1:4222"
@@ -36,7 +36,7 @@ class ServiceLifecycleControllerMixin:
         return 256 * 1024 * 1024
 
     async def _ensure_requester(self) -> Any | None:
-        return await self._ensure_nc()
+        return None
 
     def _stop_process_once_local(self, service_id: str) -> bool:
         sid = str(service_id or "").strip()

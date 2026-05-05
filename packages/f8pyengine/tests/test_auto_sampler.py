@@ -14,7 +14,7 @@ if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
 from f8pysdk.bus import ServiceBus, ServiceBusConfig  # noqa: E402
-from f8pysdk.nats_naming import kv_bucket_for_service  # noqa: E402
+from f8pysdk.f8_naming import kv_bucket_for_service  # noqa: E402
 from f8pysdk.specs import (  # noqa: E402
     F8AutoSampleRequest,
     F8DataPortSpec,

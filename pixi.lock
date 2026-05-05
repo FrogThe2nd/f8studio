@@ -474,7 +474,6 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/2f/40/dc34d1a8d5f1e51fc64640b62b191684da52ca469da9cd74e84936ffa4a6/msgpack-1.1.2-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/b8/8e/6b17e43f6eb9369d9858ee32c97959fcd515628a1df376af96c11606cf70/msgspec-0.20.0-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/79/7b/2c79738432f5c924bef5071f933bcc9efd0473bac3b4aa584a6f7c1c8df8/mypy_extensions-1.1.0-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/f9/39/0e87753df1072254bac190b33ed34b264f28f6aa9bea0f01b7e818071756/nats_py-2.14.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/c5/d7/deb8ddfbe1df5710407acb4f4d4e679845841c78924cd67ee3a4e428b418/nodegraphqt-0.6.44-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/e2/9f/06fad4ae8a723ae7096b5311eba67ad8b4df5f359c0a68e366750b7fef78/nodejs_wheel_binaries-24.14.0-py2.py3-none-manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/8e/4b/600b8b7cdbc7f9cebee9ea3d13bb70052a79baf28944024ffcb59f0712e3/numba-0.64.0-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
@@ -597,7 +596,6 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/6e/f1/abd09c2ae91228c5f3998dbd7f41353def9eac64253de3c8105efa2082f7/msgpack-1.1.2-cp314-cp314-win_amd64.whl
       - pypi: https://files.pythonhosted.org/packages/ff/37/9c4b58ff11d890d788e700b827db2366f4d11b3313bf136780da7017278b/msgspec-0.20.0-cp314-cp314-win_amd64.whl
       - pypi: https://files.pythonhosted.org/packages/79/7b/2c79738432f5c924bef5071f933bcc9efd0473bac3b4aa584a6f7c1c8df8/mypy_extensions-1.1.0-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/f9/39/0e87753df1072254bac190b33ed34b264f28f6aa9bea0f01b7e818071756/nats_py-2.14.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/c5/d7/deb8ddfbe1df5710407acb4f4d4e679845841c78924cd67ee3a4e428b418/nodegraphqt-0.6.44-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/60/8c/b8c5f61201c72a0c7dc694b459941f89a6defda85deff258a9940a4e2efc/nodejs_wheel_binaries-24.14.0-py2.py3-none-win_amd64.whl
       - pypi: https://files.pythonhosted.org/packages/b5/00/aebd2f7f1e11e38814bb96e95a27580817a7b340608d3ac085fdbab83174/numba-0.64.0-cp314-cp314-win_amd64.whl
@@ -860,7 +858,6 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/e3/98/00cd8b2dcb563f2298655633e6611a791b2c1a7df1dae064b2b96084f1bf/mediapipe-0.10.32-py3-none-manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/2f/40/dc34d1a8d5f1e51fc64640b62b191684da52ca469da9cd74e84936ffa4a6/msgpack-1.1.2-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/b8/8e/6b17e43f6eb9369d9858ee32c97959fcd515628a1df376af96c11606cf70/msgspec-0.20.0-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
-      - pypi: https://files.pythonhosted.org/packages/f9/39/0e87753df1072254bac190b33ed34b264f28f6aa9bea0f01b7e818071756/nats_py-2.14.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/5d/6c/7f237821c9642fb2a04d2f1e88b4295677144ca93285fd76eff3bcba858d/numpy-2.4.2-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/ba/f6/3c645c21358079097201090de7c30d110f5ec3fa01008e3ee81b0a77a354/opencv_contrib_python-4.13.0.92-cp37-abi3-manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/b7/b9/c538f279a4e237a006a2c98387d081e9eb060d203d8ed34467cc0f0b9b53/packaging-26.0-py3-none-any.whl
@@ -904,7 +901,6 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/fe/63/c9172142521fc334fa891be9ef6259a3790502041b395127d63755cb3f0b/mediapipe-0.10.32-py3-none-win_amd64.whl
       - pypi: https://files.pythonhosted.org/packages/6e/f1/abd09c2ae91228c5f3998dbd7f41353def9eac64253de3c8105efa2082f7/msgpack-1.1.2-cp314-cp314-win_amd64.whl
       - pypi: https://files.pythonhosted.org/packages/ff/37/9c4b58ff11d890d788e700b827db2366f4d11b3313bf136780da7017278b/msgspec-0.20.0-cp314-cp314-win_amd64.whl
-      - pypi: https://files.pythonhosted.org/packages/f9/39/0e87753df1072254bac190b33ed34b264f28f6aa9bea0f01b7e818071756/nats_py-2.14.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/05/cb/eff72a91b2efdd1bc98b3b8759f6a1654aa87612fc86e3d87d6fe4f948c4/numpy-2.4.2-cp314-cp314-win_amd64.whl
       - pypi: https://files.pythonhosted.org/packages/d9/98/a03f69ff6fb86a67d584ecc990d85a95e6930b96e3f39ad1f8e019cb8ada/opencv_contrib_python-4.13.0.92-cp37-abi3-win_amd64.whl
       - pypi: https://files.pythonhosted.org/packages/b7/b9/c538f279a4e237a006a2c98387d081e9eb060d203d8ed34467cc0f0b9b53/packaging-26.0-py3-none-any.whl
@@ -980,7 +976,6 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/43/e3/7d92a15f894aa0c9c4b49b8ee9ac9850d6e63b03c9c32c0367a13ae62209/mpmath-1.3.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/2f/40/dc34d1a8d5f1e51fc64640b62b191684da52ca469da9cd74e84936ffa4a6/msgpack-1.1.2-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/b8/8e/6b17e43f6eb9369d9858ee32c97959fcd515628a1df376af96c11606cf70/msgspec-0.20.0-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
-      - pypi: https://files.pythonhosted.org/packages/f9/39/0e87753df1072254bac190b33ed34b264f28f6aa9bea0f01b7e818071756/nats_py-2.14.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/5d/6c/7f237821c9642fb2a04d2f1e88b4295677144ca93285fd76eff3bcba858d/numpy-2.4.2-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/c1/ff/17e4e94003c0153b40ed399b9ebb7ccc78c82cc6a1538627985a443db382/onnxruntime_gpu-1.24.2-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/ba/f6/3c645c21358079097201090de7c30d110f5ec3fa01008e3ee81b0a77a354/opencv_contrib_python-4.13.0.92-cp37-abi3-manylinux_2_28_x86_64.whl
@@ -1035,7 +1030,6 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/43/e3/7d92a15f894aa0c9c4b49b8ee9ac9850d6e63b03c9c32c0367a13ae62209/mpmath-1.3.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/6e/f1/abd09c2ae91228c5f3998dbd7f41353def9eac64253de3c8105efa2082f7/msgpack-1.1.2-cp314-cp314-win_amd64.whl
       - pypi: https://files.pythonhosted.org/packages/ff/37/9c4b58ff11d890d788e700b827db2366f4d11b3313bf136780da7017278b/msgspec-0.20.0-cp314-cp314-win_amd64.whl
-      - pypi: https://files.pythonhosted.org/packages/f9/39/0e87753df1072254bac190b33ed34b264f28f6aa9bea0f01b7e818071756/nats_py-2.14.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/05/cb/eff72a91b2efdd1bc98b3b8759f6a1654aa87612fc86e3d87d6fe4f948c4/numpy-2.4.2-cp314-cp314-win_amd64.whl
       - pypi: https://files.pythonhosted.org/packages/cc/db/0f94a1b31adc07f65b8184ae600e9040e4964b415a947de77c7b5d8b7b82/onnxruntime_gpu-1.24.2-cp314-cp314-win_amd64.whl
       - pypi: https://files.pythonhosted.org/packages/d9/98/a03f69ff6fb86a67d584ecc990d85a95e6930b96e3f39ad1f8e019cb8ada/opencv_contrib_python-4.13.0.92-cp37-abi3-win_amd64.whl
@@ -1122,7 +1116,6 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/2f/40/dc34d1a8d5f1e51fc64640b62b191684da52ca469da9cd74e84936ffa4a6/msgpack-1.1.2-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/b8/8e/6b17e43f6eb9369d9858ee32c97959fcd515628a1df376af96c11606cf70/msgspec-0.20.0-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/79/7b/2c79738432f5c924bef5071f933bcc9efd0473bac3b4aa584a6f7c1c8df8/mypy_extensions-1.1.0-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/f9/39/0e87753df1072254bac190b33ed34b264f28f6aa9bea0f01b7e818071756/nats_py-2.14.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/c5/d7/deb8ddfbe1df5710407acb4f4d4e679845841c78924cd67ee3a4e428b418/nodegraphqt-0.6.44-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/e2/9f/06fad4ae8a723ae7096b5311eba67ad8b4df5f359c0a68e366750b7fef78/nodejs_wheel_binaries-24.14.0-py2.py3-none-manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/8e/4b/600b8b7cdbc7f9cebee9ea3d13bb70052a79baf28944024ffcb59f0712e3/numba-0.64.0-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
@@ -1238,7 +1231,6 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/6e/f1/abd09c2ae91228c5f3998dbd7f41353def9eac64253de3c8105efa2082f7/msgpack-1.1.2-cp314-cp314-win_amd64.whl
       - pypi: https://files.pythonhosted.org/packages/ff/37/9c4b58ff11d890d788e700b827db2366f4d11b3313bf136780da7017278b/msgspec-0.20.0-cp314-cp314-win_amd64.whl
       - pypi: https://files.pythonhosted.org/packages/79/7b/2c79738432f5c924bef5071f933bcc9efd0473bac3b4aa584a6f7c1c8df8/mypy_extensions-1.1.0-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/f9/39/0e87753df1072254bac190b33ed34b264f28f6aa9bea0f01b7e818071756/nats_py-2.14.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/c5/d7/deb8ddfbe1df5710407acb4f4d4e679845841c78924cd67ee3a4e428b418/nodegraphqt-0.6.44-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/60/8c/b8c5f61201c72a0c7dc694b459941f89a6defda85deff258a9940a4e2efc/nodejs_wheel_binaries-24.14.0-py2.py3-none-win_amd64.whl
       - pypi: https://files.pythonhosted.org/packages/b5/00/aebd2f7f1e11e38814bb96e95a27580817a7b340608d3ac085fdbab83174/numba-0.64.0-cp314-cp314-win_amd64.whl
@@ -2284,10 +2276,9 @@ packages:
 - pypi: ./packages/f8pyengine
   name: f8pyengine
   version: 0.1.1
-  sha256: a637491c07ccc978ee175db64d4c51a516a55bb3e59f48ead2cd5e93afaf55ee
+  sha256: a067571aad2dce26bceed4d6912d2b1878785ceb71bb465a3f187e41a39c57c4
   requires_dist:
   - buttplug>=1.0.0
-  - nats-py>=2.12.0
   - numpy>=1.26.0
   - scipy>=1.14.0
   - pyserial>=3.5
@@ -2313,17 +2304,16 @@ packages:
 - pypi: ./packages/f8pysdk
   name: f8pysdk
   version: 0.1.0
-  sha256: 79ef4b09b4478222e274cb0c81eb550f378c61048ef9ac99be61c71a8fbb6650
+  sha256: 049db86e54865c8c4a71d57023b3062523a8f07dfca84cd7aec6e81e4839bd25
   requires_dist:
   - msgspec>=0.18.6
-  - nats-py>=2.12.0
   - eclipse-zenoh>=1.9.0
   - msgpack>=1.0
   requires_python: '>=3.10'
 - pypi: ./packages/f8pystudio
   name: f8pystudio
   version: 0.3.0
-  sha256: 8a80871dab6887108c4a01d6087990f109d6fcb8acf7a6016790961fafd21c91
+  sha256: 312fc6910dc4a2c2ee081f0c4d4c896852793299fe0afc2e1a702bc2c0c8ce33
   requires_dist:
   - qtpy>=2.4.3
   - pyside6>=6.10.1
@@ -2331,7 +2321,6 @@ packages:
   - setuptools
   - nodegraphqt>=0.6.43
   - pyqtgraph>=0.14.0
-  - nats-py>=2.12.0
   - datamodel-code-generator>=0.50.0
   - shortuuid>=1.0.13
   - basedpyright>=1.31.0
@@ -5203,15 +5192,6 @@ packages:
   license_family: MIT
   size: 11766
   timestamp: 1745776666688
-- pypi: https://files.pythonhosted.org/packages/f9/39/0e87753df1072254bac190b33ed34b264f28f6aa9bea0f01b7e818071756/nats_py-2.14.0-py3-none-any.whl
-  name: nats-py
-  version: 2.14.0
-  sha256: 4116f5d2233ce16e63c3d5538fa40a5e207f75fcf42a741773929ddf1e29d19d
-  requires_dist:
-  - nkeys ; extra == 'nkeys'
-  - aiohttp ; extra == 'aiohttp'
-  - fast-mail-parser ; extra == 'fast-parse'
-  requires_python: '>=3.7'
 - conda: https://conda.anaconda.org/conda-forge/linux-64/ncurses-6.5-h2d0b736_3.conda
   sha256: 3fde293232fa3fca98635e1167de6b7c7fda83caf24b9d6c91ec9eefb4f4d586
   md5: 47e340acb35de30501a76c7c799c41d7

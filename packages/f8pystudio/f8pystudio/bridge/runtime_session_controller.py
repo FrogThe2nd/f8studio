@@ -11,8 +11,6 @@ from f8pysdk.zenoh_naming import zenoh_studio_liveliness_key
 
 from .runtime_lifecycle import (
     SINGLETON_GUARD_DIALOG_MESSAGE,
-    ensure_nats_server_owned_pid,
-    stop_owned_nats_server,
 )
 from .remote_state_sync import RemoteStateGatewayAdapter
 from .studio_runtime_flow import wait_for_studio_runtime_ready
@@ -54,8 +52,6 @@ class RuntimeSessionControllerMixin:
         if cfg is None:
             return "zenoh"
         text = str(cfg.bus_backend).strip().lower()
-        if text == "nats":
-            return "nats"
         if text == "mem":
             return "mem"
         return "zenoh"
@@ -63,7 +59,7 @@ class RuntimeSessionControllerMixin:
     def _runtime_nats_url(self) -> str:
         cfg = self._cfg
         if cfg is None:
-            return str(self._runtime_connection_manager.nats_url).strip() or "nats://127.0.0.1:4222"
+            return "nats://127.0.0.1:4222"
         return str(cfg.nats_url).strip() or "nats://127.0.0.1:4222"
 
     def _runtime_zenoh_config_path(self) -> str | None:
@@ -193,33 +189,6 @@ class RuntimeSessionControllerMixin:
         backend = self._runtime_bus_backend()
         if backend == "zenoh":
             return await self._run_zenoh_startup_preflight_async()
-        if backend != "nats":
-            return None
-
-        nats_url = self._runtime_nats_url()
-        if self._owned_nats_server_pid is None:
-            owned_pid = await ensure_nats_server_owned_pid(
-                nats_url,
-                emit_log=self._emit_log_line,
-                report_exception=self._report_exception,
-            )
-            if owned_pid is not None:
-                self._owned_nats_server_pid = int(owned_pid)
-
-        # The singleton probe should fail fast. If NATS is still unavailable here,
-        # let startup continue rather than blocking on the client's reconnect loop.
-        self._nc = await self._runtime_connection_manager.connect(
-            context="connect nats for singleton guard failed",
-            allow_reconnect=False,
-        )
-        guard = await self._runtime_connection_manager.singleton_guard(
-            self._nc,
-            studio_service_id=self.studio_service_id,
-            ping_timeout_s=0.2,
-        )
-        self._nc = guard.connection
-        if not bool(guard.should_start):
-            return SINGLETON_GUARD_DIALOG_MESSAGE
         return None
 
     async def _run_zenoh_startup_preflight_async(self) -> str | None:
@@ -326,15 +295,6 @@ class RuntimeSessionControllerMixin:
 
     async def _start_after_preflight_async(self) -> str | None:
         nats_url = self._runtime_nats_url()
-        if self._runtime_bus_backend() == "nats" and self._owned_nats_server_pid is None:
-            owned_pid = await ensure_nats_server_owned_pid(
-                nats_url,
-                emit_log=self._emit_log_line,
-                report_exception=self._report_exception,
-            )
-            if owned_pid is not None:
-                self._owned_nats_server_pid = int(owned_pid)
-
         try:
             cfg = PyStudioServiceConfig(
                 bus_backend=self._runtime_bus_backend(),
@@ -511,9 +471,6 @@ class RuntimeSessionControllerMixin:
         except Exception as exc:
             self._report_exception("close command gateway failed", exc)
 
-        await self._runtime_connection_manager.close(self._nc, context="close nats connection failed")
-        self._nc = None
-
         runtime_transport = self._runtime_transport
         self._runtime_transport = None
         if runtime_transport is not None:
@@ -521,17 +478,6 @@ class RuntimeSessionControllerMixin:
                 await runtime_transport.close()
             except Exception as exc:
                 self._report_exception("close runtime transport failed", exc)
-
-        owned_nats_pid = self._owned_nats_server_pid
-        self._owned_nats_server_pid = None
-        if owned_nats_pid is not None:
-            stopped = await stop_owned_nats_server(
-                int(owned_nats_pid),
-                emit_log=self._emit_log_line,
-                report_exception=self._report_exception,
-            )
-            if not stopped:
-                self._emit_log_line(f"failed to stop studio-owned nats-server pid={owned_nats_pid}")
 
         token = self._zenoh_singleton_token
         self._zenoh_singleton_token = None
@@ -547,15 +493,6 @@ class RuntimeSessionControllerMixin:
                 await asyncio.to_thread(session.close)
             except Exception as exc:
                 self._report_exception("close zenoh singleton session failed", exc)
-
-    async def _ensure_nc(self) -> Any | None:
-        """
-        Ensure a NATS connection exists for explicit NATS singleton/bootstrap fallback.
-        """
-        if self._nc is not None:
-            return self._nc
-        self._nc = await self._runtime_connection_manager.connect(context="ensure nats connection failed")
-        return self._nc
 
     async def _ensure_runtime_transport(self) -> Any:
         transport = self._runtime_transport

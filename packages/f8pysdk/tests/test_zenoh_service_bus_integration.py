@@ -9,7 +9,7 @@ import pytest
 
 from f8pysdk.bus import ServiceBus, ServiceBusConfig
 from f8pysdk.codec import decode_as, encode_obj
-from f8pysdk.nats_naming import cmd_channel_subject, kv_bucket_for_service, svc_endpoint_subject
+from f8pysdk.f8_naming import cmd_channel_subject, kv_bucket_for_service, svc_endpoint_subject
 from f8pysdk.nodes import RuntimeNode, ServiceNode
 from f8pysdk.service_runtime_tools.deploy.readiness import wait_service_ready
 from f8pysdk.specs import (

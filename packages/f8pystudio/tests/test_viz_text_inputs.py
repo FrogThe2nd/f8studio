@@ -13,7 +13,7 @@ for p in (PKG_STUDIO, PKG_SDK):
 
 from f8pysdk.bus import ServiceBus, ServiceBusConfig  # noqa: E402
 from f8pysdk.codec import encode_obj  # noqa: E402
-from f8pysdk.nats_naming import data_subject  # noqa: E402
+from f8pysdk.f8_naming import data_subject  # noqa: E402
 from f8pysdk.specs import (  # noqa: E402
     F8DataPortSpec,
     F8Edge,

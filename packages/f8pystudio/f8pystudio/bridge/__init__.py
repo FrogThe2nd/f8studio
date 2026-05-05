@@ -3,7 +3,6 @@ from .command_client import (
     CommandGateway,
     CommandRequest,
     CommandResponse,
-    NatsCommandGateway,
     RuntimeCommandGateway,
     RuntimeCommandGatewayConfig,
 )
@@ -11,12 +10,7 @@ from .facade_qt import BridgeFacadeContext
 from .json_codec import coerce_json_dict, coerce_json_value
 from .managed_service_inventory import ManagedServiceInventory, collect_managed_service_inventory
 from .runtime_lifecycle import (
-    NatsConnectionManager,
-    NatsSingletonGuardResult,
-    RuntimeConnectionManager,
     RuntimeSingletonGuardResult,
-    ensure_nats_server_owned_pid,
-    stop_owned_nats_server,
 )
 from .process_lifecycle import (
     LocalServiceProcessGateway,
@@ -34,7 +28,6 @@ from .deploy_state_controller import DeployStateControllerMixin
 from .remote_command_controller import RemoteCommandControllerMixin
 from .service_status_store import ServiceStatusStore
 from .rungraph_deployer import (
-    NatsRungraphGateway,
     RungraphDeployConfig,
     RungraphDeployRequest,
     RungraphDeployResult,
@@ -77,11 +70,6 @@ __all__ = [
     "PyStudioServiceBridgeConfig",
     "PyStudioServiceConfig",
     "ManagedServiceInventory",
-    "NatsCommandGateway",
-    "NatsConnectionManager",
-    "NatsRungraphGateway",
-    "NatsSingletonGuardResult",
-    "RuntimeConnectionManager",
     "RuntimeSingletonGuardResult",
     "ApplyWatchTargetsRequest",
     "RemoteStateGateway",
@@ -125,6 +113,4 @@ __all__ = [
     "install_studio_runtime_graph",
     "apply_remote_state_watches_if_changed",
     "pick_compiled",
-    "ensure_nats_server_owned_pid",
-    "stop_owned_nats_server",
 ]

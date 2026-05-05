@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from f8pysdk.nats_naming import kv_bucket_for_service, kv_key_node_state, svc_endpoint_subject
+from f8pysdk.f8_naming import kv_bucket_for_service, kv_key_node_state, svc_endpoint_subject
 from f8pysdk.zenoh_transport import ZenohTransport, ZenohTransportConfig
 
 

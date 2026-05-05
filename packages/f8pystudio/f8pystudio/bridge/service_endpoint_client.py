@@ -20,7 +20,7 @@ from f8pysdk.specs import (
     F8TerminateReply,
     F8TerminateRequest,
 )
-from f8pysdk.nats_naming import ensure_token, new_id, svc_endpoint_subject
+from f8pysdk.f8_naming import ensure_token, new_id, svc_endpoint_subject
 from f8pysdk.codec import decode_as, encode_obj
 
 from .runtime_request import RuntimeRequester

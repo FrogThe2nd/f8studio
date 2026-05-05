@@ -18,7 +18,7 @@ from typing import Any, Final
 
 from f8pysdk.capabilities import ClosableNode
 from f8pysdk.specs import F8RuntimeNode
-from f8pysdk.nats_naming import ensure_token
+from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
 
 logger = logging.getLogger(__name__)

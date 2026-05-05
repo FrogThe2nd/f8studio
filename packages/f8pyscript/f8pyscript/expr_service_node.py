@@ -10,7 +10,7 @@ from types import CodeType
 from typing import Any
 
 from f8pysdk.capabilities import ClosableNode
-from f8pysdk.nats_naming import ensure_token
+from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
 
 try:

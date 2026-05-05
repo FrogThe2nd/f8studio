@@ -11,7 +11,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from f8pysdk.specs import F8Edge, F8EdgeKindEnum, F8EdgeStrategyEnum, F8RuntimeGraph, F8RuntimeNode  # noqa: E402
-from f8pysdk.nats_naming import data_subject  # noqa: E402
+from f8pysdk.f8_naming import data_subject  # noqa: E402
 from f8pysdk.bus import ServiceBus, ServiceBusConfig  # noqa: E402
 from f8pysdk.service_bus.data.emit import DataEmitOptions  # noqa: E402
 from f8pysdk.testing import InMemoryCluster, InMemoryTransport, push_input  # noqa: E402

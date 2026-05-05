@@ -6,7 +6,7 @@ from typing import Any
 
 from f8pysdk.codec import decode_obj, encode_obj
 
-from f8pystudio.bridge.command_client import CommandRequest, NatsCommandGateway
+from f8pystudio.bridge.command_client import CommandRequest, RuntimeCommandGateway, RuntimeCommandGatewayConfig
 
 
 class _FakeRequester:
@@ -19,11 +19,11 @@ class _FakeRequester:
         return SimpleNamespace(data=encode_obj(self._response_payload))
 
 
-def test_nats_command_gateway_serializes_scalar_args_without_wrapping() -> None:
+def test_runtime_command_gateway_serializes_scalar_args_without_wrapping() -> None:
     requester = _FakeRequester(
         response_payload={"reqId": "r1", "ok": True, "result": 7, "error": None},
     )
-    gateway = NatsCommandGateway(nats_url="nats://unused")
+    gateway = RuntimeCommandGateway(RuntimeCommandGatewayConfig())
     gateway._requester = requester
 
     response = asyncio.run(gateway.request_command(CommandRequest(service_id="svc_alpha", call="ping", args=7)))
@@ -35,11 +35,11 @@ def test_nats_command_gateway_serializes_scalar_args_without_wrapping() -> None:
     assert response.result == {"value": 7}
 
 
-def test_nats_command_gateway_serializes_list_args_without_wrapping() -> None:
+def test_runtime_command_gateway_serializes_list_args_without_wrapping() -> None:
     requester = _FakeRequester(
         response_payload={"reqId": "r2", "ok": True, "result": {"ok": 1}, "error": None},
     )
-    gateway = NatsCommandGateway(nats_url="nats://unused")
+    gateway = RuntimeCommandGateway(RuntimeCommandGatewayConfig())
     gateway._requester = requester
 
     response = asyncio.run(gateway.request_command(CommandRequest(service_id="svc_alpha", call="ping", args=[1, 2])))

@@ -14,18 +14,13 @@ std::string ensure_token(std::string value, const char* label) {
   if (value.empty()) {
     throw std::invalid_argument(std::string(label ? label : "token") + " must be non-empty");
   }
-  if (value.find('.') != std::string::npos) {
-    throw std::invalid_argument(std::string(label ? label : "token") + " must not contain '.'");
+  if (value.find('.') != std::string::npos || value.find('/') != std::string::npos) {
+    throw std::invalid_argument(std::string(label ? label : "token") + " must not contain '.' or '/'");
   }
   return value;
 }
 
 std::string kv_bucket_for_service(const std::string& service_id) {
-  return std::string("svc_") + ensure_token(service_id, "service_id");
-}
-
-std::string svc_micro_name(const std::string& service_id) {
-  // Mirror f8pysdk: micro service names cannot contain '.', so we use `svc_<serviceId>`.
   return std::string("svc_") + ensure_token(service_id, "service_id");
 }
 

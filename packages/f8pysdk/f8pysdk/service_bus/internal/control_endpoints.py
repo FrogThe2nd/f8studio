@@ -7,8 +7,8 @@ from typing import Any, Protocol
 
 from ...codec import encode_obj
 from ...generated import Code, F8CommandError, F8CommandInvokeReply
-from ...nats_naming import cmd_channel_subject, svc_endpoint_subject
-from .micro import ServiceBusMicroEndpoints
+from ...f8_naming import cmd_channel_subject, svc_endpoint_subject
+from .micro import ServiceBusControlHandlers
 
 log = logging.getLogger(__name__)
 
@@ -32,14 +32,13 @@ class RuntimeTransportServiceControlEndpointServer:
     """
     Backend-neutral control endpoint server using RuntimeTransport request/serve.
 
-    It reuses the canonical request handlers from the NATS fallback endpoint
-    owner so NATS micro and Zenoh command streams preserve identical wire
-    payload semantics.
+    It reuses the canonical request handlers so Zenoh command streams preserve
+    identical wire payload semantics across Python and C++ services.
     """
 
     def __init__(self, bus: Any) -> None:
         self._bus = bus
-        self._handlers = ServiceBusMicroEndpoints(bus)
+        self._handlers = ServiceBusControlHandlers(bus)
         self._handles: list[Any] = []
 
     async def start(self) -> Any:
@@ -96,8 +95,6 @@ class RuntimeTransportServiceControlEndpointServer:
 
 
 def create_service_control_endpoint_server(bus: Any) -> ServiceControlEndpointServer:
-    if str(bus.bus_backend) == "nats":
-        return ServiceBusMicroEndpoints(bus)
     return RuntimeTransportServiceControlEndpointServer(bus)
 
 

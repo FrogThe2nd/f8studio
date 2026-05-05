@@ -16,7 +16,7 @@ from f8pysdk.audio_transport import (
 )
 from f8pysdk.bus import ServiceBus
 from f8pysdk.codec import coerce_int, coerce_str
-from f8pysdk.nats_naming import ensure_token
+from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
 from f8pysdk.shm.audio import SAMPLE_FORMAT_F32LE
 

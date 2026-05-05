@@ -96,47 +96,23 @@ def test_process_manager_zenoh_env_does_not_inherit_nats_url(
     assert env["F8_ZENOH_SHM_POOL_BYTES"] == "123456"
 
 
-def test_process_manager_nats_env_clears_zenoh_values(
+def test_process_manager_rejects_removed_nats_backend(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     entry_path = _write_service_entry(tmp_path)
-    captured: dict[str, Any] = {}
-
-    def fake_popen(cmd: list[str], **kwargs: Any) -> _FakeProcess:
-        captured["cmd"] = cmd
-        captured["env"] = kwargs["env"]
-        return _FakeProcess()
-
-    monkeypatch.setenv("F8_ZENOH_CONFIG", "/tmp/stale.json5")
-    monkeypatch.setenv("F8_ZENOH_CONNECT", "tcp/parent-stale")
-    monkeypatch.setenv("F8_ZENOH_LISTEN", "tcp/parent-listen-stale")
-    monkeypatch.setenv("F8_ZENOH_SHM_POOL_BYTES", "999")
-    monkeypatch.setattr(subprocess, "Popen", fake_popen)
 
     manager = ServiceProcessManager(_Catalog(entry_path))
-    manager.start(
-        ServiceProcessConfig(
-            service_class="f8.test",
-            service_id="svc1",
-            bus_backend="nats",
-            nats_url="nats://127.0.0.1:4333",
-            purge_kv_bucket_on_start=False,
+    with pytest.raises(ValueError, match="NATS process backend has been removed"):
+        manager.start(
+            ServiceProcessConfig(
+                service_class="f8.test",
+                service_id="svc1",
+                bus_backend="nats",
+                nats_url="nats://127.0.0.1:4333",
+                purge_kv_bucket_on_start=False,
+            )
         )
-    )
-
-    cmd = captured["cmd"]
-    env = captured["env"]
-    assert "--bus-backend" in cmd
-    assert cmd[cmd.index("--bus-backend") + 1] == "nats"
-    assert "--nats-url" in cmd
-    assert cmd[cmd.index("--nats-url") + 1] == "nats://127.0.0.1:4333"
-    assert env["F8_BUS_BACKEND"] == "nats"
-    assert env["F8_NATS_URL"] == "nats://127.0.0.1:4333"
-    assert "F8_ZENOH_CONFIG" not in env
-    assert "F8_ZENOH_CONNECT" not in env
-    assert "F8_ZENOH_LISTEN" not in env
-    assert "F8_ZENOH_SHM_POOL_BYTES" not in env
 
 
 def test_process_manager_mem_env_clears_transport_specific_values(

@@ -6,9 +6,8 @@ from typing import Any, Protocol
 import msgspec
 from f8pysdk.bus import BusBackend
 from f8pysdk.specs import F8CommandInvokeReply
-from f8pysdk.nats_naming import cmd_channel_subject, ensure_token, kv_bucket_for_service, new_id
+from f8pysdk.f8_naming import cmd_channel_subject, ensure_token, kv_bucket_for_service, new_id
 from f8pysdk.runtime_transport import RuntimeTransport
-from f8pysdk.transport import NatsTransport, NatsTransportConfig
 from f8pysdk.zenoh_transport import ZenohTransport, ZenohTransportConfig
 
 from .json_codec import coerce_json_value
@@ -40,7 +39,6 @@ class CommandResponse:
 @dataclass(frozen=True)
 class RuntimeCommandGatewayConfig:
     bus_backend: BusBackend = "zenoh"
-    nats_url: str = "nats://127.0.0.1:4222"
     client_service_id: str = "studio"
     zenoh_config_path: str | None = None
     zenoh_connect: tuple[str, ...] = ()
@@ -49,13 +47,6 @@ class RuntimeCommandGatewayConfig:
 
 
 def _build_runtime_transport(config: RuntimeCommandGatewayConfig) -> RuntimeTransport:
-    if config.bus_backend == "nats":
-        return NatsTransport(
-            NatsTransportConfig(
-                url=str(config.nats_url),
-                kv_bucket=kv_bucket_for_service(str(config.client_service_id)),
-            )
-        )
     if config.bus_backend == "mem":
         from f8pysdk.testing import InMemoryCluster, InMemoryTransport
 
@@ -63,6 +54,8 @@ def _build_runtime_transport(config: RuntimeCommandGatewayConfig) -> RuntimeTran
             cluster=InMemoryCluster(),
             kv_bucket=kv_bucket_for_service(str(config.client_service_id)),
         )
+    if config.bus_backend != "zenoh":
+        raise ValueError("Runtime command gateway supports only bus_backend='zenoh' or 'mem'.")
     return ZenohTransport(
         ZenohTransportConfig(
             service_id=str(config.client_service_id),
@@ -85,48 +78,6 @@ class RuntimeCommandGateway:
         if requester is not None:
             return requester
         transport = _build_runtime_transport(self.config)
-        await transport.connect()
-        self._transport = transport
-        self._requester = RuntimeTransportRequester(transport=transport)
-        return self._requester
-
-    async def close(self) -> None:
-        transport = self._transport
-        self._transport = None
-        self._requester = None
-        if transport is not None:
-            await transport.close()
-
-    async def request_command(self, req: CommandRequest) -> CommandResponse:
-        return await _request_command_with_requester(await self.ensure_connected(), req)
-
-
-@dataclass
-class NatsCommandGateway:
-    """
-    Backward-compatible NATS fallback gateway.
-
-    New code should use `RuntimeCommandGateway` with an explicit backend. This
-    wrapper keeps the old import while using RuntimeTransport instead of a raw
-    NATS client.
-    """
-
-    nats_url: str
-    client_service_id: str = "studio"
-    _transport: RuntimeTransport | None = None
-    _requester: RuntimeRequester | None = None
-
-    async def ensure_connected(self) -> RuntimeRequester:
-        requester = self._requester
-        if requester is not None:
-            return requester
-        transport = _build_runtime_transport(
-            RuntimeCommandGatewayConfig(
-                bus_backend="nats",
-                nats_url=str(self.nats_url),
-                client_service_id=str(self.client_service_id),
-            )
-        )
         await transport.connect()
         self._transport = transport
         self._requester = RuntimeTransportRequester(transport=transport)

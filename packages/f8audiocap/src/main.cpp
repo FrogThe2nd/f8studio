@@ -100,7 +100,7 @@ int main(int argc, char** argv) {
     return 2;
   }
   if (f8::cppsdk::should_warn_ignored_nats_url(result, runtime_backend)) {
-    spdlog::warn("--nats-url is ignored unless --bus-backend nats");
+    spdlog::warn("--nats-url is deprecated and ignored by the Zenoh runtime");
   }
   f8::cppsdk::AudioTransportBackend audio_backend = f8::cppsdk::AudioTransportBackend::kAuto;
   if (!f8::cppsdk::read_audio_transport_backend_option(result, audio_backend, runtime_error)) {

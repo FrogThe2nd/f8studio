@@ -25,7 +25,7 @@ from .generated import (
     F8MonitorSnapshot,
     F8MonitorTiming,
 )
-from .nats_naming import data_subject
+from .f8_naming import data_subject
 from ._specs.schema import boolean_schema, complex_object_schema, integer_schema, number_schema, string_schema
 from .time_utils import now_ms
 
