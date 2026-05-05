@@ -176,7 +176,7 @@ class ZenohTransport:
         key_expr = subject_to_zenoh_key(subject)
         declaration = await asyncio.to_thread(session.declare_subscriber, key_expr)
         task = asyncio.create_task(
-            self._pump_subscriber(declaration, cb=cb, key_converter=zenoh_key_to_subject),
+            self._pump_subscriber(declaration, key_expr=key_expr, cb=cb, key_converter=zenoh_key_to_subject),
             name=f"zenoh_sub:{key_expr}",
         )
         handle = _ZenohSubscriptionHandle(declaration, task)
@@ -217,7 +217,7 @@ class ZenohTransport:
         key_expr = subject_to_zenoh_key(subject)
         declaration = await asyncio.to_thread(session.declare_queryable, key_expr)
         task = asyncio.create_task(
-            self._pump_queryable(declaration, handler=handler, reply_key=key_expr),
+            self._pump_queryable(declaration, key_expr=key_expr, handler=handler, reply_key=key_expr),
             name=f"zenoh_serve:{key_expr}",
         )
         handle = _ZenohServeHandle(declaration, task)
@@ -259,7 +259,7 @@ class ZenohTransport:
             await cb(kv_key, payload)
 
         task = asyncio.create_task(
-            self._pump_subscriber(declaration, cb=_on_sample, key_converter=lambda item: item),
+            self._pump_subscriber(declaration, key_expr=key_expr, cb=_on_sample, key_converter=lambda item: item),
             name=f"zenoh_kv_watch:{bucket}:{key_pattern}",
         )
         handle = _ZenohSubscriptionHandle(declaration, task)
@@ -306,7 +306,7 @@ class ZenohTransport:
         session = await self._require_session()
         declaration = await asyncio.to_thread(session.declare_queryable, key_expr)
         task = asyncio.create_task(
-            self._pump_kv_queryable(declaration),
+            self._pump_kv_queryable(declaration, key_expr=key_expr),
             name=f"zenoh_kv_queryable:{key_expr}",
         )
         return _ZenohServeHandle(declaration, task)
@@ -315,6 +315,7 @@ class ZenohTransport:
         self,
         declaration: Any,
         *,
+        key_expr: str,
         cb: TransportCallback | None,
         key_converter: Callable[[str], str],
     ) -> None:
@@ -329,10 +330,17 @@ class ZenohTransport:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                log.error("zenoh subscriber pump failed key_expr=%s", str(declaration.key_expr), exc_info=exc)
+                log.error("zenoh subscriber pump failed key_expr=%s", key_expr, exc_info=exc)
                 await asyncio.sleep(0.05)
 
-    async def _pump_queryable(self, declaration: Any, *, handler: RequestHandler, reply_key: str) -> None:
+    async def _pump_queryable(
+        self,
+        declaration: Any,
+        *,
+        key_expr: str,
+        handler: RequestHandler,
+        reply_key: str,
+    ) -> None:
         while True:
             try:
                 query = declaration.try_recv()
@@ -347,10 +355,10 @@ class ZenohTransport:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                log.error("zenoh queryable pump failed key_expr=%s", str(declaration.key_expr), exc_info=exc)
+                log.error("zenoh queryable pump failed key_expr=%s", key_expr, exc_info=exc)
                 await asyncio.sleep(0.05)
 
-    async def _pump_kv_queryable(self, declaration: Any) -> None:
+    async def _pump_kv_queryable(self, declaration: Any, *, key_expr: str) -> None:
         while True:
             try:
                 query = declaration.try_recv()
@@ -369,7 +377,7 @@ class ZenohTransport:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                log.error("zenoh kv queryable pump failed key_expr=%s", str(declaration.key_expr), exc_info=exc)
+                log.error("zenoh kv queryable pump failed key_expr=%s", key_expr, exc_info=exc)
                 await asyncio.sleep(0.05)
 
     async def _recv_reply(self, replies: Any, *, timeout_s: float) -> Any | None:

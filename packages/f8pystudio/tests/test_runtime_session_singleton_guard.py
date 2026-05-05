@@ -4,7 +4,7 @@ import asyncio
 import sys
 from types import SimpleNamespace
 
-from f8pystudio.bridge.nats_lifecycle import NatsSingletonGuardResult, SINGLETON_GUARD_DIALOG_MESSAGE
+from f8pystudio.bridge.nats_lifecycle import RuntimeSingletonGuardResult, SINGLETON_GUARD_DIALOG_MESSAGE
 from f8pystudio.bridge.runtime_session_controller import (
     RuntimeSessionControllerMixin,
     _service_id_from_zenoh_liveliness_key,
@@ -23,7 +23,7 @@ class _FakeConnectionManager:
         assert connection == "connection"
         assert studio_service_id == "studio"
         assert ping_timeout_s == 0.2
-        return NatsSingletonGuardResult(should_start=False, connection=None)
+        return RuntimeSingletonGuardResult(should_start=False, connection=None)
 
 
 class _FakeMonitorCenter:
@@ -36,7 +36,7 @@ class _FakeMonitorCenter:
 
 class _Controller(RuntimeSessionControllerMixin):
     def __init__(self) -> None:
-        self._nats_connection_manager = _FakeConnectionManager()
+        self._runtime_connection_manager = _FakeConnectionManager()
         self._owned_nats_server_pid = None
         self._nc = None
         self._svc = None

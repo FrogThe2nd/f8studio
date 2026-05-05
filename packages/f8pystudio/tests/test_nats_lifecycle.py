@@ -4,7 +4,7 @@ import asyncio
 from typing import Any, Callable
 
 from f8pystudio.bridge.nats_lifecycle import (
-    NatsConnectionManager,
+    RuntimeConnectionManager,
     ensure_nats_server_owned_pid,
     stop_owned_nats_server,
 )
@@ -39,7 +39,7 @@ def test_connect_failure_reports_context() -> None:
         reconnect_flags.append(bool(allow_reconnect))
         raise RuntimeError("connect-failed")
 
-    manager = NatsConnectionManager(
+    manager = RuntimeConnectionManager(
         nats_url="nats://127.0.0.1:4222",
         emit_log=lambda _line: None,
         report_exception=lambda context, exc: reported.append(f"{context}:{type(exc).__name__}"),
@@ -69,7 +69,7 @@ def test_connect_error_callback_throttles_logs() -> None:
         reconnect_flags.append(bool(allow_reconnect))
         return fake_connection
 
-    manager = NatsConnectionManager(
+    manager = RuntimeConnectionManager(
         nats_url="nats://127.0.0.1:4222",
         emit_log=lambda line: logs.append(str(line)),
         report_exception=lambda _context, _exc: None,
@@ -105,7 +105,7 @@ def test_connect_error_callback_without_reconnect_omits_retry_suffix() -> None:
         reconnect_flags.append(bool(allow_reconnect))
         return fake_connection
 
-    manager = NatsConnectionManager(
+    manager = RuntimeConnectionManager(
         nats_url="nats://127.0.0.1:4222",
         emit_log=lambda line: logs.append(str(line)),
         report_exception=lambda _context, _exc: None,
@@ -124,7 +124,7 @@ def test_singleton_guard_blocks_start_when_ping_responds() -> None:
     fake_connection = _FakeConnection()
     logs: list[str] = []
 
-    manager = NatsConnectionManager(
+    manager = RuntimeConnectionManager(
         nats_url="nats://127.0.0.1:4222",
         emit_log=lambda line: logs.append(str(line)),
         report_exception=lambda _context, _exc: None,
@@ -148,7 +148,7 @@ def test_singleton_guard_timeout_allows_start_without_error_report() -> None:
     fake_connection = _FakeConnection(request_exc=TimeoutError("no responder"))
     reports: list[str] = []
 
-    manager = NatsConnectionManager(
+    manager = RuntimeConnectionManager(
         nats_url="nats://127.0.0.1:4222",
         emit_log=lambda _line: None,
         report_exception=lambda context, exc: reports.append(f"{context}:{type(exc).__name__}"),

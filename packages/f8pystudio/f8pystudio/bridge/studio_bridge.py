@@ -28,7 +28,7 @@ from .command_client import CommandRequest, NatsCommandGateway, RuntimeCommandGa
 from .json_codec import coerce_json_value
 from .managed_service_inventory import collect_managed_service_inventory
 from .nats_lifecycle import (
-    NatsConnectionManager,
+    RuntimeConnectionManager,
 )
 from .process_action_scheduler import ServiceProcessActionScheduler
 from .process_lifecycle import (
@@ -103,7 +103,7 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
         )
         self._command_gateway = self._build_command_gateway()
         self._exception_log_once = ExceptionLogOnce()
-        self._nats_connection_manager = NatsConnectionManager(
+        self._runtime_connection_manager = RuntimeConnectionManager(
             nats_url=str(self._cfg.nats_url).strip() or "nats://127.0.0.1:4222",
             emit_log=self._emit_log_line,
             report_exception=self._report_exception,
@@ -438,7 +438,6 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
                 self._process_gateway.stop(StopServiceRequest(service_id=sid))
             except Exception as exc:
                 self._report_exception(f"stop service process failed serviceId={sid}", exc)
-
 
 
 

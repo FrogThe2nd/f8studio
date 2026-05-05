@@ -51,13 +51,21 @@ async def _default_connect(
 
 
 @dataclass(frozen=True)
-class NatsSingletonGuardResult:
+class RuntimeSingletonGuardResult:
     should_start: bool
     connection: Any | None
 
 
 @dataclass
-class NatsConnectionManager:
+class RuntimeConnectionManager:
+    """
+    Studio runtime connection lifecycle helper.
+
+    Zenoh is handled directly by the runtime session controller through
+    liveliness tokens. This manager owns the explicit NATS fallback connection
+    lifecycle so the bridge can keep one backend-neutral entry point.
+    """
+
     nats_url: str
     emit_log: Callable[[str], None]
     report_exception: Callable[[str, BaseException], None]
@@ -107,9 +115,9 @@ class NatsConnectionManager:
         *,
         studio_service_id: str,
         ping_timeout_s: float = 0.2,
-    ) -> NatsSingletonGuardResult:
+    ) -> RuntimeSingletonGuardResult:
         if connection is None:
-            return NatsSingletonGuardResult(should_start=True, connection=None)
+            return RuntimeSingletonGuardResult(should_start=True, connection=None)
 
         try:
             await connection.request(
@@ -119,12 +127,12 @@ class NatsConnectionManager:
             )
             self.emit_log(SINGLETON_GUARD_LOG_MESSAGE)
             await self.close(connection, context="close nats connection failed after singleton ping")
-            return NatsSingletonGuardResult(should_start=False, connection=None)
+            return RuntimeSingletonGuardResult(should_start=False, connection=None)
         except Exception as exc:
             exc_name = type(exc).__name__
             if exc_name not in {"TimeoutError", "NoRespondersError"}:
                 self.report_exception("singleton ping failed", exc)
-            return NatsSingletonGuardResult(should_start=True, connection=connection)
+            return RuntimeSingletonGuardResult(should_start=True, connection=connection)
 
 
 async def ensure_nats_server_owned_pid(
@@ -172,3 +180,7 @@ async def stop_owned_nats_server(
     except Exception as exc:
         report_exception("stop studio-owned nats server failed", exc)
         return False
+
+
+NatsSingletonGuardResult = RuntimeSingletonGuardResult
+NatsConnectionManager = RuntimeConnectionManager

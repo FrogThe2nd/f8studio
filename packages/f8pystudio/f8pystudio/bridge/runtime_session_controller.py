@@ -63,7 +63,7 @@ class RuntimeSessionControllerMixin:
     def _runtime_nats_url(self) -> str:
         cfg = self._cfg
         if cfg is None:
-            return str(self._nats_connection_manager.nats_url).strip() or "nats://127.0.0.1:4222"
+            return str(self._runtime_connection_manager.nats_url).strip() or "nats://127.0.0.1:4222"
         return str(cfg.nats_url).strip() or "nats://127.0.0.1:4222"
 
     def _runtime_zenoh_config_path(self) -> str | None:
@@ -208,11 +208,11 @@ class RuntimeSessionControllerMixin:
 
         # The singleton probe should fail fast. If NATS is still unavailable here,
         # let startup continue rather than blocking on the client's reconnect loop.
-        self._nc = await self._nats_connection_manager.connect(
+        self._nc = await self._runtime_connection_manager.connect(
             context="connect nats for singleton guard failed",
             allow_reconnect=False,
         )
-        guard = await self._nats_connection_manager.singleton_guard(
+        guard = await self._runtime_connection_manager.singleton_guard(
             self._nc,
             studio_service_id=self.studio_service_id,
             ping_timeout_s=0.2,
@@ -523,7 +523,7 @@ class RuntimeSessionControllerMixin:
         except Exception as exc:
             self._report_exception("close command gateway failed", exc)
 
-        await self._nats_connection_manager.close(self._nc, context="close nats connection failed")
+        await self._runtime_connection_manager.close(self._nc, context="close nats connection failed")
         self._nc = None
 
         runtime_transport = self._runtime_transport
@@ -566,7 +566,7 @@ class RuntimeSessionControllerMixin:
         """
         if self._nc is not None:
             return self._nc
-        self._nc = await self._nats_connection_manager.connect(context="ensure nats connection failed")
+        self._nc = await self._runtime_connection_manager.connect(context="ensure nats connection failed")
         return self._nc
 
     async def _ensure_runtime_transport(self) -> Any:

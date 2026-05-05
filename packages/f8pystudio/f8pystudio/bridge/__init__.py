@@ -13,6 +13,8 @@ from .managed_service_inventory import ManagedServiceInventory, collect_managed_
 from .nats_lifecycle import (
     NatsConnectionManager,
     NatsSingletonGuardResult,
+    RuntimeConnectionManager,
+    RuntimeSingletonGuardResult,
     ensure_nats_server_owned_pid,
     stop_owned_nats_server,
 )
@@ -79,6 +81,8 @@ __all__ = [
     "NatsConnectionManager",
     "NatsRungraphGateway",
     "NatsSingletonGuardResult",
+    "RuntimeConnectionManager",
+    "RuntimeSingletonGuardResult",
     "ApplyWatchTargetsRequest",
     "RemoteStateGateway",
     "RemoteStateGatewayAdapter",
