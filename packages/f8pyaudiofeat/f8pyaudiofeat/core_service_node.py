@@ -46,10 +46,13 @@ class AudioCoreFeatureServiceNode(ServiceNode):
         self._active = True
         self._task: asyncio.Task[object] | None = None
 
-        self._audio_shm_name = coerce_str(self._initial_state.get("audioShmName"), default="")
-        audio_transport = coerce_str(self._initial_state.get("audioTransport"), default="legacy_shm").strip().lower()
-        self._audio_transport = audio_transport if audio_transport in ("legacy_shm", "zenoh") else "legacy_shm"
         self._audio_key = coerce_str(self._initial_state.get("audioKey"), default="")
+        self._audio_shm_name = coerce_str(self._initial_state.get("audioShmName"), default="")
+        raw_audio_transport = self._initial_state.get("audioTransport")
+        if raw_audio_transport is None or str(raw_audio_transport or "").strip() == "":
+            self._audio_transport = ""
+        else:
+            self._audio_transport = self._coerce_audio_transport(raw_audio_transport)
         self._channel_mode = self._coerce_channel_mode(self._initial_state.get("channelMode"))
         self._window_ms = coerce_int(self._initial_state.get("windowMs"), default=CoreDefaults.window_ms, minimum=64)
         self._hop_ms = coerce_int(self._initial_state.get("hopMs"), default=CoreDefaults.hop_ms, minimum=8)
@@ -105,8 +108,7 @@ class AudioCoreFeatureServiceNode(ServiceNode):
             self._close_reader()
             return
         if field == "audioTransport":
-            audio_transport = coerce_str(value, default="legacy_shm").strip().lower()
-            self._audio_transport = audio_transport if audio_transport in ("legacy_shm", "zenoh") else "legacy_shm"
+            self._audio_transport = self._coerce_audio_transport(value)
             self._close_reader()
             return
         if field == "audioKey":
@@ -212,7 +214,16 @@ class AudioCoreFeatureServiceNode(ServiceNode):
             return "legacy_shm"
         if str(self._audio_key or "").strip():
             return "zenoh"
-        return "legacy_shm"
+        if str(self._audio_shm_name or "").strip():
+            return "legacy_shm"
+        return "zenoh"
+
+    @staticmethod
+    def _coerce_audio_transport(value: Any) -> str:
+        audio_transport = coerce_str(value, default="").strip().lower()
+        if audio_transport in ("legacy_shm", "shm"):
+            return "legacy_shm"
+        return "zenoh"
 
     def _chunk_to_mono(self, payload: memoryview, *, frames: int, channels: int) -> np.ndarray:
         samples = np.frombuffer(payload, dtype=np.float32)

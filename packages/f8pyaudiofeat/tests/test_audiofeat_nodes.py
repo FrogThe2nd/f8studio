@@ -87,13 +87,21 @@ class _FakeBus:
 
 @unittest.skipUnless(librosa_available(), "librosa is required")
 class AudioFeatNodeTests(unittest.TestCase):
-    def test_missing_audio_shm_name_sets_error(self) -> None:
+    def test_audio_transport_defaults_to_zenoh(self) -> None:
+        node = AudioCoreFeatureServiceNode(node_id="audio_core", node=_NodeStub(stateFields=[]), initial_state={})
+
+        self.assertEqual(node._selected_audio_transport(), "zenoh")
+        self.assertEqual(AudioCoreFeatureServiceNode._coerce_audio_transport(""), "zenoh")
+        self.assertEqual(AudioCoreFeatureServiceNode._coerce_audio_transport("bad"), "zenoh")
+        self.assertEqual(AudioCoreFeatureServiceNode._coerce_audio_transport("legacy_shm"), "legacy_shm")
+
+    def test_missing_audio_key_sets_error(self) -> None:
         async def _run() -> None:
             node = AudioCoreFeatureServiceNode(node_id="audio_core", node=_NodeStub(stateFields=[]), initial_state={})
             bus = _FakeBus()
             RuntimeNode.attach(node, bus)
             await node._step()
-            self.assertEqual(bus.errors[-1][2], "missing audioShmName")
+            self.assertEqual(bus.errors[-1][2], "missing audioKey")
 
         asyncio.run(_run())
 

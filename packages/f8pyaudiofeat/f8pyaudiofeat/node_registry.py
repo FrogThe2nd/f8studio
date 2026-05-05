@@ -66,7 +66,7 @@ def _core_state_fields() -> list[F8StateSpec]:
             name="audioTransport",
             label="Audio Transport",
             description="Audio input transport backend. Use zenoh with audioKey; legacy_shm keeps old audioShmName input.",
-            valueSchema=string_schema(default="legacy_shm", enum=["legacy_shm", "zenoh"]),
+            valueSchema=string_schema(default="zenoh", enum=["zenoh", "legacy_shm"]),
             access=F8StateAccess.rw,
             required=True,
             showOnNode=True,
