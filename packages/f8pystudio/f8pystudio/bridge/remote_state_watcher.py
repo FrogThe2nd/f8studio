@@ -170,8 +170,8 @@ class RemoteStateWatcher:
         self._started = False
         try:
             await self._tr.close()
-        except (AttributeError, OSError, RuntimeError, TypeError):
-            pass
+        except (AttributeError, OSError, RuntimeError, TypeError) as exc:
+            logger.debug("remote state transport close failed", exc_info=exc)
 
     async def apply_targets(self, targets: list[WatchTarget]) -> None:
         """

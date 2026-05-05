@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol
 
 import msgspec
@@ -49,7 +49,7 @@ class RungraphDeployResult:
 
 
 @dataclass(frozen=True)
-class NatsRungraphGateway:
+class RuntimeRungraphGateway:
     config: RungraphDeployConfig
 
     @staticmethod
@@ -65,60 +65,6 @@ class NatsRungraphGateway:
         if not changed:
             return graph
         return copy_model(graph, update={"nodes": normalized_nodes})
-
-    async def deploy_runtime_graph(self, req: RungraphDeployRequest) -> RungraphDeployResult:
-        service_id = str(req.service_id)
-        bucket = kv_bucket_for_service(service_id)
-        transport = NatsTransport(NatsTransportConfig(url=str(self.config.nats_url), kv_bucket=bucket))
-        await transport.connect()
-        try:
-            try:
-                await wait_service_ready(transport, timeout_s=float(self.config.ready_timeout_s))
-            except asyncio.TimeoutError:
-                return RungraphDeployResult(
-                    service_id=service_id,
-                    success=False,
-                    error_message=f"service not ready within {float(self.config.ready_timeout_s):g}s",
-                )
-            graph_for_request = self._normalize_graph_for_request(req.graph)
-            request_payload = F8SetRungraphRequest(
-                reqId=new_id(),
-                args=F8SetRungraphArgs(graph=graph_for_request),
-                meta={"source": str(req.source or "studio")},
-            )
-            request_bytes = encode_obj(request_payload)
-            response_bytes = await transport.request(
-                svc_endpoint_subject(service_id, "set_rungraph"),
-                request_bytes,
-                timeout=float(self.config.request_timeout_s),
-                raise_on_error=True,
-            )
-            if not response_bytes:
-                return RungraphDeployResult(service_id=service_id, success=False, error_message="empty response")
-            try:
-                response_payload = decode_as(response_bytes, F8SetRungraphReply)
-            except ValueError:
-                return RungraphDeployResult(service_id=service_id, success=False, error_message="invalid response")
-            if response_payload.error is None or isinstance(response_payload.error, msgspec.UnsetType):
-                error_message = ""
-            else:
-                error_message = str(response_payload.error.message or "")
-            return RungraphDeployResult(
-                service_id=service_id,
-                success=bool(response_payload.ok),
-                error_message=("" if response_payload.ok else error_message),
-            )
-        finally:
-            await transport.close()
-
-
-@dataclass(frozen=True)
-class RuntimeRungraphGateway:
-    config: RungraphDeployConfig
-
-    @staticmethod
-    def _normalize_graph_for_request(graph: F8RuntimeGraph) -> F8RuntimeGraph:
-        return NatsRungraphGateway._normalize_graph_for_request(graph)
 
     def _build_transport(self, service_id: str) -> RuntimeTransport:
         if self.config.bus_backend == "nats":
@@ -189,3 +135,24 @@ class RuntimeRungraphGateway:
             )
         finally:
             await transport.close()
+
+
+@dataclass(frozen=True)
+class NatsRungraphGateway:
+    """
+    Backward-compatible NATS fallback gateway.
+
+    New code should use `RuntimeRungraphGateway` with an explicit backend. This
+    wrapper preserves the old import while routing through the same
+    RuntimeTransport abstraction as the Zenoh-first path.
+    """
+
+    config: RungraphDeployConfig
+
+    @staticmethod
+    def _normalize_graph_for_request(graph: F8RuntimeGraph) -> F8RuntimeGraph:
+        return RuntimeRungraphGateway._normalize_graph_for_request(graph)
+
+    async def deploy_runtime_graph(self, req: RungraphDeployRequest) -> RungraphDeployResult:
+        nats_config = replace(self.config, bus_backend="nats")
+        return await RuntimeRungraphGateway(nats_config).deploy_runtime_graph(req)

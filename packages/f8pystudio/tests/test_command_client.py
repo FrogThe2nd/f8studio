@@ -24,7 +24,7 @@ def test_nats_command_gateway_serializes_scalar_args_without_wrapping() -> None:
         response_payload={"reqId": "r1", "ok": True, "result": 7, "error": None},
     )
     gateway = NatsCommandGateway(nats_url="nats://unused")
-    gateway._nc = requester
+    gateway._requester = requester
 
     response = asyncio.run(gateway.request_command(CommandRequest(service_id="svc_alpha", call="ping", args=7)))
 
@@ -40,7 +40,7 @@ def test_nats_command_gateway_serializes_list_args_without_wrapping() -> None:
         response_payload={"reqId": "r2", "ok": True, "result": {"ok": 1}, "error": None},
     )
     gateway = NatsCommandGateway(nats_url="nats://unused")
-    gateway._nc = requester
+    gateway._requester = requester
 
     response = asyncio.run(gateway.request_command(CommandRequest(service_id="svc_alpha", call="ping", args=[1, 2])))
 

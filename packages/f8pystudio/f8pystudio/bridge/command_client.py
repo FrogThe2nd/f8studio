@@ -103,22 +103,41 @@ class RuntimeCommandGateway:
 
 @dataclass
 class NatsCommandGateway:
+    """
+    Backward-compatible NATS fallback gateway.
+
+    New code should use `RuntimeCommandGateway` with an explicit backend. This
+    wrapper keeps the old import while using RuntimeTransport instead of a raw
+    NATS client.
+    """
+
     nats_url: str
-    _nc: Any | None = None
+    client_service_id: str = "studio"
+    _transport: RuntimeTransport | None = None
+    _requester: RuntimeRequester | None = None
 
-    async def ensure_connected(self) -> Any:
-        if self._nc is not None:
-            return self._nc
-        import nats
-
-        self._nc = await nats.connect(servers=[str(self.nats_url)], connect_timeout=2)
-        return self._nc
+    async def ensure_connected(self) -> RuntimeRequester:
+        requester = self._requester
+        if requester is not None:
+            return requester
+        transport = _build_runtime_transport(
+            RuntimeCommandGatewayConfig(
+                bus_backend="nats",
+                nats_url=str(self.nats_url),
+                client_service_id=str(self.client_service_id),
+            )
+        )
+        await transport.connect()
+        self._transport = transport
+        self._requester = RuntimeTransportRequester(transport=transport)
+        return self._requester
 
     async def close(self) -> None:
-        if self._nc is None:
-            return
-        await self._nc.close()
-        self._nc = None
+        transport = self._transport
+        self._transport = None
+        self._requester = None
+        if transport is not None:
+            await transport.close()
 
     async def request_command(self, req: CommandRequest) -> CommandResponse:
         return await _request_command_with_requester(await self.ensure_connected(), req)
