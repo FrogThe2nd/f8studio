@@ -257,10 +257,13 @@ class ZenohTransport::Impl final {
               if (!reply.is_ok()) {
                 return;
               }
-              std::lock_guard<std::mutex> state_lock(state->mu);
-              if (!state->reply.has_value()) {
-                state->reply = payload_to_bytes(reply.get_ok().get_payload());
+              {
+                std::lock_guard<std::mutex> state_lock(state->mu);
+                if (!state->reply.has_value()) {
+                  state->reply = payload_to_bytes(reply.get_ok().get_payload());
+                }
               }
+              state->cv.notify_all();
             },
             [state]() {
               {
@@ -274,7 +277,8 @@ class ZenohTransport::Impl final {
 
       std::unique_lock<std::mutex> state_lock(state->mu);
       const auto wait_timeout = timeout.count() > 0 ? timeout : std::chrono::milliseconds(1);
-      (void)state->cv.wait_for(state_lock, wait_timeout, [state]() { return state->done; });
+      (void)state->cv.wait_for(state_lock, wait_timeout,
+                               [state]() { return state->done || state->reply.has_value(); });
       return state->reply;
     } catch (const std::exception& exc) {
       spdlog::error("zenoh request failed subject={}: {}", subject, exc.what());
@@ -415,10 +419,13 @@ class ZenohTransport::Impl final {
               if (!reply.is_ok()) {
                 return;
               }
-              std::lock_guard<std::mutex> state_lock(state->mu);
-              if (!state->reply.has_value()) {
-                state->reply = payload_to_bytes(reply.get_ok().get_payload());
+              {
+                std::lock_guard<std::mutex> state_lock(state->mu);
+                if (!state->reply.has_value()) {
+                  state->reply = payload_to_bytes(reply.get_ok().get_payload());
+                }
               }
+              state->cv.notify_all();
             },
             [state]() {
               {
@@ -431,7 +438,8 @@ class ZenohTransport::Impl final {
       }
 
       std::unique_lock<std::mutex> state_lock(state->mu);
-      (void)state->cv.wait_for(state_lock, wait_timeout, [state]() { return state->done; });
+      (void)state->cv.wait_for(state_lock, wait_timeout,
+                               [state]() { return state->done || state->reply.has_value(); });
       return state->reply;
     } catch (const std::exception& exc) {
       spdlog::error("zenoh kv_get_in_bucket failed bucket={} key={}: {}", bucket, key, exc.what());
