@@ -679,7 +679,7 @@ def register_operator(registry: Registry) -> Registry:
                 F8StateSpec(
                     name="worldUp",
                     label="World Up",
-                    description="World up axis for viewer transform.",
+                    description="Viewer/camera up axis. Incoming skeleton data is already treated as F8 canonical coordinates.",
                     valueSchema=string_schema(default="+y", enum=["+x", "-x", "+y", "-y", "+z", "-z"]),
                     access=F8StateAccess.rw,
                     required=True,

@@ -305,6 +305,16 @@ Unsupported until the streamer grows richer data:
 
 ## Frame Reconstruction
 
+The current `ignore/Feel8.SkeletonStreamer` emits F8 canonical right-handed
+coordinates. The canonical frame is Three/Y-up:
+
+- `+Y` is up.
+- Unity/VAM `X` and `Y` are preserved.
+- Unity/VAM `Z` is mirrored before the packet is sent.
+- Unity/VAM rotation `[w, x, y, z]` is converted to `[w, -x, -y, z]`.
+- Schema names stay `VAMMale@1.0`, `VAMFemale@1.0`, and `VAMDildo@1.0`.
+- `3D Viz.worldUp` should stay `+y`; it controls the viewer/camera up axis.
+
 The streamed bone format is:
 
 ```text
@@ -312,7 +322,8 @@ pos = [x, y, z]
 rot = [w, x, y, z]
 ```
 
-Keep that convention in every pose object.
+Keep that convention in every pose object. `rot` is already transformed into
+the canonical frame by the streamer.
 
 ### Reference Frame
 
