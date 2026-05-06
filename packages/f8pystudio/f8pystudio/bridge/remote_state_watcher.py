@@ -8,12 +8,11 @@ from typing import Any, Awaitable, Callable
 from f8pysdk.bus import BusBackend
 from f8pysdk.f8_naming import (
     ensure_token,
-    kv_bucket_for_service,
-    kv_key_node_state,
-    parse_kv_key_node_state,
+    parse_state_path_node_field,
 )
 from f8pysdk.runtime_transport import RuntimeTransport
 from f8pysdk.zenoh_transport import ZenohTransport, ZenohTransportConfig
+from f8pysdk.zenoh_naming import zenoh_key_to_state_path, zenoh_state_key
 from f8pysdk.time_utils import now_ms
 from f8pysdk.codec import decode_obj
 
@@ -96,10 +95,10 @@ class RemoteStateWatcher:
         self._studio_service_id = ensure_token(str(studio_service_id), label="studio_service_id")
         self._on_state = on_state
 
-        # One shared transport for opening multiple KV buckets.
+        # One shared transport for opening multiple retained state key expressions.
         self._tr = self._build_transport()
         self._started = False
-        self._watches: dict[tuple[str, str], Any] = {}  # (bucket, key_pattern) -> (watcher, task)
+        self._watches: dict[str, Any] = {}
         self._targets: dict[tuple[str, str], WatchTarget] = {}
         self._field_filters: dict[tuple[str, str], frozenset[str]] = {}
         # Dedupe applied updates per (serviceId,nodeId,field).
@@ -116,10 +115,7 @@ class RemoteStateWatcher:
         if self._bus_backend == "mem":
             from f8pysdk.testing import InMemoryCluster, InMemoryTransport
 
-            return InMemoryTransport(
-                cluster=InMemoryCluster(),
-                kv_bucket=kv_bucket_for_service(self._studio_service_id),
-            )
+            return InMemoryTransport(cluster=InMemoryCluster())
         if self._bus_backend != "zenoh":
             raise ValueError("Unsupported remote state watcher backend; use bus_backend='zenoh' or 'mem'.")
         return ZenohTransport(
@@ -152,7 +148,7 @@ class RemoteStateWatcher:
         self._started = True
 
     async def stop(self) -> None:
-        for (_bucket, _pattern), watch in list(self._watches.items()):
+        for _key_expr, watch in list(self._watches.items()):
             try:
                 await self._stop_watch_handle(watch)
             except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
@@ -174,18 +170,17 @@ class RemoteStateWatcher:
         """
         await self.start()
 
-        want_patterns: dict[tuple[str, str], WatchTarget] = {}
+        want_patterns: dict[str, WatchTarget] = {}
         for t in list(targets or []):
             try:
                 sid = ensure_token(str(t.service_id), label="service_id")
                 nid = ensure_token(str(t.node_id), label="node_id")
             except (AttributeError, TypeError, ValueError):
                 continue
-            bucket = kv_bucket_for_service(sid)
-            pattern = f"nodes.{nid}.state.>"
-            want_patterns[(bucket, pattern)] = WatchTarget(service_id=sid, node_id=nid, fields=tuple(t.fields or ()))
+            pattern = f"f8/svc/{sid}/state/nodes/{nid}/state/**"
+            want_patterns[pattern] = WatchTarget(service_id=sid, node_id=nid, fields=tuple(t.fields or ()))
 
-        changed_patterns: set[tuple[str, str]] = set()
+        changed_patterns: set[str] = set()
         for key, target in want_patterns.items():
             prev = self._targets.get(key)
             if prev is None or tuple(prev.fields) != tuple(target.fields):
@@ -198,7 +193,7 @@ class RemoteStateWatcher:
             try:
                 await self._stop_watch_handle(watch)
             except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
-                logger.exception("Failed to stop remote state watch bucket=%s pattern=%s", k[0], k[1])
+                logger.exception("Failed to stop remote state watch key_expr=%s", k)
             self._watches.pop(k, None)
             self._targets.pop(k, None)
 
@@ -209,18 +204,18 @@ class RemoteStateWatcher:
         }
 
         # Start new watches + initial sync for new/changed targets.
-        for (bucket, pattern), t in want_patterns.items():
-            if (bucket, pattern) not in self._watches:
+        for pattern, t in want_patterns.items():
+            if pattern not in self._watches:
                 async def _cb(key: str, val: bytes, *, _sid: str = t.service_id) -> None:
-                    await self._on_kv(_sid, key, val)
+                    await self._on_retained_state(_sid, key, val)
 
                 try:
-                    self._watches[(bucket, pattern)] = await self._tr.kv_watch_in_bucket(bucket, pattern, cb=_cb)
+                    self._watches[pattern] = await self._tr.retained_watch(pattern, cb=_cb, with_initial=True)
                 except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
-                    logger.exception("Failed to start remote state watch bucket=%s pattern=%s", bucket, pattern)
+                    logger.exception("Failed to start remote state watch key_expr=%s", pattern)
                     continue
 
-            if (bucket, pattern) not in changed_patterns:
+            if pattern not in changed_patterns:
                 continue
             if self._bus_backend == "zenoh":
                 continue
@@ -230,20 +225,21 @@ class RemoteStateWatcher:
                 if not f:
                     continue
                 try:
-                    key = kv_key_node_state(node_id=t.node_id, field=f)
+                    key = zenoh_state_key(t.service_id, node_id=t.node_id, field=f)
                 except (AttributeError, TypeError, ValueError):
                     continue
                 try:
-                    raw = await self._tr.kv_get_in_bucket(bucket, key)
+                    raw = await self._tr.retained_get(key)
                 except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
-                    logger.exception("Failed to fetch initial remote state bucket=%s key=%s", bucket, key)
+                    logger.exception("Failed to fetch initial remote state key=%s", key)
                     continue
                 if not raw:
                     continue
-                await self._on_kv(t.service_id, key, raw)
+                await self._on_retained_state(t.service_id, key, raw)
 
-    async def _on_kv(self, service_id: str, key: str, value: bytes) -> None:
-        parsed = parse_kv_key_node_state(key)
+    async def _on_retained_state(self, service_id: str, key: str, value: bytes) -> None:
+        state_path = zenoh_key_to_state_path(key) or str(key)
+        parsed = parse_state_path_node_field(state_path)
         if not parsed:
             return
         node_id, field = parsed

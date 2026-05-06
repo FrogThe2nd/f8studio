@@ -16,8 +16,8 @@ from f8pysdk._specs.builtin_fields import (  # noqa: E402
     service_state_fields_with_builtins,
 )
 from f8pysdk.specs import F8DataPortSpec, F8StateAccess, F8StateFieldEditPolicy, F8StateSpec  # noqa: E402
-from f8pysdk.f8_naming import kv_key_node_state  # noqa: E402
 from f8pysdk.codec import decode_obj  # noqa: E402
+from f8pysdk.zenoh_naming import zenoh_state_key  # noqa: E402
 from f8pysdk.specs import (  # noqa: E402
     boolean_schema,
     can_edit_state_field_access,
@@ -264,8 +264,8 @@ class LifecycleBootstrapTests(unittest.IsolatedAsyncioTestCase):
 
             ensure_control.side_effect = _noop
             await bus.start()
-        key = kv_key_node_state(node_id="svcA", field="active")
-        raw = await bus._transport.kv_get(key)
+        key = zenoh_state_key("svcA", node_id="svcA", field="active")
+        raw = await bus._transport.retained_get(key)
         await bus.stop()
         self.assertIsNotNone(raw)
         payload = decode_obj(raw) if raw is not None else {}

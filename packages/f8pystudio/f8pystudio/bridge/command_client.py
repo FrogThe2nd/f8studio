@@ -6,7 +6,7 @@ from typing import Any, Protocol
 import msgspec
 from f8pysdk.bus import BusBackend
 from f8pysdk.specs import F8CommandInvokeReply
-from f8pysdk.f8_naming import cmd_channel_subject, ensure_token, kv_bucket_for_service, new_id
+from f8pysdk.f8_naming import cmd_channel_key, ensure_token, new_id
 from f8pysdk.runtime_transport import RuntimeTransport
 from f8pysdk.zenoh_transport import ZenohTransport, ZenohTransportConfig
 
@@ -50,10 +50,7 @@ def _build_runtime_transport(config: RuntimeCommandGatewayConfig) -> RuntimeTran
     if config.bus_backend == "mem":
         from f8pysdk.testing import InMemoryCluster, InMemoryTransport
 
-        return InMemoryTransport(
-            cluster=InMemoryCluster(),
-            kv_bucket=kv_bucket_for_service(str(config.client_service_id)),
-        )
+        return InMemoryTransport(cluster=InMemoryCluster())
     if config.bus_backend != "zenoh":
         raise ValueError("Runtime command gateway supports only bus_backend='zenoh' or 'mem'.")
     return ZenohTransport(
@@ -108,7 +105,7 @@ async def _request_command_with_requester(requester: RuntimeRequester, req: Comm
     }
     response_payload = await request_typed(
         requester,
-        subject=cmd_channel_subject(sid),
+        key=cmd_channel_key(sid),
         payload=payload,
         timeout_s=float(req.timeout_s),
         response_type=F8CommandInvokeReply,

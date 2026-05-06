@@ -14,7 +14,6 @@ if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
 from f8pysdk.bus import ServiceBus, ServiceBusConfig  # noqa: E402
-from f8pysdk.f8_naming import kv_bucket_for_service  # noqa: E402
 from f8pysdk.specs import (  # noqa: E402
     F8AutoSampleRequest,
     F8DataPortSpec,
@@ -121,11 +120,11 @@ class AutoSamplerTests(unittest.IsolatedAsyncioTestCase):
         cluster = InMemoryCluster()
         self.engine_bus = ServiceBus(
             ServiceBusConfig(service_id="svcA", data_delivery="buffered"),
-            transport=InMemoryTransport(cluster=cluster, kv_bucket=kv_bucket_for_service("svcA")),
+            transport=InMemoryTransport(cluster=cluster),
         )
         self.studio_bus = ServiceBus(
             ServiceBusConfig(service_id="studio", data_delivery="callback"),
-            transport=InMemoryTransport(cluster=cluster, kv_bucket=kv_bucket_for_service("studio")),
+            transport=InMemoryTransport(cluster=cluster),
         )
         self.service = PyEngineService()
         self.runtime = _RuntimeStub(bus=self.engine_bus)

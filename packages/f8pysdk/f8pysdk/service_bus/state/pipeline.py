@@ -9,13 +9,14 @@ from typing import Any, TYPE_CHECKING
 
 from ...generated import F8StateAccess
 from ...codec import parse_bool, unwrap_json_value
-from ...f8_naming import ensure_token, kv_key_node_state
+from ...f8_naming import ensure_token
 from ...state import StateWriteContext, StateWriteError, StateWriteOrigin, StateWriteSource
 from ..internal.logging import log_error_once
 from .helpers import build_intra_state_route_meta
 from .options import StatePublishOptions
 from ...time_utils import now_ms
 from ...codec import encode_obj
+from ...zenoh_naming import zenoh_state_key
 from ..internal.command import dispatch_command_input
 
 if TYPE_CHECKING:
@@ -348,7 +349,7 @@ async def publish_state(
     update.value = coerce_state_value(update.value)
     payload = _build_state_payload(update)
 
-    key = kv_key_node_state(node_id=node_id, field=field)
+    key = zenoh_state_key(bus.service_id, node_id=node_id, field=field)
     is_hidden_command_state = bus.command_gateway.is_hidden_field(node_id=node_id, field=field)
     # Value-dedupe: avoid republishing identical values.
     #
@@ -371,7 +372,7 @@ async def publish_state(
             "state_debug[%s] publish_state node=%s field=%s ts=%s origin=%s source=%s"
             % (bus.service_id, node_id, field, str(payload.get("tsMs")), ctx.origin.value, update.source)
         )
-    await bus._transport.kv_put(key, encode_obj(payload))
+    await bus._transport.retained_put(key, encode_obj(payload))
     bus.state_store.cache_value(node_id=node_id, field=field, value=update.value, ts_ms=int(payload["tsMs"]))
     if deliver_local:
         # Local writes (actor == self.service_id) do not round-trip through the KV watcher.

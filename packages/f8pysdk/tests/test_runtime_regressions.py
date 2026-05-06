@@ -11,7 +11,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from f8pysdk.specs import F8RuntimeGraph, F8RuntimeNode, F8ServiceSpec  # noqa: E402
-from f8pysdk.f8_naming import data_subject  # noqa: E402
+from f8pysdk.f8_naming import data_key  # noqa: E402
 from f8pysdk.nodes import ServiceNode  # noqa: E402
 from f8pysdk.registry import (  # noqa: E402
     create_runtime_node_registry,
@@ -26,13 +26,13 @@ from f8pysdk.testing import InMemoryCluster, InMemoryTransport, ServiceBusHarnes
 
 
 class _RecordingTransport(InMemoryTransport):
-    def __init__(self, *, cluster: InMemoryCluster, kv_bucket: str) -> None:
-        super().__init__(cluster=cluster, kv_bucket=kv_bucket)
-        self.published_subjects: list[str] = []
+    def __init__(self, *, cluster: InMemoryCluster) -> None:
+        super().__init__(cluster=cluster)
+        self.published_keys: list[str] = []
 
-    async def publish(self, subject: str, payload: bytes) -> None:
-        self.published_subjects.append(str(subject))
-        await super().publish(subject, payload)
+    async def publish(self, key: str, payload: bytes) -> None:
+        self.published_keys.append(str(key))
+        await super().publish(key, payload)
 
 
 class _DataReceiverNode:
@@ -161,19 +161,19 @@ class RuntimeRegressionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_cross_publish_policy_all_publishes_without_cross_routes(self) -> None:
         cluster = InMemoryCluster()
-        transport = _RecordingTransport(cluster=cluster, kv_bucket="kv.svc")
+        transport = _RecordingTransport(cluster=cluster)
         bus = ServiceBus(ServiceBusConfig(service_id="svc", cross_publish_policy="all"), transport=transport)
 
         await bus.emit_data("node1", "out", {"x": 1}, ts_ms=1)
 
         self.assertEqual(
-            transport.published_subjects,
-            [data_subject("svc", from_node_id="node1", port_id="out")],
+            transport.published_keys,
+            [data_key("svc", from_node_id="node1", port_id="out")],
         )
 
     async def test_callback_data_delivery_delivers_by_callback_and_pull(self) -> None:
         cluster = InMemoryCluster()
-        transport = InMemoryTransport(cluster=cluster, kv_bucket="kv.svc")
+        transport = InMemoryTransport(cluster=cluster)
         bus = ServiceBus(ServiceBusConfig(service_id="svc", data_delivery="callback"), transport=transport)
         node = _DataReceiverNode("node1")
         bus.register_node(node)
@@ -248,7 +248,7 @@ class RuntimeRegressionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_service_host_derives_service_class_from_bus_config(self) -> None:
         cluster = InMemoryCluster()
-        transport = InMemoryTransport(cluster=cluster, kv_bucket="kv.svc")
+        transport = InMemoryTransport(cluster=cluster)
         bus = ServiceBus(
             ServiceBusConfig(service_id="svc", service_class="svc.test"),
             transport=transport,

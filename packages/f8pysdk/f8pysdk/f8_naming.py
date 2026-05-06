@@ -17,26 +17,7 @@ def ensure_token(value: str, *, label: str) -> str:
     return value
 
 
-def kv_bucket_for_service(service_id: str) -> str:
-    """
-    Default bucket name for a service instance.
-    """
-    return f"svc_{ensure_token(service_id, label='service_id')}"
-
-
-def kv_key_rungraph() -> str:
-    return "rungraph"
-
-def kv_key_ready() -> str:
-    """
-    Service readiness key in the per-service KV bucket.
-
-    Payload is JSON bytes written by the service runtime.
-    """
-    return "ready"
-
-
-def kv_key_node_state(*, node_id: str, field: str) -> str:
+def state_path_node_field(*, node_id: str, field: str) -> str:
     node_id = ensure_token(node_id, label="node_id")
     field = str(field).strip()
     if not field:
@@ -44,13 +25,13 @@ def kv_key_node_state(*, node_id: str, field: str) -> str:
     return f"nodes.{node_id}.state.{field}"
 
 
-def parse_kv_key_node_state(key: str) -> tuple[str, str] | None:
+def parse_state_path_node_field(path: str) -> tuple[str, str] | None:
     """
-    Parse a KV key in the form: nodes.<nodeId>.state.<field...>.
+    Parse a state path in the form: nodes.<nodeId>.state.<field...>.
 
-    Inverse of `kv_key_node_state(node_id=..., field=...)`.
+    Inverse of `state_path_node_field(node_id=..., field=...)`.
     """
-    parts = str(key).strip(".").split(".")
+    parts = str(path).strip(".").split(".")
     if len(parts) < 4:
         return None
     if parts[0] != "nodes" or parts[2] != "state":
@@ -61,37 +42,35 @@ def parse_kv_key_node_state(key: str) -> tuple[str, str] | None:
         return None
     return node_id, field
 
-def data_subject(from_service_id: str, *, from_node_id: str, port_id: str) -> str:
+def data_key(from_service_id: str, *, from_node_id: str, port_id: str) -> str:
     """
-    Cross-instance data bus subject for an output port.
+    Cross-instance Zenoh key for an output port.
 
     Fan-out design: publish once per (service,node,out_port); multiple receivers
-    subscribe to the same subject.
+    subscribe to the same key expression.
     """
     from_service_id = ensure_token(from_service_id, label="from_service_id")
     from_node_id = ensure_token(from_node_id, label="from_node_id")
     port_id = ensure_token(port_id, label="port_id")
-    return f"svc.{from_service_id}.nodes.{from_node_id}.data.{port_id}"
+    return f"f8/svc/{from_service_id}/nodes/{from_node_id}/data/{port_id}"
 
-def cmd_channel_subject(service_id: str) -> str:
+def cmd_channel_key(service_id: str) -> str:
     """
     Reserved command channel for user-defined service commands.
 
     The request payload should include a JSON envelope (reqId/call/args/meta).
     """
     service_id = ensure_token(service_id, label="service_id")
-    return f"svc.{service_id}.cmd"
+    return f"f8/cmd/svc/{service_id}/cmd"
 
 
-def svc_endpoint_subject(service_id: str, endpoint: str) -> str:
+def svc_endpoint_key(service_id: str, endpoint: str) -> str:
     """
-    Compatibility subject for built-in lifecycle/control endpoints.
-
-    Zenoh maps this subject onto `f8/svc/{serviceId}/endpoint/{endpoint}`.
+    Built-in lifecycle/control endpoint command key.
     """
     service_id = ensure_token(service_id, label="service_id")
     endpoint = ensure_token(str(endpoint), label="endpoint")
-    return f"svc.{service_id}.{endpoint}"
+    return f"f8/cmd/svc/{service_id}/{endpoint}"
 
 
 def new_id() -> str:

@@ -10,7 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from f8pysdk.f8_naming import kv_bucket_for_service, kv_key_node_state, svc_endpoint_subject
+from f8pysdk.f8_naming import svc_endpoint_key
+from f8pysdk.zenoh_naming import zenoh_state_key
 from f8pysdk.zenoh_transport import ZenohTransport, ZenohTransportConfig
 
 
@@ -85,7 +86,7 @@ def test_python_client_talks_to_cpp_command_server_and_reads_cpp_retained_state(
     async def _run() -> None:
         service_id = _sid("cpp_srv")
         client_id = _sid("py_cli")
-        state_key = kv_key_node_state(node_id="node", field="value")
+        state_key = zenoh_state_key(service_id, node_id="node", field="value")
         state_payload = "cpp-retained-state"
         ready_file = tmp_path / "cpp-server.ready"
         proc = subprocess.Popen(
@@ -118,7 +119,7 @@ def test_python_client_talks_to_cpp_command_server_and_reads_cpp_retained_state(
             async def _on_state(key: str, value: bytes) -> None:
                 seen.append((key, value))
 
-            watch = await client.kv_watch_in_bucket(kv_bucket_for_service(service_id), state_key, cb=_on_state)
+            watch = await client.retained_watch(state_key, cb=_on_state)
             try:
                 await _wait_until(lambda: bool(seen), timeout_s=5.0)
                 assert seen[0] == (state_key, state_payload.encode())
@@ -126,7 +127,7 @@ def test_python_client_talks_to_cpp_command_server_and_reads_cpp_retained_state(
                 await watch.unsubscribe()
 
             response = await client.request(
-                svc_endpoint_subject(service_id, "echo"),
+                svc_endpoint_key(service_id, "echo"),
                 b"from-python",
                 timeout=3.0,
                 raise_on_error=True,
@@ -134,7 +135,7 @@ def test_python_client_talks_to_cpp_command_server_and_reads_cpp_retained_state(
             assert response == b"cpp:from-python"
 
             terminate_response = await client.request(
-                svc_endpoint_subject(service_id, "terminate"),
+                svc_endpoint_key(service_id, "terminate"),
                 b"stop",
                 timeout=3.0,
                 raise_on_error=True,
@@ -170,7 +171,7 @@ def test_cpp_client_talks_to_python_command_server() -> None:
             async def _handler(payload: bytes) -> bytes:
                 return b"py:" + bytes(payload)
 
-            handle = await server.serve(svc_endpoint_subject(server_id, "echo"), _handler)
+            handle = await server.serve(svc_endpoint_key(server_id, "echo"), _handler)
             try:
                 result = await asyncio.to_thread(
                     _run_probe_capture,
@@ -205,12 +206,12 @@ def test_cpp_late_subscriber_reads_python_retained_state() -> None:
     async def _run() -> None:
         publisher_id = _sid("py_state")
         watcher_id = _sid("cpp_watch")
-        state_key = kv_key_node_state(node_id="node", field="value")
+        state_key = zenoh_state_key(publisher_id, node_id="node", field="value")
         state_payload = "python-retained-state"
         publisher = ZenohTransport(ZenohTransportConfig(service_id=publisher_id))
         await publisher.connect()
         try:
-            await publisher.kv_put(state_key, state_payload.encode())
+            await publisher.retained_put(state_key, state_payload.encode())
             result = await asyncio.to_thread(
                 _run_probe_capture,
                 "--mode",

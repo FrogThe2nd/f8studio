@@ -59,11 +59,6 @@ f8::cppsdk::RuntimeBackendConfig make_config(const Args& args) {
   return config;
 }
 
-std::string endpoint_subject(const std::string& service_id, const std::string& endpoint) {
-  return "svc." + f8::cppsdk::ensure_token(service_id, "service_id") + "." +
-         f8::cppsdk::ensure_token(endpoint, "endpoint");
-}
-
 void print_json(const nlohmann::json& payload) {
   std::cout << payload.dump() << std::endl;
 }
@@ -137,14 +132,14 @@ int run_server(const Args& args) {
 
   std::atomic<bool> terminate{false};
   auto echo_handle = transport.serve(
-      endpoint_subject(args.service_id, args.endpoint),
+      f8::cppsdk::svc_endpoint_key(args.service_id, args.endpoint),
       [](const f8::cppsdk::RuntimeMessage& message) {
         std::vector<std::uint8_t> response = bytes_from_string("cpp:");
         response.insert(response.end(), message.payload.begin(), message.payload.end());
         return response;
       });
   auto terminate_handle = transport.serve(
-      endpoint_subject(args.service_id, "terminate"),
+      f8::cppsdk::svc_endpoint_key(args.service_id, "terminate"),
       [&terminate](const f8::cppsdk::RuntimeMessage& message) {
         terminate.store(true, std::memory_order_release);
         return bytes_from_string("bye:" + string_from_bytes(message.payload));
@@ -152,7 +147,7 @@ int run_server(const Args& args) {
   if (!echo_handle || !echo_handle->valid() || !terminate_handle || !terminate_handle->valid()) {
     throw std::runtime_error("failed to serve cpp command endpoints");
   }
-  if (!transport.kv_put(args.state_key, bytes_from_string(args.state_payload))) {
+  if (!transport.retained_put(args.state_key, bytes_from_string(args.state_payload))) {
     throw std::runtime_error("failed to publish cpp retained state");
   }
 
@@ -176,7 +171,7 @@ int run_request(const Args& args) {
     throw std::runtime_error("failed to connect cpp request transport");
   }
   const auto response = transport.request(
-      endpoint_subject(args.target_service_id, args.endpoint),
+      f8::cppsdk::svc_endpoint_key(args.target_service_id, args.endpoint),
       bytes_from_string(args.payload),
       std::chrono::milliseconds(args.timeout_ms));
   print_json(
@@ -199,8 +194,7 @@ int run_watch(const Args& args) {
   std::atomic<bool> seen{false};
   std::string seen_key;
   std::string seen_payload;
-  auto handle = transport.kv_watch_in_bucket(
-      f8::cppsdk::kv_bucket_for_service(args.peer_service_id),
+  auto handle = transport.retained_watch(
       args.state_key,
       [&](const std::string& key, const f8::cppsdk::RuntimeBytes& payload) {
         seen_key = key;

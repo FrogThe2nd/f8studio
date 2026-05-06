@@ -19,7 +19,7 @@ from ...generated import (
 )
 from ..._specs.schema import data_port_payload_kind
 from ...codec import unwrap_json_value
-from ...f8_naming import data_subject
+from ...f8_naming import data_key
 from ...state import StateWriteOrigin, StateWriteSource
 from ..internal.logging import log_error_once
 from ..state.helpers import build_intra_state_route_meta
@@ -145,7 +145,7 @@ async def set_rungraph(bus: "ServiceBus", graph: F8RuntimeGraph) -> None:
     if not ok:
         raise RuntimeError("set_rungraph: apply_rungraph failed")
     raw = _encode_rungraph_bytes(graph2)
-    await bus._transport.kv_put(bus._rungraph_key, raw)
+    await bus._transport.retained_put(bus._rungraph_key, raw)
 
 
 async def apply_rungraph(bus: "ServiceBus", graph: F8RuntimeGraph) -> bool:
@@ -562,7 +562,7 @@ async def rebuild_routes(bus: "ServiceBus") -> None:
     # Intra (in-process) routing: local service -> local service.
     intra: dict[tuple[str, str], list[tuple[str, str, F8Edge]]] = {}
     intra_in: dict[tuple[str, str], list[tuple[str, str, F8Edge]]] = {}
-    input_stream_subjects: dict[tuple[str, str], str] = {}
+    input_stream_keys: dict[tuple[str, str], str] = {}
     for edge in graph.edges:
         if edge.kind != F8EdgeKindEnum.data:
             continue
@@ -573,8 +573,8 @@ async def rebuild_routes(bus: "ServiceBus") -> None:
         if not from_node or not to_node:
             continue
         if _edge_uses_stream_payload(graph, edge):
-            subject = data_subject(str(edge.fromServiceId), from_node_id=from_node, port_id=str(edge.fromPort))
-            input_stream_subjects[(to_node, str(edge.toPort))] = subject
+            key = data_key(str(edge.fromServiceId), from_node_id=from_node, port_id=str(edge.fromPort))
+            input_stream_keys[(to_node, str(edge.toPort))] = key
             continue
         intra.setdefault((from_node, str(edge.fromPort)), []).append((to_node, str(edge.toPort), edge))
         intra_in.setdefault((to_node, str(edge.toPort)), []).append((from_node, str(edge.fromPort), edge))
@@ -606,26 +606,26 @@ async def rebuild_routes(bus: "ServiceBus") -> None:
         if not from_node or not to_node:
             continue
 
-        subject = data_subject(str(edge.fromServiceId), from_node_id=from_node, port_id=str(edge.fromPort))
+        key = data_key(str(edge.fromServiceId), from_node_id=from_node, port_id=str(edge.fromPort))
 
         if str(edge.toServiceId) == bus.service_id:
             if _edge_uses_stream_payload(graph, edge):
-                input_stream_subjects[(to_node, str(edge.toPort))] = subject
+                input_stream_keys[(to_node, str(edge.toPort))] = key
                 continue
-            cross_in.setdefault(subject, []).append((to_node, str(edge.toPort), edge))
+            cross_in.setdefault(key, []).append((to_node, str(edge.toPort), edge))
             continue
 
         if str(edge.fromServiceId) == bus.service_id:
             if _edge_uses_stream_payload(graph, edge):
                 continue
-            cross_out[(from_node, str(edge.fromPort))] = subject
+            cross_out[(from_node, str(edge.fromPort))] = key
 
     await data_router.replace_routes(
         intra_data_out=intra_data_out,
         intra_data_in=intra_data_in,
-        cross_in_by_subject={k: tuple(v) for k, v in cross_in.items()},
-        cross_out_subjects=cross_out,
-        input_stream_subjects=input_stream_subjects,
+        cross_in_by_key={k: tuple(v) for k, v in cross_in.items()},
+        cross_out_keys=cross_out,
+        input_stream_keys=input_stream_keys,
     )
     update_cross_state_bindings(bus, graph)
     await stop_unused_cross_state_watches(bus)

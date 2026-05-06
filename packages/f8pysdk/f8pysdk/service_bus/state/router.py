@@ -5,7 +5,8 @@ import logging
 from typing import Any, TYPE_CHECKING
 
 from ...generated import F8Edge, F8EdgeKindEnum, F8RuntimeGraph, F8StateAccess
-from ...f8_naming import ensure_token, kv_bucket_for_service, kv_key_node_state, parse_kv_key_node_state
+from ...f8_naming import ensure_token, parse_state_path_node_field
+from ...zenoh_naming import zenoh_key_to_state_path, zenoh_state_key
 from ...time_utils import now_ms
 from ...codec import decode_obj
 from ...state import StateWriteContext, StateWriteError, StateWriteOrigin, StateWriteSource
@@ -25,7 +26,6 @@ CrossStateBindingTable = dict[CrossStateBindingKey, tuple[StateRouteTarget, ...]
 
 log = logging.getLogger(__name__)
 
-_CROSS_STATE_INITIAL_GET_TIMEOUT_S = 0.08
 _CROSS_STATE_INITIAL_SYNC_BUDGET_S = 0.30
 
 
@@ -91,7 +91,7 @@ class StateRouter:
             local_field = str(edge.toPort)
             remote_node = str(edge.fromOperatorId)
             remote_field = str(edge.fromPort)
-            remote_key = kv_key_node_state(node_id=remote_node, field=remote_field)
+            remote_key = zenoh_state_key(peer, node_id=remote_node, field=remote_field)
             want.setdefault((peer, remote_key), []).append((local_node, local_field, edge))
             targets.add((local_node, local_field))
 
@@ -106,18 +106,16 @@ class StateRouter:
             self._remote_state_watches.pop(key, None)
 
     async def sync_cross_state_watches(self) -> None:
-        initial_sync_jobs: list[tuple[str, str, str]] = []
+        initial_sync_jobs: list[tuple[str, str]] = []
         for peer, remote_key in self._cross_state_in_by_key.keys():
-            bucket = kv_bucket_for_service(peer)
-
             if (peer, remote_key) not in self._remote_state_watches:
 
                 async def _cb(key: str, val: bytes, *, _peer: str = peer) -> None:
-                    await self.on_remote_state_kv(_peer, key, val, is_initial=False)
+                    await self.on_remote_state_retained(_peer, key, val, is_initial=False)
 
                 try:
-                    self._remote_state_watches[(peer, remote_key)] = await self._bus._transport.kv_watch_in_bucket(
-                        bucket, remote_key, cb=_cb
+                    self._remote_state_watches[(peer, remote_key)] = await self._bus._transport.retained_watch(
+                        remote_key, cb=_cb, with_initial=True
                     )
                 except Exception as exc:
                     log_error_once(
@@ -129,7 +127,7 @@ class StateRouter:
                     continue
 
             if self._bus.bus_backend != "zenoh":
-                initial_sync_jobs.append((peer, bucket, remote_key))
+                initial_sync_jobs.append((peer, remote_key))
 
         if not initial_sync_jobs:
             return
@@ -138,14 +136,10 @@ class StateRouter:
         sem = asyncio.Semaphore(concurrency)
         tasks: list[asyncio.Task[None]] = []
 
-        async def _sync_one(peer: str, bucket: str, remote_key: str) -> None:
+        async def _sync_one(peer: str, remote_key: str) -> None:
             async with sem:
                 try:
-                    raw = await self._bus._transport.kv_get_in_bucket(
-                        bucket,
-                        remote_key,
-                        timeout=_CROSS_STATE_INITIAL_GET_TIMEOUT_S,
-                    )
+                    raw = await self._bus._transport.retained_get(remote_key)
                 except Exception as exc:
                     log_error_once(
                         self._bus,
@@ -155,11 +149,11 @@ class StateRouter:
                     )
                     return
                 if raw:
-                    await self.on_remote_state_kv(peer, remote_key, raw, is_initial=True, no_fanout=True)
+                    await self.on_remote_state_retained(peer, remote_key, raw, is_initial=True, no_fanout=True)
 
-        for peer, bucket, remote_key in initial_sync_jobs:
+        for peer, remote_key in initial_sync_jobs:
             task = asyncio.create_task(
-                _sync_one(peer, bucket, remote_key),
+                _sync_one(peer, remote_key),
                 name=f"service_bus:cross_state_sync:{peer}:{remote_key}",
             )
             tasks.append(task)
@@ -186,7 +180,7 @@ class StateRouter:
                     _CROSS_STATE_INITIAL_SYNC_BUDGET_S,
                 )
 
-    async def on_remote_state_kv(
+    async def on_remote_state_retained(
         self,
         peer_service_id: str,
         key: str,
@@ -199,11 +193,12 @@ class StateRouter:
 
         peer_service_id_s = str(peer_service_id)
         key_s = str(key)
-        parsed = parse_kv_key_node_state(key)
+        state_path = zenoh_key_to_state_path(key_s) or key_s
+        parsed = parse_state_path_node_field(state_path)
         if not parsed:
             return
         remote_node, remote_field = parsed
-        remote_key = kv_key_node_state(node_id=remote_node, field=remote_field)
+        remote_key = zenoh_state_key(peer_service_id_s, node_id=remote_node, field=remote_field)
         targets = self._cross_state_in_by_key.get((peer_service_id_s, remote_key)) or ()
         if not targets:
             return

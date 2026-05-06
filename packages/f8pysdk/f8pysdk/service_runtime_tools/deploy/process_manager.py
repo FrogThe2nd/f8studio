@@ -29,7 +29,6 @@ class ServiceProcessConfig:
     zenoh_connect: tuple[str, ...] = ()
     zenoh_listen: tuple[str, ...] = ()
     zenoh_shm_pool_bytes: int = 256 * 1024 * 1024
-    purge_kv_bucket_on_start: bool = True
 
 
 class ServiceProcessManager:

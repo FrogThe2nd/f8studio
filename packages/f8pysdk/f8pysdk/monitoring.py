@@ -25,7 +25,7 @@ from .generated import (
     F8MonitorSnapshot,
     F8MonitorTiming,
 )
-from .f8_naming import data_subject
+from .f8_naming import data_key
 from ._specs.schema import boolean_schema, complex_object_schema, integer_schema, number_schema, string_schema
 from .time_utils import now_ms
 
@@ -885,12 +885,12 @@ class MonitorCollector:
             "value": dump_json(snapshot, mode="json", by_alias=True),
             "ts": ts_value,
         }
-        subject = data_subject(
+        key = data_key(
             str(self._bus.service_id),
             from_node_id=str(self._bus.service_id),
             port_id="monitor",
         )
-        await self._bus._transport.publish(subject, encode_obj(payload))
+        await self._bus._transport.publish(key, encode_obj(payload))
 
     async def _run_loop(self) -> None:
         interval_s = float(self._interval_ms) / 1000.0

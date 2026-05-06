@@ -49,8 +49,8 @@ async def compute_and_buffer_for_input(
     await bus.data_router.compute_and_buffer_for_input(node_id=node_id, port=port, ctx_id=ctx_id, stack=stack)
 
 
-async def on_cross_data_msg(bus: "ServiceBus", subject: str, payload: bytes) -> None:
-    await bus.data_router.on_cross_data_msg(subject, payload)
+async def on_cross_data_msg(bus: "ServiceBus", key: str, payload: bytes) -> None:
+    await bus.data_router.on_cross_data_msg(key, payload)
 
 
 def is_stale(edge: F8Edge | None, ts_ms: int) -> bool:
@@ -81,19 +81,19 @@ def buffer_input(
     )
 
 
-async def sync_subscriptions(bus: "ServiceBus", want_subjects: set[str]) -> None:
-    await bus.data_router.sync_subscriptions(want_subjects)
+async def sync_subscriptions(bus: "ServiceBus", want_keys: set[str]) -> None:
+    await bus.data_router.sync_subscriptions(want_keys)
 
 
-async def subscribe_subject(
+async def subscribe_key(
     bus: "ServiceBus",
-    subject: str,
+    key_expr: str,
     *,
     queue: str | None = None,
     cb: Callable[[str, bytes], Awaitable[None]] | None = None,
 ) -> Any:
-    return await bus.data_router.subscribe_subject(subject, queue=queue, cb=cb)
+    return await bus.data_router.subscribe_key(key_expr, queue=queue, cb=cb)
 
 
-async def unsubscribe_subject(bus: "ServiceBus", handle: Any) -> None:
-    await bus.data_router.unsubscribe_subject(handle)
+async def unsubscribe_key(bus: "ServiceBus", handle: Any) -> None:
+    await bus.data_router.unsubscribe_key(handle)

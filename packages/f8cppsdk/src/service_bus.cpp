@@ -556,7 +556,7 @@ std::size_t ServiceBus::drain_main_thread(std::size_t max_tasks) {
   return main_thread_.drain(max_tasks);
 }
 
-void ServiceBus::handle_data_payload(const std::string& subject, const RuntimeBytes& bytes) {
+void ServiceBus::handle_data_payload(const std::string& key, const RuntimeBytes& bytes) {
   json payload = json::object();
   if (!decode_json(bytes.data(), bytes.size(), payload)) {
     return;
@@ -569,18 +569,18 @@ void ServiceBus::handle_data_payload(const std::string& subject, const RuntimeBy
   json meta = payload;
   if (meta.is_object()) {
     meta.erase("value");
-    meta["subject"] = subject;
+    meta["key"] = key;
   } else {
-    meta = json::object({{"subject", subject}});
+    meta = json::object({{"key", key}});
   }
 
   const auto value_ptr = std::make_shared<const json>(std::move(value));
   const auto snapshot = std::atomic_load(&data_routes_snapshot_);
   if (!snapshot) return;
 
-  main_thread_.post([this, snapshot, subject, value_ptr, ts_ms, meta]() {
-    const auto it = snapshot->by_subject.find(subject);
-    if (it == snapshot->by_subject.end()) return;
+  main_thread_.post([this, snapshot, key, value_ptr, ts_ms, meta]() {
+    const auto it = snapshot->by_key.find(key);
+    if (it == snapshot->by_key.end()) return;
     const auto& routes = it->second;
     if (routes.empty()) return;
 
@@ -642,20 +642,22 @@ void ServiceBus::handle_data_payload(const std::string& subject, const RuntimeBy
 }
 
 void ServiceBus::handle_peer_state_payload(const std::string& peer, const std::string& key, const RuntimeBytes& bytes) {
+  const auto state_path = zenoh_key_to_state_path(key);
+  if (!state_path.has_value()) return;
   constexpr const char* kPrefix = "nodes.";
   constexpr const char* kStateMarker = ".state.";
-  if (key.rfind(kPrefix, 0) != 0) return;
-  const std::size_t marker = key.find(kStateMarker);
+  if (state_path->rfind(kPrefix, 0) != 0) return;
+  const std::size_t marker = state_path->find(kStateMarker);
   if (marker == std::string::npos) return;
 
   const std::size_t node_begin = std::strlen(kPrefix);
   const std::size_t node_end = marker;
   if (node_end <= node_begin) return;
-  const std::string remote_node_id = key.substr(node_begin, node_end - node_begin);
+  const std::string remote_node_id = state_path->substr(node_begin, node_end - node_begin);
 
   const std::size_t field_begin = marker + std::strlen(kStateMarker);
-  if (field_begin >= key.size()) return;
-  const std::string remote_field = key.substr(field_begin);
+  if (field_begin >= state_path->size()) return;
+  const std::string remote_field = state_path->substr(field_begin);
 
   std::vector<_NodeFieldKey> targets;
   {
@@ -712,15 +714,15 @@ void ServiceBus::apply_data_routes_from_rungraph(const json& graph_obj) {
   // Build new routing snapshot + input buffers.
   auto next_snapshot = std::make_shared<_DataRoutingSnapshot>();
   auto next_inputs = std::unordered_map<_NodePortKey, std::shared_ptr<_InputBuffer>, _NodePortKeyHash>();
-  auto next_stream_subjects = std::unordered_map<_NodePortKey, std::string, _NodePortKeyHash>();
+  auto next_stream_keys = std::unordered_map<_NodePortKey, std::string, _NodePortKeyHash>();
 
-  for (const auto& kv : new_routes) {
-    const std::string& subject = kv.first;
+  for (const auto& route_entry : new_routes) {
+    const std::string& key = route_entry.first;
     std::vector<_RouteRuntime> vec;
-    vec.reserve(kv.second.size());
-    for (const auto& r : kv.second) {
+    vec.reserve(route_entry.second.size());
+    for (const auto& r : route_entry.second) {
       if (r.stream_payload) {
-        next_stream_subjects[{r.to_node_id, r.to_port}] = subject;
+        next_stream_keys[{r.to_node_id, r.to_port}] = key;
         continue;
       }
       _NodePortKey key{r.to_node_id, r.to_port};
@@ -752,13 +754,13 @@ void ServiceBus::apply_data_routes_from_rungraph(const json& graph_obj) {
       vec.push_back(std::move(rr));
     }
     if (!vec.empty()) {
-      next_snapshot->by_subject.emplace(subject, std::move(vec));
+      next_snapshot->by_key.emplace(key, std::move(vec));
     }
   }
 
-  // Unsubscribe removed subjects.
+  // Unsubscribe removed keys.
   for (auto it = runtime_data_subs_.begin(); it != runtime_data_subs_.end();) {
-    if (next_snapshot->by_subject.find(it->first) != next_snapshot->by_subject.end()) {
+    if (next_snapshot->by_key.find(it->first) != next_snapshot->by_key.end()) {
       ++it;
       continue;
     }
@@ -767,38 +769,38 @@ void ServiceBus::apply_data_routes_from_rungraph(const json& graph_obj) {
         it->second->stop();
       }
     } catch (const std::exception& exc) {
-      spdlog::warn("runtime data unsubscribe failed serviceId={} subject={}: {}", cfg_.service_id, it->first,
+      spdlog::warn("runtime data unsubscribe failed serviceId={} key={}: {}", cfg_.service_id, it->first,
                    exc.what());
     } catch (...) {
-      spdlog::warn("runtime data unsubscribe failed serviceId={} subject={}: unknown error", cfg_.service_id,
+      spdlog::warn("runtime data unsubscribe failed serviceId={} key={}: unknown error", cfg_.service_id,
                    it->first);
     }
     it = runtime_data_subs_.erase(it);
   }
 
-  // Subscribe new subjects.
-  for (const auto& kv : next_snapshot->by_subject) {
-    const std::string& subject = kv.first;
-    if (runtime_data_subs_.find(subject) != runtime_data_subs_.end()) {
+  // Subscribe new keys.
+  for (const auto& route_entry : next_snapshot->by_key) {
+    const std::string& key = route_entry.first;
+    if (runtime_data_subs_.find(key) != runtime_data_subs_.end()) {
       continue;
     }
     if (!runtime_transport_) {
-      spdlog::warn("runtime data subscription skipped without transport serviceId={} subject={}", cfg_.service_id,
-                   subject);
+      spdlog::warn("runtime data subscription skipped without transport serviceId={} key={}", cfg_.service_id,
+                   key);
       continue;
     }
-    auto sub = runtime_transport_->subscribe(subject, [this](const RuntimeMessage& msg) {
-      handle_data_payload(msg.subject, msg.payload);
+    auto sub = runtime_transport_->subscribe(key, [this](const RuntimeMessage& msg) {
+      handle_data_payload(msg.key, msg.payload);
     });
     if (sub && sub->valid()) {
-      runtime_data_subs_.emplace(subject, std::move(sub));
+      runtime_data_subs_.emplace(key, std::move(sub));
     } else {
-      spdlog::warn("runtime data subscription failed serviceId={} subject={}", cfg_.service_id, subject);
+      spdlog::warn("runtime data subscription failed serviceId={} key={}", cfg_.service_id, key);
     }
   }
 
   data_inputs_ = std::move(next_inputs);
-  data_input_stream_subjects_ = std::move(next_stream_subjects);
+  data_input_stream_keys_ = std::move(next_stream_keys);
   std::shared_ptr<const _DataRoutingSnapshot> next_snapshot_const = next_snapshot;
   std::atomic_store(&data_routes_snapshot_, std::move(next_snapshot_const));
 }
@@ -837,7 +839,7 @@ bool ServiceBus::start_zenoh_backend() {
     return false;
   }
 
-  load_active_from_kv();
+  load_active_from_retained();
 
   (void)runtime_set_ready(false, "starting");
   ready_.store(false, std::memory_order_release);
@@ -862,30 +864,30 @@ bool ServiceBus::start_runtime_control_endpoints() {
 
   struct EndpointRegistration {
     std::string endpoint;
-    std::string subject;
+    std::string key;
   };
 
   const std::vector<EndpointRegistration> registrations = {
-      {"activate", svc_endpoint_subject(cfg_.service_id, "activate")},
-      {"deactivate", svc_endpoint_subject(cfg_.service_id, "deactivate")},
-      {"set_active", svc_endpoint_subject(cfg_.service_id, "set_active")},
-      {"status", svc_endpoint_subject(cfg_.service_id, "status")},
-      {"terminate", svc_endpoint_subject(cfg_.service_id, "terminate")},
-      {"quit", svc_endpoint_subject(cfg_.service_id, "quit")},
-      {"cmd", cmd_channel_subject(cfg_.service_id)},
-      {"set_state", svc_endpoint_subject(cfg_.service_id, "set_state")},
-      {"set_rungraph", svc_endpoint_subject(cfg_.service_id, "set_rungraph")},
+      {"activate", svc_endpoint_key(cfg_.service_id, "activate")},
+      {"deactivate", svc_endpoint_key(cfg_.service_id, "deactivate")},
+      {"set_active", svc_endpoint_key(cfg_.service_id, "set_active")},
+      {"status", svc_endpoint_key(cfg_.service_id, "status")},
+      {"terminate", svc_endpoint_key(cfg_.service_id, "terminate")},
+      {"quit", svc_endpoint_key(cfg_.service_id, "quit")},
+      {"cmd", cmd_channel_key(cfg_.service_id)},
+      {"set_state", svc_endpoint_key(cfg_.service_id, "set_state")},
+      {"set_rungraph", svc_endpoint_key(cfg_.service_id, "set_rungraph")},
   };
 
   for (const EndpointRegistration& registration : registrations) {
     auto handle = runtime_transport_->serve(
-        registration.subject,
+        registration.key,
         [this, endpoint = registration.endpoint](const RuntimeMessage& msg) {
           return handle_runtime_control_request(endpoint, msg);
         });
     if (!handle || !handle->valid()) {
-      spdlog::error("runtime control endpoint registration failed serviceId={} endpoint={} subject={}",
-                    cfg_.service_id, registration.endpoint, registration.subject);
+      spdlog::error("runtime control endpoint registration failed serviceId={} endpoint={} key={}",
+                    cfg_.service_id, registration.endpoint, registration.key);
       stop_runtime_control_endpoints();
       return false;
     }
@@ -1039,38 +1041,38 @@ RuntimeBytes ServiceBus::handle_runtime_control_request(const std::string& endpo
 
 bool ServiceBus::runtime_publish_data(const std::string& from_node_id, const std::string& port_id, const json& value,
                                       std::int64_t ts_ms) {
-  const auto subject = data_subject(cfg_.service_id, from_node_id, port_id);
+  const auto key = data_key(cfg_.service_id, from_node_id, port_id);
   const auto bytes = encode_data_payload(value, ts_ms);
   if (runtime_transport_) {
-    return runtime_transport_->publish(subject, bytes);
+    return runtime_transport_->publish(key, bytes);
   }
   return false;
 }
 
-bool ServiceBus::runtime_kv_put(const std::string& key, const RuntimeBytes& bytes) {
+bool ServiceBus::runtime_retained_put(const std::string& key, const RuntimeBytes& bytes) {
   if (runtime_transport_) {
-    return runtime_transport_->kv_put(key, bytes);
+    return runtime_transport_->retained_put(key, bytes);
   }
   return false;
 }
 
-std::optional<RuntimeBytes> ServiceBus::runtime_kv_get(const std::string& key) {
+std::optional<RuntimeBytes> ServiceBus::runtime_retained_get(const std::string& key) {
   if (runtime_transport_) {
-    return runtime_transport_->kv_get(key);
+    return runtime_transport_->retained_get(key);
   }
   return std::nullopt;
 }
 
 bool ServiceBus::runtime_set_ready(bool ready, const std::string& reason, std::int64_t ts_ms) {
   const auto raw = encode_ready_payload(cfg_.service_id, ready, reason, ts_ms);
-  return runtime_kv_put(kv_key_ready(), raw);
+  return runtime_retained_put(ready_key(cfg_.service_id), raw);
 }
 
 bool ServiceBus::runtime_set_node_state(const std::string& node_id, const std::string& field, const json& value,
                                         const std::string& source, const json& extra_meta, std::int64_t ts_ms,
                                         const std::string& origin) {
   const auto raw = encode_node_state_payload(cfg_.service_id, value, source, extra_meta, ts_ms, origin);
-  return runtime_kv_put(kv_key_node_state(node_id, field), raw);
+  return runtime_retained_put(zenoh_state_key(cfg_.service_id, node_id, field), raw);
 }
 
 void ServiceBus::stop() {
@@ -1082,17 +1084,17 @@ void ServiceBus::stop() {
 
   {
     std::lock_guard<std::mutex> lock(state_mu_);
-    for (auto& kv : peer_state_subs_by_service_id_) {
+    for (auto& sub_entry : peer_state_subs_by_service_id_) {
       try {
-        if (kv.second) {
-          kv.second->stop();
+        if (sub_entry.second) {
+          sub_entry.second->stop();
         }
       } catch (const std::exception& exc) {
-        spdlog::warn("peer state subscription stop failed serviceId={} peer={}: {}", cfg_.service_id, kv.first,
+        spdlog::warn("peer state subscription stop failed serviceId={} peer={}: {}", cfg_.service_id, sub_entry.first,
                      exc.what());
       } catch (...) {
         spdlog::warn("peer state subscription stop failed serviceId={} peer={}: unknown error", cfg_.service_id,
-                     kv.first);
+                     sub_entry.first);
       }
     }
     peer_state_subs_by_service_id_.clear();
@@ -1103,22 +1105,22 @@ void ServiceBus::stop() {
   stop_runtime_control_endpoints();
   {
     std::lock_guard<std::mutex> lock(data_mu_);
-    for (auto& kv : runtime_data_subs_) {
+    for (auto& sub_entry : runtime_data_subs_) {
       try {
-        if (kv.second) {
-          kv.second->stop();
+        if (sub_entry.second) {
+          sub_entry.second->stop();
         }
       } catch (const std::exception& exc) {
-        spdlog::warn("runtime data subscription stop failed serviceId={} subject={}: {}", cfg_.service_id, kv.first,
+        spdlog::warn("runtime data subscription stop failed serviceId={} key={}: {}", cfg_.service_id, sub_entry.first,
                      exc.what());
       } catch (...) {
-        spdlog::warn("runtime data subscription stop failed serviceId={} subject={}: unknown error", cfg_.service_id,
-                     kv.first);
+        spdlog::warn("runtime data subscription stop failed serviceId={} key={}: unknown error", cfg_.service_id,
+                     sub_entry.first);
       }
     }
     runtime_data_subs_.clear();
     data_inputs_.clear();
-    data_input_stream_subjects_.clear();
+    data_input_stream_keys_.clear();
     std::atomic_store(&data_routes_snapshot_, std::shared_ptr<const _DataRoutingSnapshot>{});
   }
   {
@@ -1310,8 +1312,8 @@ void ServiceBus::monitor_record_error(const std::string& code, const std::string
 std::size_t ServiceBus::monitor_queue_depth() const {
   std::size_t depth = 0;
   std::lock_guard<std::mutex> lock(data_mu_);
-  for (const auto& kv : data_inputs_) {
-    const std::shared_ptr<_InputBuffer>& buf_ptr = kv.second;
+  for (const auto& input_entry : data_inputs_) {
+    const std::shared_ptr<_InputBuffer>& buf_ptr = input_entry.second;
     if (!buf_ptr) continue;
     std::lock_guard<std::mutex> buf_lock(buf_ptr->mu);
     depth += buf_ptr->queue.size();
@@ -1595,7 +1597,7 @@ bool ServiceBus::on_set_rungraph(const json& graph_obj, const json& meta, std::s
       return false;
     }
     const auto bytes = encode_json(persisted);
-    (void)runtime_kv_put(kv_key_rungraph(), bytes);
+    (void)runtime_retained_put(rungraph_key(cfg_.service_id), bytes);
   } catch (const std::exception& ex) {
     error_code = "INTERNAL";
     error_message = ex.what();
@@ -1781,10 +1783,10 @@ bool ServiceBus::on_command(const std::string& call, const json& args, const jso
   return ok;
 }
 
-void ServiceBus::load_active_from_kv() {
+void ServiceBus::load_active_from_retained() {
   try {
-    const auto key = kv_key_node_state(cfg_.service_id, "active");
-    const auto raw = runtime_kv_get(key);
+    const auto key = zenoh_state_key(cfg_.service_id, cfg_.service_id, "active");
+    const auto raw = runtime_retained_get(key);
     if (!raw.has_value()) {
       return;
     }
@@ -1870,21 +1872,11 @@ std::optional<std::string> ServiceBus::data_input_zenoh_key(const std::string& n
   const std::string nid = ensure_token(node_id, "node_id");
   const std::string pid = ensure_token(port_id, "port_id");
   std::lock_guard<std::mutex> lock(data_mu_);
-  const auto it = data_input_stream_subjects_.find({nid, pid});
-  if (it == data_input_stream_subjects_.end() || it->second.empty()) {
+  const auto it = data_input_stream_keys_.find({nid, pid});
+  if (it == data_input_stream_keys_.end() || it->second.empty()) {
     return std::nullopt;
   }
-  try {
-    return subject_to_zenoh_key(it->second);
-  } catch (const std::exception& exc) {
-    spdlog::warn("data input key resolve failed serviceId={} node={} port={}: {}", cfg_.service_id, nid, pid,
-                 exc.what());
-    return std::nullopt;
-  } catch (...) {
-    spdlog::warn("data input key resolve failed serviceId={} node={} port={}: unknown error", cfg_.service_id, nid,
-                 pid);
-    return std::nullopt;
-  }
+  return it->second;
 }
 
 ServiceBus::StateRead ServiceBus::get_state(const std::string& node_id, const std::string& field) {
@@ -1901,8 +1893,8 @@ ServiceBus::StateRead ServiceBus::get_state(const std::string& node_id, const st
     }
   }
 
-  const auto key = kv_key_node_state(nid, f);
-  auto raw = runtime_kv_get(key);
+  const auto key = zenoh_state_key(cfg_.service_id, nid, f);
+  auto raw = runtime_retained_get(key);
   if (!raw.has_value()) {
     return StateRead{false, json(nullptr), std::nullopt};
   }
@@ -2100,14 +2092,14 @@ void ServiceBus::apply_rungraph_local(const json& graph_obj, std::string& error_
       continue;
     }
 
-    const std::string bucket = kv_bucket_for_service(peer);
-    auto sub = runtime_transport_->kv_watch_in_bucket(
-        bucket, "nodes.>",
+    const std::string key_expr = zenoh_state_path_pattern(peer, "nodes.>");
+    auto sub = runtime_transport_->retained_watch(
+        key_expr,
         [this, peer](const std::string& key, const RuntimeBytes& bytes) {
           handle_peer_state_payload(peer, key, bytes);
         });
     if (!sub || !sub->valid()) {
-      spdlog::warn("peer state subscription failed serviceId={} peer={} bucket={}", cfg_.service_id, peer, bucket);
+      spdlog::warn("peer state subscription failed serviceId={} peer={} keyExpr={}", cfg_.service_id, peer, key_expr);
       continue;
     }
     {
@@ -2115,7 +2107,7 @@ void ServiceBus::apply_rungraph_local(const json& graph_obj, std::string& error_
       peer_state_subs_by_service_id_[peer] = std::move(sub);
     }
     if (state_debug_enabled()) {
-      spdlog::info("state_debug[{}] cross_state_watch_started peer={} bucket={}", cfg_.service_id, peer, bucket);
+      spdlog::info("state_debug[{}] cross_state_watch_started peer={} keyExpr={}", cfg_.service_id, peer, key_expr);
     }
   }
 

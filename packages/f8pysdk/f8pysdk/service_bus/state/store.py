@@ -3,9 +3,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ...generated import F8StateAccess
-from ...f8_naming import ensure_token, kv_key_node_state
+from ...f8_naming import ensure_token
 from ...state import StateRead
 from ...codec import decode_obj
+from ...zenoh_naming import zenoh_state_key
 from ..internal.cache import CappedOrderedDict
 from .helpers import coerce_inbound_ts_ms, extract_ts_field
 
@@ -55,8 +56,8 @@ class StateStore:
         if cached is not None:
             return StateRead(found=True, value=cached[0], ts_ms=cached[1])
 
-        key = kv_key_node_state(node_id=node_id_s, field=field_s)
-        raw = await self._bus._transport.kv_get(key)
+        key = zenoh_state_key(self._bus.service_id, node_id=node_id_s, field=field_s)
+        raw = await self._bus._transport.retained_get(key)
         if not raw:
             if self._bus._debug_state:
                 print(

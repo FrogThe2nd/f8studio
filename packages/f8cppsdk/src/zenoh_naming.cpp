@@ -57,7 +57,7 @@ std::string path_to_field(const std::string& path) {
   return join_parts(parts, '.');
 }
 
-std::optional<std::pair<std::string, std::string>> parse_kv_node_state_key(const std::string& key) {
+std::optional<std::pair<std::string, std::string>> parse_state_path_node_field(const std::string& key) {
   const std::string text = trim_runtime_string(key);
   constexpr const char* kPrefix = "nodes.";
   constexpr const char* kStateMarker = ".state.";
@@ -123,8 +123,8 @@ std::string zenoh_state_key(const std::string& service_id, const std::string& no
          ensure_token(node_id, "node_id") + "/state/" + field_to_path(field);
 }
 
-std::string zenoh_kv_key(const std::string& service_id, const std::string& key) {
-  const auto parsed = parse_kv_node_state_key(key);
+std::string zenoh_state_path_key(const std::string& service_id, const std::string& key) {
+  const auto parsed = parse_state_path_node_field(key);
   if (parsed.has_value()) {
     return zenoh_state_key(service_id, parsed->first, parsed->second);
   }
@@ -133,10 +133,10 @@ std::string zenoh_kv_key(const std::string& service_id, const std::string& key) 
   if (parts.empty()) {
     throw std::invalid_argument("key must be non-empty");
   }
-  return std::string(kF8Prefix) + "/svc/" + ensure_token(service_id, "service_id") + "/kv/" + join_parts(parts, '/');
+  return std::string(kF8Prefix) + "/svc/" + ensure_token(service_id, "service_id") + "/state/" + join_parts(parts, '/');
 }
 
-std::string zenoh_kv_pattern(const std::string& service_id, const std::string& key_pattern) {
+std::string zenoh_state_path_pattern(const std::string& service_id, const std::string& key_pattern) {
   const std::string pattern = trim_runtime_string(key_pattern);
   if (pattern.empty()) {
     throw std::invalid_argument("key_pattern must be non-empty");
@@ -161,21 +161,12 @@ std::string zenoh_kv_pattern(const std::string& service_id, const std::string& k
       }
     }
     const std::string path = join_parts(parts, '/');
-    return std::string(kF8Prefix) + "/svc/" + ensure_token(service_id, "service_id") + "/kv/" + path + "/**";
+    return std::string(kF8Prefix) + "/svc/" + ensure_token(service_id, "service_id") + "/state/" + path + "/**";
   }
-  return zenoh_kv_key(service_id, pattern);
+  return zenoh_state_path_key(service_id, pattern);
 }
 
-std::string kv_bucket_to_service_id(const std::string& bucket) {
-  const std::string text = trim_runtime_string(bucket);
-  constexpr const char* kPrefix = "svc_";
-  if (text.rfind(kPrefix, 0) != 0) {
-    throw std::invalid_argument("unsupported service KV bucket: " + bucket);
-  }
-  return ensure_token(text.substr(std::string_view(kPrefix).size()), "service_id");
-}
-
-std::optional<std::string> zenoh_key_to_kv_key(const std::string& key) {
+std::optional<std::string> zenoh_key_to_state_path(const std::string& key) {
   const auto parts = split_non_empty(key, '/');
   if (parts.size() >= 8 && parts[0] == kF8Prefix && parts[1] == "svc" && parts[3] == "state") {
     if (parts[4] != "nodes" || parts[6] != "state") {
@@ -184,62 +175,11 @@ std::optional<std::string> zenoh_key_to_kv_key(const std::string& key) {
     std::vector<std::string> field_parts(parts.begin() + 7, parts.end());
     return std::string("nodes.") + parts[5] + ".state." + path_to_field(join_parts(field_parts, '/'));
   }
-  if (parts.size() >= 5 && parts[0] == kF8Prefix && parts[1] == "svc" && parts[3] == "kv") {
+  if (parts.size() >= 5 && parts[0] == kF8Prefix && parts[1] == "svc" && parts[3] == "state") {
     std::vector<std::string> key_parts(parts.begin() + 4, parts.end());
     return join_parts(key_parts, '.');
   }
   return std::nullopt;
-}
-
-std::string subject_to_zenoh_key(const std::string& subject) {
-  const auto parts = split_non_empty(subject, '.');
-  if (parts.size() == 6 && parts[0] == "svc" && parts[2] == "nodes" && parts[4] == "data") {
-    return zenoh_data_key(parts[1], parts[3], parts[5]);
-  }
-  if (parts.size() == 3 && parts[0] == "svc" && parts[2] == "cmd") {
-    return zenoh_cmd_key(parts[1]);
-  }
-  if (parts.size() == 3 && parts[0] == "svc") {
-    return zenoh_endpoint_key(parts[1], parts[2]);
-  }
-
-  std::string out = trim_runtime_string(subject);
-  for (char& ch : out) {
-    if (ch == '.') {
-      ch = '/';
-    }
-  }
-  return out;
-}
-
-std::string subject_to_zenoh_command_key(const std::string& subject) {
-  const auto parts = split_non_empty(subject, '.');
-  if (parts.size() == 3 && parts[0] == "svc" && parts[2] == "cmd") {
-    return zenoh_command_key(parts[1], "cmd");
-  }
-  if (parts.size() == 3 && parts[0] == "svc") {
-    return zenoh_command_key(parts[1], parts[2]);
-  }
-  const std::string path = join_parts(parts, '/');
-  if (path.empty()) {
-    throw std::invalid_argument("subject must be non-empty");
-  }
-  return std::string(kF8Prefix) + "/cmd/raw/" + path;
-}
-
-std::string zenoh_key_to_subject(const std::string& key) {
-  const auto parts = split_non_empty(key, '/');
-  if (parts.size() == 7 && parts[0] == kF8Prefix && parts[1] == "svc" && parts[3] == "nodes" &&
-      parts[5] == "data") {
-    return "svc." + parts[2] + ".nodes." + parts[4] + ".data." + parts[6];
-  }
-  if (parts.size() == 4 && parts[0] == kF8Prefix && parts[1] == "svc" && parts[3] == "cmd") {
-    return "svc." + parts[2] + ".cmd";
-  }
-  if (parts.size() == 5 && parts[0] == kF8Prefix && parts[1] == "svc" && parts[3] == "endpoint") {
-    return "svc." + parts[2] + "." + parts[4];
-  }
-  return join_parts(parts, '.');
 }
 
 }  // namespace f8::cppsdk

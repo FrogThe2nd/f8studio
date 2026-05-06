@@ -76,7 +76,6 @@ def test_process_manager_zenoh_env_installs_zenoh_values(
             zenoh_connect=("tcp/127.0.0.1:7447",),
             zenoh_listen=("tcp/0.0.0.0:0",),
             zenoh_shm_pool_bytes=123456,
-            purge_kv_bucket_on_start=False,
         )
     )
 
@@ -104,7 +103,6 @@ def test_process_manager_rejects_invalid_backend(
                 service_class="f8.test",
                 service_id="svc1",
                 bus_backend="invalid",
-                purge_kv_bucket_on_start=False,
             )
         )
 
@@ -137,7 +135,6 @@ def test_process_manager_mem_env_clears_transport_specific_values(
             zenoh_connect=("tcp/ignored",),
             zenoh_listen=("tcp/ignored-listen",),
             zenoh_shm_pool_bytes=123456,
-            purge_kv_bucket_on_start=False,
         )
     )
 

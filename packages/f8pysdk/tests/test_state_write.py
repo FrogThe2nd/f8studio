@@ -25,7 +25,7 @@ from f8pysdk.specs import (  # noqa: E402
 )
 from f8pysdk.command import command_input_state_field, command_output_state_field, hidden_command_state_specs  # noqa: E402
 from f8pysdk.command import CommandExecutionErrorKind, CommandOutputPolicy  # noqa: E402
-from f8pysdk.f8_naming import kv_key_node_state  # noqa: E402
+from f8pysdk.zenoh_naming import zenoh_state_key  # noqa: E402
 from f8pysdk.nodes import RuntimeNode  # noqa: E402
 from f8pysdk.specs import string_schema  # noqa: E402
 from f8pysdk.bus import ServiceBus, ServiceBusConfig  # noqa: E402
@@ -209,12 +209,12 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_publish_state_sets_origin(self) -> None:
         cluster = InMemoryCluster()
-        transport = InMemoryTransport(cluster=cluster, kv_bucket="kv.svc")
+        transport = InMemoryTransport(cluster=cluster)
         bus = ServiceBus(ServiceBusConfig(service_id="svc"), transport=transport)
         bus.state_store.access_by_node_field[("svc", "status")] = F8StateAccess.ro
         await bus.publish_state_runtime("svc", "status", 7, ts_ms=42)
-        key = kv_key_node_state(node_id="svc", field="status")
-        raw = await transport.kv_get(key)
+        key = zenoh_state_key("svc", node_id="svc", field="status")
+        raw = await transport.retained_get(key)
         payload = decode_obj(raw) if raw else {}
         self.assertEqual(payload.get("source"), "runtime")
         self.assertEqual(payload.get("origin"), "runtime")
@@ -277,7 +277,7 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_no_state_fanout_meta_is_preserved_as_plain_meta(self) -> None:
         cluster = InMemoryCluster()
-        transport = InMemoryTransport(cluster=cluster, kv_bucket="kv.svc")
+        transport = InMemoryTransport(cluster=cluster)
         bus = ServiceBus(ServiceBusConfig(service_id="svc"), transport=transport)
         bus.register_node(_RecordingNode("svc"))
         bus.state_store.access_by_node_field[("svc", "status")] = F8StateAccess.rw
@@ -292,23 +292,23 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
             meta={"tag": "x", "_noStateFanout": True},
         )
 
-        key = kv_key_node_state(node_id="svc", field="status")
-        raw = await transport.kv_get(key)
+        key = zenoh_state_key("svc", node_id="svc", field="status")
+        raw = await transport.retained_get(key)
         payload = decode_obj(raw) if raw else {}
         self.assertEqual(payload.get("tag"), "x")
         self.assertTrue(bool(payload.get("_noStateFanout")))
 
     async def test_publish_state_persists_even_if_local_callback_fails(self) -> None:
         cluster = InMemoryCluster()
-        transport = InMemoryTransport(cluster=cluster, kv_bucket="kv.svc")
+        transport = InMemoryTransport(cluster=cluster)
         bus = ServiceBus(ServiceBusConfig(service_id="svc"), transport=transport)
         bus.state_store.access_by_node_field[("svc", "status")] = F8StateAccess.rw
         bus.register_node(_OnStateFailNode("svc"))
 
         await bus.publish_state_runtime("svc", "status", 7, ts_ms=42)
 
-        key = kv_key_node_state(node_id="svc", field="status")
-        raw = await transport.kv_get(key)
+        key = zenoh_state_key("svc", node_id="svc", field="status")
+        raw = await transport.retained_get(key)
         payload = decode_obj(raw) if raw else {}
         self.assertEqual(payload.get("value"), 7)
 

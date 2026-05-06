@@ -9,7 +9,7 @@ from f8pysdk.bus import BusBackend
 from f8pysdk.specs import F8RuntimeGraph
 from f8pysdk.specs import F8SetRungraphArgs, F8SetRungraphReply, F8SetRungraphRequest
 from f8pysdk.codec import copy_model
-from f8pysdk.f8_naming import kv_bucket_for_service, new_id, svc_endpoint_subject
+from f8pysdk.f8_naming import new_id, svc_endpoint_key
 from f8pysdk.runtime_transport import RuntimeTransport
 from f8pysdk.zenoh_transport import ZenohTransport, ZenohTransportConfig
 from f8pysdk.service_runtime_tools.deploy.readiness import wait_service_ready
@@ -69,10 +69,7 @@ class RuntimeRungraphGateway:
         if self.config.bus_backend == "mem":
             from f8pysdk.testing import InMemoryCluster, InMemoryTransport
 
-            return InMemoryTransport(
-                cluster=InMemoryCluster(),
-                kv_bucket=kv_bucket_for_service(str(self.config.client_service_id)),
-            )
+            return InMemoryTransport(cluster=InMemoryCluster())
         if self.config.bus_backend != "zenoh":
             raise ValueError("Runtime rungraph deployment supports only bus_backend='zenoh' or 'mem'.")
         return ZenohTransport(
@@ -102,13 +99,12 @@ class RuntimeRungraphGateway:
 
     async def deploy_runtime_graph(self, req: RungraphDeployRequest) -> RungraphDeployResult:
         service_id = str(req.service_id)
-        bucket = kv_bucket_for_service(service_id)
         transport = await self.ensure_connected()
         try:
             await wait_service_ready(
                 transport,
                 timeout_s=float(self.config.ready_timeout_s),
-                bucket=bucket,
+                service_id=service_id,
             )
         except asyncio.TimeoutError:
             return RungraphDeployResult(
@@ -123,7 +119,7 @@ class RuntimeRungraphGateway:
             meta={"source": str(req.source or "studio")},
         )
         response_bytes = await transport.request(
-            svc_endpoint_subject(service_id, "set_rungraph"),
+            svc_endpoint_key(service_id, "set_rungraph"),
             encode_obj(request_payload),
             timeout=float(self.config.request_timeout_s),
             raise_on_error=True,

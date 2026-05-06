@@ -266,9 +266,9 @@ std::unordered_map<std::string, std::vector<DataRoute>> parse_cross_service_data
     const std::string to_port = edge.toPort;
     if (from_port.empty() || to_port.empty()) continue;
 
-    std::string subject;
+    std::string key;
     try {
-      subject = data_subject(from_sid, from_nid, from_port);
+      key = data_key(from_sid, from_nid, from_port);
     } catch (...) {
       continue;
     }
@@ -288,7 +288,7 @@ std::unordered_map<std::string, std::vector<DataRoute>> parse_cross_service_data
     if (edge.timeoutMs.has_value()) {
       r.timeout_ms = edge.timeoutMs.value();
     }
-    routes[subject].push_back(std::move(r));
+    routes[key].push_back(std::move(r));
   }
 
   return routes;

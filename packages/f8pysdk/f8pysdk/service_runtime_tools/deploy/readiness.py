@@ -5,9 +5,9 @@ import logging
 from typing import Any
 
 from ...codec import decode_obj
-from ...f8_naming import kv_key_ready
 from ...runtime_transport import RuntimeTransport
 from ...time_utils import now_ms
+from ...f8_naming import ensure_token
 
 
 log = logging.getLogger(__name__)
@@ -19,13 +19,14 @@ async def wait_service_ready(
     timeout_s: float = 6.0,
     min_ts_ms: int | None = None,
     max_age_ms: int | None = None,
-    bucket: str | None = None,
+    service_id: str | None = None,
 ) -> None:
     """
     Wait until a service announces readiness.
 
-    Readiness is published via KV: key `ready` in the per-service bucket.
-    This function waits using KV watch (non-polling) after an initial read.
+    Readiness is published as a retained status sample at
+    `f8/svc/{service_id}/status/ready`. This function waits with a retained
+    watch after an initial read.
     """
     min_ts = int(min_ts_ms) if min_ts_ms is not None else None
     max_age = int(max_age_ms) if max_age_ms is not None else None
@@ -35,7 +36,7 @@ async def wait_service_ready(
             return False
         try:
             ts = int(payload.get("ts") or 0)
-        except Exception:
+        except (TypeError, ValueError):
             ts = 0
         if min_ts is not None and ts < min_ts:
             return False
@@ -45,13 +46,14 @@ async def wait_service_ready(
                 return False
         return True
 
-    key = kv_key_ready()
+    if service_id is None:
+        raise ValueError("service_id is required")
+    service_id_s = ensure_token(service_id, label="service_id")
+    key = f"f8/svc/{service_id_s}/status/ready"
     try:
-        if bucket is None:
-            raw = await tr.kv_get(key)
-        else:
-            raw = await tr.kv_get_in_bucket(str(bucket), key)
-    except Exception:
+        raw = await tr.retained_get(key)
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        log.debug("initial ready retained_get failed key=%s", key, exc_info=exc)
         raw = None
     if raw:
         try:
@@ -64,7 +66,7 @@ async def wait_service_ready(
     loop = asyncio.get_running_loop()
     fut: asyncio.Future[None] = loop.create_future()
 
-    async def _on_kv(_key: str, value: bytes) -> None:
+    async def _on_ready(_key: str, value: bytes) -> None:
         if fut.done():
             return
         try:
@@ -76,20 +78,16 @@ async def wait_service_ready(
 
     watch = None
     try:
-        if bucket is None:
-            watch = await tr.kv_watch(key, cb=_on_kv)
-        else:
-            watch = await tr.kv_watch_in_bucket(str(bucket), key, cb=_on_kv)
-    except Exception:
+        watch = await tr.retained_watch(key, cb=_on_ready, with_initial=True)
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        log.debug("ready retained_watch failed key=%s", key, exc_info=exc)
         watch = None
 
     try:
         try:
-            if bucket is None:
-                raw2 = await tr.kv_get(key)
-            else:
-                raw2 = await tr.kv_get_in_bucket(str(bucket), key)
-        except Exception:
+            raw2 = await tr.retained_get(key)
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            log.debug("second ready retained_get failed key=%s", key, exc_info=exc)
             raw2 = None
         if raw2:
             try:
@@ -108,16 +106,16 @@ async def wait_service_ready(
                     await task
                 except asyncio.CancelledError:
                     pass
-                except Exception as exc:
+                except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
                     log.error("ready watch task stop failed key=%s", key, exc_info=exc)
                 try:
                     await watcher.stop()
-                except Exception as exc:
+                except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
                     log.error("ready watcher stop failed key=%s", key, exc_info=exc)
             else:
                 try:
                     await watch.stop()
-                except Exception as exc:
+                except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
                     log.error("ready watch stop failed key=%s", key, exc_info=exc)
 
 

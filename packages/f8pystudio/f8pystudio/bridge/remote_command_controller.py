@@ -78,7 +78,7 @@ class RemoteCommandControllerMixin:
         """
         Invoke a user-defined command on a remote service via the reserved cmd channel.
 
-        Request is sent to `cmd_channel_subject(service_id)` with a JSON envelope
+        Request is sent to `cmd_channel_key(service_id)` with a JSON envelope
         (reqId/call/args/meta). This matches the service control plane `cmd` endpoint.
         Declared commands may use scalar/list/object args.
         """

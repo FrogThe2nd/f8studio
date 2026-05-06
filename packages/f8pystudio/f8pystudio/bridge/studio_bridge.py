@@ -11,7 +11,7 @@ from qtpy import QtCore
 
 from f8pysdk.runtime_transport import RuntimeTransport
 from f8pysdk.specs import F8RuntimeGraph
-from f8pysdk.f8_naming import ensure_token, kv_bucket_for_service, new_id
+from f8pysdk.f8_naming import ensure_token, new_id
 from f8pysdk.zenoh_transport import ZenohTransport, ZenohTransportConfig
 from f8pysdk.registry import RuntimeNodeRegistry
 from f8pysdk.state import StateWriteError
@@ -180,7 +180,7 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
         if self._cfg.bus_backend == "mem":
             from f8pysdk.testing import InMemoryCluster, InMemoryTransport
 
-            return InMemoryTransport(cluster=InMemoryCluster(), kv_bucket=kv_bucket_for_service(self.studio_service_id))
+            return InMemoryTransport(cluster=InMemoryCluster())
         if self._cfg.bus_backend != "zenoh":
             raise ValueError("Unsupported runtime transport backend; use bus_backend='zenoh' or 'mem'.")
         return ZenohTransport(
@@ -415,7 +415,6 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
                 self._process_gateway.stop(StopServiceRequest(service_id=sid))
             except Exception as exc:
                 self._report_exception(f"stop service process failed serviceId={sid}", exc)
-
 
 
 

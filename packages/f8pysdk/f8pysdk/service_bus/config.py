@@ -8,7 +8,6 @@ from ..data import CrossPublishPolicy, DataDeliveryMode
 
 
 BusBackend = Literal["zenoh", "mem"]
-KvStorage = Literal["memory", "file"]
 DEFAULT_ZENOH_SHM_POOL_BYTES = 256 * 1024 * 1024
 
 
@@ -36,10 +35,6 @@ class ServiceBusConfig:
     zenoh_listen: tuple[str, ...] = ()
     zenoh_shm_pool_bytes: int = DEFAULT_ZENOH_SHM_POOL_BYTES
     cross_publish_policy: CrossPublishPolicy = "routed"
-    # Deprecated compatibility fields kept so older config constructors do not fail.
-    kv_storage: KvStorage = "memory"
-    delete_bucket_on_start: bool = False
-    delete_bucket_on_stop: bool = False
     # Canonical local delivery semantics:
     # - "callback": buffer local inputs and invoke `on_data(...)`
     # - "buffered": buffer local inputs without invoking `on_data(...)`
@@ -67,9 +62,6 @@ class ServiceBusConfig:
             zenoh_listen=tuple(str(item).strip() for item in self.zenoh_listen if str(item).strip()),
             zenoh_shm_pool_bytes=max(0, int(self.zenoh_shm_pool_bytes)),
             cross_publish_policy=self.cross_publish_policy,
-            kv_storage=self.kv_storage,
-            delete_bucket_on_start=bool(self.delete_bucket_on_start),
-            delete_bucket_on_stop=bool(self.delete_bucket_on_stop),
             data_delivery=self.data_delivery,
             state_sync_concurrency=max(1, int(self.state_sync_concurrency)),
             state_cache_max_entries=max(0, int(self.state_cache_max_entries)),
@@ -106,4 +98,4 @@ class ServiceBusConfig:
         ).normalized()
 
 
-__all__ = ["BusBackend", "DEFAULT_ZENOH_SHM_POOL_BYTES", "KvStorage", "ServiceBusConfig", "_debug_state_enabled"]
+__all__ = ["BusBackend", "DEFAULT_ZENOH_SHM_POOL_BYTES", "ServiceBusConfig", "_debug_state_enabled"]

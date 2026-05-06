@@ -7,7 +7,7 @@ from typing import Any, Protocol
 
 from ...codec import encode_obj
 from ...generated import Code, F8CommandError, F8CommandInvokeReply
-from ...f8_naming import cmd_channel_subject, svc_endpoint_subject
+from ...f8_naming import cmd_channel_key, svc_endpoint_key
 from .micro import ServiceBusControlHandlers
 
 log = logging.getLogger(__name__)
@@ -44,18 +44,18 @@ class RuntimeTransportServiceControlEndpointServer:
     async def start(self) -> Any:
         sid = str(self._bus.service_id)
         registrations: tuple[tuple[str, Callable[[Any], Awaitable[None]]], ...] = (
-            (svc_endpoint_subject(sid, "activate"), self._handlers._activate),
-            (svc_endpoint_subject(sid, "deactivate"), self._handlers._deactivate),
-            (svc_endpoint_subject(sid, "set_active"), self._handlers._set_active),
-            (svc_endpoint_subject(sid, "status"), self._handlers._status),
-            (svc_endpoint_subject(sid, "terminate"), self._handlers._terminate),
-            (svc_endpoint_subject(sid, "quit"), self._handlers._terminate),
-            (cmd_channel_subject(sid), self._handlers._cmd),
-            (svc_endpoint_subject(sid, "set_state"), self._handlers._set_state),
-            (svc_endpoint_subject(sid, "set_rungraph"), self._handlers._set_rungraph),
+            (svc_endpoint_key(sid, "activate"), self._handlers._activate),
+            (svc_endpoint_key(sid, "deactivate"), self._handlers._deactivate),
+            (svc_endpoint_key(sid, "set_active"), self._handlers._set_active),
+            (svc_endpoint_key(sid, "status"), self._handlers._status),
+            (svc_endpoint_key(sid, "terminate"), self._handlers._terminate),
+            (svc_endpoint_key(sid, "quit"), self._handlers._terminate),
+            (cmd_channel_key(sid), self._handlers._cmd),
+            (svc_endpoint_key(sid, "set_state"), self._handlers._set_state),
+            (svc_endpoint_key(sid, "set_rungraph"), self._handlers._set_rungraph),
         )
-        for subject, handler in registrations:
-            self._handles.append(await self._bus._transport.serve(subject, self._wrap_handler(subject, handler)))
+        for key, handler in registrations:
+            self._handles.append(await self._bus._transport.serve(key, self._wrap_handler(key, handler)))
         return self
 
     async def stop(self) -> None:
@@ -79,7 +79,7 @@ class RuntimeTransportServiceControlEndpointServer:
 
     def _wrap_handler(
         self,
-        subject: str,
+        key: str,
         handler: Callable[[Any], Awaitable[None]],
     ) -> Callable[[bytes], Awaitable[bytes | None]]:
         async def _handle(payload: bytes) -> bytes | None:
@@ -87,7 +87,7 @@ class RuntimeTransportServiceControlEndpointServer:
             try:
                 await handler(req)
             except Exception as exc:
-                log.error("control endpoint handler failed subject=%s", subject, exc_info=exc)
+                log.error("control endpoint handler failed key=%s", key, exc_info=exc)
                 return self._empty_internal_error("")
             return req.response or b""
 

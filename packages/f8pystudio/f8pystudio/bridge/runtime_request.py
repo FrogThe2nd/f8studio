@@ -8,7 +8,7 @@ from f8pysdk.runtime_transport import RuntimeTransport
 
 
 class RuntimeRequester(Protocol):
-    async def request(self, subject: str, payload: bytes, timeout: float) -> Any: ...
+    async def request(self, key: str, payload: bytes, timeout: float) -> Any: ...
 
 
 @dataclass(frozen=True)
@@ -20,15 +20,15 @@ class RuntimeMessage:
 class RuntimeTransportRequester:
     transport: RuntimeTransport
 
-    async def request(self, subject: str, payload: bytes, timeout: float) -> Any:
+    async def request(self, key: str, payload: bytes, timeout: float) -> Any:
         raw = await self.transport.request(
-            str(subject),
+            str(key),
             bytes(payload),
             timeout=float(timeout),
             raise_on_error=True,
         )
         if raw is None:
-            raise TimeoutError(f"runtime request timed out subject={subject!r}")
+            raise TimeoutError(f"runtime request timed out key={key!r}")
         return RuntimeMessage(data=bytes(raw))
 
 
@@ -38,13 +38,13 @@ T = TypeVar("T")
 async def request_typed(
     requester: RuntimeRequester,
     *,
-    subject: str,
+    key: str,
     payload: Any,
     timeout_s: float,
     response_type: type[T],
 ) -> T:
     raw_payload = encode_obj(payload)
-    message = await requester.request(str(subject), raw_payload, timeout=float(timeout_s))
+    message = await requester.request(str(key), raw_payload, timeout=float(timeout_s))
     raw = bytes(message.data or b"")
     if not raw:
         raise RuntimeError("empty response")

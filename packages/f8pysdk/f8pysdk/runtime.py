@@ -6,7 +6,6 @@ from .bus import ServiceBus, ServiceBusConfig
 from .data import CrossPublishPolicy
 from .host import ServiceHost
 from .registry import RuntimeNodeRegistry, create_runtime_node_registry
-from .service_bus.config import KvStorage
 
 
 @dataclass(frozen=True)
@@ -43,18 +42,6 @@ class ServiceRuntimeConfig:
     @property
     def cross_publish_policy(self) -> CrossPublishPolicy:
         return self.bus.cross_publish_policy
-
-    @property
-    def kv_storage(self) -> KvStorage:
-        return self.bus.kv_storage
-
-    @property
-    def delete_bucket_on_start(self) -> bool:
-        return bool(self.bus.delete_bucket_on_start)
-
-    @property
-    def delete_bucket_on_stop(self) -> bool:
-        return bool(self.bus.delete_bucket_on_stop)
 
 
 class ServiceRuntime:

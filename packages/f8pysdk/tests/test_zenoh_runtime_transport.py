@@ -4,11 +4,11 @@ import asyncio
 from typing import Any
 
 from f8pysdk.bus import ServiceBus, ServiceBusConfig
-from f8pysdk.f8_naming import kv_bucket_for_service, kv_key_node_state, new_id, svc_endpoint_subject
+from f8pysdk.f8_naming import data_key, new_id, state_path_node_field, svc_endpoint_key
 from f8pysdk.runtime_transport import RuntimeTransport
 from f8pysdk.testing import InMemoryCluster, InMemoryTransport
 from f8pysdk.zenoh_config import apply_zenoh_shared_memory_config
-from f8pysdk.zenoh_naming import subject_to_zenoh_key, zenoh_key_to_kv_key, zenoh_kv_key, zenoh_kv_pattern
+from f8pysdk.zenoh_naming import zenoh_key_to_state_path, zenoh_state_key, zenoh_state_path_pattern
 from f8pysdk.zenoh_transport import ZenohTransport, ZenohTransportConfig
 
 
@@ -45,7 +45,7 @@ def test_service_bus_config_defaults_to_zenoh_backend() -> None:
 
 
 def test_runtime_transport_protocol_is_explicitly_satisfied() -> None:
-    mem_transport = InMemoryTransport(cluster=InMemoryCluster(), kv_bucket="svc_demo")
+    mem_transport = InMemoryTransport(cluster=InMemoryCluster())
     zenoh_transport = ZenohTransport(ZenohTransportConfig(service_id="svc_demo"))
 
     assert isinstance(mem_transport, RuntimeTransport)
@@ -53,24 +53,17 @@ def test_runtime_transport_protocol_is_explicitly_satisfied() -> None:
 
 
 def test_zenoh_key_mapping_preserves_dotted_state_fields() -> None:
-    key = kv_key_node_state(node_id="node", field="hidden.command.output.value")
-    zenoh_key = subject_to_zenoh_key("svc.demo.nodes.node.data.out")
+    key = state_path_node_field(node_id="node", field="hidden.command.output.value")
+    zenoh_key = data_key("demo", from_node_id="node", port_id="out")
 
     assert zenoh_key == "f8/svc/demo/nodes/node/data/out"
-    assert zenoh_key_to_kv_key("f8/svc/demo/state/nodes/node/state/hidden/command/output/value") == key
+    assert zenoh_key_to_state_path("f8/svc/demo/state/nodes/node/state/hidden/command/output/value") == key
 
 
-def test_zenoh_key_mapping_preserves_wildcard_runtime_subjects() -> None:
-    assert subject_to_zenoh_key("svc.*.nodes.*.data.monitor") == "f8/svc/*/nodes/*/data/monitor"
-    assert subject_to_zenoh_key("svc.*.nodes.*.data.*") == "f8/svc/*/nodes/*/data/*"
-    assert subject_to_zenoh_key("svc.*.status") == "f8/svc/*/endpoint/status"
-    assert subject_to_zenoh_key("svc.*.cmd") == "f8/svc/*/cmd"
-
-
-def test_zenoh_kv_pattern_maps_node_state_wildcards_to_state_keyspace() -> None:
-    assert zenoh_kv_pattern("svcA", "nodes.>") == "f8/svc/svcA/state/nodes/**"
-    assert zenoh_kv_pattern("svcA", "nodes.node.>") == "f8/svc/svcA/state/nodes/node/**"
-    assert zenoh_kv_pattern("svcA", "nodes.node.state.>") == "f8/svc/svcA/state/nodes/node/state/**"
+def test_zenoh_state_path_pattern_maps_node_state_wildcards_to_state_keyspace() -> None:
+    assert zenoh_state_path_pattern("svcA", "nodes.>") == "f8/svc/svcA/state/nodes/**"
+    assert zenoh_state_path_pattern("svcA", "nodes.node.>") == "f8/svc/svcA/state/nodes/node/**"
+    assert zenoh_state_path_pattern("svcA", "nodes.node.state.>") == "f8/svc/svcA/state/nodes/node/state/**"
 
 
 def test_zenoh_transport_puts_use_latest_drop_qos() -> None:
@@ -96,10 +89,10 @@ def test_zenoh_transport_puts_use_latest_drop_qos() -> None:
         transport = ZenohTransport(ZenohTransportConfig(service_id="svc_demo"))
         transport._session = session
 
-        key = kv_key_node_state(node_id="node", field="value")
-        transport._state_publishers[zenoh_kv_key("svc_demo", key)] = retained_publisher
-        await transport.publish("svc.svc_demo.nodes.node.data.out", b"payload")
-        await transport.kv_put(key, b"state")
+        key = zenoh_state_key("svc_demo", node_id="node", field="value")
+        transport._state_publishers[key] = retained_publisher
+        await transport.publish(data_key("svc_demo", from_node_id="node", port_id="out"), b"payload")
+        await transport.retained_put(key, b"state")
 
         assert session.put_calls == [
             (
@@ -113,7 +106,7 @@ def test_zenoh_transport_puts_use_latest_drop_qos() -> None:
             ),
         ]
         assert retained_publisher.put_calls == [b"state"]
-        assert await transport.kv_get(key) == b"state"
+        assert await transport.retained_get(key) == b"state"
 
     asyncio.run(_run())
 
@@ -166,31 +159,24 @@ def test_zenoh_transport_state_watch_get_and_request_roundtrip() -> None:
             async def _on_state(key: str, value: bytes) -> None:
                 seen.append((key, value))
 
-            watch = await b.kv_watch_in_bucket(
-                kv_bucket_for_service(service_a),
-                "nodes.node.state.>",
-                cb=_on_state,
-            )
-            key = kv_key_node_state(node_id="node", field="hidden.output.value")
-            await a.kv_put(key, b"state-bytes")
+            pattern = zenoh_state_path_pattern(service_a, "nodes.node.state.>")
+            watch = await b.retained_watch(pattern, cb=_on_state)
+            key = zenoh_state_key(service_a, node_id="node", field="hidden.output.value")
+            await a.retained_put(key, b"state-bytes")
 
             for _ in range(1000):
                 if seen:
                     break
                 await asyncio.sleep(0.001)
             assert seen == [(key, b"state-bytes")]
-            assert await b.kv_get_in_bucket(kv_bucket_for_service(service_a), key) is None
+            assert await b.retained_get(key) is None
 
             late_seen: list[tuple[str, bytes]] = []
 
             async def _on_late_state(key: str, value: bytes) -> None:
                 late_seen.append((key, value))
 
-            late_watch = await b.kv_watch_in_bucket(
-                kv_bucket_for_service(service_a),
-                key,
-                cb=_on_late_state,
-            )
+            late_watch = await b.retained_watch(key, cb=_on_late_state)
             for _ in range(1000):
                 if late_seen:
                     break
@@ -201,10 +187,10 @@ def test_zenoh_transport_state_watch_get_and_request_roundtrip() -> None:
             async def _handler(payload: bytes) -> bytes:
                 return b"echo:" + bytes(payload)
 
-            endpoint = await a.serve(svc_endpoint_subject(service_a, "status"), _handler)
+            endpoint = await a.serve(svc_endpoint_key(service_a, "status"), _handler)
             try:
                 response = await b.request(
-                    svc_endpoint_subject(service_a, "status"),
+                    svc_endpoint_key(service_a, "status"),
                     b"payload",
                     timeout=1.0,
                     raise_on_error=True,

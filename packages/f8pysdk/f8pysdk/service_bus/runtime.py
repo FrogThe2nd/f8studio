@@ -16,10 +16,10 @@ from ..capabilities import (
 from ..command import CommandExecutionResult, CommandOutputPolicy
 from ..data import CrossPublishPolicy, DataDeliveryMode
 from ..generated import F8RuntimeGraph
-from ..f8_naming import ensure_token, kv_bucket_for_service, kv_key_ready, kv_key_rungraph
+from ..f8_naming import ensure_token
 from ..runtime_transport import RuntimeTransport
 from ..zenoh_transport import ZenohTransport, ZenohTransportConfig
-from ..zenoh_naming import subject_to_zenoh_key
+from ..zenoh_naming import zenoh_data_key, zenoh_state_path_key
 from ..state import StateRead, StateWriteOrigin, StateWriteSource
 from ..time_utils import now_ms
 from .config import ServiceBusConfig, _debug_state_enabled
@@ -201,7 +201,6 @@ class ServiceBus:
         self._data_input_max_buffers = max(0, int(config.data_input_max_buffers))
         self._data_input_default_queue_size = max(1, int(config.data_input_default_queue_size))
 
-        bucket = kv_bucket_for_service(self.service_id)
         if transport is None:
             if config.bus_backend == "zenoh":
                 self._transport = ZenohTransport(
@@ -216,7 +215,7 @@ class ServiceBus:
             elif config.bus_backend == "mem":
                 from ..testing.in_memory_transport import InMemoryCluster, InMemoryTransport
 
-                self._transport = InMemoryTransport(cluster=InMemoryCluster(), kv_bucket=str(bucket))
+                self._transport = InMemoryTransport(cluster=InMemoryCluster())
             else:
                 raise ValueError(f"Invalid bus_backend={config.bus_backend!r}; expected 'zenoh' or 'mem'.")
         else:
@@ -225,8 +224,8 @@ class ServiceBus:
         self._nodes: dict[str, _ServiceBusNode] = {}
         self._graph: F8RuntimeGraph | None = None
 
-        self._rungraph_key = kv_key_rungraph()
-        self._ready_key = kv_key_ready()
+        self._rungraph_key = f"f8/svc/{self.service_id}/config/rungraph"
+        self._ready_key = f"f8/svc/{self.service_id}/status/ready"
         self._control_endpoints: ServiceControlEndpointServer | None = None
         self._component_factory = component_factory if component_factory is not None else DefaultServiceBusComponentFactory()
 
@@ -526,17 +525,17 @@ class ServiceBus:
         self._started = False
         self._closed = True
 
-    async def subscribe_subject(
+    async def subscribe_key(
         self,
-        subject: str,
+        key_expr: str,
         *,
         queue: str | None = None,
         cb: Callable[[str, bytes], Awaitable[None]] | None = None,
     ) -> Any:
-        return await self._data_router.subscribe_subject(subject, queue=queue, cb=cb)
+        return await self._data_router.subscribe_key(key_expr, queue=queue, cb=cb)
 
-    async def unsubscribe_subject(self, handle: Any) -> None:
-        await self._data_router.unsubscribe_subject(handle)
+    async def unsubscribe_key(self, handle: Any) -> None:
+        await self._data_router.unsubscribe_key(handle)
 
     async def publish_state_external(
         self,
@@ -634,21 +633,21 @@ class ServiceBus:
     async def set_rungraph(self, graph: F8RuntimeGraph) -> None:
         await _set_rungraph_impl(self, graph)
 
-    async def publish(self, subject: str, payload: bytes) -> None:
-        """Publish a message to a subject."""
+    async def publish(self, key: str, payload: bytes) -> None:
+        """Publish a message to a Zenoh key."""
         if not self._active:
             return
-        await self._transport.publish(str(subject), bytes(payload))
+        await self._transport.publish(str(key), bytes(payload))
 
     async def subscribe(
         self,
-        subject: str,
+        key_expr: str,
         *,
         queue: str | None = None,
         cb: Callable[[str, bytes], Awaitable[None]] | None = None,
     ) -> Any:
-        """Subscribe to a subject."""
-        return await self._transport.subscribe(str(subject), queue=queue, cb=cb)
+        """Subscribe to a Zenoh key expression."""
+        return await self._transport.subscribe(str(key_expr), queue=queue, cb=cb)
 
     async def emit_data(
         self,
@@ -707,7 +706,4 @@ class ServiceBus:
         """
         node_id_s = ensure_token(node_id, label="node_id")
         port_s = ensure_token(port, label="port_id")
-        subject = self._data_router.input_stream_subject(node_id=node_id_s, port=port_s)
-        if subject is None:
-            return None
-        return subject_to_zenoh_key(subject)
+        return self._data_router.input_stream_key(node_id=node_id_s, port=port_s)

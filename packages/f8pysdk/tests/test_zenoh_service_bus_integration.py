@@ -9,7 +9,7 @@ import pytest
 
 from f8pysdk.bus import ServiceBus, ServiceBusConfig
 from f8pysdk.codec import decode_as, encode_obj
-from f8pysdk.f8_naming import cmd_channel_subject, kv_bucket_for_service, svc_endpoint_subject
+from f8pysdk.f8_naming import cmd_channel_key, svc_endpoint_key
 from f8pysdk.nodes import RuntimeNode, ServiceNode
 from f8pysdk.service_runtime_tools.deploy.readiness import wait_service_ready
 from f8pysdk.specs import (
@@ -176,7 +176,7 @@ async def _request_endpoint(
     reply_type: type[Any],
 ) -> Any:
     raw = await transport.request(
-        svc_endpoint_subject(service_id, endpoint),
+        svc_endpoint_key(service_id, endpoint),
         encode_obj(payload),
         timeout=2.0,
         raise_on_error=True,
@@ -192,7 +192,7 @@ async def _request_cmd(
     payload: F8CommandInvokeRequest,
 ) -> F8CommandInvokeReply:
     raw = await transport.request(
-        cmd_channel_subject(service_id),
+        cmd_channel_key(service_id),
         encode_obj(payload),
         timeout=2.0,
         raise_on_error=True,
@@ -232,8 +232,8 @@ def test_two_python_service_buses_roundtrip_over_zenoh() -> None:
         await bus_b.start()
         await client.connect()
         try:
-            await wait_service_ready(client, bucket=kv_bucket_for_service(service_a), timeout_s=2.0)
-            await wait_service_ready(client, bucket=kv_bucket_for_service(service_b), timeout_s=2.0)
+            await wait_service_ready(client, service_id=service_a, timeout_s=2.0)
+            await wait_service_ready(client, service_id=service_b, timeout_s=2.0)
 
             graph = _graph(service_a, service_b)
             await bus_a.publish_state_runtime("src", "value", "initial", ts_ms=1)

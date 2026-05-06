@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 from ...capabilities import ComputableNode, DataReceivableNode
 from ...data import CrossPublishPolicy, DataDeliveryMode
 from ...generated import F8Edge, F8EdgeStrategyEnum
-from ...f8_naming import data_subject
+from ...f8_naming import data_key
 from ...time_utils import now_ms
 from ...codec import decode_obj, encode_obj
 from ..internal.cache import CappedOrderedDict
@@ -62,9 +62,9 @@ class DataRouter:
         self._default_queue_size = max(1, int(default_queue_size))
         self._intra_data_out: DataOutRoutes = {}
         self._intra_data_in: DataOutRoutes = {}
-        self._cross_in_by_subject: DataCrossInRoutes = {}
-        self._cross_out_subjects: DataCrossOutRoutes = {}
-        self._input_stream_subjects: DataInputStreamRoutes = {}
+        self._cross_in_by_key: DataCrossInRoutes = {}
+        self._cross_out_keys: DataCrossOutRoutes = {}
+        self._input_stream_keys: DataInputStreamRoutes = {}
         self._inputs: CappedOrderedDict[tuple[str, str], InputBuffer] = CappedOrderedDict(
             max_entries=max(0, int(input_max_buffers))
         )
@@ -94,18 +94,18 @@ class DataRouter:
         return self._intra_data_in
 
     @property
-    def cross_in_by_subject(self) -> DataCrossInRoutes:
-        return self._cross_in_by_subject
+    def cross_in_by_key(self) -> DataCrossInRoutes:
+        return self._cross_in_by_key
 
     @property
-    def cross_out_subjects(self) -> DataCrossOutRoutes:
-        return self._cross_out_subjects
+    def cross_out_keys(self) -> DataCrossOutRoutes:
+        return self._cross_out_keys
 
-    def input_stream_subject(self, *, node_id: str, port: str) -> str | None:
-        subject = self._input_stream_subjects.get((str(node_id), str(port)))
-        if not subject:
+    def input_stream_key(self, *, node_id: str, port: str) -> str | None:
+        key = self._input_stream_keys.get((str(node_id), str(port)))
+        if not key:
             return None
-        return str(subject)
+        return str(key)
 
     def set_cross_publish_policy(self, policy: CrossPublishPolicy) -> None:
         self._cross_publish_policy = policy
@@ -134,18 +134,18 @@ class DataRouter:
         *,
         intra_data_out: DataOutRoutes,
         intra_data_in: DataOutRoutes,
-        cross_in_by_subject: DataCrossInRoutes,
-        cross_out_subjects: DataCrossOutRoutes,
-        input_stream_subjects: DataInputStreamRoutes | None = None,
+        cross_in_by_key: DataCrossInRoutes,
+        cross_out_keys: DataCrossOutRoutes,
+        input_stream_keys: DataInputStreamRoutes | None = None,
     ) -> None:
         self._inputs.clear()
         self._intra_data_out = dict(intra_data_out)
         self._intra_data_in = dict(intra_data_in)
-        self._cross_in_by_subject = dict(cross_in_by_subject)
-        self._cross_out_subjects = dict(cross_out_subjects)
-        self._input_stream_subjects = dict(input_stream_subjects or {})
-        self.precreate_input_buffers_for_cross_in(self._cross_in_by_subject)
-        await self.sync_subscriptions(set(self._cross_in_by_subject.keys()))
+        self._cross_in_by_key = dict(cross_in_by_key)
+        self._cross_out_keys = dict(cross_out_keys)
+        self._input_stream_keys = dict(input_stream_keys or {})
+        self.precreate_input_buffers_for_cross_in(self._cross_in_by_key)
+        await self.sync_subscriptions(set(self._cross_in_by_key.keys()))
 
     async def stop(self) -> None:
         for sub in list(self._custom_subscriptions):
@@ -156,11 +156,11 @@ class DataRouter:
             await sub.unsubscribe()
         self._route_subscriptions.clear()
 
-        self._cross_in_by_subject.clear()
+        self._cross_in_by_key.clear()
         self._intra_data_out.clear()
         self._intra_data_in.clear()
-        self._cross_out_subjects.clear()
-        self._input_stream_subjects.clear()
+        self._cross_out_keys.clear()
+        self._input_stream_keys.clear()
         self._inputs.clear()
         self._on_data_push_queue.clear()
         await self._stop_flush_task()
@@ -308,11 +308,11 @@ class DataRouter:
         finally:
             stack.discard(key)
 
-    async def on_cross_data_msg(self, subject: str, payload: bytes) -> None:
+    async def on_cross_data_msg(self, key: str, payload: bytes) -> None:
         bus = self._bus
         if not bus._active:
             return
-        targets = self._cross_in_by_subject.get(str(subject)) or []
+        targets = self._cross_in_by_key.get(str(key).strip("/")) or []
         if not targets:
             return
         value: Any = None
@@ -396,44 +396,44 @@ class DataRouter:
         if dropped_count > 0:
             bus._monitor_record_drop(int(dropped_count))
 
-    async def sync_subscriptions(self, want_subjects: set[str]) -> None:
+    async def sync_subscriptions(self, want_keys: set[str]) -> None:
         bus = self._bus
-        for subject in list(self._route_subscriptions.keys()):
-            if subject in want_subjects:
+        for key in list(self._route_subscriptions.keys()):
+            if key in want_keys:
                 continue
-            sub = self._route_subscriptions.pop(subject, None)
+            sub = self._route_subscriptions.pop(key, None)
             if sub is None:
                 continue
             try:
                 await sub.unsubscribe()
             except Exception as exc:
-                log.error("failed to unsubscribe routed subject=%s", subject, exc_info=exc)
+                log.error("failed to unsubscribe routed key=%s", key, exc_info=exc)
 
-        for subject in want_subjects:
-            if subject in self._route_subscriptions:
+        for key in want_keys:
+            if key in self._route_subscriptions:
                 continue
 
             async def _cb(s: str, p: bytes) -> None:
                 await self.on_cross_data_msg(s, p)
 
-            handle = await bus._transport.subscribe(subject, cb=_cb)
-            self._route_subscriptions[subject] = handle
+            handle = await bus._transport.subscribe(key, cb=_cb)
+            self._route_subscriptions[key] = handle
 
-    async def subscribe_subject(
+    async def subscribe_key(
         self,
-        subject: str,
+        key_expr: str,
         *,
         queue: str | None = None,
         cb: Callable[[str, bytes], Awaitable[None]] | None = None,
     ) -> Any:
-        subject_s = str(subject or "").strip()
-        if not subject_s:
-            raise ValueError("subject must be non-empty")
-        handle = await self._bus._transport.subscribe(subject_s, queue=str(queue) if queue else None, cb=cb)
+        key_s = str(key_expr or "").strip("/")
+        if not key_s:
+            raise ValueError("key_expr must be non-empty")
+        handle = await self._bus._transport.subscribe(key_s, queue=str(queue) if queue else None, cb=cb)
         self._custom_subscriptions.append(handle)
         return handle
 
-    async def unsubscribe_subject(self, handle: Any) -> None:
+    async def unsubscribe_key(self, handle: Any) -> None:
         if handle is None:
             return
         await handle.unsubscribe()
@@ -534,7 +534,7 @@ class DataRouter:
         plan = self._cross_publish_plan(node_id=from_node, port=from_port)
         if options.publish_cross_service and plan.will_publish:
             payload = encode_obj({"value": value, "ts": int(ts_ms)})
-            await self._bus._transport.publish(plan.subject, payload)
+            await self._bus._transport.publish(plan.key, payload)
             self._bus._monitor_record_routed_cross_emit()
             return delivered
         self._record_skipped_cross_publish(plan=plan, publish_enabled=options.publish_cross_service)
@@ -582,18 +582,18 @@ class DataRouter:
 
     def _cross_publish_plan(self, *, node_id: str, port: str) -> CrossPublishPlan:
         if self._cross_publish_policy == "none":
-            if (node_id, port) in self._cross_out_subjects:
-                return CrossPublishPlan(subject="", decision="suppressed")
-            return CrossPublishPlan(subject="", decision="local_only")
+            if (node_id, port) in self._cross_out_keys:
+                return CrossPublishPlan(key="", decision="suppressed")
+            return CrossPublishPlan(key="", decision="local_only")
         if self._cross_publish_policy == "all":
             return CrossPublishPlan(
-                subject=data_subject(self._bus.service_id, from_node_id=node_id, port_id=port),
+                key=data_key(self._bus.service_id, from_node_id=node_id, port_id=port),
                 decision="publish",
             )
-        subject = self._cross_out_subjects.get((node_id, port)) or ""
-        if subject:
-            return CrossPublishPlan(subject=subject, decision="publish")
-        return CrossPublishPlan(subject="", decision="local_only")
+        key = self._cross_out_keys.get((node_id, port)) or ""
+        if key:
+            return CrossPublishPlan(key=key, decision="publish")
+        return CrossPublishPlan(key="", decision="local_only")
 
     async def _flush_on_data_push_queue(self) -> None:
         try:

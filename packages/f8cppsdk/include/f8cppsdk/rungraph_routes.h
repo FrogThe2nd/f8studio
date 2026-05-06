@@ -28,7 +28,7 @@ struct DataRoute {
 // Parse a rungraph JSON object and extract cross-service data routes targeting `to_service_id`.
 //
 // Expected edge schema: matches `schemas/protocol.yml#/components/schemas/F8Edge`.
-// Returns: map(subject -> routes), where subject is `svc.<fromServiceId>.nodes.<fromNodeId>.data.<fromPort>`.
+// Returns: map(key -> routes), where key is `f8/svc/<fromServiceId>/nodes/<fromNodeId>/data/<fromPort>`.
 std::unordered_map<std::string, std::vector<DataRoute>> parse_cross_service_data_routes(
     const nlohmann::json& graph_obj, const std::string& to_service_id);
 

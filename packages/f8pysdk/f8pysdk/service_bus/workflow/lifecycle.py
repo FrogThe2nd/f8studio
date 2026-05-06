@@ -44,7 +44,7 @@ async def set_active(
     """
     Set service active state.
 
-    - Persists `active` into KV under `nodes.<service_id>.state.active`
+    - Persists `active` into the retained service state key
     - Notifies lifecycle nodes + service hooks (engine/executor can pause/resume)
     """
     await apply_active(bus, active, persist=True, source=source, meta=meta)
@@ -100,7 +100,7 @@ async def announce_ready(bus: "ServiceBus", ready: bool, *, reason: str) -> None
         "ts": int(now_ms()),
     }
     raw = encode_obj(payload)
-    await bus._transport.kv_put(bus._ready_key, raw)
+    await bus._transport.retained_put(bus._ready_key, raw)
 
 
 async def notify_before_ready(bus: "ServiceBus") -> None:

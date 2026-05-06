@@ -33,21 +33,20 @@ from f8pysdk.specs import (  # noqa: E402
     video_frame_port,
     video_frame_metadata_schema,
 )
-from f8pysdk.f8_naming import data_subject  # noqa: E402
-from f8pysdk.zenoh_naming import subject_to_zenoh_key  # noqa: E402
+from f8pysdk.f8_naming import data_key  # noqa: E402
 from f8pysdk.bus import ServiceBus, ServiceBusConfig  # noqa: E402
 from f8pysdk.service_bus.data.emit import DataEmitOptions  # noqa: E402
 from f8pysdk.testing import InMemoryCluster, InMemoryTransport, push_input  # noqa: E402
 
 
 class _RecordingTransport(InMemoryTransport):
-    def __init__(self, *, cluster: InMemoryCluster, kv_bucket: str) -> None:
-        super().__init__(cluster=cluster, kv_bucket=kv_bucket)
-        self.published_subjects: list[str] = []
+    def __init__(self, *, cluster: InMemoryCluster) -> None:
+        super().__init__(cluster=cluster)
+        self.published_keys: list[str] = []
 
-    async def publish(self, subject: str, payload: bytes) -> None:
-        self.published_subjects.append(str(subject))
-        await super().publish(subject, payload)
+    async def publish(self, key: str, payload: bytes) -> None:
+        self.published_keys.append(str(key))
+        await super().publish(key, payload)
 
 
 class _DataReceiverNode:
@@ -260,9 +259,9 @@ class DataFlowRoutingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_legacy_video_metadata_schema_resolves_stream_key_in_split_graph(self) -> None:
         cluster = InMemoryCluster()
-        transport = _RecordingTransport(cluster=cluster, kv_bucket="kv.sink")
+        transport = _RecordingTransport(cluster=cluster)
         bus = ServiceBus(ServiceBusConfig(service_id="sink"), transport=transport)
-        subject = data_subject("player", from_node_id="player", port_id="video")
+        subject = data_key("player", from_node_id="player", port_id="video")
 
         graph = F8RuntimeGraph(
             graphId="g-legacy-video-stream-edge",
@@ -290,15 +289,15 @@ class DataFlowRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         await bus.set_rungraph(graph)
 
-        self.assertEqual(bus.data_input_zenoh_key("sink", "video"), subject_to_zenoh_key(subject))
-        self.assertEqual(bus.data_router.cross_in_by_subject, {})
+        self.assertEqual(bus.data_input_zenoh_key("sink", "video"), subject)
+        self.assertEqual(bus.data_router.cross_in_by_key, {})
         self.assertEqual(bus.data_router.input_buffers, {})
 
     async def test_video_frame_edge_resolves_stream_key_without_json_subscription(self) -> None:
         cluster = InMemoryCluster()
-        transport = _RecordingTransport(cluster=cluster, kv_bucket="kv.sink")
+        transport = _RecordingTransport(cluster=cluster)
         bus = ServiceBus(ServiceBusConfig(service_id="sink"), transport=transport)
-        subject = data_subject("player", from_node_id="player", port_id="video")
+        subject = data_key("player", from_node_id="player", port_id="video")
 
         graph = F8RuntimeGraph(
             graphId="g-video-stream-edge",
@@ -332,15 +331,15 @@ class DataFlowRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         await bus.set_rungraph(graph)
 
-        self.assertEqual(bus.data_input_zenoh_key("sink", "video"), subject_to_zenoh_key(subject))
-        self.assertEqual(bus.data_router.cross_in_by_subject, {})
+        self.assertEqual(bus.data_input_zenoh_key("sink", "video"), subject)
+        self.assertEqual(bus.data_router.cross_in_by_key, {})
         self.assertEqual(bus.data_router.input_buffers, {})
 
     async def test_video_frame_service_node_edge_uses_service_id_as_stream_node(self) -> None:
         cluster = InMemoryCluster()
-        transport = _RecordingTransport(cluster=cluster, kv_bucket="kv.sink")
+        transport = _RecordingTransport(cluster=cluster)
         bus = ServiceBus(ServiceBusConfig(service_id="sink"), transport=transport)
-        subject = data_subject("player", from_node_id="player", port_id="video")
+        subject = data_key("player", from_node_id="player", port_id="video")
 
         graph = F8RuntimeGraph(
             graphId="g-video-service-node-edge",
@@ -374,23 +373,23 @@ class DataFlowRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         await bus.set_rungraph(graph)
 
-        self.assertEqual(bus.data_input_zenoh_key("sink", "video"), subject_to_zenoh_key(subject))
-        self.assertEqual(bus.data_router.cross_in_by_subject, {})
+        self.assertEqual(bus.data_input_zenoh_key("sink", "video"), subject)
+        self.assertEqual(bus.data_router.cross_in_by_key, {})
         self.assertEqual(bus.data_router.input_buffers, {})
 
     async def test_default_cross_publish_policy_is_routed(self) -> None:
         cluster = InMemoryCluster()
-        transport = _RecordingTransport(cluster=cluster, kv_bucket="kv.svc")
+        transport = _RecordingTransport(cluster=cluster)
         bus = ServiceBus(ServiceBusConfig(service_id="svc"), transport=transport)
 
         await bus.emit_data("node1", "out", {"x": 1}, ts_ms=1)
 
         self.assertEqual(bus.cross_publish_policy, "routed")
-        self.assertEqual(transport.published_subjects, [])
+        self.assertEqual(transport.published_keys, [])
 
     async def test_callback_delivery_invokes_callback_and_keeps_pull_buffer(self) -> None:
         cluster = InMemoryCluster()
-        transport = InMemoryTransport(cluster=cluster, kv_bucket="kv.svc")
+        transport = InMemoryTransport(cluster=cluster)
         bus = ServiceBus(ServiceBusConfig(service_id="svc", data_delivery="callback"), transport=transport)
         node = _DataReceiverNode("node1")
         bus.register_node(node)
@@ -404,7 +403,7 @@ class DataFlowRoutingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_buffered_delivery_keeps_pull_buffer_without_callback(self) -> None:
         cluster = InMemoryCluster()
-        transport = InMemoryTransport(cluster=cluster, kv_bucket="kv.svc")
+        transport = InMemoryTransport(cluster=cluster)
         bus = ServiceBus(ServiceBusConfig(service_id="svc", data_delivery="buffered"), transport=transport)
         node = _DataReceiverNode("node1")
         bus.register_node(node)
@@ -418,7 +417,7 @@ class DataFlowRoutingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_legacy_data_delivery_aliases_fail_fast(self) -> None:
         cluster = InMemoryCluster()
-        transport = InMemoryTransport(cluster=cluster, kv_bucket="kv.svc")
+        transport = InMemoryTransport(cluster=cluster)
 
         for mode in ("push", "pull", "both"):
             with self.subTest(mode=mode):
@@ -427,7 +426,7 @@ class DataFlowRoutingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_pending_push_callbacks_are_dropped_when_bus_deactivates(self) -> None:
         cluster = InMemoryCluster()
-        transport = InMemoryTransport(cluster=cluster, kv_bucket="kv.svc")
+        transport = InMemoryTransport(cluster=cluster)
         bus = ServiceBus(ServiceBusConfig(service_id="svc", data_delivery="callback"), transport=transport)
         node = _DataReceiverNode("node1")
         bus.register_node(node)
@@ -440,7 +439,7 @@ class DataFlowRoutingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_push_input_is_ignored_while_bus_inactive(self) -> None:
         cluster = InMemoryCluster()
-        transport = InMemoryTransport(cluster=cluster, kv_bucket="kv.svc")
+        transport = InMemoryTransport(cluster=cluster)
         bus = ServiceBus(ServiceBusConfig(service_id="svc", data_delivery="callback"), transport=transport)
         node = _DataReceiverNode("node1")
         bus.register_node(node)
@@ -453,7 +452,7 @@ class DataFlowRoutingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_pull_triggered_compute_stays_local_even_when_cross_publish_is_all(self) -> None:
         cluster = InMemoryCluster()
-        transport = _RecordingTransport(cluster=cluster, kv_bucket="kv.svcA")
+        transport = _RecordingTransport(cluster=cluster)
         bus = ServiceBus(
             ServiceBusConfig(service_id="svcA", cross_publish_policy="all", data_delivery="buffered"),
             transport=transport,
@@ -496,25 +495,25 @@ class DataFlowRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(pulled, 42)
         self.assertEqual(source.compute_calls, [("out", "ctx-1")])
-        self.assertEqual(transport.published_subjects, [])
+        self.assertEqual(transport.published_keys, [])
         self.assertEqual(bus.data_router.input_buffers[("local_dst", "in")].last_seen_value, 42)
 
     async def test_cross_publish_policy_all_publishes_without_cross_routes(self) -> None:
         cluster = InMemoryCluster()
-        transport = _RecordingTransport(cluster=cluster, kv_bucket="kv.svc")
+        transport = _RecordingTransport(cluster=cluster)
         bus = ServiceBus(ServiceBusConfig(service_id="svc", cross_publish_policy="all"), transport=transport)
 
         await bus.emit_data("node1", "out", {"x": 1}, ts_ms=1)
 
         self.assertEqual(bus.cross_publish_policy, "all")
         self.assertEqual(
-            transport.published_subjects,
-            [data_subject("svc", from_node_id="node1", port_id="out")],
+            transport.published_keys,
+            [data_key("svc", from_node_id="node1", port_id="out")],
         )
 
     async def test_data_emit_options_can_force_local_only_emit_without_cross_publish(self) -> None:
         cluster = InMemoryCluster()
-        transport = _RecordingTransport(cluster=cluster, kv_bucket="kv.svcA")
+        transport = _RecordingTransport(cluster=cluster)
         bus = ServiceBus(
             ServiceBusConfig(service_id="svcA", cross_publish_policy="all", data_delivery="buffered"),
             transport=transport,
@@ -559,7 +558,7 @@ class DataFlowRoutingTests(unittest.IsolatedAsyncioTestCase):
             options=DataEmitOptions.local_compute_only(),
         )
 
-        self.assertEqual(transport.published_subjects, [])
+        self.assertEqual(transport.published_keys, [])
         self.assertEqual(bus.data_router.input_buffers[("local_dst", "in")].last_seen_value, 99)
 
 

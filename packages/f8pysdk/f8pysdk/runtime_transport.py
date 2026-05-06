@@ -13,23 +13,20 @@ class RuntimeTransport(Protocol):
     """
     Explicit runtime transport contract used by ServiceBus.
 
-    The contract is intentionally small and concrete: pub/sub for transient data,
-    request/serve for sparse control endpoints, and a latest-value state facade.
-
-    The Zenoh backend implements request/serve with native command streams and
-    state reads/watches with retained state streams, keeping queryables off the
-    control and state hot paths.
+    The contract is intentionally small and concrete: key-expression pub/sub for
+    transient data, command-key request/serve for sparse control endpoints, and
+    retained key samples for latest-value state/status snapshots.
     """
 
     async def connect(self) -> None: ...
 
     async def close(self) -> None: ...
 
-    async def publish(self, subject: str, payload: bytes) -> None: ...
+    async def publish(self, key: str, payload: bytes) -> None: ...
 
     async def subscribe(
         self,
-        subject: str,
+        key_expr: str,
         *,
         queue: str | None = None,
         cb: TransportCallback | None = None,
@@ -37,36 +34,20 @@ class RuntimeTransport(Protocol):
 
     async def request(
         self,
-        subject: str,
+        key: str,
         payload: bytes,
         *,
         timeout: float = 1.0,
         raise_on_error: bool = False,
     ) -> bytes | None: ...
 
-    async def serve(self, subject: str, handler: RequestHandler) -> Any: ...
+    async def serve(self, key: str, handler: RequestHandler) -> Any: ...
 
-    async def kv_put(self, key: str, value: bytes) -> None: ...
+    async def retained_put(self, key: str, value: bytes) -> None: ...
 
-    async def kv_get(self, key: str) -> bytes | None: ...
+    async def retained_get(self, key: str) -> bytes | None: ...
 
-    async def kv_watch(self, key_pattern: str, *, cb: TransportCallback) -> Any: ...
-
-    async def kv_watch_in_bucket(
-        self,
-        bucket: str,
-        key_pattern: str,
-        *,
-        cb: TransportCallback,
-    ) -> Any: ...
-
-    async def kv_get_in_bucket(
-        self,
-        bucket: str,
-        key: str,
-        *,
-        timeout: float | None = None,
-    ) -> bytes | None: ...
+    async def retained_watch(self, key_expr: str, *, cb: TransportCallback, with_initial: bool = True) -> Any: ...
 
 
 __all__ = [

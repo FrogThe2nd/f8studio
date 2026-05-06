@@ -157,16 +157,16 @@ class ServiceBus final : public ServiceControlHandler {
   RuntimeBytes handle_runtime_control_request(const std::string& endpoint, const RuntimeMessage& msg);
   bool runtime_publish_data(const std::string& from_node_id, const std::string& port_id, const json& value,
                             std::int64_t ts_ms = 0);
-  bool runtime_kv_put(const std::string& key, const RuntimeBytes& bytes);
-  std::optional<RuntimeBytes> runtime_kv_get(const std::string& key);
+  bool runtime_retained_put(const std::string& key, const RuntimeBytes& bytes);
+  std::optional<RuntimeBytes> runtime_retained_get(const std::string& key);
   bool runtime_set_ready(bool ready, const std::string& reason = "", std::int64_t ts_ms = 0);
   bool runtime_set_node_state(const std::string& node_id, const std::string& field, const json& value,
                               const std::string& source = "runtime",
                               const json& extra_meta = json::object(), std::int64_t ts_ms = 0,
                               const std::string& origin = "runtime");
-  void handle_data_payload(const std::string& subject, const RuntimeBytes& bytes);
+  void handle_data_payload(const std::string& key, const RuntimeBytes& bytes);
   void handle_peer_state_payload(const std::string& peer, const std::string& key, const RuntimeBytes& bytes);
-  void load_active_from_kv();
+  void load_active_from_retained();
   void apply_data_routes_from_rungraph(const json& graph_obj);
   void apply_rungraph_local(const json& graph_obj, std::string& error_code, std::string& error_message);
   void publish_state_local(const std::string& node_id, const std::string& field, const json& value, std::int64_t ts_ms,
@@ -290,7 +290,7 @@ class ServiceBus final : public ServiceControlHandler {
   mutable std::mutex data_mu_;
   std::unordered_map<std::string, std::unique_ptr<RuntimeSubscription>> runtime_data_subs_;
   std::unordered_map<_NodePortKey, std::shared_ptr<_InputBuffer>, _NodePortKeyHash> data_inputs_;
-  std::unordered_map<_NodePortKey, std::string, _NodePortKeyHash> data_input_stream_subjects_;
+  std::unordered_map<_NodePortKey, std::string, _NodePortKeyHash> data_input_stream_keys_;
 
   struct _RouteRuntime {
     std::string to_node_id;
@@ -304,7 +304,7 @@ class ServiceBus final : public ServiceControlHandler {
   };
 
   struct _DataRoutingSnapshot {
-    std::unordered_map<std::string, std::vector<_RouteRuntime>> by_subject;
+    std::unordered_map<std::string, std::vector<_RouteRuntime>> by_key;
   };
 
   std::shared_ptr<const _DataRoutingSnapshot> data_routes_snapshot_;

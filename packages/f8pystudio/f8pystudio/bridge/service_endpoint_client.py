@@ -20,7 +20,7 @@ from f8pysdk.specs import (
     F8TerminateReply,
     F8TerminateRequest,
 )
-from f8pysdk.f8_naming import ensure_token, new_id, svc_endpoint_subject
+from f8pysdk.f8_naming import ensure_token, new_id, svc_endpoint_key
 from f8pysdk.codec import decode_as, encode_obj
 
 from .runtime_request import RuntimeRequester
@@ -74,7 +74,7 @@ async def request_service_status(
         )
     )
     try:
-        message = await requester.request(svc_endpoint_subject(sid, "status"), payload, timeout=float(timeout_s))
+        message = await requester.request(svc_endpoint_key(sid, "status"), payload, timeout=float(timeout_s))
     except Exception as exc:
         logger.debug("service status request failed service_id=%s", service_id, exc_info=exc)
         return None
@@ -116,7 +116,7 @@ async def request_set_service_active(
         )
     for _ in range(max(int(attempts), 1)):
         try:
-            message = await requester.request(svc_endpoint_subject(sid, cmd), payload, timeout=float(timeout_s))
+            message = await requester.request(svc_endpoint_key(sid, cmd), payload, timeout=float(timeout_s))
             data = message_data_bytes(message)
             if data:
                 response = decode_as(data, F8ActiveReply)
@@ -138,7 +138,7 @@ async def request_service_terminate(
     retry_sleep_s: float,
 ) -> bool:
     sid = ensure_token(str(service_id), label="service_id")
-    subject = svc_endpoint_subject(sid, "terminate")
+    key = svc_endpoint_key(sid, "terminate")
     payload = encode_obj(
         F8TerminateRequest(
             reqId=new_id(),
@@ -148,7 +148,7 @@ async def request_service_terminate(
     )
     for _ in range(max(int(attempts), 1)):
         try:
-            message = await requester.request(subject, payload, timeout=float(timeout_s))
+            message = await requester.request(key, payload, timeout=float(timeout_s))
             raw = message_data_bytes(message)
             if not raw:
                 continue
@@ -191,10 +191,10 @@ async def request_set_remote_state(
             meta={"actor": "studio", "source": "ui"},
         )
     )
-    subject = svc_endpoint_subject(sid, "set_state")
+    key = svc_endpoint_key(sid, "set_state")
     for _ in range(max(int(attempts), 1)):
         try:
-            message = await requester.request(subject, payload, timeout=float(timeout_s))
+            message = await requester.request(key, payload, timeout=float(timeout_s))
             raw = message_data_bytes(message)
             if not raw:
                 continue

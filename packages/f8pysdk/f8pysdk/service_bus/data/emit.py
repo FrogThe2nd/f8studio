@@ -20,12 +20,12 @@ class CrossPublishPlan:
     Explicit cross-service publish evaluation for one emitted sample.
     """
 
-    subject: str
+    key: str
     decision: CrossPublishDecision
 
     @property
     def will_publish(self) -> bool:
-        return self.decision == "publish" and bool(self.subject)
+        return self.decision == "publish" and bool(self.key)
 
 
 @dataclass(frozen=True)
@@ -35,7 +35,7 @@ class DataEmitOptions:
 
     These options are internal router controls. They describe whether a sample
     should fan out to local inputs and whether it may be published on the
-    cross-service data subjects selected by the current rungraph/policy.
+    cross-service data keys selected by the current rungraph/policy.
     """
 
     deliver_local: bool = True

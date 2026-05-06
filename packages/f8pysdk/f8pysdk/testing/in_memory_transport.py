@@ -8,6 +8,9 @@ from typing import Any, Awaitable, Callable
 def _match_pattern(pattern: str, key: str) -> bool:
     if pattern == key:
         return True
+    if pattern.endswith("/**"):
+        prefix = pattern[:-3].rstrip("/")
+        return key == prefix or key.startswith(f"{prefix}/")
     if pattern.endswith(">"):
         prefix = pattern[:-1]
         return key.startswith(prefix)
@@ -16,47 +19,45 @@ def _match_pattern(pattern: str, key: str) -> bool:
 
 @dataclass
 class InMemoryCluster:
-    kv: dict[str, dict[str, bytes]] = field(default_factory=dict)
-    kv_watchers: dict[str, list[tuple[str, Callable[[str, bytes], Awaitable[None]]]]] = field(default_factory=dict)
+    retained: dict[str, bytes] = field(default_factory=dict)
+    retained_watchers: list[tuple[str, Callable[[str, bytes], Awaitable[None]]]] = field(default_factory=list)
     subs: dict[str, list[Callable[[str, bytes], Awaitable[None]]]] = field(default_factory=dict)
     request_handlers: dict[str, Callable[[bytes], Awaitable[bytes | None]]] = field(default_factory=dict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
-    async def kv_put(self, bucket: str, key: str, value: bytes) -> None:
+    async def retained_put(self, key: str, value: bytes) -> None:
+        key_s = str(key).strip("/")
         callbacks: list[Callable[[str, bytes], Awaitable[None]]] = []
         async with self.lock:
-            self.kv.setdefault(bucket, {})[key] = bytes(value)
-            for pattern, cb in list(self.kv_watchers.get(bucket, [])):
-                if _match_pattern(pattern, key):
+            self.retained[key_s] = bytes(value)
+            for pattern, cb in list(self.retained_watchers):
+                if _match_pattern(pattern, key_s):
                     callbacks.append(cb)
         for cb in callbacks:
-            await cb(key, bytes(value))
+            await cb(key_s, bytes(value))
 
-    async def kv_get(self, bucket: str, key: str) -> bytes | None:
+    async def retained_get(self, key: str) -> bytes | None:
         async with self.lock:
-            return self.kv.get(bucket, {}).get(key)
+            return self.retained.get(str(key).strip("/"))
 
-    def add_kv_watch(self, bucket: str, pattern: str, cb: Callable[[str, bytes], Awaitable[None]]) -> None:
-        self.kv_watchers.setdefault(bucket, []).append((pattern, cb))
+    def add_retained_watch(self, pattern: str, cb: Callable[[str, bytes], Awaitable[None]]) -> None:
+        self.retained_watchers.append((str(pattern).strip("/"), cb))
 
-    def remove_kv_watch(self, bucket: str, pattern: str, cb: Callable[[str, bytes], Awaitable[None]]) -> None:
-        watchers = self.kv_watchers.get(bucket)
-        if not watchers:
-            return
+    def remove_retained_watch(self, pattern: str, cb: Callable[[str, bytes], Awaitable[None]]) -> None:
         try:
-            watchers.remove((pattern, cb))
+            self.retained_watchers.remove((str(pattern).strip("/"), cb))
         except ValueError:
             return
 
-    async def publish(self, subject: str, payload: bytes) -> None:
-        for cb in list(self.subs.get(subject, [])):
-            await cb(str(subject), bytes(payload))
+    async def publish(self, key: str, payload: bytes) -> None:
+        for cb in list(self.subs.get(key, [])):
+            await cb(str(key), bytes(payload))
 
-    def subscribe(self, subject: str, cb: Callable[[str, bytes], Awaitable[None]]) -> None:
-        self.subs.setdefault(subject, []).append(cb)
+    def subscribe(self, key: str, cb: Callable[[str, bytes], Awaitable[None]]) -> None:
+        self.subs.setdefault(key, []).append(cb)
 
-    def unsubscribe(self, subject: str, cb: Callable[[str, bytes], Awaitable[None]]) -> None:
-        subs = self.subs.get(subject)
+    def unsubscribe(self, key: str, cb: Callable[[str, bytes], Awaitable[None]]) -> None:
+        subs = self.subs.get(key)
         if not subs:
             return
         try:
@@ -64,8 +65,8 @@ class InMemoryCluster:
         except ValueError:
             return
 
-    async def request(self, subject: str, payload: bytes) -> bytes | None:
-        handler = self.request_handlers.get(str(subject))
+    async def request(self, key: str, payload: bytes) -> bytes | None:
+        handler = self.request_handlers.get(str(key))
         if handler is None:
             return None
         result = await handler(bytes(payload))
@@ -73,39 +74,38 @@ class InMemoryCluster:
             return None
         return bytes(result)
 
-    def serve(self, subject: str, handler: Callable[[bytes], Awaitable[bytes | None]]) -> None:
-        self.request_handlers[str(subject)] = handler
+    def serve(self, key: str, handler: Callable[[bytes], Awaitable[bytes | None]]) -> None:
+        self.request_handlers[str(key)] = handler
 
-    def unserve(self, subject: str, handler: Callable[[bytes], Awaitable[bytes | None]]) -> None:
-        existing = self.request_handlers.get(str(subject))
+    def unserve(self, key: str, handler: Callable[[bytes], Awaitable[bytes | None]]) -> None:
+        existing = self.request_handlers.get(str(key))
         if existing is handler:
-            self.request_handlers.pop(str(subject), None)
+            self.request_handlers.pop(str(key), None)
 
 
 class _WatchHandle:
-    def __init__(self, cluster: InMemoryCluster, bucket: str, pattern: str, cb: Callable[[str, bytes], Awaitable[None]]):
+    def __init__(self, cluster: InMemoryCluster, pattern: str, cb: Callable[[str, bytes], Awaitable[None]]):
         self._cluster = cluster
-        self._bucket = bucket
         self._pattern = pattern
         self._cb = cb
 
     async def stop(self) -> None:
-        self._cluster.remove_kv_watch(self._bucket, self._pattern, self._cb)
+        self._cluster.remove_retained_watch(self._pattern, self._cb)
 
 
 class _ServeHandle:
     def __init__(
         self,
         cluster: InMemoryCluster,
-        subject: str,
+        key: str,
         handler: Callable[[bytes], Awaitable[bytes | None]],
     ) -> None:
         self._cluster = cluster
-        self._subject = subject
+        self._key = key
         self._handler = handler
 
     async def unsubscribe(self) -> None:
-        self._cluster.unserve(self._subject, self._handler)
+        self._cluster.unserve(self._key, self._handler)
 
     async def stop(self) -> None:
         await self.unsubscribe()
@@ -113,14 +113,13 @@ class _ServeHandle:
 
 class InMemoryTransport:
     """
-    Minimal in-memory transport for async tests (KV + pub/sub).
+    Minimal in-memory transport for async tests (retained keys + pub/sub).
 
     This mirrors only the subset of methods used by ServiceBus.
     """
 
-    def __init__(self, *, cluster: InMemoryCluster, kv_bucket: str) -> None:
+    def __init__(self, *, cluster: InMemoryCluster) -> None:
         self._cluster = cluster
-        self._kv_bucket = str(kv_bucket)
 
     async def connect(self) -> None:
         return None
@@ -131,12 +130,12 @@ class InMemoryTransport:
     async def require_client(self) -> Any:
         return self
 
-    async def publish(self, subject: str, payload: bytes) -> None:
-        await self._cluster.publish(str(subject), bytes(payload))
+    async def publish(self, key: str, payload: bytes) -> None:
+        await self._cluster.publish(str(key).strip("/"), bytes(payload))
 
     async def subscribe(
         self,
-        subject: str,
+        key_expr: str,
         *,
         queue: str | None = None,
         cb: Callable[[str, bytes], Awaitable[None]] | None = None,
@@ -144,52 +143,54 @@ class InMemoryTransport:
         if cb is None:
             return None
         cluster = self._cluster
-        subject_name = str(subject)
-        cluster.subscribe(subject_name, cb)
+        key_name = str(key_expr).strip("/")
+        cluster.subscribe(key_name, cb)
 
         class _Sub:
             async def unsubscribe(self) -> None:
-                cluster.unsubscribe(subject_name, cb)
+                cluster.unsubscribe(key_name, cb)
 
         return _Sub()
 
     async def request(
         self,
-        subject: str,
+        key: str,
         payload: bytes,
         *,
         timeout: float = 1.0,
         raise_on_error: bool = False,
     ) -> bytes | None:
         try:
-            return await asyncio.wait_for(self._cluster.request(str(subject), bytes(payload)), timeout=float(timeout))
+            return await asyncio.wait_for(self._cluster.request(str(key).strip("/"), bytes(payload)), timeout=float(timeout))
         except asyncio.TimeoutError:
             if raise_on_error:
                 raise
             return None
 
-    async def serve(self, subject: str, handler: Callable[[bytes], Awaitable[bytes | None]]) -> _ServeHandle:
-        subject_name = str(subject)
-        self._cluster.serve(subject_name, handler)
-        return _ServeHandle(self._cluster, subject_name, handler)
+    async def serve(self, key: str, handler: Callable[[bytes], Awaitable[bytes | None]]) -> _ServeHandle:
+        key_name = str(key).strip("/")
+        self._cluster.serve(key_name, handler)
+        return _ServeHandle(self._cluster, key_name, handler)
 
-    async def kv_put(self, key: str, value: bytes) -> None:
-        await self._cluster.kv_put(self._kv_bucket, str(key), bytes(value))
+    async def retained_put(self, key: str, value: bytes) -> None:
+        await self._cluster.retained_put(str(key), bytes(value))
 
-    async def kv_get(self, key: str) -> bytes | None:
-        return await self._cluster.kv_get(self._kv_bucket, str(key))
+    async def retained_get(self, key: str) -> bytes | None:
+        return await self._cluster.retained_get(str(key))
 
-    async def kv_watch(self, key_pattern: str, *, cb: Callable[[str, bytes], Awaitable[None]]) -> Any:
-        return await self.kv_watch_in_bucket(self._kv_bucket, str(key_pattern), cb=cb)
-
-    async def kv_watch_in_bucket(
-        self, bucket: str, key_pattern: str, *, cb: Callable[[str, bytes], Awaitable[None]]
+    async def retained_watch(
+        self,
+        key_expr: str,
+        *,
+        cb: Callable[[str, bytes], Awaitable[None]],
+        with_initial: bool = True,
     ) -> Any:
-        self._cluster.add_kv_watch(str(bucket), str(key_pattern), cb)
-        handle = _WatchHandle(self._cluster, str(bucket), str(key_pattern), cb)
-        task = asyncio.create_task(asyncio.sleep(0), name=f"mem_kv_watch:{bucket}:{key_pattern}")
+        pattern = str(key_expr).strip("/")
+        self._cluster.add_retained_watch(pattern, cb)
+        if with_initial:
+            for key, value in list(self._cluster.retained.items()):
+                if _match_pattern(pattern, key):
+                    await cb(key, bytes(value))
+        handle = _WatchHandle(self._cluster, pattern, cb)
+        task = asyncio.create_task(asyncio.sleep(0), name=f"mem_retained_watch:{pattern}")
         return (handle, task)
-
-    async def kv_get_in_bucket(self, bucket: str, key: str, *, timeout: float | None = None) -> bytes | None:
-        del timeout
-        return await self._cluster.kv_get(str(bucket), str(key))

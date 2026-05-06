@@ -8,18 +8,12 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from .codec import decode_obj, encode_obj
-from .f8_naming import kv_bucket_for_service, new_id
+from .f8_naming import new_id
 from .runtime_transport import RequestHandler, TransportCallback
 from .time_utils import now_ms
 from .zenoh_config import apply_zenoh_shared_memory_config, apply_zenoh_timestamping_config
 from .zenoh_naming import (
-    kv_bucket_to_service_id,
-    subject_to_zenoh_command_key,
-    subject_to_zenoh_key,
-    zenoh_key_to_kv_key,
-    zenoh_key_to_subject,
-    zenoh_kv_key,
-    zenoh_kv_pattern,
+    zenoh_key_to_state_path,
     zenoh_reply_key,
     zenoh_reply_pattern,
     zenoh_service_liveliness_key,
@@ -111,12 +105,11 @@ class ZenohTransport:
             listen=tuple(str(item).strip() for item in config.listen if str(item).strip()),
             shm_pool_bytes=max(0, int(config.shm_pool_bytes)),
         )
-        self._kv_bucket = kv_bucket_for_service(service_id)
         self._session: Any | None = None
         self._liveliness_token: Any | None = None
         self._subs: list[_ZenohSubscriptionHandle] = []
         self._serve_handles: list[_ZenohServeHandle] = []
-        self._kv: dict[str, bytes] = {}
+        self._retained: dict[str, bytes] = {}
         self._state_publishers: dict[str, Any] = {}
         self._pending_replies: dict[str, asyncio.Future[_ZenohCommandReply]] = {}
         self._reply_subscriber: _ZenohSubscriptionHandle | None = None
@@ -126,10 +119,6 @@ class ZenohTransport:
     @property
     def is_connected(self) -> bool:
         return self._session is not None
-
-    @property
-    def kv_bucket(self) -> str:
-        return self._kv_bucket
 
     async def connect(self) -> None:
         async with self._lock:
@@ -208,51 +197,50 @@ class ZenohTransport:
             if session is not None:
                 close_zenoh_session_best_effort(session, context=f"runtime:{self._config.service_id}")
 
-    async def publish(self, subject: str, payload: bytes) -> None:
-        await self.publish_stream(subject, payload, delivery="latest")
+    async def publish(self, key: str, payload: bytes) -> None:
+        await self.publish_stream(key, payload, delivery="latest")
 
     async def publish_stream(
         self,
-        subject: str,
+        key: str,
         payload: bytes,
         *,
         delivery: StreamDeliveryPolicy = "latest",
     ) -> None:
         session = await self._require_session()
-        key = subject_to_zenoh_key(subject)
         if delivery == "latest":
-            await asyncio.to_thread(_put_realtime_drop, session, key, bytes(payload))
+            await asyncio.to_thread(_put_realtime_drop, session, _normalize_zenoh_key(key), bytes(payload))
             return
         if delivery == "fifo":
-            await asyncio.to_thread(_put_data_fifo, session, key, bytes(payload))
+            await asyncio.to_thread(_put_data_fifo, session, _normalize_zenoh_key(key), bytes(payload))
             return
         if delivery == "reliable":
-            await asyncio.to_thread(_put_reliable_control, session, key, bytes(payload))
+            await asyncio.to_thread(_put_reliable_control, session, _normalize_zenoh_key(key), bytes(payload))
             return
         raise ValueError(f"unsupported stream delivery policy: {delivery!r}")
 
     async def subscribe(
         self,
-        subject: str,
+        key_expr: str,
         *,
         queue: str | None = None,
         cb: TransportCallback | None = None,
     ) -> _ZenohSubscriptionHandle:
-        return await self.subscribe_stream(subject, queue=queue, cb=cb)
+        return await self.subscribe_stream(key_expr, queue=queue, cb=cb)
 
     async def subscribe_stream(
         self,
-        subject: str,
+        key_expr: str,
         *,
         queue: str | None = None,
         cb: TransportCallback | None = None,
     ) -> _ZenohSubscriptionHandle:
         del queue
         session = await self._require_session()
-        key_expr = subject_to_zenoh_key(subject)
+        key_expr = _normalize_zenoh_key_expr(key_expr)
         declaration = await asyncio.to_thread(session.declare_subscriber, key_expr)
         task = asyncio.create_task(
-            self._pump_subscriber(declaration, key_expr=key_expr, cb=cb, key_converter=zenoh_key_to_subject),
+            self._pump_subscriber(declaration, key_expr=key_expr, cb=cb, key_converter=lambda item: item),
             name=f"zenoh_sub:{key_expr}",
         )
         handle = _ZenohSubscriptionHandle(declaration, task)
@@ -262,26 +250,26 @@ class ZenohTransport:
 
     async def request(
         self,
-        subject: str,
+        key: str,
         payload: bytes,
         *,
         timeout: float = 1.0,
         raise_on_error: bool = False,
     ) -> bytes | None:
         try:
-            return await self.send_command(subject, payload, timeout=timeout, raise_on_error=True)
+            return await self.send_command(key, payload, timeout=timeout, raise_on_error=True)
         except Exception as exc:
             if raise_on_error:
                 raise
-            log.debug("zenoh command request failed subject=%s", subject, exc_info=exc)
+            log.debug("zenoh command request failed key=%s", key, exc_info=exc)
             return None
 
-    async def serve(self, subject: str, handler: RequestHandler) -> _ZenohServeHandle:
-        return await self.serve_command(subject, handler)
+    async def serve(self, key: str, handler: RequestHandler) -> _ZenohServeHandle:
+        return await self.serve_command(key, handler)
 
     async def send_command(
         self,
-        subject: str,
+        key: str,
         payload: bytes,
         *,
         timeout: float = 1.0,
@@ -291,7 +279,7 @@ class ZenohTransport:
         session = await self._require_session()
         req_id = new_id()
         reply_key = zenoh_reply_key(self._config.service_id, req_id)
-        command_key = subject_to_zenoh_command_key(subject)
+        command_key = _normalize_zenoh_key(key)
         loop = asyncio.get_running_loop()
         future: asyncio.Future[_ZenohCommandReply] = loop.create_future()
         self._pending_replies[req_id] = future
@@ -309,20 +297,20 @@ class ZenohTransport:
             reply = await asyncio.wait_for(future, timeout=max(0.001, float(timeout)))
         except asyncio.TimeoutError:
             if raise_on_error:
-                raise TimeoutError(f"zenoh command request timed out subject={subject!r}") from None
+                raise TimeoutError(f"zenoh command request timed out key={key!r}") from None
             return None
         finally:
             self._pending_replies.pop(req_id, None)
 
         if not reply.ok:
             if raise_on_error:
-                raise RuntimeError(reply.error or f"zenoh command request failed subject={subject!r}")
+                raise RuntimeError(reply.error or f"zenoh command request failed key={key!r}")
             return None
         return reply.payload
 
-    async def serve_command(self, subject: str, handler: RequestHandler) -> _ZenohServeHandle:
+    async def serve_command(self, key: str, handler: RequestHandler) -> _ZenohServeHandle:
         session = await self._require_session()
-        key_expr = subject_to_zenoh_command_key(subject)
+        key_expr = _normalize_zenoh_key(key)
         declaration = await asyncio.to_thread(session.declare_subscriber, key_expr)
         task = asyncio.create_task(
             self._pump_command_subscriber(declaration, key_expr=key_expr, handler=handler),
@@ -333,79 +321,46 @@ class ZenohTransport:
         await asyncio.sleep(_SUBSCRIPTION_SETTLE_S)
         return handle
 
-    async def kv_put(self, key: str, value: bytes) -> None:
-        await self.publish_state(key, value)
-
-    async def publish_state(self, key: str, value: bytes) -> None:
+    async def retained_put(self, key: str, value: bytes) -> None:
         key_s = str(key or "").strip()
         if not key_s:
             raise ValueError("key must be non-empty")
+        retained_key = _normalize_zenoh_key(key_s)
         raw = bytes(value)
-        self._kv[key_s] = raw
+        self._retained[retained_key] = raw
         session = await self._require_session()
-        zenoh_key = zenoh_kv_key(self._config.service_id, key_s)
-        publisher = self._state_publishers.get(zenoh_key)
+        publisher = self._state_publishers.get(retained_key)
         if publisher is None:
-            publisher = await asyncio.to_thread(_declare_retained_state_publisher, session, zenoh_key)
-            self._state_publishers[zenoh_key] = publisher
+            publisher = await asyncio.to_thread(_declare_retained_state_publisher, session, retained_key)
+            self._state_publishers[retained_key] = publisher
             await asyncio.sleep(_SUBSCRIPTION_SETTLE_S)
         await asyncio.to_thread(publisher.put, raw)
 
-    async def kv_get(self, key: str) -> bytes | None:
-        return self._kv.get(str(key or "").strip())
+    async def retained_get(self, key: str) -> bytes | None:
+        return self._retained.get(_normalize_zenoh_key(key))
 
-    async def kv_watch(self, key_pattern: str, *, cb: TransportCallback) -> _ZenohSubscriptionHandle:
-        return await self.kv_watch_in_bucket(self._kv_bucket, key_pattern, cb=cb)
-
-    async def kv_watch_in_bucket(
+    async def retained_watch(
         self,
-        bucket: str,
-        key_pattern: str,
-        *,
-        cb: TransportCallback,
-    ) -> _ZenohSubscriptionHandle:
-        return await self.subscribe_state_in_bucket(bucket, key_pattern, cb=cb, with_initial=True)
-
-    async def subscribe_state_in_bucket(
-        self,
-        bucket: str,
-        key_pattern: str,
+        key_expr: str,
         *,
         cb: TransportCallback,
         with_initial: bool = True,
     ) -> _ZenohSubscriptionHandle:
         session = await self._require_session()
-        peer_service_id = kv_bucket_to_service_id(bucket)
-        key_expr = zenoh_kv_pattern(peer_service_id, key_pattern)
+        key_expr_s = _normalize_zenoh_key_expr(key_expr)
         if with_initial:
-            declaration = await asyncio.to_thread(_declare_retained_state_subscriber, session, key_expr)
+            declaration = await asyncio.to_thread(_declare_retained_state_subscriber, session, key_expr_s)
         else:
-            declaration = await asyncio.to_thread(session.declare_subscriber, key_expr)
-
-        async def _on_sample(key: str, payload: bytes) -> None:
-            kv_key = zenoh_key_to_kv_key(key)
-            if kv_key is None:
-                return
-            await cb(kv_key, payload)
+            declaration = await asyncio.to_thread(session.declare_subscriber, key_expr_s)
 
         task = asyncio.create_task(
-            self._pump_subscriber(declaration, key_expr=key_expr, cb=_on_sample, key_converter=lambda item: item),
-            name=f"zenoh_kv_watch:{bucket}:{key_pattern}",
+            self._pump_subscriber(declaration, key_expr=key_expr_s, cb=cb, key_converter=lambda item: item),
+            name=f"zenoh_retained_watch:{key_expr_s}",
         )
         handle = _ZenohSubscriptionHandle(declaration, task)
         self._subs.append(handle)
         await asyncio.sleep(_SUBSCRIPTION_SETTLE_S)
         return handle
-
-    async def kv_get_in_bucket(self, bucket: str, key: str, *, timeout: float | None = None) -> bytes | None:
-        del timeout
-        peer_service_id = kv_bucket_to_service_id(bucket)
-        key_s = str(key or "").strip()
-        if not key_s:
-            raise ValueError("key must be non-empty")
-        if peer_service_id == self._config.service_id:
-            return self._kv.get(key_s)
-        return None
 
     async def _ensure_reply_subscriber(self) -> None:
         async with self._reply_lock:
@@ -567,6 +522,20 @@ def _put_reliable_control(session: Any, key: str, payload: bytes) -> None:
         priority=zenoh.Priority.INTERACTIVE_HIGH,
         express=True,
     )
+
+
+def _normalize_zenoh_key(key: str) -> str:
+    text = str(key or "").strip("/")
+    if not text:
+        raise ValueError("zenoh key must be non-empty")
+    return text
+
+
+def _normalize_zenoh_key_expr(key_expr: str) -> str:
+    text = str(key_expr or "").strip("/")
+    if not text:
+        raise ValueError("zenoh key expression must be non-empty")
+    return text
 
 
 def _declare_retained_state_publisher(session: Any, key: str) -> Any:

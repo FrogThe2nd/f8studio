@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 
 from f8pysdk.codec import encode_obj
-from f8pysdk.f8_naming import kv_key_node_state
 from f8pysdk.testing import InMemoryTransport
+from f8pysdk.zenoh_naming import zenoh_state_key
 from f8pystudio.bridge.command_client import RuntimeCommandGatewayConfig
 from f8pystudio.bridge.command_client import _build_runtime_transport as build_command_transport
 from f8pystudio.bridge.remote_state_watcher import RemoteStateWatcher
@@ -90,9 +90,9 @@ def test_remote_state_watcher_accepts_cpp_ts_field() -> None:
     )
 
     asyncio.run(
-        watcher._on_kv(
+        watcher._on_retained_state(
             "engine",
-            kv_key_node_state(node_id="camera", field="statusText"),
+            zenoh_state_key("engine", node_id="camera", field="statusText"),
             encode_obj({"value": "ready", "ts": 1_700_000_001_234}),
         )
     )
