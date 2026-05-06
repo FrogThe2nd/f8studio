@@ -7,15 +7,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from .codec import decode_obj, encode_obj
-from .f8_naming import new_id
 from .runtime_transport import RequestHandler, TransportCallback
-from .time_utils import now_ms
 from .zenoh_config import apply_zenoh_shared_memory_config, apply_zenoh_timestamping_config
 from .zenoh_naming import (
     zenoh_key_to_state_path,
-    zenoh_reply_key,
-    zenoh_reply_pattern,
     zenoh_service_liveliness_key,
 )
 from .zenoh_shutdown import close_zenoh_session_best_effort
@@ -37,23 +32,6 @@ class ZenohTransportConfig:
 
 
 StreamDeliveryPolicy = Literal["latest", "fifo", "reliable"]
-
-
-@dataclass(frozen=True)
-class _ZenohCommandEnvelope:
-    req_id: str
-    actor: str
-    ts_ms: int
-    payload: bytes
-    reply_key: str | None
-
-
-@dataclass(frozen=True)
-class _ZenohCommandReply:
-    req_id: str
-    ok: bool
-    payload: bytes
-    error: str
 
 
 class _ZenohSubscriptionHandle:
@@ -111,10 +89,7 @@ class ZenohTransport:
         self._serve_handles: list[_ZenohServeHandle] = []
         self._retained: dict[str, bytes] = {}
         self._state_publishers: dict[str, Any] = {}
-        self._pending_replies: dict[str, asyncio.Future[_ZenohCommandReply]] = {}
-        self._reply_subscriber: _ZenohSubscriptionHandle | None = None
         self._lock = asyncio.Lock()
-        self._reply_lock = asyncio.Lock()
 
     @property
     def is_connected(self) -> bool:
@@ -164,9 +139,6 @@ class ZenohTransport:
     async def close(self) -> None:
         async with self._lock:
             handles = [*self._subs, *self._serve_handles]
-            if self._reply_subscriber is not None:
-                handles.append(self._reply_subscriber)
-                self._reply_subscriber = None
             self._subs.clear()
             self._serve_handles.clear()
             for handle in handles:
@@ -178,11 +150,6 @@ class ZenohTransport:
                 except Exception as exc:
                     log.debug("zenoh retained state publisher undeclare failed", exc_info=exc)
             self._state_publishers.clear()
-
-            for req_id, future in list(self._pending_replies.items()):
-                if not future.done():
-                    future.cancel()
-                self._pending_replies.pop(req_id, None)
 
             token = self._liveliness_token
             self._liveliness_token = None
@@ -257,17 +224,17 @@ class ZenohTransport:
         raise_on_error: bool = False,
     ) -> bytes | None:
         try:
-            return await self.send_command(key, payload, timeout=timeout, raise_on_error=True)
+            return await self.query_once(key, payload, timeout=timeout, raise_on_error=True)
         except Exception as exc:
             if raise_on_error:
                 raise
-            log.debug("zenoh command request failed key=%s", key, exc_info=exc)
+            log.debug("zenoh query request failed key=%s", key, exc_info=exc)
             return None
 
     async def serve(self, key: str, handler: RequestHandler) -> _ZenohServeHandle:
-        return await self.serve_command(key, handler)
+        return await self.serve_queryable(key, handler)
 
-    async def send_command(
+    async def query_once(
         self,
         key: str,
         payload: bytes,
@@ -275,46 +242,52 @@ class ZenohTransport:
         timeout: float = 1.0,
         raise_on_error: bool = False,
     ) -> bytes | None:
-        await self._ensure_reply_subscriber()
         session = await self._require_session()
-        req_id = new_id()
-        reply_key = zenoh_reply_key(self._config.service_id, req_id)
-        command_key = _normalize_zenoh_key(key)
+        query_key = _normalize_zenoh_key(key)
         loop = asyncio.get_running_loop()
-        future: asyncio.Future[_ZenohCommandReply] = loop.create_future()
-        self._pending_replies[req_id] = future
-        envelope = _encode_command_envelope(
-            _ZenohCommandEnvelope(
-                req_id=req_id,
-                actor=self._config.service_id,
-                ts_ms=now_ms(),
-                payload=bytes(payload),
-                reply_key=reply_key,
-            )
-        )
+        future: asyncio.Future[bytes] = loop.create_future()
+
+        def _on_reply(reply: Any) -> None:
+            sample = reply.ok
+            if sample is not None:
+                data = bytes(sample.payload)
+                loop.call_soon_threadsafe(_set_future_result, future, data)
+                return
+            err = reply.err
+            message = "zenoh query returned an error"
+            if err is not None:
+                try:
+                    message = bytes(err.payload).decode("utf-8", errors="replace") or message
+                except (TypeError, ValueError, UnicodeError) as exc:
+                    log.debug("zenoh query error payload decode failed key=%s", query_key, exc_info=exc)
+            loop.call_soon_threadsafe(_set_future_exception, future, RuntimeError(message))
+
         try:
-            await asyncio.to_thread(_put_reliable_control, session, command_key, envelope)
-            reply = await asyncio.wait_for(future, timeout=max(0.001, float(timeout)))
+            await asyncio.to_thread(
+                _query_once,
+                session,
+                query_key,
+                bytes(payload),
+                _on_reply,
+                int(max(1.0, float(timeout) * 1000.0)),
+            )
+            return await asyncio.wait_for(future, timeout=max(0.001, float(timeout)))
         except asyncio.TimeoutError:
             if raise_on_error:
-                raise TimeoutError(f"zenoh command request timed out key={key!r}") from None
+                raise TimeoutError(f"zenoh query request timed out key={key!r}") from None
             return None
-        finally:
-            self._pending_replies.pop(req_id, None)
-
-        if not reply.ok:
+        except RuntimeError:
             if raise_on_error:
-                raise RuntimeError(reply.error or f"zenoh command request failed key={key!r}")
+                raise
             return None
-        return reply.payload
 
-    async def serve_command(self, key: str, handler: RequestHandler) -> _ZenohServeHandle:
+    async def serve_queryable(self, key: str, handler: RequestHandler) -> _ZenohServeHandle:
         session = await self._require_session()
         key_expr = _normalize_zenoh_key(key)
-        declaration = await asyncio.to_thread(session.declare_subscriber, key_expr)
+        declaration = await asyncio.to_thread(_declare_queryable, session, key_expr)
         task = asyncio.create_task(
-            self._pump_command_subscriber(declaration, key_expr=key_expr, handler=handler),
-            name=f"zenoh_cmd_serve:{key_expr}",
+            self._pump_queryable(declaration, key_expr=key_expr, handler=handler),
+            name=f"zenoh_queryable:{key_expr}",
         )
         handle = _ZenohServeHandle(declaration, task)
         self._serve_handles.append(handle)
@@ -362,20 +335,6 @@ class ZenohTransport:
         await asyncio.sleep(_SUBSCRIPTION_SETTLE_S)
         return handle
 
-    async def _ensure_reply_subscriber(self) -> None:
-        async with self._reply_lock:
-            if self._reply_subscriber is not None:
-                return
-            session = await self._require_session()
-            key_expr = zenoh_reply_pattern(self._config.service_id)
-            declaration = await asyncio.to_thread(session.declare_subscriber, key_expr)
-            task = asyncio.create_task(
-                self._pump_reply_subscriber(declaration, key_expr=key_expr),
-                name=f"zenoh_reply:{key_expr}",
-            )
-            self._reply_subscriber = _ZenohSubscriptionHandle(declaration, task)
-            await asyncio.sleep(_SUBSCRIPTION_SETTLE_S)
-
     async def _require_session(self) -> Any:
         if self._session is None:
             await self.connect()
@@ -405,82 +364,29 @@ class ZenohTransport:
                 log.error("zenoh subscriber pump failed key_expr=%s", key_expr, exc_info=exc)
                 await asyncio.sleep(0.05)
 
-    async def _pump_reply_subscriber(self, declaration: Any, *, key_expr: str) -> None:
+    async def _pump_queryable(self, declaration: Any, *, key_expr: str, handler: RequestHandler) -> None:
         while True:
             try:
-                sample = declaration.try_recv()
-                if sample is None:
+                query = declaration.try_recv()
+                if query is None:
                     await asyncio.sleep(0.001)
                     continue
-                reply = _decode_command_reply(bytes(sample.payload))
-                future = self._pending_replies.get(reply.req_id)
-                if future is not None and not future.done():
-                    future.set_result(reply)
-            except asyncio.CancelledError:
-                raise
-            except ValueError as exc:
-                log.error("zenoh command reply decode failed key_expr=%s", key_expr, exc_info=exc)
-                await asyncio.sleep(0.01)
-            except Exception as exc:
-                log.error("zenoh command reply pump failed key_expr=%s", key_expr, exc_info=exc)
-                await asyncio.sleep(0.05)
-
-    async def _pump_command_subscriber(self, declaration: Any, *, key_expr: str, handler: RequestHandler) -> None:
-        while True:
-            try:
-                sample = declaration.try_recv()
-                if sample is None:
-                    await asyncio.sleep(0.001)
-                    continue
-                envelope = _decode_command_envelope(bytes(sample.payload))
+                payload = bytes(query.payload) if query.payload is not None else b""
                 try:
-                    response = await handler(envelope.payload)
+                    response = await handler(payload)
                 except Exception as exc:
-                    log.error("zenoh command handler failed key_expr=%s req_id=%s", key_expr, envelope.req_id, exc_info=exc)
-                    await self._publish_command_reply(
-                        envelope.reply_key,
-                        _ZenohCommandReply(
-                            req_id=envelope.req_id,
-                            ok=False,
-                            payload=b"",
-                            error="command handler failed",
-                        ),
-                    )
+                    log.error("zenoh queryable handler failed key_expr=%s", key_expr, exc_info=exc)
+                    await asyncio.to_thread(_reply_query_error, query, b"query handler failed")
                     continue
                 if response is None:
-                    await self._publish_command_reply(
-                        envelope.reply_key,
-                        _ZenohCommandReply(
-                            req_id=envelope.req_id,
-                            ok=False,
-                            payload=b"",
-                            error="empty response",
-                        ),
-                    )
+                    await asyncio.to_thread(_reply_query_error, query, b"empty response")
                     continue
-                await self._publish_command_reply(
-                    envelope.reply_key,
-                    _ZenohCommandReply(
-                        req_id=envelope.req_id,
-                        ok=True,
-                        payload=bytes(response),
-                        error="",
-                    ),
-                )
+                await asyncio.to_thread(_reply_query_ok, query, bytes(response))
             except asyncio.CancelledError:
                 raise
-            except ValueError as exc:
-                log.error("zenoh command envelope decode failed key_expr=%s", key_expr, exc_info=exc)
-                await asyncio.sleep(0.01)
             except Exception as exc:
-                log.error("zenoh command subscriber pump failed key_expr=%s", key_expr, exc_info=exc)
+                log.error("zenoh queryable pump failed key_expr=%s", key_expr, exc_info=exc)
                 await asyncio.sleep(0.05)
-
-    async def _publish_command_reply(self, reply_key: str | None, reply: _ZenohCommandReply) -> None:
-        if not reply_key:
-            return
-        session = await self._require_session()
-        await asyncio.to_thread(_put_reliable_control, session, reply_key, _encode_command_reply(reply))
 
 def _put_realtime_drop(session: Any, key: str, payload: bytes) -> None:
     try:
@@ -524,6 +430,60 @@ def _put_reliable_control(session: Any, key: str, payload: bytes) -> None:
     )
 
 
+def _declare_queryable(session: Any, key_expr: str) -> Any:
+    return session.declare_queryable(str(key_expr), complete=True)
+
+
+def _query_once(session: Any, key: str, payload: bytes, on_reply: Callable[[Any], None], timeout_ms: int) -> None:
+    try:
+        import zenoh  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise RuntimeError("Zenoh backend requires the `eclipse-zenoh` Python package") from exc
+    session.get(
+        key,
+        on_reply,
+        payload=bytes(payload),
+        encoding=zenoh.Encoding.APPLICATION_OCTET_STREAM,
+        target=zenoh.QueryTarget.BEST_MATCHING,
+        consolidation=zenoh.QueryConsolidation.AUTO,
+        timeout=int(timeout_ms),
+        congestion_control=zenoh.CongestionControl.BLOCK,
+        priority=zenoh.Priority.INTERACTIVE_HIGH,
+        express=True,
+    )
+
+
+def _reply_query_ok(query: Any, payload: bytes) -> None:
+    try:
+        import zenoh  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise RuntimeError("Zenoh backend requires the `eclipse-zenoh` Python package") from exc
+    query.reply(
+        str(query.key_expr),
+        bytes(payload),
+        encoding=zenoh.Encoding.APPLICATION_OCTET_STREAM,
+        express=True,
+    )
+
+
+def _reply_query_error(query: Any, payload: bytes) -> None:
+    try:
+        import zenoh  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise RuntimeError("Zenoh backend requires the `eclipse-zenoh` Python package") from exc
+    query.reply_err(bytes(payload), encoding=zenoh.Encoding.TEXT_PLAIN)
+
+
+def _set_future_result(future: asyncio.Future[bytes], value: bytes) -> None:
+    if not future.done():
+        future.set_result(value)
+
+
+def _set_future_exception(future: asyncio.Future[bytes], exc: BaseException) -> None:
+    if not future.done():
+        future.set_exception(exc)
+
+
 def _normalize_zenoh_key(key: str) -> str:
     text = str(key or "").strip("/")
     if not text:
@@ -564,75 +524,6 @@ def _declare_retained_state_subscriber(session: Any, key_expr: str) -> Any:
         session,
         key_expr,
         history=zenoh.ext.HistoryConfig(detect_late_publishers=True, max_samples=1),
-    )
-
-
-def _encode_command_envelope(envelope: _ZenohCommandEnvelope) -> bytes:
-    return encode_obj(
-        {
-            "v": 1,
-            "reqId": envelope.req_id,
-            "actor": envelope.actor,
-            "tsMs": int(envelope.ts_ms),
-            "payload": envelope.payload,
-            "replyKey": envelope.reply_key or "",
-        }
-    )
-
-
-def _decode_command_envelope(raw: bytes) -> _ZenohCommandEnvelope:
-    payload = decode_obj(raw)
-    req_id = str(payload.get("reqId") or "").strip()
-    if not req_id:
-        raise ValueError("command envelope missing reqId")
-    raw_payload = payload.get("payload")
-    if not isinstance(raw_payload, bytes):
-        raise ValueError("command envelope payload must be bytes")
-    raw_reply_key = payload.get("replyKey")
-    reply_key = str(raw_reply_key).strip() if raw_reply_key else None
-    raw_ts = payload.get("tsMs")
-    try:
-        ts_ms = int(raw_ts or 0)
-    except (TypeError, ValueError):
-        ts_ms = 0
-    return _ZenohCommandEnvelope(
-        req_id=req_id,
-        actor=str(payload.get("actor") or "").strip(),
-        ts_ms=ts_ms,
-        payload=raw_payload,
-        reply_key=reply_key,
-    )
-
-
-def _encode_command_reply(reply: _ZenohCommandReply) -> bytes:
-    return encode_obj(
-        {
-            "v": 1,
-            "reqId": reply.req_id,
-            "ok": bool(reply.ok),
-            "payload": reply.payload,
-            "error": reply.error,
-        }
-    )
-
-
-def _decode_command_reply(raw: bytes) -> _ZenohCommandReply:
-    payload = decode_obj(raw)
-    req_id = str(payload.get("reqId") or "").strip()
-    if not req_id:
-        raise ValueError("command reply missing reqId")
-    raw_payload = payload.get("payload")
-    if raw_payload is None:
-        data = b""
-    elif isinstance(raw_payload, bytes):
-        data = raw_payload
-    else:
-        raise ValueError("command reply payload must be bytes")
-    return _ZenohCommandReply(
-        req_id=req_id,
-        ok=bool(payload.get("ok")),
-        payload=data,
-        error=str(payload.get("error") or ""),
     )
 
 

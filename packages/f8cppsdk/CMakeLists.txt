@@ -9,6 +9,7 @@ add_library(f8cppsdk
   src/time_utils.cpp
   src/f8_naming.cpp
   src/describe_builtins.cpp
+  src/latest_binary_stream_transport.cpp
   src/latest_audio_chunk_transport.cpp
   src/latest_video_frame_transport.cpp
 )

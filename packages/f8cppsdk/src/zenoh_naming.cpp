@@ -101,15 +101,6 @@ std::string zenoh_command_key(const std::string& service_id, const std::string& 
          ensure_token(command, "command");
 }
 
-std::string zenoh_reply_key(const std::string& service_id, const std::string& req_id) {
-  return std::string(kF8Prefix) + "/reply/" + ensure_token(service_id, "service_id") + "/" +
-         ensure_token(req_id, "req_id");
-}
-
-std::string zenoh_reply_pattern(const std::string& service_id) {
-  return std::string(kF8Prefix) + "/reply/" + ensure_token(service_id, "service_id") + "/**";
-}
-
 std::string zenoh_service_liveliness_key(const std::string& service_id) {
   return std::string(kF8Prefix) + "/live/svc/" + ensure_token(service_id, "service_id");
 }

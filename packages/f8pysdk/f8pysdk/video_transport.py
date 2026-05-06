@@ -1,19 +1,13 @@
 from __future__ import annotations
 
-import json
-import logging
 import struct
-import threading
 import time
 from dataclasses import dataclass, field
 from types import TracebackType
 from typing import Any, Protocol
 
-from .zenoh_config import apply_zenoh_shared_memory_config
-from .zenoh_shutdown import close_zenoh_session_best_effort
+from .binary_stream_transport import ZenohLatestBinaryStreamTransport
 
-log = logging.getLogger(__name__)
-_SUBSCRIPTION_SETTLE_S = 0.01
 
 ZENOH_VIDEO_FRAME_MAGIC = 0xF85A1001
 ZENOH_VIDEO_FRAME_SCHEMA_VERSION = 1
@@ -170,23 +164,27 @@ class ZenohLatestVideoFrameTransport:
         self,
         *,
         key_expr: str,
-        session: Any,
+        session: Any | None = None,
         subscriber: Any | None = None,
         publisher: Any | None = None,
+        raw_transport: ZenohLatestBinaryStreamTransport | None = None,
     ) -> None:
         key = str(key_expr or "").strip()
         if not key:
             raise ValueError("key_expr must be non-empty")
         self.key_expr = key
-        self._session = session
-        self._subscriber = subscriber
-        self._publisher = publisher
-        self._closed = False
+        if raw_transport is None:
+            if session is None:
+                raise ValueError("session is required when raw_transport is not provided")
+            raw_transport = ZenohLatestBinaryStreamTransport(
+                key_expr=key,
+                session=session,
+                subscriber=subscriber,
+                publisher=publisher,
+                log_context="video",
+            )
+        self._raw = raw_transport
         self._frame_id = 0
-        self._cv = threading.Condition()
-        self._latest_raw: bytes | None = None
-        self._latest_seq = 0
-        self._delivered_seq = 0
 
     @classmethod
     def open_publisher(
@@ -198,14 +196,15 @@ class ZenohLatestVideoFrameTransport:
         listen: tuple[str, ...] = (),
         shm_pool_bytes: int = 256 * 1024 * 1024,
     ) -> "ZenohLatestVideoFrameTransport":
-        session = _open_zenoh_session(
+        raw = ZenohLatestBinaryStreamTransport.open_publisher(
+            key_expr,
             config_path=config_path,
             connect=connect,
             listen=listen,
             shm_pool_bytes=shm_pool_bytes,
+            log_context="video",
         )
-        publisher = _declare_zenoh_latest_publisher(session, key_expr)
-        return cls(key_expr=key_expr, session=session, publisher=publisher)
+        return cls(key_expr=key_expr, raw_transport=raw)
 
     @classmethod
     def open_subscriber(
@@ -217,20 +216,15 @@ class ZenohLatestVideoFrameTransport:
         listen: tuple[str, ...] = (),
         shm_pool_bytes: int = 256 * 1024 * 1024,
     ) -> "ZenohLatestVideoFrameTransport":
-        session = _open_zenoh_session(
+        raw = ZenohLatestBinaryStreamTransport.open_subscriber(
+            key_expr,
             config_path=config_path,
             connect=connect,
             listen=listen,
             shm_pool_bytes=shm_pool_bytes,
+            log_context="video",
         )
-        transport = cls(key_expr=key_expr, session=session)
-
-        def _on_sample(sample: Any) -> None:
-            transport._on_sample(sample)
-
-        transport._subscriber = session.declare_subscriber(str(key_expr), _on_sample)
-        time.sleep(_SUBSCRIPTION_SETTLE_S)
-        return transport
+        return cls(key_expr=key_expr, raw_transport=raw)
 
     @classmethod
     def open_pubsub(
@@ -242,47 +236,18 @@ class ZenohLatestVideoFrameTransport:
         listen: tuple[str, ...] = (),
         shm_pool_bytes: int = 256 * 1024 * 1024,
     ) -> "ZenohLatestVideoFrameTransport":
-        session = _open_zenoh_session(
+        raw = ZenohLatestBinaryStreamTransport.open_pubsub(
+            key_expr,
             config_path=config_path,
             connect=connect,
             listen=listen,
             shm_pool_bytes=shm_pool_bytes,
+            log_context="video",
         )
-        transport = cls(key_expr=key_expr, session=session)
-
-        def _on_sample(sample: Any) -> None:
-            transport._on_sample(sample)
-
-        transport._subscriber = session.declare_subscriber(str(key_expr), _on_sample)
-        transport._publisher = _declare_zenoh_latest_publisher(session, key_expr)
-        time.sleep(_SUBSCRIPTION_SETTLE_S)
-        return transport
+        return cls(key_expr=key_expr, raw_transport=raw)
 
     def close(self) -> None:
-        with self._cv:
-            if self._closed:
-                return
-            self._closed = True
-            self._latest_raw = None
-            self._cv.notify_all()
-        publisher = self._publisher
-        self._publisher = None
-        if publisher is not None:
-            try:
-                publisher.undeclare()
-            except (RuntimeError, OSError) as exc:
-                log.debug("zenoh video publisher undeclare failed key=%s", self.key_expr, exc_info=exc)
-        subscriber = self._subscriber
-        self._subscriber = None
-        if subscriber is not None:
-            try:
-                subscriber.undeclare()
-            except (RuntimeError, OSError) as exc:
-                log.debug("zenoh video subscriber undeclare failed key=%s", self.key_expr, exc_info=exc)
-        session = self._session
-        self._session = None
-        if session is not None:
-            close_zenoh_session_best_effort(session, context=f"video:{self.key_expr}")
+        self._raw.close()
 
     def publish_frame(
         self,
@@ -294,9 +259,6 @@ class ZenohLatestVideoFrameTransport:
         fmt: int,
         ts_ms: int | None = None,
     ) -> None:
-        session = self._session
-        if self._closed or session is None:
-            raise RuntimeError("zenoh video transport is closed")
         self._frame_id += 1
         raw = encode_zenoh_video_frame(
             width=width,
@@ -307,108 +269,22 @@ class ZenohLatestVideoFrameTransport:
             frame_id=self._frame_id,
             ts_ms=int(ts_ms) if ts_ms is not None else int(time.time() * 1000),
         )
-        try:
-            import zenoh  # type: ignore[import-not-found]
-        except ImportError as exc:
-            raise RuntimeError("Zenoh video transport requires the `eclipse-zenoh` Python package") from exc
-        publisher = self._publisher
-        if publisher is not None:
-            publisher.put(raw, encoding=zenoh.Encoding.APPLICATION_OCTET_STREAM)
-            return
-        session.put(
-            self.key_expr,
-            raw,
-            encoding=zenoh.Encoding.APPLICATION_OCTET_STREAM,
-            congestion_control=zenoh.CongestionControl.DROP,
-            priority=zenoh.Priority.REAL_TIME,
-            express=True,
-        )
+        self._raw.publish_raw(raw)
 
     def poll_latest(self) -> LatestVideoFrame | None:
-        with self._cv:
-            if self._latest_seq == self._delivered_seq or self._latest_raw is None:
-                return None
-            raw = self._latest_raw
-            seq = self._latest_seq
-            self._delivered_seq = seq
+        raw = self._raw.poll_latest_raw()
+        if raw is None:
+            return None
         return decode_zenoh_video_frame(raw)
 
     def wait_latest(self, timeout_ms: int) -> LatestVideoFrame | None:
-        frame = self.poll_latest()
-        if frame is not None:
-            return frame
-        timeout_s = max(0.0, float(int(timeout_ms)) / 1000.0)
-        deadline = time.monotonic() + timeout_s
-        with self._cv:
-            while not self._closed:
-                if self._latest_seq != self._delivered_seq and self._latest_raw is not None:
-                    raw = self._latest_raw
-                    seq = self._latest_seq
-                    self._delivered_seq = seq
-                    return decode_zenoh_video_frame(raw)
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    return None
-                self._cv.wait(timeout=remaining)
-        return None
+        raw = self._raw.wait_latest_raw(timeout_ms)
+        if raw is None:
+            return None
+        return decode_zenoh_video_frame(raw)
 
     def _on_sample(self, sample: Any) -> None:
-        try:
-            raw = bytes(sample.payload)
-        except (TypeError, ValueError) as exc:
-            log.debug("zenoh video sample decode failed key=%s", self.key_expr, exc_info=exc)
-            return
-        with self._cv:
-            if self._closed:
-                return
-            self._latest_raw = raw
-            self._latest_seq += 1
-            self._cv.notify_all()
-
-
-def _open_zenoh_session(
-    *,
-    config_path: str | None,
-    connect: tuple[str, ...],
-    listen: tuple[str, ...],
-    shm_pool_bytes: int,
-) -> Any:
-    try:
-        import zenoh  # type: ignore[import-not-found]
-    except ImportError as exc:
-        raise RuntimeError("Zenoh video transport requires the `eclipse-zenoh` Python package") from exc
-    if config_path:
-        config = zenoh.Config.from_file(str(config_path))
-    else:
-        config = zenoh.Config()
-    connect_items = tuple(str(item).strip() for item in connect if str(item).strip())
-    listen_items = tuple(str(item).strip() for item in listen if str(item).strip())
-    if connect_items:
-        config.insert_json5("connect/endpoints", json.dumps(list(connect_items)))
-    if listen_items:
-        config.insert_json5("listen/endpoints", json.dumps(list(listen_items)))
-    apply_zenoh_shared_memory_config(
-        config,
-        zenoh_module=zenoh,
-        shm_pool_bytes=int(shm_pool_bytes),
-        log_context="video",
-    )
-    return zenoh.open(config)
-
-
-def _declare_zenoh_latest_publisher(session: Any, key_expr: str) -> Any:
-    try:
-        import zenoh  # type: ignore[import-not-found]
-    except ImportError as exc:
-        raise RuntimeError("Zenoh video transport requires the `eclipse-zenoh` Python package") from exc
-    return session.declare_publisher(
-        str(key_expr),
-        encoding=zenoh.Encoding.APPLICATION_OCTET_STREAM,
-        congestion_control=zenoh.CongestionControl.DROP,
-        priority=zenoh.Priority.REAL_TIME,
-        express=True,
-        reliability=zenoh.Reliability.BEST_EFFORT,
-    )
+        self._raw._on_sample(sample)
 
 
 __all__ = [

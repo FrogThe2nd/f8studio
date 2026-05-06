@@ -5,10 +5,10 @@ import uuid
 
 import pytest
 
+from f8pysdk.binary_stream_transport import _declare_zenoh_latest_publisher
 from f8pysdk.video_transport import (
     VIDEO_FORMAT_BGRA32,
     ZenohLatestVideoFrameTransport,
-    _declare_zenoh_latest_publisher,
     decode_zenoh_video_frame,
     encode_zenoh_video_frame,
 )
@@ -78,21 +78,25 @@ def test_zenoh_latest_video_frame_transport_skips_to_latest() -> None:
         width = 2
         height = 2
         pitch = width * 4
-        latest_payload = b""
-        for seq in range(5):
-            latest_payload = bytes(((seq * 17 + i) % 256 for i in range(pitch * height)))
-            publisher.publish_frame(
-                width=width,
-                height=height,
-                pitch=pitch,
-                payload=latest_payload,
-                fmt=VIDEO_FORMAT_BGRA32,
-            )
-
-        deadline = time.monotonic() + 1.0
+        deadline = time.monotonic() + 2.0
         latest_frame = None
+        latest_payload = b""
+        next_publish_at = 0.0
+        seq = 0
         while time.monotonic() < deadline:
-            frame = subscriber.wait_latest(timeout_ms=100)
+            now = time.monotonic()
+            if seq < 5 and now >= next_publish_at:
+                latest_payload = bytes(((seq * 17 + i) % 256 for i in range(pitch * height)))
+                publisher.publish_frame(
+                    width=width,
+                    height=height,
+                    pitch=pitch,
+                    payload=latest_payload,
+                    fmt=VIDEO_FORMAT_BGRA32,
+                )
+                seq += 1
+                next_publish_at = now + 0.02
+            frame = subscriber.wait_latest(timeout_ms=50)
             if frame is None:
                 continue
             if frame.frame_id == 5:

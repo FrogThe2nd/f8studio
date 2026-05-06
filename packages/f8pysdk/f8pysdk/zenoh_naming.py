@@ -43,17 +43,6 @@ def zenoh_command_key(service_id: str, command: str) -> str:
     return f"{_F8_PREFIX}/cmd/svc/{sid}/{cmd}"
 
 
-def zenoh_reply_key(service_id: str, req_id: str) -> str:
-    sid = ensure_token(service_id, label="service_id")
-    rid = ensure_token(req_id, label="req_id")
-    return f"{_F8_PREFIX}/reply/{sid}/{rid}"
-
-
-def zenoh_reply_pattern(service_id: str) -> str:
-    sid = ensure_token(service_id, label="service_id")
-    return f"{_F8_PREFIX}/reply/{sid}/**"
-
-
 def zenoh_service_liveliness_key(service_id: str) -> str:
     sid = ensure_token(service_id, label="service_id")
     return f"{_F8_PREFIX}/live/svc/{sid}"
@@ -125,8 +114,6 @@ __all__ = [
     "zenoh_data_key",
     "zenoh_endpoint_key",
     "zenoh_key_to_state_path",
-    "zenoh_reply_key",
-    "zenoh_reply_pattern",
     "zenoh_service_liveliness_key",
     "zenoh_state_key",
     "zenoh_state_path_key",

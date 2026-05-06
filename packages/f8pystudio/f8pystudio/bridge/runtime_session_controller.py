@@ -25,7 +25,7 @@ _MONITOR_UI_EMIT_INTERVAL_S = 1.0
 _ZENOH_SERVICE_LIVELINESS_PREFIX = "f8/live/svc/"
 
 
-def _is_zenoh_reply_channel_drained(exc: BaseException) -> bool:
+def _is_zenoh_liveliness_reply_channel_drained(exc: BaseException) -> bool:
     return "channel is empty and closed" in str(exc).strip().lower()
 
 
@@ -208,7 +208,7 @@ class RuntimeSessionControllerMixin:
                 try:
                     reply = replies.try_recv()
                 except zenoh.ZError as exc:  # type: ignore[attr-defined]
-                    if _is_zenoh_reply_channel_drained(exc):
+                    if _is_zenoh_liveliness_reply_channel_drained(exc):
                         break
                     raise
                 if reply is None:

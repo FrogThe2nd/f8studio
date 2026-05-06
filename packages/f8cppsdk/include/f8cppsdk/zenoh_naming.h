@@ -9,8 +9,6 @@ std::string zenoh_data_key(const std::string& service_id, const std::string& nod
 std::string zenoh_endpoint_key(const std::string& service_id, const std::string& endpoint);
 std::string zenoh_cmd_key(const std::string& service_id);
 std::string zenoh_command_key(const std::string& service_id, const std::string& command);
-std::string zenoh_reply_key(const std::string& service_id, const std::string& req_id);
-std::string zenoh_reply_pattern(const std::string& service_id);
 std::string zenoh_service_liveliness_key(const std::string& service_id);
 std::string zenoh_studio_liveliness_key(const std::string& studio_service_id);
 std::string zenoh_state_key(const std::string& service_id, const std::string& node_id, const std::string& field);

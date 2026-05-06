@@ -1,28 +1,18 @@
 #include "f8cppsdk/latest_audio_chunk_transport.h"
 
-#include "zenoh_config_internal.h"
+#include "f8cppsdk/latest_binary_stream_transport.h"
 
 #include <chrono>
-#include <condition_variable>
 #include <cstring>
 #include <limits>
-#include <mutex>
 #include <optional>
-#include <thread>
 #include <utility>
 #include <vector>
 
-#include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
-
-#if F8_WITH_ZENOH
-#include <zenoh.hxx>
-#endif
 
 namespace f8::cppsdk {
 namespace {
-
-constexpr std::chrono::milliseconds kSubscriptionSettle{10};
 
 void set_error(std::string* error_message, std::string value) {
   if (error_message != nullptr) {
@@ -76,29 +66,6 @@ bool read_i64_le(const RuntimeBytes& data, std::size_t offset, std::int64_t& out
   out = static_cast<std::int64_t>(value);
   return true;
 }
-
-std::string json_array_for_endpoints(const std::vector<std::string>& endpoints) {
-  return nlohmann::json(endpoints).dump();
-}
-
-#if F8_WITH_ZENOH
-RuntimeBytes payload_to_bytes(const zenoh::Bytes& payload) {
-  return payload.as_vector();
-}
-
-zenoh::Bytes bytes_to_payload(const RuntimeBytes& payload) {
-  return zenoh::Bytes(payload);
-}
-
-zenoh::Session::PutOptions realtime_drop_options() {
-  zenoh::Session::PutOptions options = zenoh::Session::PutOptions::create_default();
-  options.congestion_control = Z_CONGESTION_CONTROL_DROP;
-  options.priority = Z_PRIORITY_REAL_TIME;
-  options.reliability = Z_RELIABILITY_BEST_EFFORT;
-  options.is_express = true;
-  return options;
-}
-#endif
 
 }  // namespace
 
@@ -215,54 +182,14 @@ bool decode_zenoh_audio_chunk(const RuntimeBytes& raw, LatestAudioChunk& out, st
 
 class ZenohLatestAudioChunkPublisher::Impl final {
  public:
+  Impl() : publisher_("audio") {}
+
   bool open(const RuntimeBackendConfig& config, const std::string& key_expr) {
-#if F8_WITH_ZENOH
-    std::lock_guard<std::mutex> lock(mu_);
-    close_locked();
-
-    RuntimeBackendConfig normalized = normalize_runtime_backend_config(config);
-    const std::string key = trim_runtime_string(key_expr);
-    if (key.empty()) {
-      spdlog::error("zenoh audio publisher requires a non-empty key expression");
-      return false;
-    }
-
-    try {
-      zenoh::Config zenoh_config = normalized.zenoh_config_path.empty()
-                                       ? zenoh::Config::create_default()
-                                       : zenoh::Config::from_file(normalized.zenoh_config_path);
-      if (!normalized.zenoh_connect.empty()) {
-        zenoh_config.insert_json5("connect/endpoints", json_array_for_endpoints(normalized.zenoh_connect));
-      }
-      if (!normalized.zenoh_listen.empty()) {
-        zenoh_config.insert_json5("listen/endpoints", json_array_for_endpoints(normalized.zenoh_listen));
-      }
-      zenoh_internal::apply_shared_memory_config(zenoh_config, normalized.zenoh_shm_pool_bytes, key);
-
-      session_ = std::make_unique<zenoh::Session>(zenoh::Session::open(std::move(zenoh_config)));
-      key_expr_ = key;
-      publish_failure_reported_ = false;
-      return true;
-    } catch (const std::exception& exc) {
-      spdlog::error("zenoh audio publisher open failed key={}: {}", key, exc.what());
-      close_locked();
-      return false;
-    } catch (...) {
-      spdlog::error("zenoh audio publisher open failed key={}: unknown error", key);
-      close_locked();
-      return false;
-    }
-#else
-    (void)config;
-    (void)key_expr;
-    spdlog::error("Zenoh audio publisher requested but f8cppsdk was built without F8_WITH_ZENOH");
-    return false;
-#endif
+    return publisher_.open(config, key_expr);
   }
 
   void close() {
-    std::lock_guard<std::mutex> lock(mu_);
-    close_locked();
+    publisher_.close();
   }
 
   bool publish_chunk(const AudioChunkView& chunk) {
@@ -272,272 +199,87 @@ class ZenohLatestAudioChunkPublisher::Impl final {
       report_publish_failure("encode failed: " + error);
       return false;
     }
-
-#if F8_WITH_ZENOH
-    try {
-      std::lock_guard<std::mutex> lock(mu_);
-      if (!session_ || key_expr_.empty()) {
-        return false;
-      }
-      session_->put(zenoh::KeyExpr(key_expr_), bytes_to_payload(encoded), realtime_drop_options());
-      publish_failure_reported_ = false;
-      return true;
-    } catch (const std::exception& exc) {
-      report_publish_failure(exc.what());
-      return false;
-    } catch (...) {
-      report_publish_failure("unknown error");
-      return false;
-    }
-#else
-    (void)encoded;
-    report_publish_failure("f8cppsdk was built without F8_WITH_ZENOH");
-    return false;
-#endif
+    const bool ok = publisher_.publish_bytes(encoded);
+    publish_failure_reported_ = !ok;
+    return ok;
   }
 
   bool valid() const {
-    std::lock_guard<std::mutex> lock(mu_);
-#if F8_WITH_ZENOH
-    return session_ != nullptr && !key_expr_.empty();
-#else
-    return false;
-#endif
+    return publisher_.valid();
   }
 
   std::string key_expr() const {
-    std::lock_guard<std::mutex> lock(mu_);
-    return key_expr_;
+    return publisher_.key_expr();
   }
 
  private:
-  void close_locked() {
-#if F8_WITH_ZENOH
-    if (session_) {
-      try {
-        session_->close();
-      } catch (const std::exception& exc) {
-        spdlog::warn("zenoh audio publisher session close failed key={}: {}", key_expr_, exc.what());
-      } catch (...) {
-        spdlog::warn("zenoh audio publisher session close failed key={}: unknown error", key_expr_);
-      }
-    }
-    session_.reset();
-#endif
-    key_expr_.clear();
-    publish_failure_reported_ = false;
-  }
-
   void report_publish_failure(const std::string& message) {
-    std::lock_guard<std::mutex> lock(mu_);
     if (publish_failure_reported_) {
       return;
     }
     publish_failure_reported_ = true;
-    spdlog::error("zenoh audio publish failed key={}: {}", key_expr_, message);
+    spdlog::error("zenoh audio publish failed key={}: {}", publisher_.key_expr(), message);
   }
 
-  mutable std::mutex mu_;
-  std::string key_expr_;
+  ZenohLatestBinaryStreamPublisher publisher_;
   bool publish_failure_reported_ = false;
-#if F8_WITH_ZENOH
-  std::unique_ptr<zenoh::Session> session_;
-#endif
 };
 
 class ZenohLatestAudioChunkSubscriber::Impl final {
  public:
+  Impl() : subscriber_("audio") {}
+
   bool open(const RuntimeBackendConfig& config, const std::string& key_expr) {
-#if F8_WITH_ZENOH
-    std::lock_guard<std::mutex> lock(mu_);
-    close_locked();
-
-    RuntimeBackendConfig normalized = normalize_runtime_backend_config(config);
-    const std::string key = trim_runtime_string(key_expr);
-    if (key.empty()) {
-      spdlog::error("zenoh audio subscriber requires a non-empty key expression");
-      return false;
-    }
-
-    try {
-      zenoh::Config zenoh_config = normalized.zenoh_config_path.empty()
-                                       ? zenoh::Config::create_default()
-                                       : zenoh::Config::from_file(normalized.zenoh_config_path);
-      if (!normalized.zenoh_connect.empty()) {
-        zenoh_config.insert_json5("connect/endpoints", json_array_for_endpoints(normalized.zenoh_connect));
-      }
-      if (!normalized.zenoh_listen.empty()) {
-        zenoh_config.insert_json5("listen/endpoints", json_array_for_endpoints(normalized.zenoh_listen));
-      }
-      zenoh_internal::apply_shared_memory_config(zenoh_config, normalized.zenoh_shm_pool_bytes, key);
-
-      session_ = std::make_unique<zenoh::Session>(zenoh::Session::open(std::move(zenoh_config)));
-      key_expr_ = key;
-      closed_ = false;
-      latest_raw_.clear();
-      latest_seq_ = 0;
-      delivered_seq_ = 0;
-      decode_failure_reported_ = false;
-      subscriber_ = session_->declare_subscriber(
-          zenoh::KeyExpr(key_expr_),
-          [this](zenoh::Sample& sample) {
-            try {
-              RuntimeBytes raw = payload_to_bytes(sample.get_payload());
-              {
-                std::lock_guard<std::mutex> sample_lock(mu_);
-                if (closed_) {
-                  return;
-                }
-                latest_raw_ = std::move(raw);
-                ++latest_seq_;
-              }
-              cv_.notify_all();
-            } catch (const std::exception& exc) {
-              spdlog::error("zenoh audio subscriber callback failed key={}: {}", key_expr_, exc.what());
-            } catch (...) {
-              spdlog::error("zenoh audio subscriber callback failed key={}: unknown error", key_expr_);
-            }
-          },
-          []() {});
-      std::this_thread::sleep_for(kSubscriptionSettle);
-      return true;
-    } catch (const std::exception& exc) {
-      spdlog::error("zenoh audio subscriber open failed key={}: {}", key, exc.what());
-      close_locked();
-      return false;
-    } catch (...) {
-      spdlog::error("zenoh audio subscriber open failed key={}: unknown error", key);
-      close_locked();
-      return false;
-    }
-#else
-    (void)config;
-    (void)key_expr;
-    spdlog::error("Zenoh audio subscriber requested but f8cppsdk was built without F8_WITH_ZENOH");
-    return false;
-#endif
+    decode_failure_reported_ = false;
+    return subscriber_.open(config, key_expr);
   }
 
   void close() {
-    std::lock_guard<std::mutex> lock(mu_);
-    close_locked();
-    cv_.notify_all();
-  }
-
-  std::optional<LatestAudioChunk> poll_latest() {
-    RuntimeBytes raw;
-    {
-      std::lock_guard<std::mutex> lock(mu_);
-      if (latest_seq_ == delivered_seq_ || latest_raw_.empty()) {
-        return std::nullopt;
-      }
-      raw = std::move(latest_raw_);
-      latest_raw_.clear();
-      delivered_seq_ = latest_seq_;
-    }
-    return decode_latest(raw);
-  }
-
-  std::optional<LatestAudioChunk> wait_latest(std::chrono::milliseconds timeout) {
-    if (auto chunk = poll_latest()) {
-      return chunk;
-    }
-    if (timeout.count() <= 0) {
-      return std::nullopt;
-    }
-
-    RuntimeBytes raw;
-    {
-      std::unique_lock<std::mutex> lock(mu_);
-      const bool ready = cv_.wait_for(lock, timeout, [this]() {
-        return closed_ || (latest_seq_ != delivered_seq_ && !latest_raw_.empty());
-      });
-      if (!ready || closed_ || latest_seq_ == delivered_seq_ || latest_raw_.empty()) {
-        return std::nullopt;
-      }
-      raw = std::move(latest_raw_);
-      latest_raw_.clear();
-      delivered_seq_ = latest_seq_;
-    }
-    return decode_latest(raw);
-  }
-
-  bool valid() const {
-    std::lock_guard<std::mutex> lock(mu_);
-#if F8_WITH_ZENOH
-    return session_ != nullptr && subscriber_.has_value() && !key_expr_.empty() && !closed_;
-#else
-    return false;
-#endif
-  }
-
-  std::string key_expr() const {
-    std::lock_guard<std::mutex> lock(mu_);
-    return key_expr_;
-  }
-
- private:
-  void close_locked() {
-#if F8_WITH_ZENOH
-    if (subscriber_.has_value()) {
-      try {
-        std::move(*subscriber_).undeclare();
-      } catch (const std::exception& exc) {
-        spdlog::warn("zenoh audio subscriber undeclare failed key={}: {}", key_expr_, exc.what());
-      } catch (...) {
-        spdlog::warn("zenoh audio subscriber undeclare failed key={}: unknown error", key_expr_);
-      }
-      subscriber_.reset();
-    }
-    if (session_) {
-      try {
-        session_->close();
-      } catch (const std::exception& exc) {
-        spdlog::warn("zenoh audio subscriber session close failed key={}: {}", key_expr_, exc.what());
-      } catch (...) {
-        spdlog::warn("zenoh audio subscriber session close failed key={}: unknown error", key_expr_);
-      }
-    }
-    session_.reset();
-#endif
-    closed_ = true;
-    key_expr_.clear();
-    latest_raw_.clear();
-    latest_seq_ = 0;
-    delivered_seq_ = 0;
+    subscriber_.close();
     decode_failure_reported_ = false;
   }
 
+  std::optional<LatestAudioChunk> poll_latest() {
+    std::optional<RuntimeBytes> raw = subscriber_.poll_latest();
+    if (!raw.has_value()) {
+      return std::nullopt;
+    }
+    return decode_latest(*raw);
+  }
+
+  std::optional<LatestAudioChunk> wait_latest(std::chrono::milliseconds timeout) {
+    std::optional<RuntimeBytes> raw = subscriber_.wait_latest(timeout);
+    if (!raw.has_value()) {
+      return std::nullopt;
+    }
+    return decode_latest(*raw);
+  }
+
+  bool valid() const {
+    return subscriber_.valid();
+  }
+
+  std::string key_expr() const {
+    return subscriber_.key_expr();
+  }
+
+ private:
   std::optional<LatestAudioChunk> decode_latest(const RuntimeBytes& raw) {
     LatestAudioChunk chunk;
     std::string error;
     if (!decode_zenoh_audio_chunk(raw, chunk, &error)) {
-      std::lock_guard<std::mutex> lock(mu_);
       if (!decode_failure_reported_) {
         decode_failure_reported_ = true;
-        spdlog::error("zenoh audio chunk decode failed key={}: {}", key_expr_, error);
+        spdlog::error("zenoh audio chunk decode failed key={}: {}", subscriber_.key_expr(), error);
       }
       return std::nullopt;
     }
-    {
-      std::lock_guard<std::mutex> lock(mu_);
-      decode_failure_reported_ = false;
-    }
+    decode_failure_reported_ = false;
     return chunk;
   }
 
-  mutable std::mutex mu_;
-  std::condition_variable cv_;
-  std::string key_expr_;
-  bool closed_ = true;
-  RuntimeBytes latest_raw_;
-  std::uint64_t latest_seq_ = 0;
-  std::uint64_t delivered_seq_ = 0;
+  ZenohLatestBinaryStreamSubscriber subscriber_;
   bool decode_failure_reported_ = false;
-#if F8_WITH_ZENOH
-  std::unique_ptr<zenoh::Session> session_;
-  std::optional<zenoh::Subscriber<void>> subscriber_;
-#endif
 };
 
 ZenohLatestAudioChunkPublisher::ZenohLatestAudioChunkPublisher() : impl_(std::make_unique<Impl>()) {}
