@@ -14,8 +14,8 @@ class _FakeRequester:
         self._response_payload = response_payload
         self.requests: list[tuple[str, bytes, float]] = []
 
-    async def request(self, subject: str, payload: bytes, timeout: float) -> Any:
-        self.requests.append((str(subject), bytes(payload), float(timeout)))
+    async def request(self, key: str, payload: bytes, timeout: float) -> Any:
+        self.requests.append((str(key), bytes(payload), float(timeout)))
         return SimpleNamespace(data=encode_obj(self._response_payload))
 
 

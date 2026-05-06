@@ -387,10 +387,10 @@ class RuntimeSessionControllerMixin:
             try:
                 transport = await self._ensure_runtime_transport()
 
-                async def _on_monitor_sample(_subject: str, payload: bytes) -> None:
+                async def _on_monitor_sample(_key: str, payload: bytes) -> None:
                     await _on_monitor_payload(bytes(payload))
 
-                self._monitor_sub = await transport.subscribe("svc.*.nodes.*.data.monitor", cb=_on_monitor_sample)
+                self._monitor_sub = await transport.subscribe("f8/svc/*/nodes/*/data/monitor", cb=_on_monitor_sample)
             except Exception as exc:
                 self._report_exception("subscribe monitor stream failed", exc)
 

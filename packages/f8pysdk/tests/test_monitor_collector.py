@@ -13,6 +13,7 @@ if ROOT not in sys.path:
 
 from f8pysdk import monitoring as monitoring_module  # noqa: E402
 from f8pysdk.codec import decode_obj, dump_json  # noqa: E402
+from f8pysdk.f8_naming import data_key  # noqa: E402
 from f8pysdk.monitoring import MonitorCollector, MonitorCollectorConfig  # noqa: E402
 from f8pysdk.time_utils import now_ms  # noqa: E402
 
@@ -21,8 +22,8 @@ class _FakeTransport:
     def __init__(self) -> None:
         self.published: list[tuple[str, bytes]] = []
 
-    async def publish(self, subject: str, payload: bytes) -> None:
-        self.published.append((str(subject), bytes(payload)))
+    async def publish(self, key: str, payload: bytes) -> None:
+        self.published.append((str(key), bytes(payload)))
 
 
 class _FakeDataRouter:
@@ -101,8 +102,8 @@ class MonitorCollectorTests(unittest.IsolatedAsyncioTestCase):
 
         await collector._publish_snapshot(snapshot)
         self.assertEqual(len(bus._transport.published), 1)
-        subject, raw = bus._transport.published[0]
-        self.assertIn(".monitor", subject)
+        key, raw = bus._transport.published[0]
+        self.assertEqual(key, data_key("svcA", from_node_id="svcA", port_id="monitor"))
         envelope = decode_obj(raw)
         self.assertEqual(envelope.get("value", {}).get("schemaVersion"), "f8monitor/1")
 
