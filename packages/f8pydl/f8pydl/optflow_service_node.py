@@ -27,6 +27,9 @@ from .video_frame_source import (
 from .weights_downloader import ensure_onnx_file, onnx_file_matches_sha256
 
 
+_MISSING_VIDEO_INPUT_GRACE_S = 2.0
+
+
 def _default_weights_dir() -> Path:
     candidates: list[Path] = []
     try:
@@ -257,6 +260,7 @@ class OnnxOptflowServiceNode(ServiceNode):
         self._last_error_repeats = 0
         self._model_index_warning = ""
         self._runtime_warning = ""
+        self._missing_input_since_monotonic: float | None = None
 
         self._last_processed_frame_id: int | None = None
         self._last_infer_frame_id: int | None = None
@@ -492,6 +496,7 @@ class OnnxOptflowServiceNode(ServiceNode):
         self._dup_skipped_since_last_processed = 0
 
     async def _clear_missing_input_error(self) -> None:
+        self._missing_input_since_monotonic = None
         if self._last_error in (
             "missing video data input",
         ):
@@ -499,6 +504,17 @@ class OnnxOptflowServiceNode(ServiceNode):
             return
         if not self._last_error:
             await self.clear_error()
+
+    async def _handle_missing_input_stream_key(self) -> None:
+        now = time.monotonic()
+        missing_since = self._missing_input_since_monotonic
+        if missing_since is None:
+            self._missing_input_since_monotonic = now
+            await asyncio.sleep(0.05)
+            return
+        if (float(now) - float(missing_since)) >= _MISSING_VIDEO_INPUT_GRACE_S:
+            await self._set_last_error("missing video data input")
+        await asyncio.sleep(0.05)
 
     def _resolve_input_stream_key(self) -> str:
         return self.input_zenoh_key("video")
@@ -672,9 +688,10 @@ class OnnxOptflowServiceNode(ServiceNode):
 
                 input_stream_key = self._resolve_input_stream_key()
                 if not input_stream_key:
-                    await self._set_last_error("missing video data input")
-                    await asyncio.sleep(0.05)
+                    await self._handle_missing_input_stream_key()
                     continue
+                if self._missing_input_since_monotonic is not None:
+                    await self._clear_missing_input_error()
 
                 try:
                     await self._ensure_runtime()

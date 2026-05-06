@@ -1,6 +1,7 @@
 import asyncio
 import os
 import sys
+import time
 import unittest
 from types import SimpleNamespace
 from typing import Any
@@ -161,6 +162,36 @@ class OptflowServiceNodeErrorTests(unittest.IsolatedAsyncioTestCase):
             await task
 
         self.assertEqual(bus.errors, [])
+
+    async def test_missing_input_stream_key_has_startup_grace_period(self) -> None:
+        node = OnnxOptflowServiceNode(
+            node_id="optflowGrace",
+            node=SimpleNamespace(stateFields=[]),
+            initial_state=None,
+            service_class="f8.dl.optflow",
+            allowed_tasks={"optflow_neuflowv2"},
+        )
+        node._bus = _BusStub()
+
+        await node._handle_missing_input_stream_key()
+
+        self.assertEqual(node._bus.errors, [])
+
+    async def test_missing_input_stream_key_reports_after_grace_period(self) -> None:
+        node = OnnxOptflowServiceNode(
+            node_id="optflowMissing",
+            node=SimpleNamespace(stateFields=[]),
+            initial_state=None,
+            service_class="f8.dl.optflow",
+            allowed_tasks={"optflow_neuflowv2"},
+        )
+        bus = _BusStub()
+        node._bus = bus
+        node._missing_input_since_monotonic = time.monotonic() - 3.0
+
+        await node._handle_missing_input_stream_key()
+
+        self.assertEqual(bus.errors, [("optflowMissing", "DL_OPTFLOW_RUNTIME", "missing video data input")])
 
     async def test_attach_uses_service_id_for_flow_zenoh_key(self) -> None:
         bus = ServiceBus(ServiceBusConfig(service_id="dl_service", bus_backend="mem"))

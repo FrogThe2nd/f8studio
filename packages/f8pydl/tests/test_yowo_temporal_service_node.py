@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 import unittest
@@ -17,6 +18,26 @@ for p in (PKG_PYDL, PKG_SDK):
 
 
 from f8pydl.service_node import OnnxVisionServiceNode  # noqa: E402
+
+
+class _BusStub:
+    def __init__(self) -> None:
+        self.errors: list[tuple[str, str, str]] = []
+
+    def report_error(
+        self,
+        node_id: str,
+        code: str,
+        message: str,
+        severity: str = "error",
+        fingerprint: str | None = None,
+        ts_ms: int | None = None,
+    ) -> None:
+        del severity, fingerprint, ts_ms
+        self.errors.append((str(node_id), str(code), str(message)))
+
+    def clear_error(self, node_id: str, fingerprint: str | None = None, ts_ms: int | None = None) -> None:
+        del node_id, fingerprint, ts_ms
 
 
 @dataclass(frozen=True)
@@ -137,6 +158,44 @@ class YowoTemporalServiceNodeTests(unittest.TestCase):
         self.assertEqual(payload["frameId"], 9)
         self.assertEqual(payload["detections"][0]["cls"], "insertive_actor")
         self.assertEqual(payload["detections"][0]["bbox"], [10, 20, 100, 120])
+
+
+class OnnxVisionServiceNodeLoopTests(unittest.IsolatedAsyncioTestCase):
+    async def test_loop_retries_when_runtime_is_reset_after_ensure(self) -> None:
+        class _RuntimeResetNode(OnnxVisionServiceNode):
+            async def _ensure_config_loaded(self) -> None:
+                return None
+
+            async def _ensure_runtime(self) -> bool:
+                self._det_runtime = None
+                self._temporal_det_runtime = None
+                self._cls_runtime = None
+                return True
+
+            def _ensure_video_source(self) -> Any:
+                raise AssertionError("video source should not be opened without runtime")
+
+        bus = _BusStub()
+        node = _RuntimeResetNode(
+            node_id="visionRace",
+            node=SimpleNamespace(stateFields=[]),
+            initial_state=None,
+            service_class="f8.dl.detector",
+            service_task="detector",
+            output_port="detections",
+            allowed_tasks={"yolo_det"},
+        )
+        node._bus = bus
+
+        task = asyncio.create_task(node._loop())
+        await asyncio.sleep(0.08)
+        if task.done():
+            task.result()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
+        self.assertEqual(bus.errors, [])
 
 
 if __name__ == "__main__":

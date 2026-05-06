@@ -779,6 +779,13 @@ class OnnxVisionServiceNode(ServiceNode):
                     await asyncio.sleep(0.1)
                     continue
 
+                temporal_runtime = self._temporal_det_runtime
+                det_runtime = self._det_runtime
+                cls_runtime = self._cls_runtime
+                if temporal_runtime is None and det_runtime is None and cls_runtime is None:
+                    await asyncio.sleep(0.05)
+                    continue
+
                 source = self._ensure_video_source()
                 video_stream_key = self._resolve_video_stream_key()
                 if not video_stream_key:
@@ -837,8 +844,8 @@ class OnnxVisionServiceNode(ServiceNode):
                     frame_bgr = bgra[:, :, 0:3]
 
                     t_infer0 = time.perf_counter()
-                    if self._temporal_det_runtime is not None:
-                        prepared = self._temporal_det_runtime.prepare_frame(frame_bgr)
+                    if temporal_runtime is not None:
+                        prepared = temporal_runtime.prepare_frame(frame_bgr)
                         self._append_temporal_frame(
                             prepared_frame=prepared,
                             frame_id=frame_id_seen,
@@ -849,7 +856,7 @@ class OnnxVisionServiceNode(ServiceNode):
                         if not self._should_infer_temporal():
                             continue
                         sequence = self._build_temporal_sequence()
-                        detections, _meta = self._temporal_det_runtime.infer_sequence(
+                        detections, _meta = temporal_runtime.infer_sequence(
                             sequence,
                             frame_size_hw=(height, width),
                         )
@@ -861,8 +868,8 @@ class OnnxVisionServiceNode(ServiceNode):
                             detections=detections,
                         )
                         await self.emit("detections", payload_out, ts_ms=int(frame.ts_ms))
-                    elif self._det_runtime is not None:
-                        detections, _meta = self._det_runtime.infer(frame_bgr)
+                    elif det_runtime is not None:
+                        detections, _meta = det_runtime.infer(frame_bgr)
                         payload_out = self._build_detection_payload(
                             width=width,
                             height=height,
@@ -871,16 +878,14 @@ class OnnxVisionServiceNode(ServiceNode):
                             detections=detections,
                         )
                         await self.emit("detections", payload_out, ts_ms=int(frame.ts_ms))
-                    elif self._cls_runtime is not None:
-                        topk, _meta = self._cls_runtime.infer(frame_bgr, top_k=self._top_k)
+                    elif cls_runtime is not None:
+                        topk, _meta = cls_runtime.infer(frame_bgr, top_k=self._top_k)
                         payload_out = self._build_classification_payload(
                             frame_id=frame_id_seen,
                             ts_ms=int(frame.ts_ms),
                             topk=topk,
                         )
                         await self.emit("classifications", payload_out, ts_ms=int(frame.ts_ms))
-                    else:
-                        raise RuntimeError("Inference runtime is not initialized.")
                     t_infer1 = time.perf_counter()
                 finally:
                     frame.release()
