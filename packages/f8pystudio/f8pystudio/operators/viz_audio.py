@@ -5,15 +5,12 @@ import time
 from typing import Any
 
 from f8pysdk.specs import (
-    F8DataPortDelivery,
-    F8DataPortPayloadKind,
-    F8DataPortSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
     F8StateAccess,
     F8StateSpec,
-    audio_chunk_schema,
+    audio_chunk_port,
     boolean_schema,
     integer_schema,
 )
@@ -48,12 +45,9 @@ class VizAudioRuntimeNode(OperatorNode):
         description="Display waveform from Zenoh latest-audio streams.",
         tags=["ui", "zenoh", "audio", "viewer", "waveform"],
         dataInPorts=[
-            F8DataPortSpec(
+            audio_chunk_port(
                 name="audio",
                 description="Input audio chunk stream.",
-                valueSchema=audio_chunk_schema(),
-                payloadKind=F8DataPortPayloadKind.audio_chunk,
-                delivery=F8DataPortDelivery.latest,
                 required=True,
             ),
         ],

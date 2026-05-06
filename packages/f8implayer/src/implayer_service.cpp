@@ -50,8 +50,8 @@ using f8::cppsdk::describe::schema_number;
 using f8::cppsdk::describe::schema_object;
 using f8::cppsdk::describe::schema_string;
 using f8::cppsdk::describe::schema_string_enum;
-using f8::cppsdk::describe::schema_video_frame;
 using f8::cppsdk::describe::state_field;
+using f8::cppsdk::describe::video_frame_port;
 
 namespace {
 
@@ -2437,13 +2437,7 @@ json ImPlayerService::describe() {
   });
 
   service["dataOutPorts"] = json::array({
-      json{{"name", "video"},
-           {"valueSchema", schema_video_frame()},
-           {"description", "Decoded video frame stream."},
-           {"payloadKind", "video_frame"},
-           {"delivery", "latest"},
-           {"required", true},
-           {"showOnNode", true}},
+      video_frame_port("video", "Decoded video frame stream."),
       json{{"name", "playback"},
            {"valueSchema", schema_object(json{{"videoId", schema_string()},
                                               {"position", schema_number()},

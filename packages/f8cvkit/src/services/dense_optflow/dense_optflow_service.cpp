@@ -24,8 +24,8 @@ using f8::cppsdk::describe::schema_integer;
 using f8::cppsdk::describe::schema_number;
 using f8::cppsdk::describe::schema_object;
 using f8::cppsdk::describe::schema_string_enum;
-using f8::cppsdk::describe::schema_video_frame;
 using f8::cppsdk::describe::state_field;
+using f8::cppsdk::describe::video_frame_port;
 
 namespace {
 
@@ -528,22 +528,10 @@ json DenseOptflowService::describe() {
   });
   service["commands"] = json::array();
   service["dataInPorts"] = json::array({
-      json{{"name", "video"},
-           {"valueSchema", schema_video_frame()},
-           {"description", "Input video frame stream."},
-           {"payloadKind", "video_frame"},
-           {"delivery", "latest"},
-           {"required", true},
-           {"showOnNode", true}},
+      video_frame_port("video", "Input video frame stream."),
   });
   service["dataOutPorts"] = json::array({
-      json{{"name", "flow"},
-           {"valueSchema", schema_video_frame()},
-           {"description", "Dense optical-flow frame stream."},
-           {"payloadKind", "video_frame"},
-           {"delivery", "latest"},
-           {"required", true},
-           {"showOnNode", true}},
+      video_frame_port("flow", "Dense optical-flow frame stream."),
   });
 
   json out;

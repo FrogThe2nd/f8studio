@@ -2,6 +2,7 @@
 
 #include <initializer_list>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace f8::cppsdk::describe {
@@ -83,7 +84,7 @@ json schema_array(const json& item_schema) {
   return arr;
 }
 
-json schema_video_frame() {
+json schema_video_frame_metadata() {
   json obj = schema_object(
       json{{"schemaVersion", schema_integer(1, 1, 1)},
            {"format", schema_string_enum({"bgra32", "bgr24", "flow2_f16", "scalar1_f32"})},
@@ -93,11 +94,18 @@ json schema_video_frame() {
            {"frameId", schema_integer()},
            {"tsMs", schema_integer()}},
       json::array({"schemaVersion", "format", "width", "height", "pitch", "frameId", "tsMs"}));
-  obj["$comment"] = "f8.payloadKind=video_frame";
+  obj["title"] = "F8 Video Frame Stream Metadata";
+  obj["description"] =
+      "Decoded metadata for a video_frame data stream. Frame bytes are carried by the runtime stream envelope, not by "
+      "this JSON object.";
   return obj;
 }
 
-json schema_audio_chunk() {
+json schema_video_frame() {
+  return schema_video_frame_metadata();
+}
+
+json schema_audio_chunk_metadata() {
   json obj = schema_object(
       json{{"schemaVersion", schema_integer(1, 1, 1)},
            {"format", schema_string_enum({"f32le"})},
@@ -110,8 +118,65 @@ json schema_audio_chunk() {
            {"tsMs", schema_integer()}},
       json::array({"schemaVersion", "format", "sampleRate", "channels", "frames", "bytesPerFrame", "seq",
                    "frameIndex", "tsMs"}));
-  obj["$comment"] = "f8.payloadKind=audio_chunk";
+  obj["title"] = "F8 Audio Chunk Stream Metadata";
+  obj["description"] =
+      "Decoded metadata for an audio_chunk data stream. PCM bytes are carried by the runtime stream envelope, not by "
+      "this JSON object.";
   return obj;
+}
+
+json schema_audio_chunk() {
+  return schema_audio_chunk_metadata();
+}
+
+json data_stream(std::string delivery, std::string reliability, std::string congestion, std::string priority) {
+  json stream;
+  stream["delivery"] = std::move(delivery);
+  stream["reliability"] = std::move(reliability);
+  stream["congestion"] = std::move(congestion);
+  stream["priority"] = std::move(priority);
+  return stream;
+}
+
+json data_port(std::string name, const json& value_schema, std::string payload_kind, std::string delivery,
+               std::string description, bool required, bool show_on_node, const json& metadata_schema,
+               const std::vector<std::string>& formats, std::string reliability, std::string congestion,
+               std::string priority) {
+  json payload;
+  payload["kind"] = payload_kind;
+  payload["schemaVersion"] = 1;
+  payload["formats"] = formats;
+  if (payload_kind == "json") {
+    payload["valueSchema"] = value_schema;
+  } else {
+    payload["metadataSchema"] = metadata_schema.is_null() ? value_schema : metadata_schema;
+  }
+
+  json port;
+  port["name"] = std::move(name);
+  port["valueSchema"] = value_schema;
+  port["payload"] = std::move(payload);
+  port["stream"] = data_stream(delivery, std::move(reliability), std::move(congestion), std::move(priority));
+  port["payloadKind"] = payload_kind;
+  port["delivery"] = std::move(delivery);
+  port["required"] = required;
+  port["showOnNode"] = show_on_node;
+  if (!description.empty()) {
+    port["description"] = std::move(description);
+  }
+  return port;
+}
+
+json video_frame_port(std::string name, std::string description, bool required) {
+  const json metadata = schema_video_frame_metadata();
+  return data_port(std::move(name), metadata, "video_frame", "latest", std::move(description), required, true, metadata,
+                   {"bgra32", "bgr24", "flow2_f16", "scalar1_f32"}, "best_effort", "drop", "real_time");
+}
+
+json audio_chunk_port(std::string name, std::string description, bool required) {
+  const json metadata = schema_audio_chunk_metadata();
+  return data_port(std::move(name), metadata, "audio_chunk", "latest", std::move(description), required, true, metadata,
+                   {"f32le"}, "best_effort", "drop", "real_time");
 }
 
 json state_field(std::string name, const json& value_schema, std::string access, std::string label,

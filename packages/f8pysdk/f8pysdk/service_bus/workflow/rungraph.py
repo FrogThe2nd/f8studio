@@ -60,6 +60,13 @@ def _payload_kind_text(value: object) -> str:
     return str(value or "").strip().lower() or "json"
 
 
+def _port_payload_kind_text(port: F8DataPortSpec) -> str:
+    payload = port.payload
+    if payload is not None and not _is_unset(payload):
+        return _payload_kind_text(payload.kind)
+    return _payload_kind_text(port.payloadKind)
+
+
 def _edge_from_node_id(edge: F8Edge) -> str:
     node_id = "" if _is_unset(edge.fromOperatorId) else str(edge.fromOperatorId or "").strip()
     if node_id:
@@ -104,10 +111,10 @@ def _edge_uses_stream_payload(graph: F8RuntimeGraph, edge: F8Edge) -> bool:
     from_node = _find_runtime_node(graph, from_node_id) if from_node_id else None
     to_node = _find_runtime_node(graph, to_node_id) if to_node_id else None
     from_port = _find_data_port(from_node.dataOutPorts, str(edge.fromPort)) if from_node is not None else None
-    if from_port is not None and _payload_kind_text(from_port.payloadKind) in _STREAM_PAYLOAD_KINDS:
+    if from_port is not None and _port_payload_kind_text(from_port) in _STREAM_PAYLOAD_KINDS:
         return True
     to_port = _find_data_port(to_node.dataInPorts, str(edge.toPort)) if to_node is not None else None
-    if to_port is not None and _payload_kind_text(to_port.payloadKind) in _STREAM_PAYLOAD_KINDS:
+    if to_port is not None and _port_payload_kind_text(to_port) in _STREAM_PAYLOAD_KINDS:
         return True
     return False
 

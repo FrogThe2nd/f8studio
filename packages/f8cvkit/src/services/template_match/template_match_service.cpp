@@ -25,8 +25,8 @@ using f8::cppsdk::describe::schema_number;
 using f8::cppsdk::describe::schema_object;
 using f8::cppsdk::describe::schema_string;
 using f8::cppsdk::describe::schema_string_enum;
-using f8::cppsdk::describe::schema_video_frame;
 using f8::cppsdk::describe::state_field;
+using f8::cppsdk::describe::video_frame_port;
 
 namespace {
 
@@ -153,7 +153,7 @@ EncodedImage encode_image_b64(const cv::Mat& bgr, std::string format, int qualit
 }
 
 json video_source_metadata(std::uint32_t width, std::uint32_t height) {
-  return json::object({{"width", width}, {"height", height}, {"payloadKind", "video_frame"}});
+  return json::object({{"width", width}, {"height", height}});
 }
 
 }  // namespace
@@ -813,13 +813,7 @@ json TemplateMatchService::describe() {
       json{{"name", "ping"}, {"description", "Health check."}, {"required", true}, {"showOnNode", false}},
   });
   service["dataInPorts"] = json::array({
-      json{{"name", "video"},
-           {"valueSchema", schema_video_frame()},
-           {"description", "Input video frame stream."},
-           {"payloadKind", "video_frame"},
-           {"delivery", "latest"},
-           {"required", true},
-           {"showOnNode", true}},
+      video_frame_port("video", "Input video frame stream."),
   });
   service["dataOutPorts"] = json::array({
       json{{"name", "detections"},

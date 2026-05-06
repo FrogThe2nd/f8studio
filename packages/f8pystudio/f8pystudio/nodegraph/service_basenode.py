@@ -29,7 +29,7 @@ from NodeGraphQt.qgraphics.node_overlay_disabled import XDisabledItem
 from NodeGraphQt.qgraphics.node_text_item import NodeTextItem
 from NodeGraphQt.qgraphics.port import CustomPortItem, PortItem
 
-from .port_painter import draw_square_port, DATA_PORT_COLOR, STATE_PORT_COLOR
+from .port_painter import STATE_PORT_COLOR, draw_square_port
 from .viewer import F8StudioNodeViewer
 from .service_node_graph_mixin import ServiceNodeGraphMixin
 from .service_node_layout_mixin import ServiceNodeLayoutMixin

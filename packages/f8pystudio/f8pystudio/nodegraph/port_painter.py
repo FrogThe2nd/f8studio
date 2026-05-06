@@ -1,9 +1,28 @@
 from qtpy import QtCore, QtGui
 
+from f8pysdk.specs import F8DataPortPayloadKind, F8DataPortSpec, data_port_payload_kind
+
+PortColor = tuple[int, int, int]
+
 EXEC_PORT_COLOR = (230, 230, 230)
 DATA_PORT_COLOR = (150, 150, 150)
+DATA_PORT_BYTES_COLOR = (74, 167, 205)
+DATA_PORT_VIDEO_COLOR = (222, 96, 146)
+DATA_PORT_AUDIO_COLOR = (92, 190, 118)
 STATE_PORT_COLOR = (200, 200, 50)
 COMMAND_PORT_COLOR = (90, 180, 210)
+
+
+def data_port_color(port: F8DataPortSpec) -> PortColor:
+    kind = data_port_payload_kind(port)
+    if kind == F8DataPortPayloadKind.video_frame:
+        return DATA_PORT_VIDEO_COLOR
+    if kind == F8DataPortPayloadKind.audio_chunk:
+        return DATA_PORT_AUDIO_COLOR
+    if kind == F8DataPortPayloadKind.bytes:
+        return DATA_PORT_BYTES_COLOR
+    return DATA_PORT_COLOR
+
 
 def draw_nothing(painter, rect, info):
     pass

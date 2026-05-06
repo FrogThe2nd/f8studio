@@ -10,7 +10,7 @@ from f8pysdk.command import command_input_port_name, command_output_port_name
 from f8pysdk.specs import schema_default, schema_type
 
 from .items.node_item_core import state_field_info as _state_field_info
-from .port_painter import COMMAND_PORT_COLOR, DATA_PORT_COLOR, STATE_PORT_COLOR, draw_square_port
+from .port_painter import COMMAND_PORT_COLOR, STATE_PORT_COLOR, data_port_color, draw_square_port
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ def build_data_port(node: Any) -> None:
         node.add_input(
             f"[D]{port.name}",
             multi_input=False,
-            color=DATA_PORT_COLOR,
+            color=data_port_color(port),
         )
 
     for port in node.spec.dataOutPorts:
@@ -31,7 +31,7 @@ def build_data_port(node: Any) -> None:
         node.add_output(
             f"{port.name}[D]",
             multi_output=True,
-            color=DATA_PORT_COLOR,
+            color=data_port_color(port),
         )
 
 
@@ -227,7 +227,7 @@ def sync_from_spec(node: Any) -> None:
             except (AttributeError, RuntimeError, TypeError):
                 pass
         if show_on_node:
-            desired_inputs[port_name] = {"color": DATA_PORT_COLOR, "multi_input": False}
+            desired_inputs[port_name] = {"color": data_port_color(port), "multi_input": False}
 
     for port in list(node.spec.dataOutPorts or []):
         try:
@@ -245,7 +245,7 @@ def sync_from_spec(node: Any) -> None:
             except (AttributeError, RuntimeError, TypeError):
                 pass
         if show_on_node:
-            desired_outputs[port_name] = {"color": DATA_PORT_COLOR, "multi_output": True}
+            desired_outputs[port_name] = {"color": data_port_color(port), "multi_output": True}
 
     for state_field in list(node.effective_state_fields() or []):
         info = _state_field_info(state_field)

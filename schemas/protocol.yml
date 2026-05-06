@@ -442,6 +442,83 @@ components:
         execOutPorts:
           $ref: "#/components/schemas/F8CollectionEditPolicy"
       additionalProperties: false
+    F8DataPortPayloadKind:
+      title: F8DataPortPayloadKind
+      type: string
+      default: json
+      enum:
+        - json
+        - bytes
+        - video_frame
+        - audio_chunk
+      description: Runtime payload class. Media/binary payloads use stream transport and are not JSON-wrapped.
+    F8DataPortDelivery:
+      title: F8DataPortDelivery
+      type: string
+      default: fifo
+      enum:
+        - latest
+        - fifo
+        - reliable
+      description: Preferred stream delivery policy for this data port.
+    F8DataPayloadSpec:
+      title: F8DataPayloadSpec
+      type: object
+      properties:
+        kind:
+          $ref: "#/components/schemas/F8DataPortPayloadKind"
+        valueSchema:
+          $ref: "#/components/schemas/F8DataTypeSchema"
+          description: JSON value schema for ordinary JSON data ports.
+        metadataSchema:
+          $ref: "#/components/schemas/F8DataTypeSchema"
+          description: Decoded envelope metadata schema for binary/media payloads.
+        schemaVersion:
+          type: integer
+          default: 1
+          minimum: 1
+          description: Payload envelope schema version.
+        formats:
+          type: array
+          items:
+            type: string
+          default: []
+          description: Optional allowed media/binary formats for this payload kind.
+      required:
+        - kind
+      additionalProperties: false
+    F8DataStreamSpec:
+      title: F8DataStreamSpec
+      type: object
+      properties:
+        delivery:
+          $ref: "#/components/schemas/F8DataPortDelivery"
+        reliability:
+          type: string
+          default: best_effort
+          enum:
+            - best_effort
+            - reliable
+          title: F8DataStreamReliability
+          description: Runtime reliability preference for stream transports.
+        congestion:
+          type: string
+          default: drop
+          enum:
+            - drop
+            - block
+          title: F8DataStreamCongestion
+          description: Runtime congestion behavior preference for stream transports.
+        priority:
+          type: string
+          default: data
+          enum:
+            - real_time
+            - interactive
+            - data
+          title: F8DataStreamPriority
+          description: Runtime priority preference for stream transports.
+      additionalProperties: false
     F8DataPortSpec:
       title: F8DataPortSpec
       type: object
@@ -450,6 +527,13 @@ components:
           type: string
         valueSchema:
           $ref: "#/components/schemas/F8DataTypeSchema"
+          description: Legacy-compatible schema mirror. Prefer payload.valueSchema or payload.metadataSchema for new specs.
+        payload:
+          $ref: "#/components/schemas/F8DataPayloadSpec"
+          description: Explicit payload contract for this data port.
+        stream:
+          $ref: "#/components/schemas/F8DataStreamSpec"
+          description: Explicit stream transport preferences for this data port.
         description:
           type: string
         required:
@@ -461,24 +545,13 @@ components:
           default: true
           description: If true, render this port on the node body; otherwise only in the inspector.
         payloadKind:
-          type: string
-          default: json
-          enum:
-            - json
-            - bytes
-            - video_frame
-            - audio_chunk
-          title: F8DataPortPayloadKind
-          description: Runtime payload class. Media/binary payloads use stream transport and are not JSON-wrapped.
+          $ref: "#/components/schemas/F8DataPortPayloadKind"
+          deprecated: true
+          description: Deprecated compatibility mirror of payload.kind.
         delivery:
-          type: string
-          default: fifo
-          enum:
-            - latest
-            - fifo
-            - reliable
-          title: F8DataPortDelivery
-          description: Preferred stream delivery policy for this data port.
+          $ref: "#/components/schemas/F8DataPortDelivery"
+          deprecated: true
+          description: Deprecated compatibility mirror of stream.delivery.
       required:
         - name
         - valueSchema

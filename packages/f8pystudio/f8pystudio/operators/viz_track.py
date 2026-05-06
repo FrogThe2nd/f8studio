@@ -7,8 +7,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from f8pysdk.specs import (
-    F8DataPortDelivery,
-    F8DataPortPayloadKind,
     array_schema,
     F8DataPortSpec,
     F8OperatorSchemaVersion,
@@ -21,7 +19,7 @@ from f8pysdk.specs import (
     integer_schema,
     number_schema,
     string_schema,
-    video_frame_schema,
+    video_frame_port,
 )
 from f8pysdk.f8_naming import ensure_token
 from f8pysdk.registry import Registry
@@ -555,20 +553,14 @@ def register_operator(registry: Registry) -> Registry:
                     description="Tracking/detection payload (f8.detecttracker or f8visionDetections/1).",
                     valueSchema=_viz_track_input_schema(),
                 ),
-                F8DataPortSpec(
+                video_frame_port(
                     name="video",
                     description="Optional background video frame stream.",
-                    valueSchema=video_frame_schema(),
-                    payloadKind=F8DataPortPayloadKind.video_frame,
-                    delivery=F8DataPortDelivery.latest,
                     required=False,
                 ),
-                F8DataPortSpec(
+                video_frame_port(
                     name="flow",
                     description="Optional dense optical-flow frame stream.",
-                    valueSchema=video_frame_schema(),
-                    payloadKind=F8DataPortPayloadKind.video_frame,
-                    delivery=F8DataPortDelivery.latest,
                     required=False,
                 ),
             ],

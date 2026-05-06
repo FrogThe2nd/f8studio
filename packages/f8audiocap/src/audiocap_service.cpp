@@ -25,8 +25,8 @@ using f8::cppsdk::describe::schema_integer;
 using f8::cppsdk::describe::schema_number;
 using f8::cppsdk::describe::schema_object;
 using f8::cppsdk::describe::schema_string;
-using f8::cppsdk::describe::schema_audio_chunk;
 using f8::cppsdk::describe::state_field;
+using f8::cppsdk::describe::audio_chunk_port;
 
 namespace {
 
@@ -517,13 +517,7 @@ nlohmann::json AudioCapService::describe() {
       {"dataInPorts", json::array()},
       {"dataOutPorts",
        json::array({
-           json{{"name", "audio"},
-                {"valueSchema", schema_audio_chunk()},
-                {"description", "Captured audio chunk stream."},
-                {"payloadKind", "audio_chunk"},
-                {"delivery", "latest"},
-                {"required", true},
-                {"showOnNode", true}},
+           audio_chunk_port("audio", "Captured audio chunk stream."),
        })},
   };
   spec["operators"] = json::array();

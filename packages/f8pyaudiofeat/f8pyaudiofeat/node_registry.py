@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 from f8pysdk.specs import (
-    F8DataPortDelivery,
-    F8DataPortPayloadKind,
     F8DataPortSpec,
     F8ServiceSchemaVersion,
     F8ServiceSpec,
     F8StateAccess,
     F8StateSpec,
     array_schema,
-    audio_chunk_schema,
+    audio_chunk_port,
     complex_object_schema,
     integer_schema,
     number_schema,
@@ -140,12 +138,9 @@ def _register_core(registry: Registry) -> None:
             rendererClass="default_svc",
             stateFields=_core_state_fields(),
             dataInPorts=[
-                F8DataPortSpec(
+                audio_chunk_port(
                     name="audio",
                     description="Input audio chunk stream from f8.audiocap.",
-                    valueSchema=audio_chunk_schema(),
-                    payloadKind=F8DataPortPayloadKind.audio_chunk,
-                    delivery=F8DataPortDelivery.latest,
                     required=True,
                 )
             ],

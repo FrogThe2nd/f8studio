@@ -6,9 +6,6 @@ import time
 from typing import Any, cast
 
 from f8pysdk.specs import (
-    F8DataPortDelivery,
-    F8DataPortPayloadKind,
-    F8DataPortSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeGraph,
@@ -19,7 +16,7 @@ from f8pysdk.specs import (
     integer_schema,
     number_schema,
     string_schema,
-    video_frame_schema,
+    video_frame_port,
 )
 from f8pysdk.capabilities import RungraphHookBus
 from f8pysdk.f8_naming import ensure_token
@@ -54,28 +51,19 @@ class VizVideoRuntimeNode(OperatorNode):
         description="Display frames from Zenoh latest-frame video streams.",
         tags=["ui", "zenoh", "video", "viewer"],
         dataInPorts=[
-            F8DataPortSpec(
+            video_frame_port(
                 name="video",
                 description="Input video frame stream.",
-                valueSchema=video_frame_schema(),
-                payloadKind=F8DataPortPayloadKind.video_frame,
-                delivery=F8DataPortDelivery.latest,
                 required=True,
             ),
-            F8DataPortSpec(
+            video_frame_port(
                 name="flow",
                 description="Optional dense optical-flow frame stream.",
-                valueSchema=video_frame_schema(),
-                payloadKind=F8DataPortPayloadKind.video_frame,
-                delivery=F8DataPortDelivery.latest,
                 required=False,
             ),
-            F8DataPortSpec(
+            video_frame_port(
                 name="scalar",
                 description="Optional scalar metric frame stream.",
-                valueSchema=video_frame_schema(),
-                payloadKind=F8DataPortPayloadKind.video_frame,
-                delivery=F8DataPortDelivery.latest,
                 required=False,
             ),
         ],

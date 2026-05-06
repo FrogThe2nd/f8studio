@@ -27,8 +27,8 @@ using f8::cppsdk::describe::schema_number;
 using f8::cppsdk::describe::schema_object;
 using f8::cppsdk::describe::schema_string;
 using f8::cppsdk::describe::schema_string_enum;
-using f8::cppsdk::describe::schema_video_frame;
 using f8::cppsdk::describe::state_field;
+using f8::cppsdk::describe::video_frame_port;
 
 namespace {
 
@@ -958,22 +958,10 @@ json VideoStabService::describe() {
   });
 
   service["dataInPorts"] = json::array({
-      json{{"name", "video"},
-           {"valueSchema", schema_video_frame()},
-           {"description", "Input video frame stream."},
-           {"payloadKind", "video_frame"},
-           {"delivery", "latest"},
-           {"required", true},
-           {"showOnNode", true}},
+      video_frame_port("video", "Input video frame stream."),
   });
   service["dataOutPorts"] = json::array({
-      json{{"name", "video"},
-           {"valueSchema", schema_video_frame()},
-           {"description", "Stabilized video frame stream."},
-           {"payloadKind", "video_frame"},
-           {"delivery", "latest"},
-           {"required", true},
-           {"showOnNode", true}},
+      video_frame_port("video", "Stabilized video frame stream."),
       json{{"name", "motion"},
            {"valueSchema", motion_schema},
            {"description", "Per-frame estimated and smoothed motion parameters."},

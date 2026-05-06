@@ -3,8 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 from f8pysdk.specs import (
-    F8DataPortDelivery,
-    F8DataPortPayloadKind,
     F8DataPortSpec,
     F8RuntimeNode,
     F8ServiceSchemaVersion,
@@ -17,7 +15,7 @@ from f8pysdk.specs import (
     integer_schema,
     number_schema,
     string_schema,
-    video_frame_schema,
+    video_frame_port,
 )
 from f8pysdk.nodes import RuntimeNode
 from f8pysdk.registry import Registry, RuntimeNodeRegistry, create_runtime_node_registry, shared_runtime_node_registry
@@ -96,12 +94,9 @@ def _detections_payload_schema():
 
 
 def _video_input_port() -> F8DataPortSpec:
-    return F8DataPortSpec(
+    return video_frame_port(
         name="video",
         description="Input video frame stream.",
-        valueSchema=video_frame_schema(),
-        payloadKind=F8DataPortPayloadKind.video_frame,
-        delivery=F8DataPortDelivery.latest,
         required=True,
     )
 
@@ -605,12 +600,9 @@ def _register_optflow(registry: Registry) -> None:
             stateFields=_optflow_state_fields(),
             dataInPorts=[_video_input_port()],
             dataOutPorts=[
-                F8DataPortSpec(
+                video_frame_port(
                     name="flow",
                     description="Dense optical-flow frame stream.",
-                    valueSchema=video_frame_schema(),
-                    payloadKind=F8DataPortPayloadKind.video_frame,
-                    delivery=F8DataPortDelivery.latest,
                     required=True,
                 ),
             ],
@@ -639,12 +631,9 @@ def _register_detection_sorter(registry: Registry) -> None:
                     valueSchema=_detections_payload_schema(),
                     required=True,
                 ),
-                F8DataPortSpec(
+                video_frame_port(
                     name="score",
                     description="Scalar or flow score-map frame stream used to rank detections.",
-                    valueSchema=video_frame_schema(),
-                    payloadKind=F8DataPortPayloadKind.video_frame,
-                    delivery=F8DataPortDelivery.latest,
                     required=True,
                 ),
             ],

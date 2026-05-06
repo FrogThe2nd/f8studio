@@ -6,6 +6,8 @@ import sys
 import unittest
 from typing import Any
 
+from msgspec import UNSET
+
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -14,12 +16,17 @@ from f8pysdk.specs import (  # noqa: E402
     F8DataPortDelivery,
     F8DataPortPayloadKind,
     F8DataPortSpec,
+    F8DataStreamCongestion,
+    F8DataStreamPriority,
+    F8DataStreamReliability,
     F8Edge,
     F8EdgeKindEnum,
     F8EdgeStrategyEnum,
     F8RuntimeGraph,
     F8RuntimeNode,
-    video_frame_schema,
+    audio_chunk_port,
+    video_frame_port,
+    video_frame_metadata_schema,
 )
 from f8pysdk.f8_naming import data_subject  # noqa: E402
 from f8pysdk.zenoh_naming import subject_to_zenoh_key  # noqa: E402
@@ -100,11 +107,8 @@ def _runtime_node(*, node_id: str, service_id: str, data_in: list[str] | None = 
 
 
 def _video_port(name: str) -> F8DataPortSpec:
-    return F8DataPortSpec(
+    return video_frame_port(
         name=name,
-        valueSchema=video_frame_schema(),
-        payloadKind=F8DataPortPayloadKind.video_frame,
-        delivery=F8DataPortDelivery.latest,
         required=True,
     )
 
@@ -138,6 +142,45 @@ async def _sleep_ticks(ticks: int) -> None:
 
 
 class DataFlowRoutingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_video_frame_port_uses_explicit_payload_and_stream_specs(self) -> None:
+        port = video_frame_port(name="video", required=True)
+
+        self.assertEqual(port.payload.kind, F8DataPortPayloadKind.video_frame)
+        self.assertEqual(port.stream.delivery, F8DataPortDelivery.latest)
+        self.assertEqual(port.stream.reliability, F8DataStreamReliability.best_effort)
+        self.assertEqual(port.stream.congestion, F8DataStreamCongestion.drop)
+        self.assertEqual(port.stream.priority, F8DataStreamPriority.real_time)
+        self.assertEqual(port.payloadKind, F8DataPortPayloadKind.video_frame)
+        self.assertEqual(port.delivery, F8DataPortDelivery.latest)
+        self.assertEqual(list(port.payload.formats), ["bgra32", "bgr24", "flow2_f16", "scalar1_f32"])
+        self.assertIs(port.valueSchema, port.payload.metadataSchema)
+        self.assertEqual(
+            port.valueSchema.required,
+            ["schemaVersion", "format", "width", "height", "pitch", "frameId", "tsMs"],
+        )
+        self.assertEqual(port.valueSchema.title, "F8 Video Frame Stream Metadata")
+        self.assertIn("video_frame data stream", str(port.valueSchema.description))
+        self.assertIs(port.valueSchema.additionalProperties, False)
+        self.assertIs(port.valueSchema.field_comment, UNSET)
+
+    async def test_audio_chunk_port_uses_explicit_payload_and_stream_specs(self) -> None:
+        port = audio_chunk_port(name="audio", required=True)
+
+        self.assertEqual(port.payload.kind, F8DataPortPayloadKind.audio_chunk)
+        self.assertEqual(port.stream.delivery, F8DataPortDelivery.latest)
+        self.assertEqual(port.stream.priority, F8DataStreamPriority.real_time)
+        self.assertEqual(port.payloadKind, F8DataPortPayloadKind.audio_chunk)
+        self.assertEqual(port.delivery, F8DataPortDelivery.latest)
+        self.assertEqual(list(port.payload.formats), ["f32le"])
+        self.assertIs(port.valueSchema, port.payload.metadataSchema)
+        self.assertIs(port.valueSchema.additionalProperties, False)
+        self.assertIs(port.valueSchema.field_comment, UNSET)
+
+    async def test_video_frame_metadata_schema_has_no_payload_kind_comment(self) -> None:
+        schema = video_frame_metadata_schema()
+
+        self.assertIs(schema.field_comment, UNSET)
+
     async def test_video_frame_edge_resolves_stream_key_without_json_subscription(self) -> None:
         cluster = InMemoryCluster()
         transport = _RecordingTransport(cluster=cluster, kv_bucket="kv.sink")

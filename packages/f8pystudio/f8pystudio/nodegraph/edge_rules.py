@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
+from f8pysdk.specs import F8DataPortSpec, F8OperatorSpec, F8ServiceSpec, data_port_payload_kind
 from f8pysdk.specs import coerce_spec_payload, spec_kind_from_spec
 
 EDGE_KIND_EXEC = "exec"
@@ -18,6 +18,7 @@ class EdgeRuleNodeInfo:
     node_id: str
     service_id: str
     is_operator: bool
+    spec: F8OperatorSpec | F8ServiceSpec | None = None
 
 
 def normalize_edge_kind(kind: str) -> str | None:
@@ -52,6 +53,58 @@ def connection_kind(out_port_name: str, in_port_name: str) -> str | None:
     return out_kind
 
 
+def raw_data_port_name(port_name: str, *, is_input: bool) -> str:
+    text = str(port_name or "").strip()
+    if bool(is_input) and text.startswith("[D]"):
+        return str(text[3:] or "").strip()
+    if not bool(is_input) and text.endswith("[D]"):
+        return str(text[:-3] or "").strip()
+    return ""
+
+
+def data_port_spec_for_view_name(
+    spec: F8OperatorSpec | F8ServiceSpec | None,
+    *,
+    view_name: str,
+    is_input: bool,
+) -> F8DataPortSpec | None:
+    if spec is None:
+        return None
+    port_name = raw_data_port_name(view_name, is_input=bool(is_input))
+    if not port_name:
+        return None
+    ports = list(spec.dataInPorts or []) if bool(is_input) else list(spec.dataOutPorts or [])
+    for port in ports:
+        if not isinstance(port, F8DataPortSpec):
+            continue
+        if str(port.name or "").strip() == port_name:
+            return port
+    return None
+
+
+def validate_data_payload_compatibility(
+    *,
+    out_port_name: str,
+    in_port_name: str,
+    out_info: EdgeRuleNodeInfo | None,
+    in_info: EdgeRuleNodeInfo | None,
+) -> tuple[bool, str]:
+    if out_info is None or in_info is None:
+        return True, ""
+    out_port = data_port_spec_for_view_name(out_info.spec, view_name=out_port_name, is_input=False)
+    in_port = data_port_spec_for_view_name(in_info.spec, view_name=in_port_name, is_input=True)
+    if out_port is None or in_port is None:
+        return True, ""
+    out_kind = data_port_payload_kind(out_port)
+    in_kind = data_port_payload_kind(in_port)
+    if out_kind == in_kind:
+        return True, ""
+    return (
+        False,
+        f"data payload kind mismatch: {out_port.name} is {out_kind.value}, {in_port.name} expects {in_kind.value}",
+    )
+
+
 def port_view_name(port_view: Any) -> str:
     try:
         return str(port_view.name or "").strip()
@@ -84,10 +137,10 @@ def runtime_node_info(node: Any) -> EdgeRuleNodeInfo | None:
             service_id = str(node.svcId or "").strip()
         except (AttributeError, RuntimeError, TypeError):
             service_id = ""
-        return EdgeRuleNodeInfo(node_id=node_id, service_id=service_id, is_operator=True)
+        return EdgeRuleNodeInfo(node_id=node_id, service_id=service_id, is_operator=True, spec=spec)
 
     if isinstance(spec, F8ServiceSpec):
-        return EdgeRuleNodeInfo(node_id=node_id, service_id=node_id, is_operator=False)
+        return EdgeRuleNodeInfo(node_id=node_id, service_id=node_id, is_operator=False, spec=spec)
 
     return None
 
@@ -109,9 +162,9 @@ def layout_node_info(node_id: str, node_data: dict[str, Any]) -> EdgeRuleNodeInf
             service_id = str(custom.get("svcId") or "").strip()
         if not service_id:
             service_id = str(node_payload.get("svcId") or "").strip()
-        return EdgeRuleNodeInfo(node_id=node_id_str, service_id=service_id, is_operator=True)
+        return EdgeRuleNodeInfo(node_id=node_id_str, service_id=service_id, is_operator=True, spec=spec)
 
-    return EdgeRuleNodeInfo(node_id=node_id_str, service_id=node_id_str, is_operator=False)
+    return EdgeRuleNodeInfo(node_id=node_id_str, service_id=node_id_str, is_operator=False, spec=spec)
 
 
 def validate_connection_by_infos(
@@ -136,7 +189,15 @@ def validate_connection_by_infos(
             return False, "cross-service exec edges are not allowed"
         return True, ""
 
-    # data/state only need same-kind connection; cross-service is allowed.
+    if kind == EDGE_KIND_DATA:
+        return validate_data_payload_compatibility(
+            out_port_name=out_port_name,
+            in_port_name=in_port_name,
+            out_info=out_info,
+            in_info=in_info,
+        )
+
+    # state only needs same-kind connection; cross-service is allowed.
     return True, ""
 
 

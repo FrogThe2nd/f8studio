@@ -3,7 +3,13 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
+from f8pysdk.specs import (
+    F8DataPortPayloadKind,
+    F8OperatorSpec,
+    F8ServiceSpec,
+    data_port_payload_kind,
+    data_port_stream_delivery,
+)
 from f8pysdk.codec import dump_json
 from qtpy import QtCore, QtWidgets
 
@@ -39,10 +45,13 @@ def render_data_ports_md(title: str, ports: list[Any]) -> str:
         lines.append("_None_")
         return "\n".join(lines)
     for port in ports:
+        payload_kind = data_port_payload_kind(port)
         lines.append(f"### `{port.name}`")
         lines.append(f"- **Description**: {port.description or ''}")
         lines.append(f"- **Required**: `{bool(port.required)}`")
-        lines.append("**Schema**")
+        lines.append(f"- **Payload**: `{payload_kind.value}`")
+        lines.append(f"- **Delivery**: `{data_port_stream_delivery(port).value}`")
+        lines.append("**Metadata Schema**" if payload_kind != F8DataPortPayloadKind.json else "**Value Schema**")
         lines.append(md_code_block(schema_to_json_text(port.valueSchema)))
     return "\n".join(lines)
 

@@ -54,6 +54,13 @@ std::string port_payload_kind(const json* node, const std::string& port_name, bo
     if (name_it == port.end() || !name_it->is_string() || name_it->get<std::string>() != port_name) {
       continue;
     }
+    const auto payload_it = port.find("payload");
+    if (payload_it != port.end() && payload_it->is_object()) {
+      const auto kind_it = payload_it->find("kind");
+      if (kind_it != payload_it->end() && kind_it->is_string()) {
+        return kind_it->get<std::string>();
+      }
+    }
     const auto kind_it = port.find("payloadKind");
     if (kind_it != port.end() && kind_it->is_string()) {
       return kind_it->get<std::string>();

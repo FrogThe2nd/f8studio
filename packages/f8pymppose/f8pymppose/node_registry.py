@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from f8pysdk.specs import (
-    F8DataPortDelivery,
-    F8DataPortPayloadKind,
     F8DataPortSpec,
     F8ServiceSchemaVersion,
     F8ServiceSpec,
@@ -14,7 +12,7 @@ from f8pysdk.specs import (
     integer_schema,
     number_schema,
     string_schema,
-    video_frame_schema,
+    video_frame_port,
 )
 from f8pysdk.registry import Registry, RuntimeNodeRegistry, create_runtime_node_registry, shared_runtime_node_registry
 
@@ -171,12 +169,9 @@ def register_specs(registry: Registry) -> Registry:
             rendererClass="default_svc",
             stateFields=_state_fields(),
             dataInPorts=[
-                F8DataPortSpec(
+                video_frame_port(
                     name="video",
                     description="Input video frame stream.",
-                    valueSchema=video_frame_schema(),
-                    payloadKind=F8DataPortPayloadKind.video_frame,
-                    delivery=F8DataPortDelivery.latest,
                     required=True,
                 ),
             ],
