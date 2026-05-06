@@ -34,7 +34,30 @@ def test_runtime_rungraph_gateway_mem_uses_in_memory_transport() -> None:
         )
     )
 
-    assert isinstance(gateway._build_transport("engine"), InMemoryTransport)
+    assert isinstance(gateway._build_transport(), InMemoryTransport)
+
+
+def test_runtime_rungraph_gateway_reuses_mem_transport_until_close() -> None:
+    async def _run() -> None:
+        gateway = RuntimeRungraphGateway(
+            RungraphDeployConfig(
+                bus_backend="mem",
+                client_service_id="studio",
+            )
+        )
+
+        first = await gateway.ensure_connected()
+        second = await gateway.ensure_connected()
+        assert first is second
+
+        await gateway.close()
+        assert gateway._transport is None
+
+        third = await gateway.ensure_connected()
+        assert third is not first
+        await gateway.close()
+
+    asyncio.run(_run())
 
 
 def test_remote_state_watcher_mem_uses_in_memory_transport() -> None:

@@ -708,14 +708,17 @@ class OnnxTcnWaveServiceNode(ServiceNode):
                     await asyncio.sleep(0.1)
                     continue
 
-                source = self._ensure_video_source()
                 video_stream_key = self._resolve_video_stream_key()
                 if not video_stream_key:
                     await self._handle_missing_video_input()
                     await asyncio.sleep(0.05)
                     continue
 
-                assert self._runtime is not None
+                runtime = self._runtime
+                if runtime is None:
+                    await asyncio.sleep(0.05)
+                    continue
+                source = self._ensure_video_source()
                 t0 = time.perf_counter()
                 try:
                     frame = source.read_latest(stream_key=video_stream_key, timeout_ms=10)
@@ -762,13 +765,13 @@ class OnnxTcnWaveServiceNode(ServiceNode):
                     if self._use_vr_focus_crop and int(frame_bgr.shape[1]) > 1:
                         frame_bgr = apply_vr_focus_crop(frame_bgr)
 
-                    prepared = self._runtime.prepare_frame(frame_bgr)
+                    prepared = runtime.prepare_frame(frame_bgr)
                     self._window.append(prepared)
                     frame_index = self._aggregator.register_frame(frame_id=frame_id_seen, ts_ms=int(frame.ts_ms))
 
-                    if len(self._window) < int(self._runtime.sequence_length):
+                    if len(self._window) < int(runtime.sequence_length):
                         await self._set_last_error(
-                            f"warming up temporal window: {len(self._window)}/{self._runtime.sequence_length}"
+                            f"warming up temporal window: {len(self._window)}/{runtime.sequence_length}"
                         )
                         continue
 
@@ -782,10 +785,10 @@ class OnnxTcnWaveServiceNode(ServiceNode):
                     if sequence_buffer is None:
                         sequence_buffer = np.empty(
                             (
-                                int(self._runtime.sequence_length),
-                                int(self._runtime.channels),
-                                int(self._runtime.input_height),
-                                int(self._runtime.input_width),
+                                int(runtime.sequence_length),
+                                int(runtime.channels),
+                                int(runtime.input_height),
+                                int(runtime.input_width),
                             ),
                             dtype=np.float32,
                         )
@@ -794,7 +797,7 @@ class OnnxTcnWaveServiceNode(ServiceNode):
                         sequence_buffer[sequence_index] = prepared_frame
                     sequence = sequence_buffer
                     t_infer0 = time.perf_counter()
-                    values_np = self._runtime.infer_sequence(sequence)
+                    values_np = runtime.infer_sequence(sequence)
                     values = self._to_float_list(values_np.tolist())
                     output_length = self._aggregator.apply_window(window_end_index=frame_index, values=values)
                     ready = self._aggregator.pop_ready(

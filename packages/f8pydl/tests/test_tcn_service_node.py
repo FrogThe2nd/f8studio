@@ -118,6 +118,46 @@ class TcnServiceNodeTests(unittest.TestCase):
 
         asyncio.run(_run())
 
+    def test_loop_retries_when_runtime_is_reset_after_ensure(self) -> None:
+        class _RuntimeResetNode(OnnxTcnWaveServiceNode):
+            async def _ensure_config_loaded(self) -> None:
+                return None
+
+            async def _ensure_runtime(self) -> bool:
+                self._runtime = None
+                return True
+
+            def _resolve_video_stream_key(self) -> str:
+                return "f8/svc/source/nodes/camera/data/video"
+
+            def _ensure_video_source(self) -> Any:
+                raise AssertionError("video source should not be opened without runtime")
+
+        async def _run() -> None:
+            node = _RuntimeResetNode(
+                node_id="tcn_node",
+                node=_NodeStub(stateFields=[]),
+                initial_state={},
+                service_class="f8.dl.tcnwave",
+                allowed_tasks={"tcn_wave"},
+            )
+            bus = _FakeBus()
+            node._bus = bus
+
+            task = asyncio.create_task(node._loop())
+            await asyncio.sleep(0.08)
+            if task.done():
+                task.result()
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+            self.assertEqual(bus.errors, [])
+
+        asyncio.run(_run())
+
 
 if __name__ == "__main__":
     unittest.main()

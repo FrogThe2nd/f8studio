@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 import msgspec
@@ -46,9 +46,10 @@ class RungraphDeployResult:
     error_message: str = ""
 
 
-@dataclass(frozen=True)
+@dataclass
 class RuntimeRungraphGateway:
     config: RungraphDeployConfig
+    _transport: RuntimeTransport | None = field(default=None, init=False)
 
     @staticmethod
     def _normalize_graph_for_request(graph: F8RuntimeGraph) -> F8RuntimeGraph:
@@ -64,7 +65,7 @@ class RuntimeRungraphGateway:
             return graph
         return copy_model(graph, update={"nodes": normalized_nodes})
 
-    def _build_transport(self, service_id: str) -> RuntimeTransport:
+    def _build_transport(self) -> RuntimeTransport:
         if self.config.bus_backend == "mem":
             from f8pysdk.testing import InMemoryCluster, InMemoryTransport
 
@@ -84,50 +85,61 @@ class RuntimeRungraphGateway:
             )
         )
 
+    async def ensure_connected(self) -> RuntimeTransport:
+        transport = self._transport
+        if transport is not None:
+            return transport
+        transport = self._build_transport()
+        await transport.connect()
+        self._transport = transport
+        return transport
+
+    async def close(self) -> None:
+        transport = self._transport
+        self._transport = None
+        if transport is not None:
+            await transport.close()
+
     async def deploy_runtime_graph(self, req: RungraphDeployRequest) -> RungraphDeployResult:
         service_id = str(req.service_id)
         bucket = kv_bucket_for_service(service_id)
-        transport = self._build_transport(service_id)
-        await transport.connect()
+        transport = await self.ensure_connected()
         try:
-            try:
-                await wait_service_ready(
-                    transport,
-                    timeout_s=float(self.config.ready_timeout_s),
-                    bucket=bucket,
-                )
-            except asyncio.TimeoutError:
-                return RungraphDeployResult(
-                    service_id=service_id,
-                    success=False,
-                    error_message=f"service not ready within {float(self.config.ready_timeout_s):g}s",
-                )
-            graph_for_request = self._normalize_graph_for_request(req.graph)
-            request_payload = F8SetRungraphRequest(
-                reqId=new_id(),
-                args=F8SetRungraphArgs(graph=graph_for_request),
-                meta={"source": str(req.source or "studio")},
+            await wait_service_ready(
+                transport,
+                timeout_s=float(self.config.ready_timeout_s),
+                bucket=bucket,
             )
-            response_bytes = await transport.request(
-                svc_endpoint_subject(service_id, "set_rungraph"),
-                encode_obj(request_payload),
-                timeout=float(self.config.request_timeout_s),
-                raise_on_error=True,
-            )
-            if not response_bytes:
-                return RungraphDeployResult(service_id=service_id, success=False, error_message="empty response")
-            try:
-                response_payload = decode_as(response_bytes, F8SetRungraphReply)
-            except ValueError:
-                return RungraphDeployResult(service_id=service_id, success=False, error_message="invalid response")
-            if response_payload.error is None or isinstance(response_payload.error, msgspec.UnsetType):
-                error_message = ""
-            else:
-                error_message = str(response_payload.error.message or "")
+        except asyncio.TimeoutError:
             return RungraphDeployResult(
                 service_id=service_id,
-                success=bool(response_payload.ok),
-                error_message=("" if response_payload.ok else error_message),
+                success=False,
+                error_message=f"service not ready within {float(self.config.ready_timeout_s):g}s",
             )
-        finally:
-            await transport.close()
+        graph_for_request = self._normalize_graph_for_request(req.graph)
+        request_payload = F8SetRungraphRequest(
+            reqId=new_id(),
+            args=F8SetRungraphArgs(graph=graph_for_request),
+            meta={"source": str(req.source or "studio")},
+        )
+        response_bytes = await transport.request(
+            svc_endpoint_subject(service_id, "set_rungraph"),
+            encode_obj(request_payload),
+            timeout=float(self.config.request_timeout_s),
+            raise_on_error=True,
+        )
+        if not response_bytes:
+            return RungraphDeployResult(service_id=service_id, success=False, error_message="empty response")
+        try:
+            response_payload = decode_as(response_bytes, F8SetRungraphReply)
+        except ValueError:
+            return RungraphDeployResult(service_id=service_id, success=False, error_message="invalid response")
+        if response_payload.error is None or isinstance(response_payload.error, msgspec.UnsetType):
+            error_message = ""
+        else:
+            error_message = str(response_payload.error.message or "")
+        return RungraphDeployResult(
+            service_id=service_id,
+            success=bool(response_payload.ok),
+            error_message=("" if response_payload.ok else error_message),
+        )

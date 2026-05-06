@@ -46,3 +46,29 @@ def test_close_zenoh_session_best_effort_timeout_does_not_wait_for_blocking_clos
     assert entered.wait(timeout=0.5)
     assert ok is False
     assert elapsed_s < 0.5
+
+
+def test_close_zenoh_session_best_effort_timeout_warning_is_deduped(caplog: object) -> None:
+    import logging
+
+    entered_a = threading.Event()
+    entered_b = threading.Event()
+    release = threading.Event()
+    session_a = _BlockingSession(release=release, entered=entered_a)
+    session_b = _BlockingSession(release=release, entered=entered_b)
+
+    with caplog.at_level(logging.WARNING, logger="f8pysdk.zenoh_shutdown"):  # type: ignore[attr-defined]
+        first_ok = close_zenoh_session_best_effort(session_a, context="test-dedupe-close", timeout_s=0.01)
+        second_ok = close_zenoh_session_best_effort(session_b, context="test-dedupe-close", timeout_s=0.01)
+    release.set()
+
+    assert entered_a.wait(timeout=0.5)
+    assert entered_b.wait(timeout=0.5)
+    assert first_ok is False
+    assert second_ok is False
+    warnings = [
+        record.message  # type: ignore[attr-defined]
+        for record in caplog.records  # type: ignore[attr-defined]
+        if "test-dedupe-close" in record.message  # type: ignore[attr-defined]
+    ]
+    assert len(warnings) == 1

@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 import unittest
@@ -125,6 +126,41 @@ class OptflowServiceNodeErrorTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(bus.errors, [("optflowA", "DL_OPTFLOW_RUNTIME", "missing video data input")])
         self.assertEqual(bus.clear_count, 1)
+
+    async def test_loop_retries_when_runtime_is_reset_after_ensure(self) -> None:
+        class _RuntimeResetNode(OnnxOptflowServiceNode):
+            async def _ensure_config_loaded(self) -> None:
+                return None
+
+            def _resolve_input_stream_key(self) -> str:
+                return "f8/svc/source/nodes/camera/data/video"
+
+            async def _ensure_runtime(self) -> bool:
+                self._runtime = None
+                return True
+
+            def _ensure_video_source(self) -> Any:
+                raise AssertionError("video source should not be opened without runtime")
+
+        bus = _BusStub()
+        node = _RuntimeResetNode(
+            node_id="optflowRace",
+            node=SimpleNamespace(stateFields=[]),
+            initial_state=None,
+            service_class="f8.dl.optflow",
+            allowed_tasks={"optflow_neuflowv2"},
+        )
+        node._bus = bus
+
+        task = asyncio.create_task(node._loop())
+        await asyncio.sleep(0.08)
+        if task.done():
+            task.result()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
+        self.assertEqual(bus.errors, [])
 
     async def test_attach_uses_service_id_for_flow_zenoh_key(self) -> None:
         bus = ServiceBus(ServiceBusConfig(service_id="dl_service", bus_backend="mem"))

@@ -37,6 +37,8 @@ namespace fs = std::filesystem;
 
 constexpr std::int64_t kModelDownloadRetryCooldownMs = 30000;
 constexpr long kModelDownloadTimeoutSeconds = 300;
+constexpr std::int64_t kInitVideoReadErrorDelayMs = 1000;
+constexpr std::chrono::milliseconds kInitVideoReadTimeout{100};
 
 bool json_number_to_int(const json& v, int& out) {
   return service_runtime::parse_json_int(v, out);
@@ -656,6 +658,8 @@ bool TrackingService::start() {
   last_processed_frame_ts_ms_ = 0;
   next_tracking_due_ts_ms_ = 0.0;
   last_video_open_attempt_ms_ = 0;
+  init_video_wait_started_ms_ = 0;
+  init_video_wait_misses_ = 0;
 
   tracker_.release();
   bbox_ = cv::Rect();
@@ -1007,6 +1011,8 @@ void TrackingService::apply_init_box_if_any() {
       pending_init_boxes_.clear();
       ++pending_init_box_generation_;
     }
+    init_video_wait_started_ms_ = 0;
+    init_video_wait_misses_ = 0;
     return;
   }
 
@@ -1023,10 +1029,22 @@ void TrackingService::apply_init_box_if_any() {
   }
 
   f8::cppsdk::LatestVideoFrame frame_meta{};
-  if (!copy_latest_video_frame(frame_bgra_, frame_meta, false, 0, std::chrono::milliseconds(20))) {
-    publish_error_if_changed("failed to read video frame for init", "runtime", json::object());
+  if (!copy_latest_video_frame(frame_bgra_, frame_meta, false, 0, kInitVideoReadTimeout)) {
+    const std::int64_t now = f8::cppsdk::now_ms();
+    if (init_video_wait_started_ms_ <= 0) {
+      init_video_wait_started_ms_ = now;
+      init_video_wait_misses_ = 0;
+    }
+    ++init_video_wait_misses_;
+    if ((now - init_video_wait_started_ms_) >= kInitVideoReadErrorDelayMs) {
+      publish_error_if_changed("failed to read video frame for init", "runtime",
+                               json::object({{"waitMs", now - init_video_wait_started_ms_},
+                                             {"misses", init_video_wait_misses_}}));
+    }
     return;
   }
+  init_video_wait_started_ms_ = 0;
+  init_video_wait_misses_ = 0;
   {
     std::lock_guard<std::mutex> lock(tracking_mu_);
     if (pending_init_box_generation_ == candidates_generation) {

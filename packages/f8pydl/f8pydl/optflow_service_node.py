@@ -683,7 +683,10 @@ class OnnxOptflowServiceNode(ServiceNode):
                     await asyncio.sleep(0.1)
                     continue
 
-                assert self._runtime is not None
+                runtime = self._runtime
+                if runtime is None:
+                    await asyncio.sleep(0.05)
+                    continue
                 source = self._ensure_video_source()
                 t0 = time.perf_counter()
                 try:
@@ -728,7 +731,7 @@ class OnnxOptflowServiceNode(ServiceNode):
                     bgra = rows[:, : width * 4].reshape((height, width, 4))
                     frame_bgr = bgra[:, :, 0:3]
 
-                    tensor = self._runtime.prepare_input(frame_bgr)
+                    tensor = runtime.prepare_input(frame_bgr)
                     pair = self._frame_cache.push_and_get_pair(
                         PreparedFlowFrame(
                             frame_id=frame_id_seen,
@@ -748,7 +751,7 @@ class OnnxOptflowServiceNode(ServiceNode):
                     t_infer0 = time.perf_counter()
                     prev_frame, current_frame = pair
                     try:
-                        flow = self._runtime.infer_preprocessed(
+                        flow = runtime.infer_preprocessed(
                             prev_frame.tensor,
                             current_frame.tensor,
                             output_size_hw=(height, width),

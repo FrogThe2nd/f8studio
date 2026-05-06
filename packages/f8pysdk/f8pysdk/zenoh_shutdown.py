@@ -7,6 +7,8 @@ from typing import Protocol
 log = logging.getLogger(__name__)
 
 DEFAULT_ZENOH_CLOSE_TIMEOUT_S = 0.5
+_timeout_warning_lock = threading.Lock()
+_timeout_warning_contexts: set[str] = set()
 
 
 class ZenohCloseableSession(Protocol):
@@ -51,11 +53,21 @@ def close_zenoh_session_best_effort(
     thread.start()
     thread.join(timeout=timeout)
     if not done.is_set():
-        log.warning(
-            "zenoh session close timed out context=%s timeout=%.3fs; continuing shutdown",
-            context_text,
-            timeout,
-        )
+        with _timeout_warning_lock:
+            should_warn = context_text not in _timeout_warning_contexts
+            _timeout_warning_contexts.add(context_text)
+        if should_warn:
+            log.warning(
+                "zenoh session close timed out context=%s timeout=%.3fs; continuing shutdown",
+                context_text,
+                timeout,
+            )
+        else:
+            log.debug(
+                "zenoh session close timed out again context=%s timeout=%.3fs; continuing shutdown",
+                context_text,
+                timeout,
+            )
         return False
     return not errors
 

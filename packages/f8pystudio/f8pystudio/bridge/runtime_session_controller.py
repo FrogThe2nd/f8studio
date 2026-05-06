@@ -460,6 +460,11 @@ class RuntimeSessionControllerMixin:
         except Exception as exc:
             self._report_exception("close command gateway failed", exc)
 
+        try:
+            await self._rungraph_gateway.close()
+        except Exception as exc:
+            self._report_exception("close rungraph gateway failed", exc)
+
         runtime_transport = self._runtime_transport
         self._runtime_transport = None
         if runtime_transport is not None:
