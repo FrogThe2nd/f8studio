@@ -24,6 +24,12 @@ from ..generated import (
 
 VIDEO_FRAME_FORMATS: tuple[str, ...] = ("bgra32", "bgr24", "flow2_f16", "scalar1_f32")
 AUDIO_CHUNK_FORMATS: tuple[str, ...] = ("f32le",)
+_VIDEO_FRAME_METADATA_FIELDS: frozenset[str] = frozenset(
+    {"schemaVersion", "format", "width", "height", "pitch", "frameId", "tsMs"}
+)
+_AUDIO_CHUNK_METADATA_FIELDS: frozenset[str] = frozenset(
+    {"schemaVersion", "format", "sampleRate", "channels", "frames", "bytesPerFrame", "seq", "frameIndex", "tsMs"}
+)
 
 
 def _is_unset(value: object) -> bool:
@@ -40,11 +46,111 @@ def _payload_kind_from_value(value: object) -> F8DataPortPayloadKind:
         return F8DataPortPayloadKind.json
 
 
+def _schema_comment_payload_kind(schema: F8DataTypeSchema) -> F8DataPortPayloadKind | None:
+    comment = schema.field_comment
+    if comment is None or _is_unset(comment):
+        return None
+    text = str(comment or "").strip()
+    if text == "f8.payloadKind=video_frame":
+        return F8DataPortPayloadKind.video_frame
+    if text == "f8.payloadKind=audio_chunk":
+        return F8DataPortPayloadKind.audio_chunk
+    if text == "f8.payloadKind=bytes":
+        return F8DataPortPayloadKind.bytes
+    return None
+
+
+def _schema_property_is_type(
+    properties: dict[str, F8DataTypeSchema],
+    *,
+    name: str,
+    schema_type_cls: type[object],
+) -> bool:
+    prop = properties.get(name)
+    return isinstance(prop, schema_type_cls)
+
+
+def _schema_string_enum_intersects(
+    properties: dict[str, F8DataTypeSchema],
+    *,
+    name: str,
+    allowed_values: tuple[str, ...],
+) -> bool:
+    prop = properties.get(name)
+    if not isinstance(prop, F8StringTypeSchema):
+        return False
+    enum_values = prop.enum
+    if enum_values is None or _is_unset(enum_values):
+        return True
+    allowed = set(allowed_values)
+    return any(str(item) in allowed for item in list(enum_values or []))
+
+
+def _legacy_schema_has_required_fields(schema: F8ComplexObjectTypeSchema, fields: frozenset[str]) -> bool:
+    properties = schema.properties
+    if not fields.issubset(set(properties.keys())):
+        return False
+    required = schema.required
+    if required is None or _is_unset(required):
+        return True
+    return fields.issubset({str(item) for item in list(required or [])})
+
+
+def _is_legacy_video_frame_metadata_schema(schema: F8DataTypeSchema) -> bool:
+    if not isinstance(schema, F8ComplexObjectTypeSchema):
+        return False
+    if not _legacy_schema_has_required_fields(schema, _VIDEO_FRAME_METADATA_FIELDS):
+        return False
+    properties = schema.properties
+    return (
+        _schema_property_is_type(properties, name="schemaVersion", schema_type_cls=F8IntegerTypeSchema)
+        and _schema_string_enum_intersects(properties, name="format", allowed_values=VIDEO_FRAME_FORMATS)
+        and _schema_property_is_type(properties, name="width", schema_type_cls=F8IntegerTypeSchema)
+        and _schema_property_is_type(properties, name="height", schema_type_cls=F8IntegerTypeSchema)
+        and _schema_property_is_type(properties, name="pitch", schema_type_cls=F8IntegerTypeSchema)
+        and _schema_property_is_type(properties, name="frameId", schema_type_cls=F8IntegerTypeSchema)
+        and _schema_property_is_type(properties, name="tsMs", schema_type_cls=F8IntegerTypeSchema)
+    )
+
+
+def _is_legacy_audio_chunk_metadata_schema(schema: F8DataTypeSchema) -> bool:
+    if not isinstance(schema, F8ComplexObjectTypeSchema):
+        return False
+    if not _legacy_schema_has_required_fields(schema, _AUDIO_CHUNK_METADATA_FIELDS):
+        return False
+    properties = schema.properties
+    return (
+        _schema_property_is_type(properties, name="schemaVersion", schema_type_cls=F8IntegerTypeSchema)
+        and _schema_string_enum_intersects(properties, name="format", allowed_values=AUDIO_CHUNK_FORMATS)
+        and _schema_property_is_type(properties, name="sampleRate", schema_type_cls=F8IntegerTypeSchema)
+        and _schema_property_is_type(properties, name="channels", schema_type_cls=F8IntegerTypeSchema)
+        and _schema_property_is_type(properties, name="frames", schema_type_cls=F8IntegerTypeSchema)
+        and _schema_property_is_type(properties, name="bytesPerFrame", schema_type_cls=F8IntegerTypeSchema)
+        and _schema_property_is_type(properties, name="seq", schema_type_cls=F8IntegerTypeSchema)
+        and _schema_property_is_type(properties, name="frameIndex", schema_type_cls=F8IntegerTypeSchema)
+        and _schema_property_is_type(properties, name="tsMs", schema_type_cls=F8IntegerTypeSchema)
+    )
+
+
+def _legacy_payload_kind_from_schema(schema: F8DataTypeSchema) -> F8DataPortPayloadKind:
+    comment_kind = _schema_comment_payload_kind(schema)
+    if comment_kind is not None:
+        return comment_kind
+    if _is_legacy_video_frame_metadata_schema(schema):
+        return F8DataPortPayloadKind.video_frame
+    if _is_legacy_audio_chunk_metadata_schema(schema):
+        return F8DataPortPayloadKind.audio_chunk
+    return F8DataPortPayloadKind.json
+
+
 def data_port_payload_kind(port: F8DataPortSpec) -> F8DataPortPayloadKind:
     payload = port.payload
     if payload is not None and not _is_unset(payload):
         return _payload_kind_from_value(payload.kind)
-    return _payload_kind_from_value(port.payloadKind)
+    payload_kind = _payload_kind_from_value(port.payloadKind)
+    if payload_kind != F8DataPortPayloadKind.json:
+        return payload_kind
+    return _legacy_payload_kind_from_schema(port.valueSchema)
 
 
 def _delivery_from_value(value: object) -> F8DataPortDelivery:
@@ -61,6 +167,9 @@ def data_port_stream_delivery(port: F8DataPortSpec) -> F8DataPortDelivery:
     stream = port.stream
     if stream is not None and not _is_unset(stream):
         return _delivery_from_value(stream.delivery)
+    payload_kind = data_port_payload_kind(port)
+    if payload_kind in (F8DataPortPayloadKind.video_frame, F8DataPortPayloadKind.audio_chunk):
+        return F8DataPortDelivery.latest
     return _delivery_from_value(port.delivery)
 
 

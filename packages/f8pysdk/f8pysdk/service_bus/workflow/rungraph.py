@@ -9,7 +9,6 @@ from typing import Any, TYPE_CHECKING
 import msgspec
 
 from ...generated import (
-    F8DataPortPayloadKind,
     F8DataPortSpec,
     F8Edge,
     F8EdgeKindEnum,
@@ -18,6 +17,7 @@ from ...generated import (
     F8RuntimeNode,
     F8StateAccess,
 )
+from ..._specs.schema import data_port_payload_kind
 from ...codec import unwrap_json_value
 from ...f8_naming import data_subject
 from ...state import StateWriteOrigin, StateWriteSource
@@ -52,19 +52,8 @@ def _is_unset(value: object) -> bool:
     return isinstance(value, msgspec.UnsetType)
 
 
-def _payload_kind_text(value: object) -> str:
-    if isinstance(value, F8DataPortPayloadKind):
-        return str(value.value)
-    if value is None or _is_unset(value):
-        return "json"
-    return str(value or "").strip().lower() or "json"
-
-
 def _port_payload_kind_text(port: F8DataPortSpec) -> str:
-    payload = port.payload
-    if payload is not None and not _is_unset(payload):
-        return _payload_kind_text(payload.kind)
-    return _payload_kind_text(port.payloadKind)
+    return data_port_payload_kind(port).value
 
 
 def _edge_from_node_id(edge: F8Edge) -> str:

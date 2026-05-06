@@ -10,6 +10,7 @@ from types import TracebackType
 from typing import Any, Protocol
 
 from .zenoh_config import apply_zenoh_shared_memory_config
+from .zenoh_shutdown import close_zenoh_session_best_effort
 
 log = logging.getLogger(__name__)
 _SUBSCRIPTION_SETTLE_S = 0.01
@@ -267,10 +268,7 @@ class ZenohLatestAudioChunkTransport:
         session = self._session
         self._session = None
         if session is not None:
-            try:
-                session.close()
-            except (RuntimeError, OSError) as exc:
-                log.debug("zenoh audio session close failed key=%s", self.key_expr, exc_info=exc)
+            close_zenoh_session_best_effort(session, context=f"audio:{self.key_expr}")
 
     def publish_chunk(
         self,

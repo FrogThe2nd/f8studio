@@ -137,6 +137,7 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
 
   // Pending init candidates extracted from upstream payloads.
   std::vector<TrackingInitCandidate> pending_init_boxes_;
+  std::uint64_t pending_init_box_generation_ = 0;
 
   std::uint64_t monitor_observed_frames_ = 0;
   std::uint64_t monitor_processed_frames_ = 0;

@@ -662,6 +662,7 @@ bool TrackingService::start() {
   is_tracking_ = false;
   active_tracker_kind_state_.clear();
   pending_init_boxes_.clear();
+  pending_init_box_generation_ = 0;
   monitor_observed_frames_ = 0;
   monitor_processed_frames_ = 0;
   monitor_window_processed_frames_ = 0;
@@ -833,6 +834,7 @@ void TrackingService::on_data(const std::string& node_id, const std::string& por
     }
 
     pending_init_boxes_ = std::move(candidates);
+    ++pending_init_box_generation_;
   }
 }
 
@@ -880,6 +882,7 @@ void TrackingService::stop_tracking_internal(const json& meta) {
   bbox_ = cv::Rect();
   active_tracker_kind_state_.clear();
   pending_init_boxes_.clear();
+  ++pending_init_box_generation_;
   last_processed_frame_ts_ms_ = 0;
   next_tracking_due_ts_ms_ = 0.0;
   set_tracking(false, meta);
@@ -1000,11 +1003,15 @@ bool TrackingService::copy_latest_video_frame(std::vector<std::byte>& out_payloa
 void TrackingService::apply_init_box_if_any() {
   if (stop_tracking_cooldown_until_ms_.load(std::memory_order_acquire) > f8::cppsdk::now_ms()) {
     std::lock_guard<std::mutex> lock(tracking_mu_);
-    pending_init_boxes_.clear();
+    if (!pending_init_boxes_.empty()) {
+      pending_init_boxes_.clear();
+      ++pending_init_box_generation_;
+    }
     return;
   }
 
   std::vector<TrackingInitCandidate> candidates;
+  std::uint64_t candidates_generation = 0;
   {
     std::lock_guard<std::mutex> lock(tracking_mu_);
     if (is_tracking_)
@@ -1012,13 +1019,20 @@ void TrackingService::apply_init_box_if_any() {
     if (pending_init_boxes_.empty())
       return;
     candidates = pending_init_boxes_;
-    pending_init_boxes_.clear();
+    candidates_generation = pending_init_box_generation_;
   }
 
   f8::cppsdk::LatestVideoFrame frame_meta{};
   if (!copy_latest_video_frame(frame_bgra_, frame_meta, false, 0, std::chrono::milliseconds(20))) {
     publish_error_if_changed("failed to read video frame for init", "runtime", json::object());
     return;
+  }
+  {
+    std::lock_guard<std::mutex> lock(tracking_mu_);
+    if (pending_init_box_generation_ == candidates_generation) {
+      pending_init_boxes_.clear();
+      ++pending_init_box_generation_;
+    }
   }
   if (frame_meta.format != 1 || frame_meta.width == 0 || frame_meta.height == 0 || frame_meta.pitch == 0) {
     publish_error_if_changed("unsupported video frame format", "runtime", json::object());

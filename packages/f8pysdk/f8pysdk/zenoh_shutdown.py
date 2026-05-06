@@ -1,0 +1,63 @@
+from __future__ import annotations
+
+import logging
+import threading
+from typing import Protocol
+
+log = logging.getLogger(__name__)
+
+DEFAULT_ZENOH_CLOSE_TIMEOUT_S = 0.5
+
+
+class ZenohCloseableSession(Protocol):
+    def close(self) -> None: ...
+
+
+def _thread_name(context: str) -> str:
+    text = str(context or "").strip() or "session"
+    safe = "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "-" for ch in text)
+    return f"zenoh-close:{safe[:48]}"
+
+
+def close_zenoh_session_best_effort(
+    session: ZenohCloseableSession,
+    *,
+    context: str,
+    timeout_s: float = DEFAULT_ZENOH_CLOSE_TIMEOUT_S,
+) -> bool:
+    """
+    Close a Zenoh session without letting a stuck close block process shutdown.
+
+    Zenoh shutdown can occasionally block in native code. Using asyncio.to_thread()
+    for that path leaves a non-daemon ThreadPoolExecutor worker behind, which can
+    keep PyStudio alive after the Qt window is already gone.
+    """
+
+    done = threading.Event()
+    context_text = str(context or "").strip()
+    errors: list[BaseException] = []
+
+    def _close() -> None:
+        try:
+            session.close()
+        except Exception as exc:
+            log.debug("zenoh session close failed context=%s", context_text, exc_info=exc)
+            errors.append(exc)
+        finally:
+            done.set()
+
+    timeout = max(0.0, float(timeout_s))
+    thread = threading.Thread(target=_close, name=_thread_name(context), daemon=True)
+    thread.start()
+    thread.join(timeout=timeout)
+    if not done.is_set():
+        log.warning(
+            "zenoh session close timed out context=%s timeout=%.3fs; continuing shutdown",
+            context_text,
+            timeout,
+        )
+        return False
+    return not errors
+
+
+__all__ = ["DEFAULT_ZENOH_CLOSE_TIMEOUT_S", "ZenohCloseableSession", "close_zenoh_session_best_effort"]

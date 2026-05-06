@@ -378,6 +378,9 @@ class AiLlmBridge(QtCore.QObject):
         """Called from JS to abort an in-flight LLM request."""
         self._http.abort_request(request_id)
 
+    def abort_all_requests(self) -> None:
+        self._http.abort_all_requests()
+
     @QtCore.Slot(result="QVariantList")
     def select_images(self) -> list[dict[str, str]]:
         """Open file dialog to select images and return base64 encoded content."""

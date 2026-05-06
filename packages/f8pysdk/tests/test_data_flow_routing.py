@@ -13,6 +13,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from f8pysdk.specs import (  # noqa: E402
+    F8ComplexObjectTypeSchema,
     F8DataPortDelivery,
     F8DataPortPayloadKind,
     F8DataPortSpec,
@@ -25,6 +26,10 @@ from f8pysdk.specs import (  # noqa: E402
     F8RuntimeGraph,
     F8RuntimeNode,
     audio_chunk_port,
+    data_port_payload_kind,
+    data_port_stream_delivery,
+    integer_schema,
+    string_schema,
     video_frame_port,
     video_frame_metadata_schema,
 )
@@ -113,6 +118,66 @@ def _video_port(name: str) -> F8DataPortSpec:
     )
 
 
+def _legacy_video_metadata_schema() -> F8ComplexObjectTypeSchema:
+    return F8ComplexObjectTypeSchema(
+        properties={
+            "schemaVersion": integer_schema(),
+            "format": string_schema(enum=["bgra32", "bgr24", "flow2_f16", "scalar1_f32"]),
+            "width": integer_schema(),
+            "height": integer_schema(),
+            "pitch": integer_schema(),
+            "frameId": integer_schema(),
+            "tsMs": integer_schema(),
+        },
+        required=["schemaVersion", "format", "width", "height", "pitch", "frameId", "tsMs"],
+        additionalProperties=False,
+    )
+
+
+def _legacy_video_port(name: str) -> F8DataPortSpec:
+    return F8DataPortSpec(
+        name=name,
+        valueSchema=_legacy_video_metadata_schema(),
+        required=True,
+    )
+
+
+def _legacy_audio_metadata_schema() -> F8ComplexObjectTypeSchema:
+    return F8ComplexObjectTypeSchema(
+        properties={
+            "schemaVersion": integer_schema(),
+            "format": string_schema(enum=["f32le"]),
+            "sampleRate": integer_schema(),
+            "channels": integer_schema(),
+            "frames": integer_schema(),
+            "bytesPerFrame": integer_schema(),
+            "seq": integer_schema(),
+            "frameIndex": integer_schema(),
+            "tsMs": integer_schema(),
+        },
+        required=[
+            "schemaVersion",
+            "format",
+            "sampleRate",
+            "channels",
+            "frames",
+            "bytesPerFrame",
+            "seq",
+            "frameIndex",
+            "tsMs",
+        ],
+        additionalProperties=False,
+    )
+
+
+def _legacy_audio_port(name: str) -> F8DataPortSpec:
+    return F8DataPortSpec(
+        name=name,
+        valueSchema=_legacy_audio_metadata_schema(),
+        required=True,
+    )
+
+
 def _data_edge(
     *,
     edge_id: str,
@@ -180,6 +245,54 @@ class DataFlowRoutingTests(unittest.IsolatedAsyncioTestCase):
         schema = video_frame_metadata_schema()
 
         self.assertIs(schema.field_comment, UNSET)
+
+    async def test_legacy_video_metadata_schema_infers_stream_payload_kind(self) -> None:
+        port = _legacy_video_port("video")
+
+        self.assertEqual(data_port_payload_kind(port), F8DataPortPayloadKind.video_frame)
+        self.assertEqual(data_port_stream_delivery(port), F8DataPortDelivery.latest)
+
+    async def test_legacy_audio_metadata_schema_infers_stream_payload_kind(self) -> None:
+        port = _legacy_audio_port("audio")
+
+        self.assertEqual(data_port_payload_kind(port), F8DataPortPayloadKind.audio_chunk)
+        self.assertEqual(data_port_stream_delivery(port), F8DataPortDelivery.latest)
+
+    async def test_legacy_video_metadata_schema_resolves_stream_key_in_split_graph(self) -> None:
+        cluster = InMemoryCluster()
+        transport = _RecordingTransport(cluster=cluster, kv_bucket="kv.sink")
+        bus = ServiceBus(ServiceBusConfig(service_id="sink"), transport=transport)
+        subject = data_subject("player", from_node_id="player", port_id="video")
+
+        graph = F8RuntimeGraph(
+            graphId="g-legacy-video-stream-edge",
+            revision="r1",
+            nodes=[
+                F8RuntimeNode(
+                    nodeId="sink",
+                    serviceId="sink",
+                    serviceClass="f8.sink",
+                    dataInPorts=[_legacy_video_port("video")],
+                ),
+            ],
+            edges=[
+                _data_edge(
+                    edge_id="video",
+                    from_service="player",
+                    from_node="player",
+                    from_port="video",
+                    to_service="sink",
+                    to_node="sink",
+                    to_port="video",
+                ),
+            ],
+        )
+
+        await bus.set_rungraph(graph)
+
+        self.assertEqual(bus.data_input_zenoh_key("sink", "video"), subject_to_zenoh_key(subject))
+        self.assertEqual(bus.data_router.cross_in_by_subject, {})
+        self.assertEqual(bus.data_router.input_buffers, {})
 
     async def test_video_frame_edge_resolves_stream_key_without_json_subscription(self) -> None:
         cluster = InMemoryCluster()

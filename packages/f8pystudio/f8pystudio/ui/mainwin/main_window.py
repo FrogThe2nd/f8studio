@@ -14,6 +14,7 @@ from ...nodegraph.node_graph import F8StudioGraph
 from ...nodegraph.session import last_session_path
 from ...nodegraph.viewer import F8StudioNodeViewer
 from ...ui.support.ui_notifications import show_info, show_warning
+from ...ui.support.webengine_utils import flush_qt_deferred_deletes
 from ..support.runtime_state_sync import RuntimeStateSyncController
 from ..widgets.layers_panel import LayersPanelWidget
 from ..widgets.node_property_panel import F8StudioSingleNodePropertiesWidget
@@ -161,6 +162,7 @@ class F8StudioMainWin(
         self._deferred_startup_scheduled = False
         self._deferred_startup_completed = False
         self._closing = False
+        self._shutdown_started = False
         self._auto_load_worker = None
 
         self.studio_graph = F8StudioGraph(asset_cache_auto_refresh=False)
@@ -278,6 +280,92 @@ class F8StudioMainWin(
             return
         self._bridge_stopped = True
 
+    def _stop_shutdown_timer(self, timer: QtCore.QTimer | None, *, context: str) -> None:
+        if timer is None:
+            return
+        try:
+            timer.stop()
+        except RuntimeError as exc:
+            logger.debug("failed to stop timer during shutdown context=%s", context, exc_info=exc)
+
+    def _shutdown_ai_assist_sidebar(self) -> None:
+        sidebar = self._ai_assist_sidebar
+        self._ai_assist_sidebar = None
+        if sidebar is None:
+            return
+        try:
+            sidebar.shutdown()
+        except Exception as exc:
+            logger.exception("failed to shutdown AI Assist sidebar", exc_info=exc)
+        try:
+            sidebar.deleteLater()
+        except RuntimeError as exc:
+            logger.debug("failed to deleteLater AI Assist sidebar", exc_info=exc)
+
+    def _teardown_graph_nodes_for_exit(self) -> None:
+        try:
+            nodes = list(self.studio_graph.all_nodes() or [])
+        except Exception as exc:
+            logger.exception("failed to list graph nodes during shutdown", exc_info=exc)
+            return
+        try:
+            self.studio_graph._teardown_nodes(nodes)
+        except Exception as exc:
+            logger.exception("failed to teardown graph nodes during shutdown", exc_info=exc)
+
+    def _request_qt_app_quit(self) -> None:
+        app = QtWidgets.QApplication.instance()
+        if app is None:
+            return
+        try:
+            QtCore.QTimer.singleShot(0, app.quit)
+        except RuntimeError as exc:
+            logger.debug("failed to request Qt app quit during shutdown", exc_info=exc)
+
+    def _run_shutdown_step(self, context: str, step: Callable[[], None]) -> None:
+        try:
+            step()
+        except Exception as exc:
+            logger.exception("shutdown step failed context=%s", str(context or "").strip(), exc_info=exc)
+
+    def shutdown_for_app_exit(self) -> None:
+        if self._shutdown_started:
+            return
+        self._shutdown_started = True
+        self._closing = True
+        self._run_shutdown_step("asset-cache-unsubscribe", self._clear_asset_cache_changed_subscription)
+        self._run_shutdown_step(
+            "timer-periodic-auto-save",
+            lambda: self._stop_shutdown_timer(self._periodic_auto_save_timer, context="periodic-auto-save"),
+        )
+        self._run_shutdown_step(
+            "timer-auto-deploy",
+            lambda: self._stop_shutdown_timer(self._auto_deploy_timer, context="auto-deploy"),
+        )
+        self._run_shutdown_step(
+            "timer-auto-deploy-fingerprint",
+            lambda: self._stop_shutdown_timer(
+                self._deferred_auto_deploy_fingerprint_timer,
+                context="auto-deploy-fingerprint",
+            ),
+        )
+        self._run_shutdown_step(
+            "timer-studio-runtime-sync",
+            lambda: self._stop_shutdown_timer(self._studio_runtime_sync_timer, context="studio-runtime-sync"),
+        )
+        self._run_shutdown_step(
+            "timer-asset-cloud-last-sync",
+            lambda: self._stop_shutdown_timer(self._asset_cloud_last_sync_timer, context="asset-cloud-last-sync"),
+        )
+        self._run_shutdown_step("save-window-layout", self._save_window_layout)
+        self._run_shutdown_step("auto-save-project", self._auto_save_project)
+        self._run_shutdown_step("global-hotkeys-close", self._global_hotkey_controller.close)
+        self._run_shutdown_step("ai-assist-sidebar-shutdown", self._shutdown_ai_assist_sidebar)
+        self._run_shutdown_step("graph-node-teardown", self._teardown_graph_nodes_for_exit)
+        self._run_shutdown_step("bridge-stop", self.stop_bridge)
+        self._run_shutdown_step("qt-deferred-delete-flush", flush_qt_deferred_deletes)
+        self._run_shutdown_step("qt-app-quit", self._request_qt_app_quit)
+
     def append_discovery_logs(self, *, timing_lines: Iterable[str], error_lines: Iterable[str]) -> None:
         try:
             timing_line_texts = [str(line) for line in timing_lines]
@@ -291,10 +379,5 @@ class F8StudioMainWin(
             logger.exception("Failed to emit discovery logs to studio log dock")
 
     def closeEvent(self, event) -> None:
-        self._closing = True
-        self._clear_asset_cache_changed_subscription()
-        self._save_window_layout()
-        self._auto_save_project()
-        self._global_hotkey_controller.close()
-        self.stop_bridge()
+        self.shutdown_for_app_exit()
         super().closeEvent(event)

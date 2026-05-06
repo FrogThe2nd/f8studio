@@ -65,6 +65,7 @@ class _FakeMainWindow:
         self.discovery_logs: list[tuple[list[str], list[str]]] = []
         self.deferred_startup_scheduled = False
         self.prepare_before_show_called = False
+        self.shutdown_called = False
         _FakeMainWindow.last_instance = self
 
     def setWindowIcon(self, icon: object) -> None:
@@ -91,6 +92,9 @@ class _FakeMainWindow:
         self.bridge_stopped = True
         if self.bridge is not None:
             self.bridge.stop()
+
+    def shutdown_for_app_exit(self) -> None:
+        self.shutdown_called = True
 
     def append_discovery_logs(self, *, timing_lines, error_lines) -> None:
         self.discovery_logs.append(([str(line) for line in timing_lines], [str(line) for line in error_lines]))
@@ -194,6 +198,7 @@ def test_program_shows_main_window_after_bridge_startup_passes(monkeypatch, tmp_
     assert _FakeMainWindow.last_instance.bridge_stopped is False
     assert _FakeMainWindow.last_instance.deferred_startup_scheduled is True
     assert _FakeMainWindow.last_instance.prepare_before_show_called is True
+    assert _FakeMainWindow.last_instance.shutdown_called is True
     assert _FakeMainWindow.last_instance.shown is True
     assert _FakeMainWindow.last_instance.closed is False
     assert _FakeMainWindow.last_instance.discovery_logs == [(["timing-1"], ["error-1"])]

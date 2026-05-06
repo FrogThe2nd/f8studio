@@ -8,6 +8,7 @@ from typing import Any
 from f8pysdk.bus import BusBackend
 from f8pysdk.codec import decode_obj, dump_json
 from f8pysdk.zenoh_naming import zenoh_studio_liveliness_key
+from f8pysdk.zenoh_shutdown import close_zenoh_session_best_effort
 
 from .runtime_lifecycle import (
     SINGLETON_GUARD_DIALOG_MESSAGE,
@@ -214,16 +215,13 @@ class RuntimeSessionControllerMixin:
                     await asyncio.sleep(0.01)
                     continue
                 if reply.ok is not None:
-                    await asyncio.to_thread(session.close)
+                    close_zenoh_session_best_effort(session, context="pystudio-singleton-conflict")
                     return SINGLETON_GUARD_DIALOG_MESSAGE
             self._zenoh_singleton_session = session
             self._zenoh_singleton_token = session.liveliness().declare_token(key)
         except Exception as exc:
             self._report_exception("zenoh singleton guard failed", exc)
-            try:
-                await asyncio.to_thread(session.close)
-            except Exception as close_exc:
-                self._report_exception("close zenoh singleton session failed", close_exc)
+            close_zenoh_session_best_effort(session, context="pystudio-singleton-guard-error")
         return None
 
     async def _start_zenoh_service_liveliness_watch_async(self) -> None:
@@ -275,7 +273,7 @@ class RuntimeSessionControllerMixin:
             self._report_exception("declare zenoh service liveliness watch failed", exc)
             if owns_session:
                 try:
-                    await asyncio.to_thread(session.close)
+                    close_zenoh_session_best_effort(session, context="pystudio-liveliness-watch-declare-failed")
                 except Exception as close_exc:
                     self._report_exception("close zenoh service liveliness session failed", close_exc)
 
@@ -434,7 +432,7 @@ class RuntimeSessionControllerMixin:
         self._zenoh_service_liveliness_session = None
         if liveliness_session is not None:
             try:
-                await asyncio.to_thread(liveliness_session.close)
+                close_zenoh_session_best_effort(liveliness_session, context="pystudio-service-liveliness")
             except Exception as exc:
                 self._report_exception("close zenoh service liveliness session failed", exc)
         try:
@@ -481,7 +479,7 @@ class RuntimeSessionControllerMixin:
         self._zenoh_singleton_session = None
         if session is not None:
             try:
-                await asyncio.to_thread(session.close)
+                close_zenoh_session_best_effort(session, context="pystudio-singleton")
             except Exception as exc:
                 self._report_exception("close zenoh singleton session failed", exc)
 

@@ -220,7 +220,11 @@ class PyStudioProgram:
 
         from f8pystudio.ui.support.qt_font_utils import normalize_application_font
         from f8pystudio.ui.support.studio_theme import apply_studio_theme, studio_dark_theme
-        from f8pystudio.ui.support.webengine_utils import prewarm_webengine_view
+        from f8pystudio.ui.support.webengine_utils import (
+            flush_qt_deferred_deletes,
+            prewarm_webengine_view,
+            release_prewarmed_webengine_view,
+        )
         from f8pystudio.ui.mainwin.main_window import F8StudioMainWin
 
         manifests = self._load_plugin_manifests()
@@ -285,7 +289,19 @@ class PyStudioProgram:
             timing_lines=last_discovery_timing_lines(),
             error_lines=last_discovery_error_lines(),
         )
-        return int(app.exec_() or 0)
+        try:
+            return int(app.exec_() or 0)
+        finally:
+            try:
+                mainwin.shutdown_for_app_exit()
+            except Exception:
+                logger.exception("failed to shutdown main window after Qt loop exit")
+            try:
+                mainwin.deleteLater()
+            except (AttributeError, RuntimeError, TypeError):
+                logger.debug("failed to deleteLater main window after Qt loop exit", exc_info=True)
+            release_prewarmed_webengine_view()
+            flush_qt_deferred_deletes()
 
     def describe_json_text(self) -> str:
         return json.dumps(self.describe_json(), ensure_ascii=False)

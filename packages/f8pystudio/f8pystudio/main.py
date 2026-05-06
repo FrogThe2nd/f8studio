@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from typing import cast
 
 from f8pysdk.bus import BusBackend
@@ -32,6 +33,17 @@ def _env_int(default: int, name: str) -> int:
         return int(raw)
     except ValueError:
         return int(default)
+
+
+def _env_flag(default: bool, name: str) -> bool:
+    raw = str(os.environ.get(name, "") or "").strip().lower()
+    if not raw:
+        return bool(default)
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    return bool(default)
 
 
 def _split_endpoint_values(values: list[str] | tuple[str, ...]) -> tuple[str, ...]:
@@ -83,7 +95,19 @@ def _install_runtime_env(config: PyStudioServiceBridgeConfig) -> None:
     os.environ.pop("F8_ZENOH_SHM_POOL_BYTES", None)
 
 
-def main(argv: list[str] | None = None) -> int:
+def _force_process_exit(exit_code: int) -> None:
+    try:
+        sys.stdout.flush()
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        pass
+    try:
+        sys.stderr.flush()
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        pass
+    os._exit(int(exit_code))
+
+
+def main(argv: list[str] | None = None, *, force_process_exit: bool = False) -> int:
     configure_root_logging_from_env()
 
     parser = argparse.ArgumentParser(description="F8PyStudio")
@@ -135,8 +159,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.describe:
         print(prog.describe_json_text())
         return 0
-    return prog.run()
+    exit_code = int(prog.run())
+    if force_process_exit and _env_flag(True, "F8_PYSTUDIO_FORCE_PROCESS_EXIT"):
+        _force_process_exit(exit_code)
+    return exit_code
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(force_process_exit=True))

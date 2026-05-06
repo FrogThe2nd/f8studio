@@ -144,3 +144,35 @@ def test_main_describe_uses_configured_program_without_running(monkeypatch: pyte
     cfg = _FakeProgram.last_config
     assert cfg is not None
     assert cfg.bus_backend == "zenoh"
+
+
+def test_main_force_process_exit_uses_os_exit_after_running(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _ExitCalled(RuntimeError):
+        def __init__(self, code: int) -> None:
+            super().__init__(str(code))
+            self.code = int(code)
+
+    _clear_runtime_env(monkeypatch)
+    _install_fake_program(monkeypatch)
+
+    def _fake_exit(code: int) -> None:
+        raise _ExitCalled(int(code))
+
+    monkeypatch.setattr(studio_main.os, "_exit", _fake_exit)
+
+    with pytest.raises(_ExitCalled) as exc_info:
+        studio_main.main([], force_process_exit=True)
+
+    assert exc_info.value.code == 17
+    assert _FakeProgram.run_called is True
+
+
+def test_main_force_process_exit_can_be_disabled_by_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_runtime_env(monkeypatch)
+    _install_fake_program(monkeypatch)
+    monkeypatch.setenv("F8_PYSTUDIO_FORCE_PROCESS_EXIT", "0")
+
+    exit_code = studio_main.main([], force_process_exit=True)
+
+    assert exit_code == 17
+    assert _FakeProgram.run_called is True

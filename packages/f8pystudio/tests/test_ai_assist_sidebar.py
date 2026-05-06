@@ -41,6 +41,9 @@ class _FakeWebEngineView(QtWidgets.QWidget):
         self._page = _FakeWebPage(self)
         self.html = ""
         self.base_url = None
+        self.stopped = False
+        self.urls: list[object] = []
+        self.deleted = False
         self.created.append(self)
 
     def page(self) -> _FakeWebPage:
@@ -49,6 +52,16 @@ class _FakeWebEngineView(QtWidgets.QWidget):
     def setHtml(self, html: str, base_url=None) -> None:
         self.html = html
         self.base_url = base_url
+
+    def stop(self) -> None:
+        self.stopped = True
+
+    def setUrl(self, url: object) -> None:
+        self.urls.append(url)
+
+    def deleteLater(self) -> None:  # type: ignore[override]
+        self.deleted = True
+        super().deleteLater()
 
 
 class _FakeWebChannel(QtCore.QObject):
@@ -203,6 +216,25 @@ def test_take_prewarmed_webengine_view_returns_cached_instance(monkeypatch) -> N
     assert webengine_utils._WEBENGINE_PREWARM_VIEW is None
 
 
+def test_release_prewarmed_webengine_view_tears_down_cached_instance(monkeypatch) -> None:
+    _ensure_app()
+    _install_fake_pyside6(monkeypatch)
+    _FakeWebEngineView.created = []
+    _reset_webengine_prewarm_state()
+    monkeypatch.setattr("f8pystudio.ui.support.webengine_utils.configure_default_webengine_profile", lambda: None)
+
+    assert webengine_utils.prewarm_webengine_view() is True
+    prewarmed_view = _FakeWebEngineView.created[0]
+
+    webengine_utils.release_prewarmed_webengine_view()
+
+    assert webengine_utils._WEBENGINE_PREWARM_VIEW is None
+    assert webengine_utils._WEBENGINE_VIEW_PREWARMED is False
+    assert prewarmed_view.stopped is True
+    assert prewarmed_view.page().web_channel is None
+    assert prewarmed_view.deleted is True
+
+
 def test_sidebar_reuses_prewarmed_webengine_view(monkeypatch) -> None:
     _ensure_app()
     _install_fake_pyside6(monkeypatch)
@@ -220,6 +252,18 @@ def test_sidebar_reuses_prewarmed_webengine_view(monkeypatch) -> None:
     assert len(_FakeWebEngineView.created) == 1
     assert widget._view.parent() is widget
     assert widget._view.base_url is not None
+
+
+def test_sidebar_shutdown_releases_webengine_view(monkeypatch) -> None:
+    widget, _graph = _make_sidebar(monkeypatch)
+    view = widget._view
+    assert isinstance(view, _FakeWebEngineView)
+
+    widget.shutdown()
+
+    assert view.stopped is True
+    assert view.page().web_channel is None
+    assert view.deleted is True
 
 
 def test_sidebar_uses_toolbar_mixin_methods_directly() -> None:

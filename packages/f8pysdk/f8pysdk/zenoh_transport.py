@@ -24,6 +24,7 @@ from .zenoh_naming import (
     zenoh_reply_pattern,
     zenoh_service_liveliness_key,
 )
+from .zenoh_shutdown import close_zenoh_session_best_effort
 
 log = logging.getLogger(__name__)
 # Zenoh can return a subscriber declaration before local matching is fully
@@ -205,10 +206,7 @@ class ZenohTransport:
             session = self._session
             self._session = None
             if session is not None:
-                try:
-                    await asyncio.to_thread(session.close)
-                except Exception as exc:
-                    log.debug("zenoh session close failed", exc_info=exc)
+                close_zenoh_session_best_effort(session, context=f"runtime:{self._config.service_id}")
 
     async def publish(self, subject: str, payload: bytes) -> None:
         await self.publish_stream(subject, payload, delivery="latest")
