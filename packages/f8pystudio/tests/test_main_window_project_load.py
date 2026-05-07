@@ -81,6 +81,7 @@ class _FakeMain:
         self.mark_session_saved_calls = 0
         self.mark_auto_deploy_observed_calls = 0
         self.schedule_deferred_auto_deploy_fingerprint_refresh_calls = 0
+        self.schedule_studio_runtime_sync_calls = 0
         self.refresh_auto_deploy_fingerprint_calls = 0
 
     def _mark_session_saved(self) -> None:
@@ -91,6 +92,9 @@ class _FakeMain:
 
     def _schedule_deferred_auto_deploy_fingerprint_refresh(self) -> None:
         self.schedule_deferred_auto_deploy_fingerprint_refresh_calls += 1
+
+    def _schedule_studio_runtime_sync(self) -> None:
+        self.schedule_studio_runtime_sync_calls += 1
 
     def _refresh_auto_deploy_fingerprint(self) -> None:
         self.refresh_auto_deploy_fingerprint_calls += 1
@@ -121,6 +125,22 @@ class _FakePrepareBeforeShowFailureMain(_FakePrepareBeforeShowMain):
         self._log_dock = self._LogDock(self)
 
 
+class _FakeTimer:
+    def __init__(self) -> None:
+        self.start_calls = 0
+
+    def start(self) -> None:
+        self.start_calls += 1
+
+
+class _FakeRuntimeSyncMain:
+    _schedule_studio_runtime_sync = F8StudioMainWin._schedule_studio_runtime_sync
+
+    def __init__(self) -> None:
+        self._closing = False
+        self._studio_runtime_sync_timer = _FakeTimer()
+
+
 def test_auto_load_project_starts_background_worker_once(monkeypatch) -> None:
     _FakeWorker.created = []
     monkeypatch.setattr("f8pystudio.ui.mainwin.main_window_project_mixin._ProjectAutoLoadWorker", _FakeWorker)
@@ -146,6 +166,7 @@ def test_auto_load_project_loaded_applies_payload_and_finalizes() -> None:
     assert fake_main.mark_session_saved_calls == 1
     assert fake_main.mark_auto_deploy_observed_calls == 1
     assert fake_main.schedule_deferred_auto_deploy_fingerprint_refresh_calls == 1
+    assert fake_main.schedule_studio_runtime_sync_calls == 1
     assert fake_main._last_auto_deploy_fingerprint == ""
     assert fake_main._global_hotkey_controller.refresh_calls == 1
     assert fake_main._log_dock.exceptions == []
@@ -162,6 +183,7 @@ def test_auto_load_project_failure_reports_and_finalizes() -> None:
     assert fake_main.mark_session_saved_calls == 1
     assert fake_main.mark_auto_deploy_observed_calls == 1
     assert fake_main.schedule_deferred_auto_deploy_fingerprint_refresh_calls == 1
+    assert fake_main.schedule_studio_runtime_sync_calls == 1
     assert fake_main._last_auto_deploy_fingerprint == ""
     assert fake_main._global_hotkey_controller.refresh_calls == 1
     assert fake_main._log_dock.exceptions == [("studio", "session auto-load failed", "boom")]
@@ -176,6 +198,17 @@ def test_deferred_auto_deploy_fingerprint_refresh_runs_only_when_open() -> None:
     fake_main._closing = True
     F8StudioMainWin._on_deferred_auto_deploy_fingerprint_timeout(fake_main)
     assert fake_main.refresh_auto_deploy_fingerprint_calls == 1
+
+
+def test_schedule_studio_runtime_sync_runs_only_when_open() -> None:
+    fake_main = _FakeRuntimeSyncMain()
+
+    F8StudioMainWin._schedule_studio_runtime_sync(fake_main)
+    assert fake_main._studio_runtime_sync_timer.start_calls == 1
+
+    fake_main._closing = True
+    F8StudioMainWin._schedule_studio_runtime_sync(fake_main)
+    assert fake_main._studio_runtime_sync_timer.start_calls == 1
 
 
 def test_prepare_before_show_initializes_ai_assist() -> None:

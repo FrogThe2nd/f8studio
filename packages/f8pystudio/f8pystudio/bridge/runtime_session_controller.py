@@ -118,6 +118,8 @@ class RuntimeSessionControllerMixin:
         """
         Best-effort wait for the in-process studio runtime (ServiceRuntime) to be ready.
         """
+        if self._studio_service_bus() is None:
+            await self._ensure_studio_service_started_async()
         return await wait_for_studio_runtime_ready(
             get_service_bus=self._studio_service_bus,
             emit_log=self._emit_log_line,
@@ -130,6 +132,34 @@ class RuntimeSessionControllerMixin:
         if svc is None:
             return None
         return svc.bus
+
+    async def _ensure_studio_service_started_async(self) -> bool:
+        if self._studio_service_bus() is not None:
+            return True
+        try:
+            cfg = PyStudioServiceConfig(
+                bus_backend=self._runtime_bus_backend(),
+                zenoh_config_path=self._runtime_zenoh_config_path(),
+                zenoh_connect=self._runtime_zenoh_connect(),
+                zenoh_listen=self._runtime_zenoh_listen(),
+                zenoh_shm_pool_bytes=self._runtime_zenoh_shm_pool_bytes(),
+                studio_service_id=self.studio_service_id,
+            )
+            self._svc = PyStudioService(cfg, registry=shared_pystudio_registry())
+            await self._svc.start(
+                on_ui_command=lambda cmd: self.ui_command.emit(cmd),
+            )
+            self._cache_service_alive(self.studio_service_id, True)
+            self._cache_service_active(self.studio_service_id, True)
+            self._monitor_center.update_service_status(service_id=self.studio_service_id, ready=True)
+            return True
+        except Exception as exc:
+            self._emit_log_line(f"studio runtime start failed: {exc}")
+            self._svc = None
+            self._cache_service_alive(self.studio_service_id, False)
+            self._cache_service_active(self.studio_service_id, None)
+            self._monitor_center.update_service_status(service_id=self.studio_service_id, ready=False)
+            return False
 
     def _emit_monitor_ui_update_now(self, *, service_id: str, update: PendingMonitorUpdate) -> None:
         try:
@@ -387,28 +417,7 @@ class RuntimeSessionControllerMixin:
         return instances
 
     async def _start_after_preflight_async(self) -> str | None:
-        try:
-            cfg = PyStudioServiceConfig(
-                bus_backend=self._runtime_bus_backend(),
-                zenoh_config_path=self._runtime_zenoh_config_path(),
-                zenoh_connect=self._runtime_zenoh_connect(),
-                zenoh_listen=self._runtime_zenoh_listen(),
-                zenoh_shm_pool_bytes=self._runtime_zenoh_shm_pool_bytes(),
-                studio_service_id=self.studio_service_id,
-            )
-            self._svc = PyStudioService(cfg, registry=shared_pystudio_registry())
-            await self._svc.start(
-                on_ui_command=lambda cmd: self.ui_command.emit(cmd),
-            )
-            self._cache_service_alive(self.studio_service_id, True)
-            self._cache_service_active(self.studio_service_id, True)
-            self._monitor_center.update_service_status(service_id=self.studio_service_id, ready=True)
-        except Exception as exc:
-            self._emit_log_line(f"studio runtime start failed: {exc}")
-            self._svc = None
-            self._cache_service_alive(self.studio_service_id, False)
-            self._cache_service_active(self.studio_service_id, None)
-            self._monitor_center.update_service_status(service_id=self.studio_service_id, ready=False)
+        await self._ensure_studio_service_started_async()
 
         # Studio-side remote KV watcher (monitors all remote node state and mirrors into UI).
         if self._remote_state_watcher is None:

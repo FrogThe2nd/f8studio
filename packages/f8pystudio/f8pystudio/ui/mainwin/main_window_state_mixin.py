@@ -345,6 +345,11 @@ class MainWindowStateMixin:
     def _schedule_deferred_auto_deploy_fingerprint_refresh(self) -> None:
         self._deferred_auto_deploy_fingerprint_timer.start()
 
+    def _schedule_studio_runtime_sync(self) -> None:
+        if self._closing:
+            return
+        self._studio_runtime_sync_timer.start()
+
     def _on_auto_save_toggled(self, checked: bool) -> None:
         self._auto_save_enabled = bool(checked)
         self._write_saved_auto_save_enabled(enabled=self._auto_save_enabled)
@@ -371,7 +376,7 @@ class MainWindowStateMixin:
         self._exit_autosaved = False
         if bool(self.studio_graph._loading_session):  # type: ignore[attr-defined]
             return
-        self._studio_runtime_sync_timer.start()
+        self._schedule_studio_runtime_sync()
         if self._auto_deploy_enabled:
             self._auto_deploy_timer.start()
 

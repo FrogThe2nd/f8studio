@@ -21,6 +21,22 @@ class _FakeMonitorCenter:
         self.ready_updates.append((str(service_id), bool(ready)))
 
 
+class _FakeStudioService:
+    instances: list["_FakeStudioService"] = []
+
+    def __init__(self, cfg: object, *, registry: object) -> None:
+        self.cfg = cfg
+        self.registry = registry
+        self.bus = object()
+        self.started = False
+        self.on_ui_command = None
+        self.__class__.instances.append(self)
+
+    async def start(self, *, on_ui_command: object) -> None:
+        self.on_ui_command = on_ui_command
+        self.started = True
+
+
 class _Controller(RuntimeSessionControllerMixin):
     def __init__(self) -> None:
         self._svc = None
@@ -54,6 +70,38 @@ class _Controller(RuntimeSessionControllerMixin):
 
     def request_service_status(self, service_id: str) -> None:
         self.status_requests.append(str(service_id))
+
+
+def test_ensure_studio_runtime_starts_missing_builtin_service(monkeypatch) -> None:
+    _FakeStudioService.instances.clear()
+    monkeypatch.setattr(
+        "f8pystudio.bridge.runtime_session_controller.PyStudioService",
+        _FakeStudioService,
+    )
+    monkeypatch.setattr(
+        "f8pystudio.bridge.runtime_session_controller.shared_pystudio_registry",
+        lambda: object(),
+    )
+
+    controller = _Controller()
+    controller._cfg = SimpleNamespace(
+        bus_backend="mem",
+        zenoh_config_path=None,
+        zenoh_connect=(),
+        zenoh_listen=(),
+        zenoh_shm_pool_bytes=256 * 1024 * 1024,
+    )
+
+    ok = asyncio.run(controller._ensure_studio_runtime_async(timeout_s=0.0))
+
+    assert ok is True
+    assert len(_FakeStudioService.instances) == 1
+    assert _FakeStudioService.instances[0].started is True
+    assert controller._svc is _FakeStudioService.instances[0]
+    assert controller.alive_updates == [("studio", True)]
+    assert controller.active_updates == [("studio", True)]
+    assert controller._monitor_center.ready_updates == [("studio", True)]
+    assert controller.logged == []
 
 
 def test_zenoh_liveliness_key_extracts_service_id() -> None:

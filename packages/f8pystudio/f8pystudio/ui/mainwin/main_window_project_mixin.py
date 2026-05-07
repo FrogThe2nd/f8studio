@@ -82,6 +82,7 @@ class MainWindowProjectMixin:
         def _mark_session_saved(self) -> None: ...
         def _mark_auto_deploy_observed(self) -> None: ...
         def _schedule_deferred_auto_deploy_fingerprint_refresh(self) -> None: ...
+        def _schedule_studio_runtime_sync(self) -> None: ...
         def _graph_has_unsaved_changes(self) -> bool: ...
         def _mark_auto_deploy_synced(self, *, compiled: object | None = None) -> None: ...
         def _focus_node_by_id(self, node_id: str) -> None: ...
@@ -101,6 +102,7 @@ class MainWindowProjectMixin:
         self._mark_auto_deploy_observed()
         self._last_auto_deploy_fingerprint = ""
         self._schedule_deferred_auto_deploy_fingerprint_refresh()
+        self._schedule_studio_runtime_sync()
         self._global_hotkey_controller.refresh_bindings()
 
     @QtCore.Slot(object)
@@ -167,6 +169,7 @@ class MainWindowProjectMixin:
         if loaded:
             self._mark_session_saved()
             self._mark_auto_deploy_synced()
+            self._schedule_studio_runtime_sync()
             self._global_hotkey_controller.refresh_bindings()
 
     @QtCore.Slot()
@@ -182,6 +185,7 @@ class MainWindowProjectMixin:
         if loaded:
             self._mark_session_saved()
             self._mark_auto_deploy_synced()
+            self._schedule_studio_runtime_sync()
             self._global_hotkey_controller.refresh_bindings()
 
     @QtCore.Slot()
@@ -197,6 +201,7 @@ class MainWindowProjectMixin:
         if loaded:
             self._mark_session_saved()
             self._mark_auto_deploy_synced()
+            self._schedule_studio_runtime_sync()
             self._global_hotkey_controller.refresh_bindings()
 
     @QtCore.Slot()
@@ -237,6 +242,7 @@ class MainWindowProjectMixin:
         if restored:
             self._mark_session_saved()
             self._mark_auto_deploy_synced()
+            self._schedule_studio_runtime_sync()
             self._global_hotkey_controller.refresh_bindings()
 
     @QtCore.Slot()
