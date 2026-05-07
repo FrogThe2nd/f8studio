@@ -22,6 +22,7 @@ class RungraphApplyTests(unittest.IsolatedAsyncioTestCase):
     async def test_apply_rungraph_accepts_decoded_model(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svc")
+        self.assertFalse(bus.has_rungraph())
 
         service_node = F8RuntimeNode(
             nodeId="svc",
@@ -36,6 +37,7 @@ class RungraphApplyTests(unittest.IsolatedAsyncioTestCase):
 
         await bus.set_rungraph(graph)
         self.assertIsNotNone(bus._graph)
+        self.assertTrue(bus.has_rungraph())
 
     async def test_apply_rungraph_accepts_service_node_with_unset_operator_class(self) -> None:
         harness = ServiceBusHarness()

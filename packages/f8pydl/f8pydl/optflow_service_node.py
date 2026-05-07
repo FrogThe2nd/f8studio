@@ -260,6 +260,8 @@ class OnnxOptflowServiceNode(ServiceNode):
         self._last_error_repeats = 0
         self._model_index_warning = ""
         self._runtime_warning = ""
+        self._last_input_stream_key = ""
+        self._using_cached_input_stream_key = False
         self._missing_input_since_monotonic: float | None = None
 
         self._last_processed_frame_id: int | None = None
@@ -495,6 +497,12 @@ class OnnxOptflowServiceNode(ServiceNode):
         self._last_infer_frame_id = None
         self._dup_skipped_since_last_processed = 0
 
+    def _current_input_stream_key(self) -> str:
+        return str(self.input_zenoh_key("video") or "").strip()
+
+    def _has_rungraph(self) -> bool:
+        return self.has_rungraph()
+
     async def _clear_missing_input_error(self) -> None:
         self._missing_input_since_monotonic = None
         if self._last_error in (
@@ -506,6 +514,10 @@ class OnnxOptflowServiceNode(ServiceNode):
             await self.clear_error()
 
     async def _handle_missing_input_stream_key(self) -> None:
+        if not self._has_rungraph():
+            self._missing_input_since_monotonic = None
+            await asyncio.sleep(0.05)
+            return
         now = time.monotonic()
         missing_since = self._missing_input_since_monotonic
         if missing_since is None:
@@ -517,7 +529,26 @@ class OnnxOptflowServiceNode(ServiceNode):
         await asyncio.sleep(0.05)
 
     def _resolve_input_stream_key(self) -> str:
-        return self.input_zenoh_key("video")
+        key = self._current_input_stream_key()
+        if key:
+            self._last_input_stream_key = key
+            self._using_cached_input_stream_key = False
+            return key
+        cached_key = str(self._last_input_stream_key or "").strip()
+        if not cached_key:
+            self._using_cached_input_stream_key = False
+            return ""
+        now = time.monotonic()
+        missing_since = self._missing_input_since_monotonic
+        if missing_since is None:
+            self._missing_input_since_monotonic = now
+            self._using_cached_input_stream_key = True
+            return cached_key
+        if (float(now) - float(missing_since)) < _MISSING_VIDEO_INPUT_GRACE_S:
+            self._using_cached_input_stream_key = True
+            return cached_key
+        self._using_cached_input_stream_key = False
+        return ""
 
     def _resolve_model_yaml(self) -> Path:
         if self._model_yaml_path:
@@ -690,7 +721,7 @@ class OnnxOptflowServiceNode(ServiceNode):
                 if not input_stream_key:
                     await self._handle_missing_input_stream_key()
                     continue
-                if self._missing_input_since_monotonic is not None:
+                if self._missing_input_since_monotonic is not None and not self._using_cached_input_stream_key:
                     await self._clear_missing_input_error()
 
                 try:

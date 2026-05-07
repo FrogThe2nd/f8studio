@@ -234,6 +234,15 @@ class DataIOBus(Protocol):
 
 
 @runtime_checkable
+class RuntimeGraphBus(Protocol):
+    """
+    Runtime graph snapshot visibility for node-side startup gating.
+    """
+
+    def has_rungraph(self) -> bool: ...
+
+
+@runtime_checkable
 class ExecIOBus(Protocol):
     """
     Exec emission operations against the bus.
@@ -275,7 +284,7 @@ class MonitorErrorBus(Protocol):
 
 
 @runtime_checkable
-class NodeBus(StateIOBus, DataIOBus, ExecIOBus, MonitorErrorBus, BusActive, Protocol):
+class NodeBus(StateIOBus, DataIOBus, RuntimeGraphBus, ExecIOBus, MonitorErrorBus, BusActive, Protocol):
     """
     Composition of bus capabilities used by `RuntimeNode`.
     """

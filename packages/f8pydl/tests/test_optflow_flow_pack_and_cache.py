@@ -26,10 +26,14 @@ from f8pysdk.zenoh_naming import zenoh_data_key  # noqa: E402
 
 
 class _BusStub:
-    def __init__(self, initial_state: dict[str, Any] | None = None) -> None:
+    def __init__(self, initial_state: dict[str, Any] | None = None, *, has_rungraph: bool = True) -> None:
         self.state: dict[str, Any] = dict(initial_state or {})
         self.errors: list[tuple[str, str, str]] = []
         self.clear_count = 0
+        self._has_rungraph = bool(has_rungraph)
+
+    def has_rungraph(self) -> bool:
+        return self._has_rungraph
 
     def report_error(
         self,
@@ -163,7 +167,7 @@ class OptflowServiceNodeErrorTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(bus.errors, [])
 
-    async def test_missing_input_stream_key_has_startup_grace_period(self) -> None:
+    async def test_missing_input_stream_key_ignores_startup_before_rungraph(self) -> None:
         node = OnnxOptflowServiceNode(
             node_id="optflowGrace",
             node=SimpleNamespace(stateFields=[]),
@@ -171,11 +175,28 @@ class OptflowServiceNodeErrorTests(unittest.IsolatedAsyncioTestCase):
             service_class="f8.dl.optflow",
             allowed_tasks={"optflow_neuflowv2"},
         )
-        node._bus = _BusStub()
+        node._bus = _BusStub(has_rungraph=False)
+        node._missing_input_since_monotonic = time.monotonic() - 30.0
 
         await node._handle_missing_input_stream_key()
 
         self.assertEqual(node._bus.errors, [])
+        self.assertIsNone(node._missing_input_since_monotonic)
+
+    async def test_missing_input_stream_key_starts_grace_after_rungraph_arrives(self) -> None:
+        node = OnnxOptflowServiceNode(
+            node_id="optflowGraphGrace",
+            node=SimpleNamespace(stateFields=[]),
+            initial_state=None,
+            service_class="f8.dl.optflow",
+            allowed_tasks={"optflow_neuflowv2"},
+        )
+        node._bus = _BusStub(has_rungraph=True)
+
+        await node._handle_missing_input_stream_key()
+
+        self.assertEqual(node._bus.errors, [])
+        self.assertIsNotNone(node._missing_input_since_monotonic)
 
     async def test_missing_input_stream_key_reports_after_grace_period(self) -> None:
         node = OnnxOptflowServiceNode(
@@ -192,6 +213,48 @@ class OptflowServiceNodeErrorTests(unittest.IsolatedAsyncioTestCase):
         await node._handle_missing_input_stream_key()
 
         self.assertEqual(bus.errors, [("optflowMissing", "DL_OPTFLOW_RUNTIME", "missing video data input")])
+
+    async def test_resolve_input_stream_key_reuses_cached_route_during_grace_period(self) -> None:
+        class _RouteFlapNode(OnnxOptflowServiceNode):
+            def __init__(self) -> None:
+                super().__init__(
+                    node_id="optflowRouteFlap",
+                    node=SimpleNamespace(stateFields=[]),
+                    initial_state=None,
+                    service_class="f8.dl.optflow",
+                    allowed_tasks={"optflow_neuflowv2"},
+                )
+                self.current_input_key = "f8/svc/source/nodes/camera/data/video"
+
+            def _current_input_stream_key(self) -> str:
+                return self.current_input_key
+
+        node = _RouteFlapNode()
+
+        self.assertEqual(node._resolve_input_stream_key(), "f8/svc/source/nodes/camera/data/video")
+        self.assertFalse(node._using_cached_input_stream_key)
+
+        node.current_input_key = ""
+        self.assertEqual(node._resolve_input_stream_key(), "f8/svc/source/nodes/camera/data/video")
+        self.assertTrue(node._using_cached_input_stream_key)
+
+    async def test_resolve_input_stream_key_reports_missing_after_cached_route_expires(self) -> None:
+        class _RouteMissingNode(OnnxOptflowServiceNode):
+            def _current_input_stream_key(self) -> str:
+                return ""
+
+        node = _RouteMissingNode(
+            node_id="optflowRouteExpired",
+            node=SimpleNamespace(stateFields=[]),
+            initial_state=None,
+            service_class="f8.dl.optflow",
+            allowed_tasks={"optflow_neuflowv2"},
+        )
+        node._last_input_stream_key = "f8/svc/source/nodes/camera/data/video"
+        node._missing_input_since_monotonic = time.monotonic() - 3.0
+
+        self.assertEqual(node._resolve_input_stream_key(), "")
+        self.assertFalse(node._using_cached_input_stream_key)
 
     async def test_attach_uses_service_id_for_flow_zenoh_key(self) -> None:
         bus = ServiceBus(ServiceBusConfig(service_id="dl_service", bus_backend="mem"))

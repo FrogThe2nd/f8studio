@@ -445,6 +445,9 @@ class ServiceBus:
     def active(self) -> bool:
         return bool(self._active)
 
+    def has_rungraph(self) -> bool:
+        return self._graph is not None
+
     @property
     def command_gateway(self) -> CommandGateway:
         return self._command_gateway
