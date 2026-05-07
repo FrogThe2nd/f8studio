@@ -38,12 +38,44 @@ class _FakeRequester:
 
 def test_request_service_status_success() -> None:
     requester = _FakeRequester(
+        [
+            encode_obj(
+                {
+                    "reqId": "r1",
+                    "ok": True,
+                    "result": {
+                        "serviceId": "svc_demo",
+                        "serviceClass": "f8.tests.demo",
+                        "runtimeInstanceId": "inst_demo",
+                        "active": False,
+                    },
+                    "error": None,
+                }
+            )
+        ]
+    )
+
+    result = asyncio.run(request_service_status(requester, service_id="svc_demo", timeout_s=0.4))
+
+    assert result == {
+        "alive": True,
+        "identityValid": True,
+        "serviceId": "svc_demo",
+        "serviceClass": "f8.tests.demo",
+        "runtimeInstanceId": "inst_demo",
+        "active": False,
+    }
+    assert requester.calls[0][0] == svc_endpoint_key("svc_demo", "status")
+
+
+def test_request_service_status_marks_old_protocol_identity_invalid() -> None:
+    requester = _FakeRequester(
         [encode_obj({"reqId": "r1", "ok": True, "result": {"serviceId": "svc_demo", "active": False}, "error": None})]
     )
 
     result = asyncio.run(request_service_status(requester, service_id="svc_demo", timeout_s=0.4))
 
-    assert result == {"alive": True, "active": False}
+    assert result == {"alive": True, "identityValid": False}
     assert requester.calls[0][0] == svc_endpoint_key("svc_demo", "status")
 
 

@@ -43,9 +43,10 @@ def zenoh_command_key(service_id: str, command: str) -> str:
     return f"{_F8_PREFIX}/cmd/svc/{sid}/{cmd}"
 
 
-def zenoh_service_liveliness_key(service_id: str) -> str:
+def zenoh_service_liveliness_key(service_id: str, runtime_instance_id: str) -> str:
     sid = ensure_token(service_id, label="service_id")
-    return f"{_F8_PREFIX}/live/svc/{sid}"
+    rid = ensure_token(runtime_instance_id, label="runtime_instance_id")
+    return f"{_F8_PREFIX}/live/svc/{sid}/instances/{rid}"
 
 
 def zenoh_studio_liveliness_key(studio_service_id: str) -> str:

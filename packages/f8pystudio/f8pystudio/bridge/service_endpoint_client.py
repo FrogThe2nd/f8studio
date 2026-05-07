@@ -21,7 +21,7 @@ from f8pysdk.specs import (
     F8TerminateRequest,
 )
 from f8pysdk.f8_naming import ensure_token, new_id, svc_endpoint_key
-from f8pysdk.codec import decode_as, encode_obj
+from f8pysdk.codec import decode_as, decode_obj, encode_obj
 
 from .runtime_request import RuntimeRequester
 
@@ -84,13 +84,29 @@ async def request_service_status(
     try:
         response = decode_as(raw, F8StatusReply)
     except ValueError:
-        return None
+        try:
+            fallback = decode_obj(raw)
+        except ValueError:
+            return None
+        if not isinstance(fallback, dict):
+            return None
+        if not bool(fallback.get("ok")):
+            return None
+        if not isinstance(fallback.get("result"), dict):
+            return None
+        return {"alive": True, "identityValid": False}
     if not response.ok:
         return None
     result = response.result
     if result is None or isinstance(result, msgspec.UnsetType):
         return None
-    output: dict[str, Any] = {"alive": True}
+    output: dict[str, Any] = {
+        "alive": True,
+        "identityValid": True,
+        "serviceId": str(result.serviceId),
+        "serviceClass": str(result.serviceClass),
+        "runtimeInstanceId": str(result.runtimeInstanceId),
+    }
     output["active"] = bool(result.active)
     return output
 

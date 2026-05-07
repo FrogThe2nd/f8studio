@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol, TYPE_CHECKING
@@ -185,6 +186,7 @@ class ServiceBus:
         self._config = config
         self._bus_backend = config.bus_backend
         self.service_id = ensure_token(config.service_id, label="service_id")
+        self._runtime_instance_id = uuid.uuid4().hex
         self._service_name = str(config.service_name or "") or self.service_id
         self._service_class = str(config.service_class or "")
         self._debug_state = _debug_state_enabled()
@@ -208,6 +210,8 @@ class ServiceBus:
                 self._transport = ZenohTransport(
                     ZenohTransportConfig(
                         service_id=self.service_id,
+                        runtime_instance_id=self._runtime_instance_id,
+                        announce_service_liveliness=True,
                         config_path=config.zenoh_config_path,
                         connect=config.zenoh_connect,
                         listen=config.zenoh_listen,
@@ -374,6 +378,10 @@ class ServiceBus:
     @property
     def service_class(self) -> str:
         return self._service_class
+
+    @property
+    def runtime_instance_id(self) -> str:
+        return self._runtime_instance_id
 
     @property
     def config(self) -> ServiceBusConfig:

@@ -80,7 +80,12 @@ class _GatewayTransportStub:
                 {
                     "reqId": str(decoded_status.get("reqId") or ""),
                     "ok": True,
-                    "result": {"serviceId": "svc1", "active": True},
+                    "result": {
+                        "serviceId": "svc1",
+                        "serviceClass": "f8.tests.svc1",
+                        "runtimeInstanceId": "inst_svc1",
+                        "active": True,
+                    },
                     "error": None,
                 }
             )

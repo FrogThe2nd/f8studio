@@ -718,10 +718,16 @@ components:
       properties:
         serviceId:
           type: string
+        serviceClass:
+          type: string
+        runtimeInstanceId:
+          type: string
         active:
           type: boolean
       required:
         - serviceId
+        - serviceClass
+        - runtimeInstanceId
         - active
       additionalProperties: false
 

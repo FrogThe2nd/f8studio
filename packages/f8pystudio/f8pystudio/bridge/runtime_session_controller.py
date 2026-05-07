@@ -13,6 +13,7 @@ from f8pysdk.zenoh_shutdown import close_zenoh_session_best_effort
 from .runtime_lifecycle import (
     SINGLETON_GUARD_DIALOG_MESSAGE,
 )
+from .process_lifecycle import StopServiceRequest
 from .remote_state_sync import RemoteStateGatewayAdapter
 from .studio_runtime_flow import wait_for_studio_runtime_ready
 from f8pystudio.bridge.studio_service import PyStudioService, PyStudioServiceConfig
@@ -25,18 +26,34 @@ _MONITOR_UI_EMIT_INTERVAL_S = 1.0
 _ZENOH_SERVICE_LIVELINESS_PREFIX = "f8/live/svc/"
 
 
+@dataclass(frozen=True)
+class ServiceLivelinessIdentity:
+    service_id: str
+    runtime_instance_id: str
+
+
 def _is_zenoh_liveliness_reply_channel_drained(exc: BaseException) -> bool:
     return "channel is empty and closed" in str(exc).strip().lower()
 
 
+def _service_liveliness_identity_from_zenoh_key(key: str) -> ServiceLivelinessIdentity | None:
+    parts = [part for part in str(key or "").strip("/").split("/") if part]
+    if len(parts) != 6:
+        return None
+    if parts[0] != "f8" or parts[1] != "live" or parts[2] != "svc" or parts[4] != "instances":
+        return None
+    service_id = parts[3]
+    runtime_instance_id = parts[5]
+    if not service_id or not runtime_instance_id:
+        return None
+    return ServiceLivelinessIdentity(service_id=service_id, runtime_instance_id=runtime_instance_id)
+
+
 def _service_id_from_zenoh_liveliness_key(key: str) -> str | None:
-    text = str(key or "").strip("/")
-    if not text.startswith(_ZENOH_SERVICE_LIVELINESS_PREFIX):
+    identity = _service_liveliness_identity_from_zenoh_key(key)
+    if identity is None:
         return None
-    service_id = text[len(_ZENOH_SERVICE_LIVELINESS_PREFIX) :].strip("/")
-    if not service_id or "/" in service_id:
-        return None
-    return service_id
+    return identity.service_id
 
 
 @dataclass(frozen=True)
@@ -250,14 +267,24 @@ class RuntimeSessionControllerMixin:
 
         def _on_sample(sample: Any) -> None:
             try:
-                service_id = _service_id_from_zenoh_liveliness_key(str(sample.key_expr))
-                if service_id is None:
+                identity = _service_liveliness_identity_from_zenoh_key(str(sample.key_expr))
+                if identity is None:
                     return
                 if sample.kind == zenoh.SampleKind.PUT:
-                    loop.call_soon_threadsafe(self._on_zenoh_service_liveliness, service_id, True)
+                    loop.call_soon_threadsafe(
+                        self._on_zenoh_service_liveliness,
+                        identity.service_id,
+                        identity.runtime_instance_id,
+                        True,
+                    )
                     return
                 if sample.kind == zenoh.SampleKind.DELETE:
-                    loop.call_soon_threadsafe(self._on_zenoh_service_liveliness, service_id, False)
+                    loop.call_soon_threadsafe(
+                        self._on_zenoh_service_liveliness,
+                        identity.service_id,
+                        identity.runtime_instance_id,
+                        False,
+                    )
             except Exception as exc:
                 loop.call_soon_threadsafe(self._report_exception, "zenoh service liveliness sample failed", exc)
 
@@ -277,13 +304,87 @@ class RuntimeSessionControllerMixin:
                 except Exception as close_exc:
                     self._report_exception("close zenoh service liveliness session failed", close_exc)
 
-    def _on_zenoh_service_liveliness(self, service_id: str, alive: bool) -> None:
-        self._cache_service_alive(str(service_id), bool(alive))
-        if alive:
-            self.request_service_status(str(service_id))
+    def _on_zenoh_service_liveliness(self, service_id: str, runtime_instance_id: str, alive: bool) -> None:
+        sid = str(service_id or "").strip()
+        rid = str(runtime_instance_id or "").strip()
+        if not sid or not rid:
             return
-        self._cache_service_active(str(service_id), None)
-        self._monitor_center.update_service_status(service_id=str(service_id), ready=False)
+        instances = self._service_liveliness_instances_by_service.setdefault(sid, set())
+        if alive:
+            instances.add(rid)
+            self._cache_service_alive(sid, True)
+            self.request_service_status(sid)
+            return
+        instances.discard(rid)
+        if instances:
+            self._cache_service_alive(sid, True)
+            return
+        self._service_liveliness_instances_by_service.pop(sid, None)
+        self._cache_service_alive(sid, False)
+        self._cache_service_active(sid, None)
+        self._monitor_center.update_service_status(service_id=sid, ready=False)
+
+    async def _query_zenoh_service_liveliness_instances_async(
+        self,
+        service_id: str,
+        *,
+        timeout_s: float = 0.25,
+    ) -> set[str]:
+        sid = str(service_id or "").strip()
+        if not sid or self._runtime_bus_backend() != "zenoh":
+            return set()
+        try:
+            import zenoh  # type: ignore[import-not-found]
+        except ImportError as exc:
+            self._report_exception("import zenoh for service liveliness query failed", exc)
+            return set()
+
+        owns_session = False
+        session = self._zenoh_singleton_session
+        if session is None:
+            try:
+                config = self._build_zenoh_session_config(zenoh)
+                session = await asyncio.to_thread(zenoh.open, config)
+                owns_session = True
+            except Exception as exc:
+                self._report_exception("open zenoh for service liveliness query failed", exc)
+                return set()
+
+        instances: set[str] = set()
+        key_expr = f"{_ZENOH_SERVICE_LIVELINESS_PREFIX}{sid}/instances/**"
+        query_ok = False
+        try:
+            replies = session.liveliness().get(key_expr, timeout=float(timeout_s))
+            deadline = time.monotonic() + max(0.02, float(timeout_s)) + 0.05
+            while time.monotonic() < deadline:
+                try:
+                    reply = replies.try_recv()
+                except zenoh.ZError as exc:  # type: ignore[attr-defined]
+                    if _is_zenoh_liveliness_reply_channel_drained(exc):
+                        break
+                    raise
+                if reply is None:
+                    await asyncio.sleep(0.01)
+                    continue
+                sample = reply.ok
+                if sample is None:
+                    continue
+                identity = _service_liveliness_identity_from_zenoh_key(str(sample.key_expr))
+                if identity is not None and identity.service_id == sid:
+                    instances.add(identity.runtime_instance_id)
+            query_ok = True
+        except Exception as exc:
+            self._report_exception(f"query zenoh service liveliness failed serviceId={sid}", exc)
+        finally:
+            if owns_session:
+                close_zenoh_session_best_effort(session, context="pystudio-service-liveliness-query")
+        if instances:
+            self._service_liveliness_instances_by_service[sid] = set(instances)
+        elif query_ok:
+            self._service_liveliness_instances_by_service.pop(sid, None)
+        else:
+            return set(self._service_liveliness_instances_by_service.get(sid, set()))
+        return instances
 
     async def _start_after_preflight_async(self) -> str | None:
         try:
@@ -414,6 +515,13 @@ class RuntimeSessionControllerMixin:
         if monitor_ui_flush_task is not None:
             monitor_ui_flush_task.cancel()
             await asyncio.gather(monitor_ui_flush_task, return_exceptions=True)
+
+        if self.kill_managed_services_on_exit():
+            for sid in list(self._process_gateway.service_ids()):
+                try:
+                    self._process_gateway.stop(StopServiceRequest(service_id=sid))
+                except Exception as exc:
+                    self._report_exception(f"stop service process failed serviceId={sid}", exc)
 
         if self._monitor_sub is not None:
             try:

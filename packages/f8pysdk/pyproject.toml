@@ -18,7 +18,7 @@ build-backend = "hatchling.build"
 ignore-vcs = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["f8pysdk", "f8pysdk.generated"]
+packages = ["f8pysdk"]
 
 [tool.hatch.build.hooks.custom]
 path = "build_hooks.py"

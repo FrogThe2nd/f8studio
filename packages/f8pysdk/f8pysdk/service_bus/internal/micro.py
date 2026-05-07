@@ -211,6 +211,8 @@ class ServiceBusControlHandlers:
                     "ok": True,
                     "result": {
                         "serviceId": self._bus.service_id,
+                        "serviceClass": self._bus.service_class,
+                        "runtimeInstanceId": self._bus.runtime_instance_id,
                         "active": self._bus.active,
                     },
                     "error": None,

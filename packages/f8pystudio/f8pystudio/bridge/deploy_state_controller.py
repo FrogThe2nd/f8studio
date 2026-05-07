@@ -47,7 +47,6 @@ class DeployStateControllerMixin:
         Starts service processes (if not running), deploys per-service graphs,
         installs the studio runtime graph, and enables remote state monitoring.
         """
-        # 1) start processes (sync)
         self._remember_compiled_graphs(compiled)
         inventory = collect_managed_service_inventory(
             services=list(compiled.global_graph.services or []),
@@ -55,19 +54,16 @@ class DeployStateControllerMixin:
             studio_service_class=SERVICE_CLASS,
             on_collect_error=lambda exc: self._emit_log_line(f"start service failed: {exc}"),
         )
-        for service_id, service_class in list(inventory.start_order):
-            try:
-                # Use the public helper so we dedup against already-running services
-                # (including ones started outside this Studio process).
-                self.start_service(service_id, service_class=service_class)
-            except Exception as exc:
-                self._emit_log_line(f"start service failed: {exc}")
+        previous_service_classes = dict(self._managed_service_classes)
         self._managed_service_ids = set(inventory.service_ids)
         self._managed_service_classes = dict(inventory.service_classes)
 
-        # 2) deploy + install monitoring (async)
         self._submit_async(
-            self._deploy_remote_services_and_refresh_studio_async(compiled),
+            self._ensure_remote_services_and_deploy_async(
+                compiled,
+                start_order=tuple(inventory.start_order),
+                previous_service_classes=previous_service_classes,
+            ),
             context="submit deploy_remote_services_and_refresh_studio failed",
         )
         # Preserve the current global lifecycle preference across repeated deploys.
@@ -152,6 +148,33 @@ class DeployStateControllerMixin:
 
     async def _deploy_remote_services_and_refresh_studio_async(self, compiled: CompiledRuntimeGraphs) -> None:
         await self._rungraph_deploy_flow.deploy_all_service_rungraphs(compiled=compiled)
+        await self._refresh_studio_runtime_async(compiled=compiled)
+
+    async def _ensure_remote_services_and_deploy_async(
+        self,
+        compiled: CompiledRuntimeGraphs,
+        *,
+        start_order: tuple[tuple[str, str], ...],
+        previous_service_classes: dict[str, str],
+    ) -> None:
+        ensured_service_ids: set[str] = set()
+        for service_id, service_class in list(start_order):
+            try:
+                sid = ensure_token(str(service_id), label="service_id")
+            except ValueError as exc:
+                self._emit_log_line(f"deploy blocked: invalid serviceId {service_id!r}: {exc}")
+                continue
+            ok = await self.ensure_service_available(
+                sid,
+                str(service_class),
+                local_known_service_class=previous_service_classes.get(sid),
+            )
+            if ok:
+                ensured_service_ids.add(sid)
+        await self._rungraph_deploy_flow.deploy_selected_service_rungraphs(
+            compiled=compiled,
+            allowed_service_ids=ensured_service_ids,
+        )
         await self._refresh_studio_runtime_async(compiled=compiled)
 
     def set_local_state(self, node_id: str, field: str, value: Any) -> None:

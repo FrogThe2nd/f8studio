@@ -20,6 +20,8 @@ struct RuntimeBackendConfig {
   std::vector<std::string> zenoh_connect;
   std::vector<std::string> zenoh_listen;
   std::uint64_t zenoh_shm_pool_bytes = kDefaultZenohShmPoolBytes;
+  bool announce_service_liveliness = false;
+  std::string runtime_instance_id;
 };
 
 std::string bus_backend_to_string(BusBackend backend);

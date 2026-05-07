@@ -118,6 +118,7 @@ std::vector<std::string> parse_endpoint_list(std::string_view value) {
 }
 
 RuntimeBackendConfig normalize_runtime_backend_config(RuntimeBackendConfig config) {
+  config.runtime_instance_id = trim_runtime_string(config.runtime_instance_id);
   config.zenoh_config_path = trim_runtime_string(config.zenoh_config_path);
   config.zenoh_connect = normalize_endpoint_list(config.zenoh_connect);
   config.zenoh_listen = normalize_endpoint_list(config.zenoh_listen);

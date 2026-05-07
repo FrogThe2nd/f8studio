@@ -234,6 +234,32 @@ class MainWindowStateMixin:
         finally:
             settings.endGroup()
 
+    def _read_saved_kill_managed_services_on_exit_enabled(self) -> bool:
+        settings = self._layout_settings()
+        settings.beginGroup(self._AUTOMATION_SETTINGS_GROUP)
+        try:
+            raw = settings.value(self._KILL_MANAGED_SERVICES_ON_EXIT_SETTINGS_KEY, True)
+        finally:
+            settings.endGroup()
+        return coerce_bool(raw, default=True)
+
+    def _write_saved_kill_managed_services_on_exit_enabled(self, *, enabled: bool) -> None:
+        settings = self._layout_settings()
+        settings.beginGroup(self._AUTOMATION_SETTINGS_GROUP)
+        try:
+            settings.setValue(self._KILL_MANAGED_SERVICES_ON_EXIT_SETTINGS_KEY, bool(enabled))
+            settings.sync()
+        finally:
+            settings.endGroup()
+
+    def _apply_kill_managed_services_on_exit_enabled(self, *, enabled: bool, persist: bool) -> None:
+        self._kill_managed_services_on_exit_enabled = bool(enabled)
+        self._bridge.set_kill_managed_services_on_exit(self._kill_managed_services_on_exit_enabled)
+        if persist:
+            self._write_saved_kill_managed_services_on_exit_enabled(
+                enabled=self._kill_managed_services_on_exit_enabled
+            )
+
     def _read_saved_performance_overlay_enabled(self) -> bool:
         settings = self._layout_settings()
         settings.beginGroup(self._VIEW_SETTINGS_GROUP)
@@ -330,6 +356,9 @@ class MainWindowStateMixin:
         elif self._current_undo_index() != self._last_auto_deploy_observed_undo_index:
             self._auto_deploy_timer.start()
         self._write_saved_auto_deploy_enabled(enabled=self._auto_deploy_enabled)
+
+    def _on_kill_managed_services_on_exit_toggled(self, checked: bool) -> None:
+        self._apply_kill_managed_services_on_exit_enabled(enabled=bool(checked), persist=True)
 
     def _on_performance_overlay_toggled(self, checked: bool) -> None:
         self._apply_performance_overlay_enabled(enabled=bool(checked), persist=True)

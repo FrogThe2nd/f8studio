@@ -233,8 +233,11 @@ class ZenohTransport::Impl final {
 
       auto session = std::make_unique<zenoh::Session>(zenoh::Session::open(std::move(zenoh_config)));
       session_ = std::move(session);
-      liveliness_token_ =
-          session_->liveliness_declare_token(zenoh::KeyExpr(zenoh_service_liveliness_key(service_id_)));
+      if (config_.announce_service_liveliness) {
+        const std::string runtime_instance_id = ensure_token(config_.runtime_instance_id, "runtime_instance_id");
+        liveliness_token_ = session_->liveliness_declare_token(
+            zenoh::KeyExpr(zenoh_service_liveliness_key(service_id_, runtime_instance_id)));
+      }
       return true;
     } catch (const std::exception& exc) {
       spdlog::error("zenoh transport connect failed serviceId={}: {}", service_id_, exc.what());

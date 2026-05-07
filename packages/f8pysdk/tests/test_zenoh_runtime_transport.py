@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from typing import Any
 
 from f8pysdk.bus import ServiceBus, ServiceBusConfig
@@ -8,7 +9,12 @@ from f8pysdk.f8_naming import data_key, new_id, state_path_node_field, svc_endpo
 from f8pysdk.runtime_transport import RuntimeTransport
 from f8pysdk.testing import InMemoryCluster, InMemoryTransport
 from f8pysdk.zenoh_config import apply_zenoh_shared_memory_config
-from f8pysdk.zenoh_naming import zenoh_key_to_state_path, zenoh_state_key, zenoh_state_path_pattern
+from f8pysdk.zenoh_naming import (
+    zenoh_key_to_state_path,
+    zenoh_service_liveliness_key,
+    zenoh_state_key,
+    zenoh_state_path_pattern,
+)
 from f8pysdk.zenoh_transport import ZenohTransport, ZenohTransportConfig
 
 
@@ -64,6 +70,90 @@ def test_zenoh_state_path_pattern_maps_node_state_wildcards_to_state_keyspace() 
     assert zenoh_state_path_pattern("svcA", "nodes.>") == "f8/svc/svcA/state/nodes/**"
     assert zenoh_state_path_pattern("svcA", "nodes.node.>") == "f8/svc/svcA/state/nodes/node/**"
     assert zenoh_state_path_pattern("svcA", "nodes.node.state.>") == "f8/svc/svcA/state/nodes/node/state/**"
+
+
+def test_zenoh_service_liveliness_key_is_per_runtime_instance() -> None:
+    assert zenoh_service_liveliness_key("engine", "inst1") == "f8/live/svc/engine/instances/inst1"
+
+
+def test_zenoh_transport_client_does_not_announce_service_liveliness_by_default(monkeypatch) -> None:
+    class _FakeConfig:
+        def insert_json5(self, _key: str, _value: str) -> None:
+            return None
+
+    class _FakeLiveliness:
+        def __init__(self) -> None:
+            self.declared: list[str] = []
+
+        def declare_token(self, key: str) -> object:
+            self.declared.append(str(key))
+            return object()
+
+    class _FakeSession:
+        def __init__(self) -> None:
+            self.liveliness_api = _FakeLiveliness()
+
+        def liveliness(self) -> _FakeLiveliness:
+            return self.liveliness_api
+
+    class _FakeZenoh:
+        ZError = _FakeZenohConfigError
+        Config = _FakeConfig
+
+        @staticmethod
+        def open(_config: object) -> _FakeSession:
+            return _FakeSession()
+
+    async def _run() -> None:
+        monkeypatch.setitem(sys.modules, "zenoh", _FakeZenoh)
+        transport = ZenohTransport(ZenohTransportConfig(service_id="studio"))
+        await transport.connect()
+        assert transport._session.liveliness_api.declared == []
+
+    asyncio.run(_run())
+
+
+def test_zenoh_transport_declares_service_liveliness_when_enabled(monkeypatch) -> None:
+    class _FakeConfig:
+        def insert_json5(self, _key: str, _value: str) -> None:
+            return None
+
+    class _FakeLiveliness:
+        def __init__(self) -> None:
+            self.declared: list[str] = []
+
+        def declare_token(self, key: str) -> object:
+            self.declared.append(str(key))
+            return object()
+
+    class _FakeSession:
+        def __init__(self) -> None:
+            self.liveliness_api = _FakeLiveliness()
+
+        def liveliness(self) -> _FakeLiveliness:
+            return self.liveliness_api
+
+    class _FakeZenoh:
+        ZError = _FakeZenohConfigError
+        Config = _FakeConfig
+
+        @staticmethod
+        def open(_config: object) -> _FakeSession:
+            return _FakeSession()
+
+    async def _run() -> None:
+        monkeypatch.setitem(sys.modules, "zenoh", _FakeZenoh)
+        transport = ZenohTransport(
+            ZenohTransportConfig(
+                service_id="engine",
+                runtime_instance_id="inst1",
+                announce_service_liveliness=True,
+            )
+        )
+        await transport.connect()
+        assert transport._session.liveliness_api.declared == ["f8/live/svc/engine/instances/inst1"]
+
+    asyncio.run(_run())
 
 
 def test_zenoh_transport_puts_use_latest_drop_qos() -> None:

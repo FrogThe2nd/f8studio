@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from typing import cast
+from typing import Literal, cast
 
 from f8pysdk.bus import BusBackend
 from f8pysdk.service_bus.config import DEFAULT_ZENOH_SHM_POOL_BYTES
@@ -64,8 +64,10 @@ def _env_tuple(default: tuple[str, ...], name: str) -> tuple[str, ...]:
 
 
 def _build_bridge_config(args: argparse.Namespace) -> PyStudioServiceBridgeConfig:
+    supervision_mode = "studio_owned" if bool(args.kill_managed_services_on_exit) else "detached"
     return PyStudioServiceBridgeConfig(
         bus_backend=cast(BusBackend, str(args.bus_backend)),
+        supervision_mode=cast(Literal["studio_owned", "detached"], supervision_mode),
         zenoh_config_path=str(args.zenoh_config or "").strip() or None,
         zenoh_connect=_split_endpoint_values(list(args.zenoh_connect or [])),
         zenoh_listen=_split_endpoint_values(list(args.zenoh_listen or [])),
@@ -145,6 +147,12 @@ def main(argv: list[str] | None = None, *, force_process_exit: bool = False) -> 
         default=_env_int(DEFAULT_ZENOH_SHM_POOL_BYTES, "F8_ZENOH_SHM_POOL_BYTES"),
         type=int,
         help="Zenoh SHM pool size hint in bytes (env: F8_ZENOH_SHM_POOL_BYTES).",
+    )
+    parser.add_argument(
+        "--kill-managed-services-on-exit",
+        action=argparse.BooleanOptionalAction,
+        default=_env_flag(True, "F8_KILL_MANAGED_SERVICES_ON_EXIT"),
+        help="Bind managed services to the PyStudio process lifetime (env: F8_KILL_MANAGED_SERVICES_ON_EXIT).",
     )
     args = parser.parse_args(argv)
 

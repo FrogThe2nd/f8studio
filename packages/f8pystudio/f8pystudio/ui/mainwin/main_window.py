@@ -54,6 +54,7 @@ class F8StudioMainWin(
     _AUTOMATION_SETTINGS_GROUP = "main_window/automation/v1"
     _AUTO_SAVE_ENABLED_SETTINGS_KEY = "auto_save_enabled"
     _AUTO_DEPLOY_ENABLED_SETTINGS_KEY = "auto_deploy_enabled"
+    _KILL_MANAGED_SERVICES_ON_EXIT_SETTINGS_KEY = "kill_managed_services_on_exit"
     _VIEW_SETTINGS_GROUP = "main_window/view/v1"
     _AUTO_PROXY_ENABLED_SETTINGS_KEY = "auto_proxy_enabled"
     _PERFORMANCE_OVERLAY_ENABLED_SETTINGS_KEY = "performance_overlay_enabled"
@@ -91,6 +92,7 @@ class F8StudioMainWin(
     _export_published_session_action: QtGui.QAction
     _auto_save_action: QtGui.QAction
     _auto_deploy_action: QtGui.QAction
+    _kill_managed_services_on_exit_action: QtGui.QAction
     _auto_proxy_action: QtGui.QAction
     _performance_overlay_action: QtGui.QAction
     _global_hotkeys_action: QtGui.QAction
@@ -147,6 +149,7 @@ class F8StudioMainWin(
         self._default_dock_layout_state = QtCore.QByteArray()
         self._auto_save_enabled = self._read_saved_auto_save_enabled()
         self._auto_deploy_enabled = self._read_saved_auto_deploy_enabled()
+        self._kill_managed_services_on_exit_enabled = self._read_saved_kill_managed_services_on_exit_enabled()
         self._auto_proxy_enabled = self._read_saved_auto_proxy_enabled()
         self._performance_overlay_enabled = self._read_saved_performance_overlay_enabled()
         self._asset_cloud_sync_client = None
@@ -212,6 +215,10 @@ class F8StudioMainWin(
         self._bridge = bridge or PyStudioServiceBridge(PyStudioServiceBridgeConfig(), parent=self)
         if bridge is not None and self._bridge.parent() is None:
             self._bridge.setParent(self)
+        self._apply_kill_managed_services_on_exit_enabled(
+            enabled=self._kill_managed_services_on_exit_enabled,
+            persist=False,
+        )
         self._bridge.ui_command.connect(self._on_ui_command)  # type: ignore[attr-defined]
         self._bridge.service_output.connect(self._on_service_output)  # type: ignore[attr-defined]
         self._bridge.service_process_state.connect(self._on_service_process_state)  # type: ignore[attr-defined]

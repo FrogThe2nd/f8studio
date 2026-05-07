@@ -6,7 +6,9 @@ from types import SimpleNamespace
 
 from f8pystudio.bridge.runtime_lifecycle import SINGLETON_GUARD_DIALOG_MESSAGE
 from f8pystudio.bridge.runtime_session_controller import (
+    ServiceLivelinessIdentity,
     RuntimeSessionControllerMixin,
+    _service_liveliness_identity_from_zenoh_key,
     _service_id_from_zenoh_liveliness_key,
 )
 
@@ -28,6 +30,7 @@ class _Controller(RuntimeSessionControllerMixin):
         self._watch_targets_cache = None
         self._zenoh_service_liveliness_session = None
         self._zenoh_service_liveliness_sub = None
+        self._service_liveliness_instances_by_service: dict[str, set[str]] = {}
         self._managed_active = True
         self.logged: list[str] = []
         self.reported: list[str] = []
@@ -54,11 +57,18 @@ class _Controller(RuntimeSessionControllerMixin):
 
 
 def test_zenoh_liveliness_key_extracts_service_id() -> None:
-    assert _service_id_from_zenoh_liveliness_key("f8/live/svc/engine") == "engine"
-    assert _service_id_from_zenoh_liveliness_key("/f8/live/svc/detector/") == "detector"
+    assert _service_id_from_zenoh_liveliness_key("f8/live/svc/engine/instances/inst1") == "engine"
+    assert _service_id_from_zenoh_liveliness_key("/f8/live/svc/detector/instances/inst2/") == "detector"
     assert _service_id_from_zenoh_liveliness_key("f8/live/studio/studio") is None
     assert _service_id_from_zenoh_liveliness_key("f8/live/svc/") is None
     assert _service_id_from_zenoh_liveliness_key("f8/live/svc/bad/path") is None
+
+
+def test_zenoh_liveliness_key_extracts_instance_identity() -> None:
+    assert _service_liveliness_identity_from_zenoh_key("f8/live/svc/engine/instances/inst1") == (
+        ServiceLivelinessIdentity(service_id="engine", runtime_instance_id="inst1")
+    )
+    assert _service_liveliness_identity_from_zenoh_key("f8/live/svc/engine") is None
 
 
 def test_runtime_session_returns_block_message_when_singleton_detected(monkeypatch) -> None:
@@ -249,9 +259,9 @@ def test_zenoh_service_liveliness_watch_updates_alive_cache(monkeypatch) -> None
 
         callback = fake_session.liveliness_api.callback
         assert callback is not None
-        callback(_FakeSample("f8/live/svc/engine", _FakeSampleKind.PUT))
+        callback(_FakeSample("f8/live/svc/engine/instances/inst1", _FakeSampleKind.PUT))
         await asyncio.sleep(0)
-        callback(_FakeSample("f8/live/svc/engine", _FakeSampleKind.DELETE))
+        callback(_FakeSample("f8/live/svc/engine/instances/inst1", _FakeSampleKind.DELETE))
         await asyncio.sleep(0)
         return controller
 
@@ -262,4 +272,44 @@ def test_zenoh_service_liveliness_watch_updates_alive_cache(monkeypatch) -> None
     assert controller.status_requests == ["engine"]
     assert controller.active_updates == [("engine", None)]
     assert controller._monitor_center.ready_updates == [("engine", False)]
+    assert controller.reported == []
+
+
+def test_zenoh_service_liveliness_query_clears_stale_cache(monkeypatch) -> None:
+    class _FakeZError(Exception):
+        pass
+
+    class _FakeReplies:
+        def try_recv(self):
+            raise _FakeZError("channel is empty and closed")
+
+    class _FakeLiveliness:
+        def get(self, key_expr: str, *, timeout: float):
+            assert key_expr == "f8/live/svc/engine/instances/**"
+            assert timeout == 0.25
+            return _FakeReplies()
+
+    class _FakeSession:
+        def __init__(self) -> None:
+            self.liveliness_api = _FakeLiveliness()
+
+        def liveliness(self) -> _FakeLiveliness:
+            return self.liveliness_api
+
+    fake_session = _FakeSession()
+    fake_zenoh = SimpleNamespace(ZError=_FakeZError)
+    monkeypatch.setitem(sys.modules, "zenoh", fake_zenoh)
+
+    async def _run() -> _Controller:
+        controller = _Controller()
+        controller._cfg = SimpleNamespace(bus_backend="zenoh")
+        controller._zenoh_singleton_session = fake_session
+        controller._service_liveliness_instances_by_service["engine"] = {"stale_inst"}
+        instances = await controller._query_zenoh_service_liveliness_instances_async("engine")
+        assert instances == set()
+        return controller
+
+    controller = asyncio.run(_run())
+
+    assert "engine" not in controller._service_liveliness_instances_by_service
     assert controller.reported == []

@@ -101,8 +101,9 @@ std::string zenoh_command_key(const std::string& service_id, const std::string& 
          ensure_token(command, "command");
 }
 
-std::string zenoh_service_liveliness_key(const std::string& service_id) {
-  return std::string(kF8Prefix) + "/live/svc/" + ensure_token(service_id, "service_id");
+std::string zenoh_service_liveliness_key(const std::string& service_id, const std::string& runtime_instance_id) {
+  return std::string(kF8Prefix) + "/live/svc/" + ensure_token(service_id, "service_id") + "/instances/" +
+         ensure_token(runtime_instance_id, "runtime_instance_id");
 }
 
 std::string zenoh_studio_liveliness_key(const std::string& studio_service_id) {

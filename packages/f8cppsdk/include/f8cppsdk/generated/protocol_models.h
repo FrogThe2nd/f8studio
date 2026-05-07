@@ -1778,12 +1778,16 @@ inline bool parse_F8StatusReply(const nlohmann::json& j, F8StatusReply& out, Par
 
 struct F8StatusReplyResult {
   std::string serviceId;
+  std::string serviceClass;
+  std::string runtimeInstanceId;
   bool active;
 };
 
 inline bool parse_F8StatusReplyResult(const nlohmann::json& j, F8StatusReplyResult& out, ParseError& err) {
   if (!j.is_object()) { err.code="INVALID_SCHEMA"; err.message="object expected"; return false; }
   if (!_get_str_req(j, "serviceId", out.serviceId, err)) return false;
+  if (!_get_str_req(j, "serviceClass", out.serviceClass, err)) return false;
+  if (!_get_str_req(j, "runtimeInstanceId", out.runtimeInstanceId, err)) return false;
   if (!j.contains("active") || j["active"].is_null() || !j["active"].is_boolean()) {
     err.code="INVALID_SCHEMA"; err.message="missing/invalid required boolean"; return false; }
   out.active = j["active"].get<bool>();

@@ -99,3 +99,23 @@ def test_deploy_all_service_rungraphs_runs_services_concurrently() -> None:
 
     assert gateway.calls == ["engine", "implayer"]
     assert gateway.finished == ["implayer", "engine"]
+
+
+def test_deploy_selected_service_rungraphs_skips_blocked_services() -> None:
+    gateway = _FakeRungraphGateway()
+    flow = RungraphDeployFlow(
+        studio_service_id="studio",
+        rungraph_gateway=gateway,
+        emit_log=lambda line: None,
+    )
+    compiled = _compiled(
+        {
+            "engine": object(),
+            "implayer": object(),
+            "tracker": object(),
+        }
+    )
+
+    asyncio.run(flow.deploy_selected_service_rungraphs(compiled=compiled, allowed_service_ids={"engine", "tracker"}))  # type: ignore[arg-type]
+
+    assert gateway.calls == ["engine", "tracker"]

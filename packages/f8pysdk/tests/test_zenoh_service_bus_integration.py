@@ -210,11 +210,17 @@ def test_two_python_service_buses_roundtrip_over_zenoh() -> None:
         client_id = _sid("zenohClient")
 
         bus_a = ServiceBus(
-            ServiceBusConfig(service_id=service_a, bus_backend="zenoh", monitor_enabled=False)
+            ServiceBusConfig(
+                service_id=service_a,
+                service_class="test.zenoh.serviceA",
+                bus_backend="zenoh",
+                monitor_enabled=False,
+            )
         )
         bus_b = ServiceBus(
             ServiceBusConfig(
                 service_id=service_b,
+                service_class="test.zenoh.serviceB",
                 bus_backend="zenoh",
                 data_delivery="callback",
                 monitor_enabled=False,
@@ -300,6 +306,9 @@ def test_two_python_service_buses_roundtrip_over_zenoh() -> None:
             )
             assert status_reply.ok is True
             assert status_reply.result is not None
+            assert status_reply.result.serviceId == service_a
+            assert status_reply.result.serviceClass == "test.zenoh.serviceA"
+            assert status_reply.result.runtimeInstanceId
             assert status_reply.result.active is True
 
             deactivate_reply = await _request_endpoint(

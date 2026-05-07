@@ -65,6 +65,7 @@ class ServiceBus final : public ServiceControlHandler {
     std::int64_t monitor_interval_ms = 1000;
     std::int64_t monitor_window_ms = 30000;
     bool monitor_gpu_enabled = true;
+    std::string runtime_instance_id;
 
     void apply_runtime_backend(const RuntimeBackendConfig& runtime_backend) {
       bus_backend = runtime_backend.bus_backend;
@@ -77,6 +78,8 @@ class ServiceBus final : public ServiceControlHandler {
     RuntimeBackendConfig runtime_backend_config() const {
       RuntimeBackendConfig runtime_backend;
       runtime_backend.bus_backend = bus_backend;
+      runtime_backend.announce_service_liveliness = true;
+      runtime_backend.runtime_instance_id = runtime_instance_id;
       runtime_backend.zenoh_config_path = zenoh_config_path;
       runtime_backend.zenoh_connect = zenoh_connect;
       runtime_backend.zenoh_listen = zenoh_listen;
@@ -105,6 +108,7 @@ class ServiceBus final : public ServiceControlHandler {
 
   bool active() const { return active_.load(std::memory_order_acquire); }
   bool terminate_requested() const { return terminate_.load(std::memory_order_acquire); }
+  const std::string& runtime_instance_id() const { return runtime_instance_id_; }
 
   void report_error(const std::string& node_id, const std::string& code, const std::string& message,
                     const std::string& severity = "error", const std::string& fingerprint = "",
@@ -204,6 +208,7 @@ class ServiceBus final : public ServiceControlHandler {
   std::size_t monitor_queue_depth() const;
 
   Config cfg_;
+  std::string runtime_instance_id_;
   std::atomic<bool> active_{true};
   std::atomic<bool> ready_{false};
   std::atomic<bool> terminate_{false};

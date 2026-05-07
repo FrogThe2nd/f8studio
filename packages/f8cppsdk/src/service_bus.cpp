@@ -10,6 +10,7 @@
 #include <ctime>
 #include <fstream>
 #include <iomanip>
+#include <random>
 #include <sstream>
 #include <stdexcept>
 #include <tuple>
@@ -42,6 +43,18 @@ bool state_debug_enabled() {
   std::string s(v);
   std::transform(s.begin(), s.end(), s.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
   return (s == "1" || s == "true" || s == "yes" || s == "on");
+}
+
+std::string runtime_instance_id_hex() {
+  std::random_device rd;
+  std::uniform_int_distribution<int> dist(0, 15);
+  std::string out;
+  out.reserve(32);
+  static constexpr char kHex[] = "0123456789abcdef";
+  for (int i = 0; i < 32; ++i) {
+    out.push_back(kHex[dist(rd)]);
+  }
+  return out;
 }
 
 std::int64_t coerce_inbound_ts_ms(const json& payload, std::int64_t default_ts_ms) {
@@ -507,7 +520,7 @@ void validate_state_edges_or_throw(const f8::cppsdk::generated::F8RuntimeGraph& 
 
 }  // namespace
 
-ServiceBus::ServiceBus(Config cfg) : cfg_(std::move(cfg)) {}
+ServiceBus::ServiceBus(Config cfg) : cfg_(std::move(cfg)), runtime_instance_id_(runtime_instance_id_hex()) {}
 
 ServiceBus::~ServiceBus() {
   stop();
@@ -809,6 +822,7 @@ bool ServiceBus::start() {
   stop();
 
   cfg_.service_id = ensure_token(cfg_.service_id, "service_id");
+  cfg_.runtime_instance_id = runtime_instance_id_;
   if (cfg_.service_name.empty()) {
     cfg_.service_name = cfg_.service_id;
   }
@@ -953,7 +967,10 @@ RuntimeBytes ServiceBus::handle_runtime_control_request(const std::string& endpo
       return ok_response(json{{"active", req.active}});
     }
     if (endpoint == "status") {
-      return ok_response(json{{"serviceId", cfg_.service_id}, {"active", is_active()}});
+      return ok_response(json{{"serviceId", cfg_.service_id},
+                              {"serviceClass", cfg_.service_class},
+                              {"runtimeInstanceId", runtime_instance_id_},
+                              {"active", is_active()}});
     }
     if (endpoint == "terminate" || endpoint == "quit") {
       spdlog::info("{} requested serviceId={}", endpoint, cfg_.service_id);

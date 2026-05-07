@@ -32,6 +32,15 @@ class ServiceLifecycleControllerMixin:
     def _runtime_zenoh_shm_pool_bytes(self) -> int:
         return 256 * 1024 * 1024
 
+    def _runtime_supervision_mode(self) -> str:
+        cfg = self._cfg
+        if cfg is None:
+            return "studio_owned"
+        mode = str(cfg.supervision_mode or "studio_owned").strip().lower()
+        if mode == "detached":
+            return "detached"
+        return "studio_owned"
+
     async def _ensure_requester(self) -> Any | None:
         return None
 
@@ -75,6 +84,7 @@ class ServiceLifecycleControllerMixin:
         self._managed_service_classes.pop(sid, None)
         self._service_status_cache.pop(sid, None)
         self._service_alive_cache.pop(sid, None)
+        self._service_liveliness_instances_by_service.pop(sid, None)
         self._service_status_req_s.pop(sid, None)
         self._service_status_inflight.discard(sid)
         self._monitor_center.drop_service(service_id=sid)
@@ -166,6 +176,44 @@ class ServiceLifecycleControllerMixin:
             return None
         return await request_service_status(requester, service_id=sid, timeout_s=0.4)
 
+    def _cache_status_identity(self, service_id: str, status: dict[str, Any]) -> None:
+        sid = str(service_id or "").strip()
+        if not sid:
+            return
+        if "active" in status:
+            self._cache_service_active(sid, status.get("active"))
+        service_class = str(status.get("serviceClass") or "").strip()
+        runtime_instance_id = str(status.get("runtimeInstanceId") or "").strip()
+        if service_class:
+            self._managed_service_classes[sid] = service_class
+        if runtime_instance_id:
+            instances = self._service_liveliness_instances_by_service.setdefault(sid, set())
+            instances.add(runtime_instance_id)
+
+    def _identity_status_valid(self, status: dict[str, Any]) -> bool:
+        if not bool(status.get("identityValid")):
+            return False
+        service_class = str(status.get("serviceClass") or "").strip()
+        runtime_instance_id = str(status.get("runtimeInstanceId") or "").strip()
+        return bool(service_class and runtime_instance_id)
+
+    async def _live_runtime_instances(self, service_id: str) -> set[str]:
+        sid = ensure_token(str(service_id), label="service_id")
+        instances = await self._query_zenoh_service_liveliness_instances_async(sid)
+        return set(instances)
+
+    def _block_duplicate_runtime_instances(self, service_id: str, instances: set[str]) -> bool:
+        sid = str(service_id or "").strip()
+        if len(instances) <= 1:
+            return False
+        instance_text = ",".join(sorted(instances))
+        self._emit_log_line(
+            f"deploy blocked serviceId={sid}: duplicate runtime instances for serviceId={sid} "
+            f"instances={instance_text}"
+        )
+        self._cache_service_alive(sid, True)
+        return True
+
     def request_service_status(self, service_id: str) -> None:
         """
         Trigger a best-effort status refresh (async).
@@ -202,12 +250,128 @@ class ServiceLifecycleControllerMixin:
                 self._cache_service_alive(sid, True)
                 if "active" in status:
                     self._cache_service_active(sid, status.get("active"))
+                self._cache_status_identity(sid, status)
             finally:
                 self._service_status_inflight.discard(sid)
 
         submitted = self._submit_async(_do(), context=f"submit request_service_status failed serviceId={sid}")
         if not submitted:
             self._service_status_inflight.discard(sid)
+
+    def _start_service_process_local(self, *, service_id: str, service_class: str) -> bool:
+        sid = ensure_token(str(service_id), label="service_id")
+        svc_class = str(service_class or "").strip()
+        if not svc_class:
+            self._emit_log_line(f"start_service ignored (unknown serviceClass): serviceId={sid}")
+            return False
+        try:
+            self._process_gateway.start(
+                StartServiceRequest(
+                    config=ServiceProcessConfig(
+                        service_class=str(svc_class),
+                        service_id=sid,
+                        supervision_mode=self._runtime_supervision_mode(),
+                        bus_backend=self._runtime_bus_backend(),
+                        zenoh_config_path=self._runtime_zenoh_config_path(),
+                        zenoh_connect=self._runtime_zenoh_connect(),
+                        zenoh_listen=self._runtime_zenoh_listen(),
+                        zenoh_shm_pool_bytes=self._runtime_zenoh_shm_pool_bytes(),
+                    ),
+                    on_output=lambda _sid, line, _sid2=sid: self.service_output.emit(_sid2, str(line)),
+                )
+            )
+        except Exception as exc:
+            self._emit_log_line(f"start_service failed: {exc}")
+            return False
+        self._managed_service_ids.add(sid)
+        self._managed_service_classes[sid] = str(svc_class)
+        self._emit_service_process_state_safe(sid, bool(self.is_service_running(sid)))
+        return True
+
+    async def ensure_service_available(
+        self,
+        service_id: str,
+        desired_service_class: str,
+        *,
+        local_known_service_class: str | None = None,
+    ) -> bool:
+        try:
+            sid = ensure_token(str(service_id), label="service_id")
+        except ValueError:
+            return False
+        if sid == self.studio_service_id:
+            return True
+        desired_class = str(desired_service_class or "").strip()
+        if not desired_class:
+            self._emit_log_line(f"deploy blocked serviceId={sid}: missing desired serviceClass")
+            return False
+
+        local_running = False
+        try:
+            local_running = bool(self._process_gateway.is_running(sid))
+        except Exception as exc:
+            self._report_exception(f"check local process failed serviceId={sid}", exc)
+        if local_running:
+            instances = await self._live_runtime_instances(sid)
+            if self._block_duplicate_runtime_instances(sid, instances):
+                return False
+            local_class = str(local_known_service_class or self._managed_service_classes.get(sid, "") or "").strip()
+            if local_class and local_class != desired_class:
+                self._emit_log_line(
+                    f"deploy blocked serviceId={sid}: local process serviceClass collision "
+                    f"running={local_class} desired={desired_class}"
+                )
+                return False
+            status = await self._request_service_status_async(sid)
+            if isinstance(status, dict):
+                if not self._identity_status_valid(status):
+                    self._emit_log_line(
+                        f"deploy blocked serviceId={sid}: status endpoint uses old protocol without identity"
+                    )
+                    return False
+                running_class = str(status.get("serviceClass") or "").strip()
+                if running_class and running_class != desired_class:
+                    self._emit_log_line(
+                        f"deploy blocked serviceId={sid}: serviceClass collision "
+                        f"running={running_class} desired={desired_class}"
+                    )
+                    return False
+                self._cache_service_alive(sid, True)
+                self._cache_status_identity(sid, status)
+            self._managed_service_ids.add(sid)
+            self._managed_service_classes[sid] = desired_class
+            self._emit_log_line(f"reuse local service serviceId={sid} serviceClass={desired_class}")
+            return True
+
+        instances = await self._live_runtime_instances(sid)
+        if self._block_duplicate_runtime_instances(sid, instances):
+            return False
+
+        if len(instances) == 1:
+            status = await self._request_service_status_async(sid)
+            if status is None:
+                self._emit_log_line(f"service liveliness found but status unreachable; spawning serviceId={sid}")
+                return self._start_service_process_local(service_id=sid, service_class=desired_class)
+            if not self._identity_status_valid(status):
+                self._emit_log_line(
+                    f"deploy blocked serviceId={sid}: status endpoint uses old protocol without identity"
+                )
+                return False
+            running_class = str(status.get("serviceClass") or "").strip()
+            if running_class != desired_class:
+                self._emit_log_line(
+                    f"deploy blocked serviceId={sid}: serviceClass collision "
+                    f"running={running_class or '<empty>'} desired={desired_class}"
+                )
+                return False
+            self._cache_service_alive(sid, True)
+            self._cache_status_identity(sid, status)
+            self._managed_service_ids.add(sid)
+            self._managed_service_classes[sid] = desired_class
+            self._emit_log_line(f"reuse live service serviceId={sid} serviceClass={desired_class}")
+            return True
+
+        return self._start_service_process_local(service_id=sid, service_class=desired_class)
 
     async def _set_service_active_async(self, service_id: str, active: bool) -> bool:
         sid = ""
@@ -287,28 +451,7 @@ class ServiceLifecycleControllerMixin:
         if not svc_class:
             self._emit_log_line(f"start_service ignored (unknown serviceClass): serviceId={sid}")
             return
-        try:
-            self._process_gateway.start(
-                StartServiceRequest(
-                    config=ServiceProcessConfig(
-                        service_class=str(svc_class),
-                        service_id=sid,
-                        bus_backend=self._runtime_bus_backend(),
-                        zenoh_config_path=self._runtime_zenoh_config_path(),
-                        zenoh_connect=self._runtime_zenoh_connect(),
-                        zenoh_listen=self._runtime_zenoh_listen(),
-                        zenoh_shm_pool_bytes=self._runtime_zenoh_shm_pool_bytes(),
-                    ),
-                    on_output=lambda _sid, line, _sid2=sid: self.service_output.emit(_sid2, str(line)),
-                )
-            )
-        except Exception as exc:
-            self._emit_log_line(f"start_service failed: {exc}")
-            return
-        self._managed_service_ids.add(sid)
-        if svc_class:
-            self._managed_service_classes[sid] = str(svc_class)
-        self._emit_service_process_state_safe(sid, bool(self.is_service_running(sid)))
+        self._start_service_process_local(service_id=sid, service_class=str(svc_class))
 
     def stop_service(self, service_id: str) -> None:
         try:
@@ -331,6 +474,17 @@ class ServiceLifecycleControllerMixin:
         # 2) Poll for graceful exit, then fall back to local kill-tree.
         self._process_actions.schedule_stop(service_id=sid, grace_s=2.2)
 
+    @QtCore.Slot(str, object)
+    def _on_restart_service_after_guard(self, service_id: str, service_class: object) -> None:
+        try:
+            sid = ensure_token(str(service_id), label="service_id")
+        except ValueError:
+            return
+        if sid == self.studio_service_id:
+            return
+        svc_class = str(service_class or "")
+        self._process_actions.schedule_restart(service_id=sid, service_class=svc_class, grace_s=2.2)
+
     def restart_service(self, service_id: str, *, service_class: str | None = None) -> None:
         try:
             sid = ensure_token(str(service_id), label="service_id")
@@ -341,16 +495,21 @@ class ServiceLifecycleControllerMixin:
 
         svc_class = self._managed_service_classes.get(sid, "") or str(service_class or "")
 
+        async def _guard_and_schedule_restart() -> None:
+            instances = await self._live_runtime_instances(sid)
+            if self._block_duplicate_runtime_instances(sid, instances):
+                return
+            await self._request_service_terminate_async(sid)
+            self._restart_service_after_guard.emit(sid, svc_class)
+
         if not self.is_service_running(sid):
             self.start_service(sid, service_class=svc_class or None)
             return
 
         self._submit_async(
-            self._request_service_terminate_async(sid),
-            context=f"submit request_service_terminate failed serviceId={sid}",
+            _guard_and_schedule_restart(),
+            context=f"submit restart_service failed serviceId={sid}",
         )
-
-        self._process_actions.schedule_restart(service_id=sid, service_class=svc_class, grace_s=2.2)
 
     def start_service_and_deploy(
         self, service_id: str, *, service_class: str | None = None, compiled: CompiledRuntimeGraphs | None = None

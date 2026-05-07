@@ -3,11 +3,12 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import msgspec
 
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 class ServiceProcessConfig:
     service_class: str
     service_id: str
+    supervision_mode: Literal["studio_owned", "detached"] = "studio_owned"
     bus_backend: BusBackend = "zenoh"
     zenoh_config_path: str | None = None
     zenoh_connect: tuple[str, ...] = ()
@@ -91,8 +93,34 @@ class ServiceProcessManager:
         try:
             if (thread is None or not thread.is_alive()) and proc.stdout:
                 proc.stdout.close()
-        except (AttributeError, RuntimeError, TypeError):
-            pass
+        except (AttributeError, RuntimeError, TypeError) as exc:
+            logger.debug("Service process stdout close failed (service_id=%s)", sid, exc_info=exc)
+
+    def _request_graceful_stop(self, *, service_id: str, proc: subprocess.Popen[Any]) -> bool:
+        try:
+            stdin = proc.stdin
+        except (AttributeError, RuntimeError, TypeError) as exc:
+            logger.debug("Service process stdin unavailable (service_id=%s)", service_id, exc_info=exc)
+            return False
+        if stdin is None:
+            return False
+        try:
+            stdin.write("stop\n")
+            stdin.flush()
+            return True
+        except (BrokenPipeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Service process graceful stop request failed (service_id=%s)", service_id, exc_info=exc)
+            return False
+
+    def _wait_for_exit(self, *, service_id: str, proc: subprocess.Popen[Any], timeout_s: float) -> bool:
+        try:
+            proc.wait(timeout=max(0.0, float(timeout_s)))
+            return True
+        except subprocess.TimeoutExpired:
+            return False
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Service process wait failed (service_id=%s)", service_id, exc_info=exc)
+            return False
 
     def stop(self, service_id: str) -> bool:
         sid = str(service_id)
@@ -102,22 +130,30 @@ class ServiceProcessManager:
 
         try:
             pid = proc.pid
-        except (AttributeError, RuntimeError, TypeError):
+        except (AttributeError, RuntimeError, TypeError) as exc:
+            logger.debug("Service process pid read failed (service_id=%s)", sid, exc_info=exc)
             pid = None
+
+        if self._request_graceful_stop(service_id=sid, proc=proc) and self._wait_for_exit(
+            service_id=sid,
+            proc=proc,
+            timeout_s=2.5,
+        ):
+            self._cleanup_entry(sid)
+            return True
 
         try:
             proc.terminate()
-        except (AttributeError, RuntimeError, TypeError):
-            pass
-        try:
-            proc.wait(timeout=0.8)
-        except (subprocess.TimeoutExpired, OSError, RuntimeError, TypeError, ValueError):
-            pass
+        except (AttributeError, RuntimeError, TypeError) as exc:
+            logger.debug("Service process terminate failed (service_id=%s)", sid, exc_info=exc)
+        if not self._wait_for_exit(service_id=sid, proc=proc, timeout_s=3.0):
+            logger.debug("Service process wait after terminate timed out (service_id=%s)", sid)
 
         if os.name == "nt" and pid:
             try:
                 creationflags = subprocess.CREATE_NO_WINDOW
-            except Exception:
+            except AttributeError as exc:
+                logger.debug("subprocess.CREATE_NO_WINDOW unavailable", exc_info=exc)
                 creationflags = 0
             try:
                 subprocess.run(
@@ -128,14 +164,14 @@ class ServiceProcessManager:
                     check=False,
                     creationflags=creationflags,
                 )
-            except (OSError, RuntimeError, TypeError, ValueError, subprocess.SubprocessError):
-                pass
+            except (OSError, RuntimeError, TypeError, ValueError, subprocess.SubprocessError) as exc:
+                logger.debug("taskkill failed for service process (service_id=%s pid=%s)", sid, pid, exc_info=exc)
         else:
             try:
                 if proc.poll() is None:
                     proc.kill()
-            except (AttributeError, RuntimeError, TypeError):
-                pass
+            except (AttributeError, RuntimeError, TypeError) as exc:
+                logger.debug("Service process kill failed (service_id=%s)", sid, exc_info=exc)
 
         deadline = time.monotonic() + 3.0
         while time.monotonic() < deadline:
@@ -154,6 +190,9 @@ class ServiceProcessManager:
     def start(self, cfg: ServiceProcessConfig, *, on_output: Any | None = None) -> None:
         service_class = str(cfg.service_class).strip()
         service_id = str(cfg.service_id).strip()
+        supervision_mode = str(cfg.supervision_mode or "studio_owned").strip().lower()
+        if supervision_mode not in {"studio_owned", "detached"}:
+            raise ValueError("Invalid supervision_mode; expected 'studio_owned' or 'detached'.")
         bus_backend = str(cfg.bus_backend or "zenoh").strip().lower()
         if bus_backend not in {"zenoh", "mem"}:
             raise ValueError("Invalid process bus_backend; expected 'zenoh' or 'mem'.")
@@ -165,8 +204,13 @@ class ServiceProcessManager:
         try:
             if service_dir.is_file() and service_dir.name.lower() == "service.yml":
                 service_dir = service_dir.parent.resolve()
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
-            pass
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug(
+                "Service discovery entry path normalization failed serviceClass=%s path=%s",
+                service_class,
+                entry_path,
+                exc_info=exc,
+            )
         entry = load_service_entry(service_dir)
 
         if self.is_running(service_id):
@@ -186,13 +230,27 @@ class ServiceProcessManager:
                 cmd += ["--zenoh-listen", endpoint]
             cmd += ["--zenoh-shm-pool-bytes", str(max(0, int(cfg.zenoh_shm_pool_bytes)))]
 
+        child_cmd = list(cmd)
+        if supervision_mode == "studio_owned":
+            supervisor_path = Path(__file__).with_name("supervised_child.py").resolve()
+            if not supervisor_path.exists():
+                raise FileNotFoundError(f"Missing service supervisor wrapper: {supervisor_path}")
+            cmd = [
+                os.environ.get("PYTHON", "") or sys.executable,
+                str(supervisor_path),
+                "--parent-pid",
+                str(os.getpid()),
+                "--",
+                *child_cmd,
+            ]
+
         env = os.environ.copy()
         launch_env = launch.env
         if isinstance(launch_env, dict):
             try:
                 env.update({str(k): str(v) for k, v in launch_env.items()})
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                pass
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                logger.debug("Service launch env normalization failed service_id=%s", service_id, exc_info=exc)
         env["F8_SERVICE_ID"] = service_id
         env["F8_BUS_BACKEND"] = bus_backend
         if bus_backend == "zenoh":
@@ -230,6 +288,7 @@ class ServiceProcessManager:
             cmd,
             cwd=str(workdir),
             env=env,
+            stdin=subprocess.PIPE if supervision_mode == "studio_owned" else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -241,7 +300,11 @@ class ServiceProcessManager:
         if on_output is not None:
             try:
                 pid_txt = str(proc.pid)
-            except (AttributeError, RuntimeError, TypeError):
+            except (AttributeError, RuntimeError, TypeError) as exc:
+                logger.debug("Service process pid string conversion failed service_id=%s", service_id, exc_info=exc)
                 pid_txt = "?"
-            on_output(service_id, f"[proc] started pid={pid_txt} cmd={' '.join(cmd)}\n")
+            on_output(
+                service_id,
+                f"[proc] started pid={pid_txt} supervision={supervision_mode} cmd={' '.join(cmd)}\n",
+            )
         self._start_reader(service_id=service_id, proc=proc, on_output=on_output)

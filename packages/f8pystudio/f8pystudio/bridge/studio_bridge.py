@@ -27,11 +27,7 @@ from .command_client import CommandRequest, RuntimeCommandGateway, RuntimeComman
 from .json_codec import coerce_json_value
 from .managed_service_inventory import collect_managed_service_inventory
 from .process_action_scheduler import ServiceProcessActionScheduler
-from .process_lifecycle import (
-    LocalServiceProcessGateway,
-    StartServiceRequest,
-    StopServiceRequest,
-)
+from .process_lifecycle import LocalServiceProcessGateway
 from .process_manager import ServiceProcessManager
 from .remote_command_controller import RemoteCommandControllerMixin
 from .remote_state_sync import RemoteStateGatewayAdapter
@@ -83,6 +79,7 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
     log = QtCore.Signal(str)
     service_process_state = QtCore.Signal(str, bool)  # serviceId, running
     _remote_command_response = QtCore.Signal(str, object, object)  # reqId, result, err
+    _restart_service_after_guard = QtCore.Signal(str, object)  # serviceId, serviceClass
 
     def __init__(self, config: PyStudioServiceBridgeConfig, parent: QtCore.QObject | None = None) -> None:
         super().__init__(parent)
@@ -103,6 +100,7 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
         self._managed_active: bool = True
         self._service_status_cache: dict[str, tuple[bool | None, float]] = {}  # serviceId -> (active, monotonic_ts)
         self._service_alive_cache: dict[str, tuple[bool, float]] = {}  # serviceId -> (alive, monotonic_ts)
+        self._service_liveliness_instances_by_service: dict[str, set[str]] = {}
         self._service_status_inflight: set[str] = set()
         self._service_status_req_s: dict[str, float] = {}
         self._status_store = ServiceStatusStore(
@@ -149,6 +147,10 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
             self._remote_command_response.connect(self._on_remote_command_response)  # type: ignore[attr-defined]
         except Exception as exc:
             self._report_exception("connect remote_command_response failed", exc)
+        try:
+            self._restart_service_after_guard.connect(self._on_restart_service_after_guard)  # type: ignore[attr-defined]
+        except Exception as exc:
+            self._report_exception("connect restart_service_after_guard failed", exc)
 
     def _build_rungraph_config(self) -> RungraphDeployConfig:
         return RungraphDeployConfig(
@@ -191,6 +193,17 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
                 listen=self._cfg.zenoh_listen,
                 shm_pool_bytes=self._cfg.zenoh_shm_pool_bytes,
             )
+        )
+
+    def kill_managed_services_on_exit(self) -> bool:
+        return str(self._cfg.supervision_mode or "studio_owned").strip().lower() != "detached"
+
+    def set_kill_managed_services_on_exit(self, enabled: bool) -> None:
+        from dataclasses import replace
+
+        self._cfg = replace(
+            self._cfg,
+            supervision_mode="studio_owned" if bool(enabled) else "detached",
         )
 
     def _emit_log_line(self, line: str) -> None:
@@ -397,7 +410,7 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
             try:
                 fut = self._async.submit(self._stop_async())
                 try:
-                    fut.result(timeout=2)
+                    fut.result(timeout=5)
                 except concurrent.futures.TimeoutError:
                     self._emit_log_line("bridge stop timeout; continue shutdown")
             except Exception as exc:
@@ -408,18 +421,6 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
         self._startup_preflight_ready = threading.Event()
         self._startup_continue_requested = threading.Event()
         self._startup_preflight_message = None
-
-        # Best-effort stop all launched processes.
-        for sid in list(self._process_gateway.service_ids()):
-            try:
-                self._process_gateway.stop(StopServiceRequest(service_id=sid))
-            except Exception as exc:
-                self._report_exception(f"stop service process failed serviceId={sid}", exc)
-
-
-
-
-
 
 
 

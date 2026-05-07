@@ -6,6 +6,7 @@ import inspect
 import json
 import logging
 import os
+import signal
 import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
@@ -190,6 +191,55 @@ async def _run_runtime_hook(hook: RuntimeLifecycleHook | None, runtime: ServiceR
         await result
 
 
+def _set_runtime_terminate(runtime: ServiceRuntime) -> None:
+    runtime.bus._terminate_event.set()
+
+
+def _install_runtime_signal_handlers(runtime: ServiceRuntime) -> list[tuple[int, Any]]:
+    loop = asyncio.get_running_loop()
+    previous_handlers: list[tuple[int, Any]] = []
+
+    def _request_terminate() -> None:
+        _set_runtime_terminate(runtime)
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            previous_handler = signal.getsignal(sig)
+        except (OSError, RuntimeError, ValueError) as exc:
+            log.debug("service signal get failed signal=%s", sig, exc_info=exc)
+            continue
+        try:
+            loop.add_signal_handler(sig, _request_terminate)
+            previous_handlers.append((sig, previous_handler))
+            continue
+        except (NotImplementedError, RuntimeError, ValueError) as exc:
+            log.debug("async signal handler unavailable signal=%s", sig, exc_info=exc)
+        try:
+            signal.signal(sig, lambda _signum, _frame: _request_terminate())
+            previous_handlers.append((sig, previous_handler))
+        except (OSError, RuntimeError, ValueError) as exc:
+            log.debug("service signal install failed signal=%s", sig, exc_info=exc)
+    return previous_handlers
+
+
+def _restore_runtime_signal_handlers(previous_handlers: list[tuple[int, Any]]) -> None:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    for sig, previous_handler in reversed(previous_handlers):
+        if loop is not None:
+            try:
+                loop.remove_signal_handler(sig)
+            except (NotImplementedError, RuntimeError, ValueError) as exc:
+                log.debug("async signal handler remove failed signal=%s", sig, exc_info=exc)
+        try:
+            signal.signal(sig, previous_handler)
+        except (OSError, RuntimeError, ValueError) as exc:
+            log.debug("service signal restore failed signal=%s", sig, exc_info=exc)
+
+
 def _wrap_registry(registry: Registry | RuntimeNodeRegistry | None) -> Registry:
     if registry is None:
         return Registry()
@@ -323,9 +373,11 @@ class ServiceApp:
         )
         await _run_runtime_hook(self._setup, runtime)
         await runtime.start()
+        previous_signal_handlers = _install_runtime_signal_handlers(runtime)
         try:
             await runtime.bus.wait_terminate()
         finally:
+            _restore_runtime_signal_handlers(previous_signal_handlers)
             try:
                 await _run_runtime_hook(self._teardown, runtime)
             except Exception as exc:

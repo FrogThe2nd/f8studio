@@ -52,6 +52,14 @@ class RungraphDeployFlow:
             self.emit_log(f"deploy service rungraph failed serviceId={sid}: {exc}")
 
     async def deploy_all_service_rungraphs(self, *, compiled: CompiledRuntimeGraphs) -> None:
+        await self.deploy_selected_service_rungraphs(compiled=compiled, allowed_service_ids=None)
+
+    async def deploy_selected_service_rungraphs(
+        self,
+        *,
+        compiled: CompiledRuntimeGraphs,
+        allowed_service_ids: set[str] | None,
+    ) -> None:
         async def _deploy_one(service_id: str, graph: object) -> None:
             try:
                 result = await self.rungraph_gateway.deploy_runtime_graph(
@@ -70,6 +78,8 @@ class RungraphDeployFlow:
         for sid_raw, graph in compiled.per_service.items():
             service_id = ensure_token(str(sid_raw), label="service_id")
             if service_id == str(self.studio_service_id):
+                continue
+            if allowed_service_ids is not None and service_id not in allowed_service_ids:
                 continue
             tasks.append(asyncio.create_task(_deploy_one(service_id, graph), name=f"deploy_rungraph:{service_id}"))
         if tasks:

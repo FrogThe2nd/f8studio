@@ -25,6 +25,8 @@ _SUBSCRIPTION_SETTLE_S = 0.01
 @dataclass(frozen=True)
 class ZenohTransportConfig:
     service_id: str
+    runtime_instance_id: str = ""
+    announce_service_liveliness: bool = False
     config_path: str | None = None
     connect: tuple[str, ...] = ()
     listen: tuple[str, ...] = ()
@@ -78,6 +80,8 @@ class ZenohTransport:
         service_id = str(config.service_id or "").strip()
         self._config = ZenohTransportConfig(
             service_id=service_id,
+            runtime_instance_id=str(config.runtime_instance_id or "").strip(),
+            announce_service_liveliness=bool(config.announce_service_liveliness),
             config_path=str(config.config_path).strip() if config.config_path else None,
             connect=tuple(str(item).strip() for item in config.connect if str(item).strip()),
             listen=tuple(str(item).strip() for item in config.listen if str(item).strip()),
@@ -109,9 +113,13 @@ class ZenohTransport:
 
             config = self._build_config(zenoh)
             self._session = await asyncio.to_thread(zenoh.open, config)
-            self._liveliness_token = self._session.liveliness().declare_token(
-                zenoh_service_liveliness_key(self._config.service_id)
-            )
+            if self._config.announce_service_liveliness:
+                runtime_instance_id = self._config.runtime_instance_id
+                if not runtime_instance_id:
+                    raise ValueError("runtime_instance_id is required when announce_service_liveliness=True")
+                self._liveliness_token = self._session.liveliness().declare_token(
+                    zenoh_service_liveliness_key(self._config.service_id, runtime_instance_id)
+                )
 
     def _build_config(self, zenoh_module: Any) -> Any:
         path = self._config.config_path
