@@ -8,6 +8,8 @@ namespace f8::cppsdk {
 std::string ensure_token(std::string value, const char* label);
 
 std::string rungraph_key(const std::string& service_id);
+std::string rungraph_deploy_status_key(const std::string& service_id);
+std::string rungraph_deploy_request_status_key(const std::string& service_id, const std::string& req_id);
 std::string ready_key(const std::string& service_id);
 std::string state_path_node_field(const std::string& node_id, const std::string& field);
 

@@ -831,9 +831,11 @@ bool ServiceBus::start_zenoh_backend() {
     runtime_transport_.reset();
     return false;
   }
+  start_rungraph_apply_worker();
 
   if (!start_runtime_control_endpoints()) {
     stop_runtime_control_endpoints();
+    stop_rungraph_apply_worker();
     runtime_transport_->close();
     runtime_transport_.reset();
     return false;
@@ -1009,7 +1011,7 @@ RuntimeBytes ServiceBus::handle_runtime_control_request(const std::string& endpo
         return error_response("INVALID_ARGS", "missing graph");
       }
 
-      const bool ok = on_set_rungraph(graph_obj, env.meta, err_code, err_msg);
+      const bool ok = submit_rungraph(graph_obj, env.meta, env.req_id, err_code, err_msg);
       if (!ok) {
         return error_response(err_code, err_msg);
       }
@@ -1081,6 +1083,8 @@ void ServiceBus::stop() {
   if (runtime_transport_ && !cfg_.service_id.empty()) {
     (void)runtime_set_ready(false, "stop");
   }
+  stop_runtime_control_endpoints();
+  stop_rungraph_apply_worker();
 
   {
     std::lock_guard<std::mutex> lock(state_mu_);
@@ -1102,7 +1106,6 @@ void ServiceBus::stop() {
     cross_state_targets_.clear();
   }
 
-  stop_runtime_control_endpoints();
   {
     std::lock_guard<std::mutex> lock(data_mu_);
     for (auto& sub_entry : runtime_data_subs_) {
@@ -1591,6 +1594,10 @@ bool ServiceBus::on_set_rungraph(const json& graph_obj, const json& meta, std::s
     if (!persisted.contains("meta") || !persisted["meta"].is_object()) {
       persisted["meta"] = json::object();
     }
+    if (meta.is_object() && meta.contains("source") && meta["source"].is_string() &&
+        !persisted["meta"].contains("source")) {
+      persisted["meta"]["source"] = meta["source"];
+    }
     persisted["meta"]["ts"] = now_ms();
     apply_rungraph_local(persisted, error_code, error_message);
     if (!error_code.empty()) {
@@ -1626,6 +1633,141 @@ bool ServiceBus::on_set_rungraph(const json& graph_obj, const json& meta, std::s
     }
   }
   return true;
+}
+
+bool ServiceBus::submit_rungraph(const json& graph_obj, const json& meta, const std::string& req_id,
+                                 std::string& error_code, std::string& error_message) {
+  error_code.clear();
+  error_message.clear();
+
+  std::string req_id_s = trim_copy(req_id);
+  if (req_id_s.empty()) {
+    req_id_s = new_control_req_id();
+  }
+
+  std::string source = "control";
+  if (meta.is_object() && meta.contains("source") && meta["source"].is_string()) {
+    source = trim_copy(meta["source"].get<std::string>());
+    if (source.empty()) {
+      source = "control";
+    }
+  }
+
+  try {
+    {
+      std::lock_guard<std::mutex> lock(rungraph_apply_mu_);
+      if (!rungraph_apply_running_) {
+        error_code = "NOT_READY";
+        error_message = "rungraph apply worker is not running";
+        return false;
+      }
+      rungraph_apply_queue_.push_back(_RungraphApplyRequest{graph_obj, meta, req_id_s, source});
+    }
+    rungraph_apply_cv_.notify_one();
+  } catch (const std::exception& exc) {
+    error_code = "INTERNAL";
+    error_message = exc.what();
+    return false;
+  } catch (...) {
+    error_code = "INTERNAL";
+    error_message = "failed to start rungraph apply task";
+    return false;
+  }
+  return true;
+}
+
+void ServiceBus::start_rungraph_apply_worker() {
+  stop_rungraph_apply_worker();
+  {
+    std::lock_guard<std::mutex> lock(rungraph_apply_mu_);
+    rungraph_apply_queue_.clear();
+    rungraph_apply_stop_requested_ = false;
+    rungraph_apply_running_ = true;
+  }
+  rungraph_apply_thread_ = std::thread([this]() { rungraph_apply_worker_loop(); });
+}
+
+void ServiceBus::stop_rungraph_apply_worker() {
+  {
+    std::lock_guard<std::mutex> lock(rungraph_apply_mu_);
+    rungraph_apply_stop_requested_ = true;
+    rungraph_apply_running_ = false;
+    rungraph_apply_queue_.clear();
+  }
+  rungraph_apply_cv_.notify_all();
+  if (rungraph_apply_thread_.joinable()) {
+    try {
+      rungraph_apply_thread_.join();
+    } catch (const std::system_error& exc) {
+      spdlog::warn("rungraph apply worker join failed serviceId={}: {}", cfg_.service_id, exc.what());
+    }
+  }
+}
+
+void ServiceBus::rungraph_apply_worker_loop() {
+  while (true) {
+    _RungraphApplyRequest request;
+    {
+      std::unique_lock<std::mutex> lock(rungraph_apply_mu_);
+      rungraph_apply_cv_.wait(
+          lock, [this]() { return rungraph_apply_stop_requested_ || !rungraph_apply_queue_.empty(); });
+      if (rungraph_apply_stop_requested_) {
+        return;
+      }
+      request = std::move(rungraph_apply_queue_.front());
+      rungraph_apply_queue_.pop_front();
+    }
+    run_rungraph_apply_worker(std::move(request.graph_obj), std::move(request.meta), std::move(request.req_id),
+                              std::move(request.source));
+  }
+}
+
+void ServiceBus::run_rungraph_apply_worker(json graph_obj, json meta, std::string req_id, std::string source) {
+  publish_rungraph_deploy_status(graph_obj, req_id, "accepted", source);
+  publish_rungraph_deploy_status(graph_obj, req_id, "applying", source);
+
+  std::string error_code;
+  std::string error_message;
+  const bool ok = on_set_rungraph(graph_obj, meta, error_code, error_message);
+  if (!ok) {
+    const std::string message = error_message.empty() ? error_code : error_message;
+    publish_rungraph_deploy_status(graph_obj, req_id, "failed", source, message);
+    spdlog::error("rungraph async apply failed serviceId={} reqId={} code={} message={}", cfg_.service_id, req_id,
+                  error_code, error_message);
+    return;
+  }
+  publish_rungraph_deploy_status(graph_obj, req_id, "applied", source);
+}
+
+void ServiceBus::publish_rungraph_deploy_status(const json& graph_obj, const std::string& req_id,
+                                                const std::string& phase, const std::string& source,
+                                                const std::string& error_message) {
+  try {
+    const std::string graph_id = graph_obj.is_object() ? graph_obj.value("graphId", "") : "";
+    const std::string revision = graph_obj.is_object() ? graph_obj.value("revision", "") : "";
+    const std::string phase_s = trim_copy(phase);
+    json payload = json::object();
+    payload["schemaVersion"] = "f8.rungraphDeployStatus/1";
+    payload["serviceId"] = cfg_.service_id;
+    payload["reqId"] = req_id;
+    payload["graphId"] = graph_id;
+    payload["revision"] = revision;
+    payload["phase"] = phase_s;
+    payload["ok"] = phase_s == "applied";
+    payload["source"] = source;
+    payload["errorMessage"] = error_message;
+    payload["ts"] = now_ms();
+
+    const auto raw = encode_json(payload);
+    (void)runtime_retained_put(rungraph_deploy_status_key(cfg_.service_id), raw);
+    (void)runtime_retained_put(rungraph_deploy_request_status_key(cfg_.service_id, req_id), raw);
+  } catch (const std::exception& exc) {
+    spdlog::warn("publish rungraph deploy status failed serviceId={} reqId={}: {}", cfg_.service_id, req_id,
+                 exc.what());
+  } catch (...) {
+    spdlog::warn("publish rungraph deploy status failed serviceId={} reqId={}: unknown error", cfg_.service_id,
+                 req_id);
+  }
 }
 
 void ServiceBus::rebuild_command_bindings_locked() {

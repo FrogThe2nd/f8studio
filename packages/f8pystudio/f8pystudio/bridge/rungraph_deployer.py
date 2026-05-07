@@ -6,13 +6,17 @@ from typing import Protocol
 
 import msgspec
 from f8pysdk.bus import BusBackend
-from f8pysdk.specs import F8RuntimeGraph
+from f8pysdk.specs import F8EmptyArgs, F8RuntimeGraph, F8RuntimeGraphMeta
+from f8pysdk.specs import F8StatusReply, F8StatusRequest
 from f8pysdk.specs import F8SetRungraphArgs, F8SetRungraphReply, F8SetRungraphRequest
 from f8pysdk.codec import copy_model
 from f8pysdk.f8_naming import new_id, svc_endpoint_key
 from f8pysdk.runtime_transport import RuntimeTransport
 from f8pysdk.zenoh_transport import ZenohTransport, ZenohTransportConfig
-from f8pysdk.service_runtime_tools.deploy.readiness import wait_service_ready
+from f8pysdk.service_runtime_tools.deploy.readiness import (
+    wait_rungraph_deploy_status,
+    wait_service_ready,
+)
 from f8pysdk.codec import decode_as, encode_obj
 
 
@@ -23,7 +27,10 @@ class RungraphGateway(Protocol):
 @dataclass(frozen=True)
 class RungraphDeployConfig:
     ready_timeout_s: float = 6.0
+    endpoint_ready_timeout_s: float = 4.0
+    endpoint_probe_timeout_s: float = 0.5
     request_timeout_s: float = 2.0
+    apply_timeout_s: float = 15.0
     bus_backend: BusBackend = "zenoh"
     client_service_id: str = "studio"
     zenoh_config_path: str | None = None
@@ -52,7 +59,7 @@ class RuntimeRungraphGateway:
     _transport: RuntimeTransport | None = field(default=None, init=False)
 
     @staticmethod
-    def _normalize_graph_for_request(graph: F8RuntimeGraph) -> F8RuntimeGraph:
+    def _normalize_graph_for_request(graph: F8RuntimeGraph, *, source: str = "") -> F8RuntimeGraph:
         normalized_nodes = []
         changed = False
         for node in list(graph.nodes or []):
@@ -61,9 +68,55 @@ class RuntimeRungraphGateway:
                 changed = True
             else:
                 normalized_nodes.append(node)
-        if not changed:
+        meta = graph.meta
+        if meta is None or isinstance(meta, msgspec.UnsetType):
+            meta = F8RuntimeGraphMeta()
+        source_s = str(source or "").strip()
+        meta_update = {"source": source_s} if source_s else {}
+        meta2 = copy_model(meta, update=meta_update) if meta_update else meta
+        if not changed and meta2 is meta:
             return graph
-        return copy_model(graph, update={"nodes": normalized_nodes})
+        return copy_model(graph, update={"nodes": normalized_nodes, "meta": meta2})
+
+    async def _wait_apply_evidence(
+        self,
+        transport: RuntimeTransport,
+        *,
+        service_id: str,
+        req_id: str,
+        graph_id: str,
+        revision: str,
+    ) -> RungraphDeployResult:
+        status_task = asyncio.create_task(
+            wait_rungraph_deploy_status(
+                transport,
+                service_id=service_id,
+                req_id=req_id,
+                graph_id=graph_id,
+                revision=revision,
+                timeout_s=float(self.config.apply_timeout_s),
+            ),
+            name=f"rungraph_deploy_status:{service_id}:{req_id}",
+        )
+        try:
+            result = await status_task
+            if result.phase == "failed":
+                return RungraphDeployResult(
+                    service_id=service_id,
+                    success=False,
+                    error_message=result.error_message or "rungraph apply failed",
+                )
+            return RungraphDeployResult(service_id=service_id, success=True, error_message="")
+        except asyncio.TimeoutError:
+            return RungraphDeployResult(
+                service_id=service_id,
+                success=False,
+                error_message=f"rungraph apply status not received within {float(self.config.apply_timeout_s):g}s",
+            )
+        finally:
+            if not status_task.done():
+                status_task.cancel()
+            await asyncio.gather(status_task, return_exceptions=True)
 
     def _build_transport(self) -> RuntimeTransport:
         if self.config.bus_backend == "mem":
@@ -97,6 +150,40 @@ class RuntimeRungraphGateway:
         if transport is not None:
             await transport.close()
 
+    async def _wait_control_endpoint_ready(
+        self,
+        transport: RuntimeTransport,
+        *,
+        service_id: str,
+    ) -> None:
+        deadline = asyncio.get_running_loop().time() + max(0.001, float(self.config.endpoint_ready_timeout_s))
+        last_error = ""
+        while True:
+            req_id = new_id()
+            request_payload = F8StatusRequest(reqId=req_id, args=F8EmptyArgs(), meta={"source": "studio:probe"})
+            try:
+                raw = await transport.request(
+                    svc_endpoint_key(service_id, "status"),
+                    encode_obj(request_payload),
+                    timeout=float(self.config.endpoint_probe_timeout_s),
+                    raise_on_error=True,
+                )
+                if raw:
+                    response = decode_as(raw, F8StatusReply)
+                    if bool(response.ok):
+                        return
+                    if response.error is not None and not isinstance(response.error, msgspec.UnsetType):
+                        last_error = str(response.error.message or "")
+            except (TimeoutError, ValueError, RuntimeError, OSError) as exc:
+                last_error = f"{type(exc).__name__}: {exc}"
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                suffix = f": {last_error}" if last_error else ""
+                raise TimeoutError(
+                    f"service control endpoint not ready within {float(self.config.endpoint_ready_timeout_s):g}s{suffix}"
+                )
+            await asyncio.sleep(min(0.1, max(0.01, remaining)))
+
     async def deploy_runtime_graph(self, req: RungraphDeployRequest) -> RungraphDeployResult:
         service_id = str(req.service_id)
         transport = await self.ensure_connected()
@@ -112,18 +199,45 @@ class RuntimeRungraphGateway:
                 success=False,
                 error_message=f"service not ready within {float(self.config.ready_timeout_s):g}s",
             )
-        graph_for_request = self._normalize_graph_for_request(req.graph)
+        try:
+            await self._wait_control_endpoint_ready(
+                transport,
+                service_id=service_id,
+            )
+        except TimeoutError as exc:
+            return RungraphDeployResult(service_id=service_id, success=False, error_message=str(exc))
+        req_id = new_id()
+        deploy_source = f"{str(req.source or 'studio')}:{req_id}"
+        graph_for_request = self._normalize_graph_for_request(req.graph, source=deploy_source)
         request_payload = F8SetRungraphRequest(
-            reqId=new_id(),
+            reqId=req_id,
             args=F8SetRungraphArgs(graph=graph_for_request),
-            meta={"source": str(req.source or "studio")},
+            meta={"source": deploy_source},
         )
-        response_bytes = await transport.request(
-            svc_endpoint_key(service_id, "set_rungraph"),
-            encode_obj(request_payload),
-            timeout=float(self.config.request_timeout_s),
-            raise_on_error=True,
-        )
+        graph_id = str(graph_for_request.graphId or "")
+        revision = str(graph_for_request.revision or "")
+        try:
+            response_bytes = await transport.request(
+                svc_endpoint_key(service_id, "set_rungraph"),
+                encode_obj(request_payload),
+                timeout=float(self.config.request_timeout_s),
+                raise_on_error=True,
+            )
+        except TimeoutError:
+            fallback = await self._wait_apply_evidence(
+                transport,
+                service_id=service_id,
+                req_id=req_id,
+                graph_id=graph_id,
+                revision=revision,
+            )
+            if fallback.success:
+                return fallback
+            return RungraphDeployResult(
+                service_id=service_id,
+                success=False,
+                error_message=f"set_rungraph acknowledgement timed out; {fallback.error_message}",
+            )
         if not response_bytes:
             return RungraphDeployResult(service_id=service_id, success=False, error_message="empty response")
         try:
@@ -134,8 +248,16 @@ class RuntimeRungraphGateway:
             error_message = ""
         else:
             error_message = str(response_payload.error.message or "")
-        return RungraphDeployResult(
+        if not bool(response_payload.ok):
+            return RungraphDeployResult(
+                service_id=service_id,
+                success=False,
+                error_message=error_message or "set_rungraph rejected",
+            )
+        return await self._wait_apply_evidence(
+            transport,
             service_id=service_id,
-            success=bool(response_payload.ok),
-            error_message=("" if response_payload.ok else error_message),
+            req_id=req_id,
+            graph_id=graph_id,
+            revision=revision,
         )

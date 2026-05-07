@@ -42,7 +42,7 @@ def close_zenoh_session_best_effort(
     def _close() -> None:
         try:
             session.close()
-        except Exception as exc:
+        except BaseException as exc:
             log.debug("zenoh session close failed context=%s", context_text, exc_info=exc)
             errors.append(exc)
         finally:

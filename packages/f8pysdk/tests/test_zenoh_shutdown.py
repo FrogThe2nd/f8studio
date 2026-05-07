@@ -24,6 +24,11 @@ class _BlockingSession:
         self.release.wait(timeout=5.0)
 
 
+class _PanicSession:
+    def close(self) -> None:
+        raise BaseException("native close panic")
+
+
 def test_close_zenoh_session_best_effort_closes_session() -> None:
     session = _CloseableSession()
 
@@ -72,3 +77,11 @@ def test_close_zenoh_session_best_effort_timeout_warning_is_deduped(caplog: obje
         if "test-dedupe-close" in record.message  # type: ignore[attr-defined]
     ]
     assert len(warnings) == 1
+
+
+def test_close_zenoh_session_best_effort_contains_base_exception() -> None:
+    session = _PanicSession()
+
+    ok = close_zenoh_session_best_effort(session, context="test-panic-close", timeout_s=0.5)
+
+    assert ok is False

@@ -24,8 +24,6 @@ from ...generated import (
     F8SetStateReply,
     F8SetStateReplyResult,
     F8SetStateRequest,
-    F8StatusReply,
-    F8StatusReplyResult,
     F8StatusRequest,
     F8TerminateReply,
     F8TerminateReplyResult,
@@ -208,12 +206,15 @@ class ServiceBusControlHandlers:
             req_id = new_id()
         await req.respond(
             encode_obj(
-                F8StatusReply(
-                    reqId=req_id,
-                    ok=True,
-                    result=F8StatusReplyResult(serviceId=self._bus.service_id, active=self._bus.active),
-                    error=None,
-                )
+                {
+                    "reqId": req_id,
+                    "ok": True,
+                    "result": {
+                        "serviceId": self._bus.service_id,
+                        "active": self._bus.active,
+                    },
+                    "error": None,
+                }
             )
         )
 
@@ -411,7 +412,11 @@ class ServiceBusControlHandlers:
         req_id = self._req_id(decoded_req.reqId)
 
         try:
-            await self._bus.set_rungraph(graph)
+            source = "control"
+            meta = decoded_req.meta
+            if isinstance(meta, dict):
+                source = str(meta.get("source") or "control")
+            self._bus.submit_rungraph(graph, req_id=req_id, source=source)
         except Exception as exc:
             await req.respond(
                 encode_obj(

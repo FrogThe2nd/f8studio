@@ -155,6 +155,14 @@ class ServiceBus final : public ServiceControlHandler {
   bool start_runtime_control_endpoints();
   void stop_runtime_control_endpoints();
   RuntimeBytes handle_runtime_control_request(const std::string& endpoint, const RuntimeMessage& msg);
+  bool submit_rungraph(const json& graph_obj, const json& meta, const std::string& req_id,
+                       std::string& error_code, std::string& error_message);
+  void start_rungraph_apply_worker();
+  void stop_rungraph_apply_worker();
+  void rungraph_apply_worker_loop();
+  void run_rungraph_apply_worker(json graph_obj, json meta, std::string req_id, std::string source);
+  void publish_rungraph_deploy_status(const json& graph_obj, const std::string& req_id, const std::string& phase,
+                                      const std::string& source, const std::string& error_message = "");
   bool runtime_publish_data(const std::string& from_node_id, const std::string& port_id, const json& value,
                             std::int64_t ts_ms = 0);
   bool runtime_retained_put(const std::string& key, const RuntimeBytes& bytes);
@@ -208,6 +216,20 @@ class ServiceBus final : public ServiceControlHandler {
   std::vector<std::unique_ptr<RuntimeSubscription>> runtime_control_endpoints_;
 
   MainThreadQueue main_thread_;
+
+  struct _RungraphApplyRequest {
+    json graph_obj = json::object();
+    json meta = json::object();
+    std::string req_id;
+    std::string source;
+  };
+
+  std::thread rungraph_apply_thread_;
+  mutable std::mutex rungraph_apply_mu_;
+  std::condition_variable rungraph_apply_cv_;
+  std::deque<_RungraphApplyRequest> rungraph_apply_queue_;
+  bool rungraph_apply_stop_requested_ = false;
+  bool rungraph_apply_running_ = false;
 
   mutable std::mutex lifecycle_mu_;
   std::vector<LifecycleNode*> lifecycle_nodes_;

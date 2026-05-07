@@ -13,10 +13,12 @@ from ..capabilities import (
     ServiceHook,
     StatefulNode,
 )
+from ..codec import encode_obj
 from ..command import CommandExecutionResult, CommandOutputPolicy
 from ..data import CrossPublishPolicy, DataDeliveryMode
 from ..generated import F8RuntimeGraph
 from ..f8_naming import ensure_token
+from ..service_runtime_tools.deploy.readiness import rungraph_deploy_request_status_key
 from ..runtime_transport import RuntimeTransport
 from ..zenoh_transport import ZenohTransport, ZenohTransportConfig
 from ..zenoh_naming import zenoh_data_key, zenoh_state_path_key
@@ -225,6 +227,7 @@ class ServiceBus:
         self._graph: F8RuntimeGraph | None = None
 
         self._rungraph_key = f"f8/svc/{self.service_id}/config/rungraph"
+        self._rungraph_status_key = f"f8/svc/{self.service_id}/status/rungraph"
         self._ready_key = f"f8/svc/{self.service_id}/status/ready"
         self._control_endpoints: ServiceControlEndpointServer | None = None
         self._component_factory = component_factory if component_factory is not None else DefaultServiceBusComponentFactory()
@@ -251,6 +254,8 @@ class ServiceBus:
         # Generic error dedupe for high-frequency paths (watchers/fanout/loops).
         self._error_once: set[str] = set()
         self._state_publish_seq = 0
+        self._rungraph_apply_lock = asyncio.Lock()
+        self._rungraph_apply_tasks: set[asyncio.Task[None]] = set()
 
         # Process-level termination request (set via `svc.<serviceId>.terminate`).
         # Service entrypoints may `await bus.wait_terminate()` to exit gracefully.
@@ -524,6 +529,12 @@ class ServiceBus:
     async def stop(self) -> None:
         if self._closed:
             return
+        tasks = list(self._rungraph_apply_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._rungraph_apply_tasks.clear()
         await _stop_impl(self)
         self._started = False
         self._closed = True
@@ -635,6 +646,80 @@ class ServiceBus:
 
     async def set_rungraph(self, graph: F8RuntimeGraph) -> None:
         await _set_rungraph_impl(self, graph)
+
+    def submit_rungraph(self, graph: F8RuntimeGraph, *, req_id: str, source: str = "control") -> None:
+        """
+        Accept a remote rungraph deployment request and apply it asynchronously.
+
+        The control endpoint should return quickly after this method succeeds;
+        deployment progress and final result are published to the retained
+        rungraph status key.
+        """
+        req_id_s = str(req_id or "").strip()
+        if not req_id_s:
+            raise ValueError("req_id is empty")
+        source_s = str(source or "control").strip() or "control"
+        task = asyncio.create_task(
+            self._rungraph_apply_worker(graph, req_id=req_id_s, source=source_s),
+            name=f"service_bus:set_rungraph:{self.service_id}:{req_id_s}",
+        )
+        self._rungraph_apply_tasks.add(task)
+        task.add_done_callback(self._on_rungraph_apply_task_done)
+
+    def _on_rungraph_apply_task_done(self, task: asyncio.Task[None]) -> None:
+        self._rungraph_apply_tasks.discard(task)
+        if task.cancelled():
+            return
+        try:
+            task.result()
+        except Exception as exc:
+            log.error("rungraph apply task failed service_id=%s", self.service_id, exc_info=exc)
+
+    async def _rungraph_apply_worker(self, graph: F8RuntimeGraph, *, req_id: str, source: str) -> None:
+        await self._publish_rungraph_status(graph, req_id=req_id, phase="accepted", source=source)
+        async with self._rungraph_apply_lock:
+            await self._publish_rungraph_status(graph, req_id=req_id, phase="applying", source=source)
+            try:
+                await self.set_rungraph(graph)
+            except Exception as exc:
+                await self._publish_rungraph_status(
+                    graph,
+                    req_id=req_id,
+                    phase="failed",
+                    source=source,
+                    error_message=f"{type(exc).__name__}: {exc}",
+                )
+                log.error("rungraph async apply failed service_id=%s req_id=%s", self.service_id, req_id, exc_info=exc)
+                return
+            await self._publish_rungraph_status(graph, req_id=req_id, phase="applied", source=source)
+
+    async def _publish_rungraph_status(
+        self,
+        graph: F8RuntimeGraph,
+        *,
+        req_id: str,
+        phase: str,
+        source: str,
+        error_message: str = "",
+    ) -> None:
+        graph_id = str(graph.graphId or "")
+        revision = str(graph.revision or "")
+        phase_s = str(phase or "").strip()
+        payload = {
+            "schemaVersion": "f8.rungraphDeployStatus/1",
+            "serviceId": self.service_id,
+            "reqId": str(req_id or ""),
+            "graphId": graph_id,
+            "revision": revision,
+            "phase": phase_s,
+            "ok": phase_s == "applied",
+            "source": str(source or ""),
+            "errorMessage": str(error_message or ""),
+            "ts": int(now_ms()),
+        }
+        raw = encode_obj(payload)
+        await self._transport.retained_put(self._rungraph_status_key, raw)
+        await self._transport.retained_put(rungraph_deploy_request_status_key(self.service_id, str(req_id or "")), raw)
 
     async def publish(self, key: str, payload: bytes) -> None:
         """Publish a message to a Zenoh key."""
