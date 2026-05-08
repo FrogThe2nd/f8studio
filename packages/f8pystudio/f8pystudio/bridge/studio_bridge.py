@@ -114,6 +114,8 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
         self._shutting_down: bool = False
 
         self._svc: PyStudioService | None = None
+        self._studio_service_lock: asyncio.Lock | None = None
+        self._studio_service_lock_loop: asyncio.AbstractEventLoop | None = None
         self._remote_state_watcher: RemoteStateWatcher | None = None
         self._remote_state_gateway: RemoteStateGatewayAdapter | None = None
         self._watch_targets_cache: tuple[WatchTarget, ...] | None = None
@@ -421,8 +423,6 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
         self._startup_preflight_ready = threading.Event()
         self._startup_continue_requested = threading.Event()
         self._startup_preflight_message = None
-
-
 
 
 

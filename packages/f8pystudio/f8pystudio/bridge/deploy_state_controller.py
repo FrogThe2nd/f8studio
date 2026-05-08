@@ -88,6 +88,15 @@ class DeployStateControllerMixin:
 
         async def _do() -> None:
             await self._refresh_studio_runtime_async(compiled=compiled)
+            desired_class = ""
+            resolved_compiled = pick_compiled(compiled, self._last_compiled)
+            if resolved_compiled is not None:
+                for service in list(resolved_compiled.global_graph.services or []):
+                    if str(service.serviceId or "") == sid:
+                        desired_class = str(service.serviceClass or "").strip()
+                        break
+            if not await self.ensure_service_available(sid, desired_class):
+                return
             await self._deploy_service_rungraph_async(sid, compiled=compiled)
 
         self._submit_async(_do(), context=f"submit deploy_service_rungraph failed serviceId={sid}")

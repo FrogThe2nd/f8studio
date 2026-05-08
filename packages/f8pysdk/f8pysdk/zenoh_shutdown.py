@@ -7,12 +7,16 @@ from typing import Protocol
 log = logging.getLogger(__name__)
 
 DEFAULT_ZENOH_CLOSE_TIMEOUT_S = 0.5
-_timeout_warning_lock = threading.Lock()
-_timeout_warning_contexts: set[str] = set()
 
 
 class ZenohCloseableSession(Protocol):
     def close(self) -> None: ...
+
+
+_timeout_warning_lock = threading.Lock()
+_timeout_warning_contexts: set[str] = set()
+_abandoned_session_lock = threading.Lock()
+_abandoned_sessions: list[ZenohCloseableSession] = []
 
 
 def _thread_name(context: str) -> str:
@@ -26,6 +30,7 @@ def close_zenoh_session_best_effort(
     *,
     context: str,
     timeout_s: float = DEFAULT_ZENOH_CLOSE_TIMEOUT_S,
+    native_close: bool = True,
 ) -> bool:
     """
     Close a Zenoh session without letting a stuck close block process shutdown.
@@ -38,6 +43,12 @@ def close_zenoh_session_best_effort(
     done = threading.Event()
     context_text = str(context or "").strip()
     errors: list[BaseException] = []
+
+    if not bool(native_close):
+        with _abandoned_session_lock:
+            _abandoned_sessions.append(session)
+        log.debug("zenoh session native close skipped context=%s", context_text)
+        return True
 
     def _close() -> None:
         try:

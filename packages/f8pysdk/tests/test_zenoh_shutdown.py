@@ -4,6 +4,7 @@ import threading
 import time
 
 from f8pysdk.zenoh_shutdown import close_zenoh_session_best_effort
+from f8pysdk import zenoh_shutdown
 
 
 class _CloseableSession:
@@ -85,3 +86,13 @@ def test_close_zenoh_session_best_effort_contains_base_exception() -> None:
     ok = close_zenoh_session_best_effort(session, context="test-panic-close", timeout_s=0.5)
 
     assert ok is False
+
+
+def test_close_zenoh_session_best_effort_can_skip_native_close() -> None:
+    session = _CloseableSession()
+
+    ok = close_zenoh_session_best_effort(session, context="test-skip-close", native_close=False)
+
+    assert ok is True
+    assert session.closed is False
+    assert zenoh_shutdown._abandoned_sessions[-1] is session

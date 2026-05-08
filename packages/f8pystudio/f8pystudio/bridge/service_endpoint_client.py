@@ -59,6 +59,25 @@ def _error_code(error: F8CommandError | None | msgspec.UnsetType) -> str:
     return str(error.code.value)
 
 
+def _status_identity_from_mapping(result: dict[str, Any]) -> dict[str, Any]:
+    service_id = str(result.get("serviceId") or "").strip()
+    service_class = str(result.get("serviceClass") or "").strip()
+    runtime_instance_id = str(result.get("runtimeInstanceId") or "").strip()
+    output: dict[str, Any] = {
+        "alive": True,
+        "identityValid": bool(service_class and runtime_instance_id),
+    }
+    if service_id:
+        output["serviceId"] = service_id
+    if service_class:
+        output["serviceClass"] = service_class
+    if runtime_instance_id:
+        output["runtimeInstanceId"] = runtime_instance_id
+    if "active" in result:
+        output["active"] = bool(result.get("active"))
+    return output
+
+
 async def request_service_status(
     requester: RuntimeRequester,
     *,
@@ -83,7 +102,8 @@ async def request_service_status(
         return None
     try:
         response = decode_as(raw, F8StatusReply)
-    except ValueError:
+    except ValueError as exc:
+        logger.debug("strict service status decode failed service_id=%s", service_id, exc_info=exc)
         try:
             fallback = decode_obj(raw)
         except ValueError:
@@ -92,9 +112,10 @@ async def request_service_status(
             return None
         if not bool(fallback.get("ok")):
             return None
-        if not isinstance(fallback.get("result"), dict):
+        result = fallback.get("result")
+        if not isinstance(result, dict):
             return None
-        return {"alive": True, "identityValid": False}
+        return _status_identity_from_mapping(result)
     if not response.ok:
         return None
     result = response.result

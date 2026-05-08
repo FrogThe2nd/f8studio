@@ -11,6 +11,7 @@ from f8pysdk.f8_naming import ensure_token
 
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
 from .process_lifecycle import StartServiceRequest, StopServiceRequest
+from .rungraph_deploy_flow import pick_compiled
 from .service_endpoint_client import request_service_status, request_service_terminate, request_set_service_active
 from f8pystudio.bridge.process_manager import ServiceProcessConfig
 from f8pystudio.nodegraph.runtime_compiler import CompiledRuntimeGraphs
@@ -116,6 +117,9 @@ class ServiceLifecycleControllerMixin:
                 return True
         except Exception as exc:
             self._report_exception(f"check process running failed serviceId={sid}", exc)
+        instances = self._service_liveliness_instances_by_service.get(sid)
+        if instances:
+            return True
         # If the service wasn't launched by this studio process, fall back to
         # a best-effort "alive" cache (refreshed via status endpoint).
         v = self._service_alive_cache.get(sid)
@@ -197,12 +201,21 @@ class ServiceLifecycleControllerMixin:
         runtime_instance_id = str(status.get("runtimeInstanceId") or "").strip()
         return bool(service_class and runtime_instance_id)
 
-    async def _live_runtime_instances(self, service_id: str) -> set[str]:
+    async def _live_runtime_instances(self, service_id: str) -> set[str] | None:
         sid = ensure_token(str(service_id), label="service_id")
         instances = await self._query_zenoh_service_liveliness_instances_async(sid)
+        if instances is None:
+            return None
         return set(instances)
 
-    def _block_duplicate_runtime_instances(self, service_id: str, instances: set[str]) -> bool:
+    def _block_unknown_runtime_instances(self, service_id: str) -> bool:
+        sid = str(service_id or "").strip()
+        self._emit_log_line(f"deploy blocked serviceId={sid}: service liveliness query failed")
+        return True
+
+    def _block_duplicate_runtime_instances(self, service_id: str, instances: set[str] | None) -> bool:
+        if instances is None:
+            return self._block_unknown_runtime_instances(service_id)
         sid = str(service_id or "").strip()
         if len(instances) <= 1:
             return False
@@ -213,6 +226,78 @@ class ServiceLifecycleControllerMixin:
         )
         self._cache_service_alive(sid, True)
         return True
+
+    def _try_cleanup_untracked_local_processes(self, service_id: str) -> bool:
+        sid = str(service_id or "").strip()
+        if not sid:
+            return False
+        try:
+            matches = self._process_gateway.external_processes(sid)
+        except AttributeError:
+            return False
+        except Exception as exc:
+            self._report_exception(f"scan external service processes failed serviceId={sid}", exc)
+            return False
+        if not matches:
+            return False
+        if self._runtime_supervision_mode() != "studio_owned":
+            return False
+        pid_text = ",".join(str(match.pid) for match in matches)
+        self._emit_log_line(f"cleanup untracked local service processes serviceId={sid} pids={pid_text}")
+        try:
+            result = self._process_gateway.terminate_external_processes(sid)
+        except AttributeError:
+            result = None
+        except Exception as exc:
+            self._report_exception(f"terminate untracked service processes failed serviceId={sid}", exc)
+            result = None
+        if result is None or not bool(result.success):
+            return False
+        terminated_text = ",".join(str(pid) for pid in result.terminated_pids)
+        self._emit_log_line(f"cleaned untracked local service processes serviceId={sid} pids={terminated_text}")
+        self._cache_service_alive(sid, False)
+        return True
+
+    def _handle_external_process_collision(self, service_id: str) -> bool:
+        sid = str(service_id or "").strip()
+        if not sid:
+            return False
+        try:
+            matches = self._process_gateway.external_processes(sid)
+        except AttributeError:
+            return False
+        except Exception as exc:
+            self._report_exception(f"scan external service processes failed serviceId={sid}", exc)
+            return False
+        if not matches:
+            return False
+        pid_text = ",".join(str(match.pid) for match in matches)
+        if self._try_cleanup_untracked_local_processes(sid):
+            return False
+        if self._runtime_supervision_mode() == "studio_owned":
+            try:
+                matches = self._process_gateway.external_processes(sid)
+            except Exception as exc:
+                self._report_exception(f"rescan external service processes failed serviceId={sid}", exc)
+                matches = []
+            pid_text = ",".join(str(match.pid) for match in matches)
+            if not matches:
+                self._cache_service_alive(sid, False)
+                return False
+        self._emit_log_line(
+            f"deploy blocked serviceId={sid}: untracked local process collision pids={pid_text}"
+        )
+        self._cache_service_alive(sid, True)
+        return True
+
+    def _service_class_from_compiled(self, service_id: str, compiled: CompiledRuntimeGraphs | None) -> str:
+        if compiled is None:
+            return ""
+        sid = str(service_id or "").strip()
+        for service in list(compiled.global_graph.services or []):
+            if str(service.serviceId or "") == sid:
+                return str(service.serviceClass or "").strip()
+        return ""
 
     def request_service_status(self, service_id: str) -> None:
         """
@@ -323,21 +408,24 @@ class ServiceLifecycleControllerMixin:
                 )
                 return False
             status = await self._request_service_status_async(sid)
-            if isinstance(status, dict):
-                if not self._identity_status_valid(status):
-                    self._emit_log_line(
-                        f"deploy blocked serviceId={sid}: status endpoint uses old protocol without identity"
-                    )
-                    return False
-                running_class = str(status.get("serviceClass") or "").strip()
-                if running_class and running_class != desired_class:
-                    self._emit_log_line(
-                        f"deploy blocked serviceId={sid}: serviceClass collision "
-                        f"running={running_class} desired={desired_class}"
-                    )
-                    return False
+            if not isinstance(status, dict):
+                self._emit_log_line(f"deploy blocked serviceId={sid}: local service status unreachable")
                 self._cache_service_alive(sid, True)
-                self._cache_status_identity(sid, status)
+                return False
+            if not self._identity_status_valid(status):
+                self._emit_log_line(
+                    f"deploy blocked serviceId={sid}: status endpoint uses old protocol without identity"
+                )
+                return False
+            running_class = str(status.get("serviceClass") or "").strip()
+            if running_class and running_class != desired_class:
+                self._emit_log_line(
+                    f"deploy blocked serviceId={sid}: serviceClass collision "
+                    f"running={running_class} desired={desired_class}"
+                )
+                return False
+            self._cache_service_alive(sid, True)
+            self._cache_status_identity(sid, status)
             self._managed_service_ids.add(sid)
             self._managed_service_classes[sid] = desired_class
             self._emit_log_line(f"reuse local service serviceId={sid} serviceClass={desired_class}")
@@ -346,19 +434,28 @@ class ServiceLifecycleControllerMixin:
         instances = await self._live_runtime_instances(sid)
         if self._block_duplicate_runtime_instances(sid, instances):
             return False
+        if len(instances) == 0 and self._handle_external_process_collision(sid):
+            return False
 
         if len(instances) == 1:
             status = await self._request_service_status_async(sid)
             if status is None:
-                self._emit_log_line(f"service liveliness found but status unreachable; spawning serviceId={sid}")
-                return self._start_service_process_local(service_id=sid, service_class=desired_class)
+                if self._try_cleanup_untracked_local_processes(sid):
+                    return self._start_service_process_local(service_id=sid, service_class=desired_class)
+                self._emit_log_line(f"deploy blocked serviceId={sid}: live service status unreachable")
+                self._cache_service_alive(sid, True)
+                return False
             if not self._identity_status_valid(status):
+                if self._try_cleanup_untracked_local_processes(sid):
+                    return self._start_service_process_local(service_id=sid, service_class=desired_class)
                 self._emit_log_line(
                     f"deploy blocked serviceId={sid}: status endpoint uses old protocol without identity"
                 )
                 return False
             running_class = str(status.get("serviceClass") or "").strip()
             if running_class != desired_class:
+                if self._try_cleanup_untracked_local_processes(sid):
+                    return self._start_service_process_local(service_id=sid, service_class=desired_class)
                 self._emit_log_line(
                     f"deploy blocked serviceId={sid}: serviceClass collision "
                     f"running={running_class or '<empty>'} desired={desired_class}"
@@ -441,17 +538,15 @@ class ServiceLifecycleControllerMixin:
         if sid == self.studio_service_id:
             return
 
-        # Dedup: if Studio already believes the service is alive (via local proc tracking or a fresh
-        # status ping), do not spawn another process on repeated deploy (e.g. repeated F5).
-        if self.is_service_running(sid):
-            self._emit_log_line(f"start_service ignored (already running): serviceId={sid}")
-            return
-
         svc_class = self._managed_service_classes.get(sid, "") or str(service_class or "")
         if not svc_class:
             self._emit_log_line(f"start_service ignored (unknown serviceClass): serviceId={sid}")
             return
-        self._start_service_process_local(service_id=sid, service_class=str(svc_class))
+
+        async def _do() -> None:
+            _ = await self.ensure_service_available(sid, str(svc_class))
+
+        self._submit_async(_do(), context=f"submit start_service failed serviceId={sid}")
 
     def stop_service(self, service_id: str) -> None:
         try:
@@ -523,10 +618,15 @@ class ServiceLifecycleControllerMixin:
             return
         if sid == self.studio_service_id:
             return
-        self.start_service(sid, service_class=service_class)
 
         async def _do() -> None:
             await self._refresh_studio_runtime_async(compiled=compiled)
+            desired_class = (
+                self._service_class_from_compiled(sid, pick_compiled(compiled, self._last_compiled))
+                or str(service_class or "").strip()
+            )
+            if not await self.ensure_service_available(sid, desired_class):
+                return
             await self._deploy_service_rungraph_async(sid, compiled=compiled)
             await self._set_service_active_async(sid, True)
 
@@ -545,13 +645,31 @@ class ServiceLifecycleControllerMixin:
         if sid == self.studio_service_id:
             return
 
-        # Reuse existing restart flow; deploy will happen once process is back.
-        self.restart_service(sid, service_class=service_class)
-
         async def _do() -> None:
-            # Give restart a moment to come back; readiness wait inside deploy handles most cases.
-            await asyncio.sleep(0.3)
+            instances = await self._live_runtime_instances(sid)
+            if self._block_duplicate_runtime_instances(sid, instances):
+                return
+            self._process_actions.cancel(service_id=sid)
+            await self._request_service_terminate_async(sid)
+            stop_deadline_s = time.monotonic() + 2.2
+            while self.is_service_running(sid) and time.monotonic() < stop_deadline_s:
+                await asyncio.sleep(0.1)
+            if self.is_service_running(sid):
+                self._stop_process_once_local(sid)
+            final_deadline_s = time.monotonic() + 1.0
+            while self.is_service_running(sid) and time.monotonic() < final_deadline_s:
+                await asyncio.sleep(0.1)
+            if self.is_service_running(sid):
+                self._emit_log_line(f"restart blocked serviceId={sid}: service did not stop")
+                return
+            self._emit_service_process_state_safe(sid, False)
             await self._refresh_studio_runtime_async(compiled=compiled)
+            desired_class = (
+                self._service_class_from_compiled(sid, pick_compiled(compiled, self._last_compiled))
+                or str(service_class or "").strip()
+            )
+            if not await self.ensure_service_available(sid, desired_class):
+                return
             await self._deploy_service_rungraph_async(sid, compiled=compiled)
             await self._set_service_active_async(sid, True)
 
@@ -577,3 +695,21 @@ class ServiceLifecycleControllerMixin:
             if not ok:
                 cmd = "activate" if bool(active) else "deactivate"
                 self._emit_log_line(f"lifecycle {cmd} failed serviceId={sid}")
+
+    def stop_all_services(self) -> None:
+        service_ids: set[str] = set()
+        service_ids.update(str(sid) for sid in self._managed_service_ids if str(sid or "").strip())
+        service_ids.update(str(sid) for sid in self._managed_service_classes.keys() if str(sid or "").strip())
+        service_ids.update(str(sid) for sid in self._service_alive_cache.keys() if str(sid or "").strip())
+        service_ids.update(str(sid) for sid in self._service_status_cache.keys() if str(sid or "").strip())
+        service_ids.update(str(sid) for sid in self._service_liveliness_instances_by_service.keys() if str(sid or "").strip())
+        try:
+            service_ids.update(str(sid) for sid in self._process_gateway.service_ids() if str(sid or "").strip())
+        except Exception as exc:
+            self._report_exception("list process service ids for stop_all failed", exc)
+        service_ids.discard(str(self.studio_service_id))
+        if not service_ids:
+            self._emit_log_line("[service] no known service instances to stop")
+            return
+        for sid in sorted(service_ids):
+            self.stop_service(sid)

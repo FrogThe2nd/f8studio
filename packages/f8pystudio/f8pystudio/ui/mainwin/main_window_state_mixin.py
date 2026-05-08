@@ -65,6 +65,7 @@ class MainWindowStateMixin:
             fingerprint: str,
         ) -> tuple[int, str]: ...
         def _declared_graph_services(self) -> dict[str, str]: ...
+        def _schedule_studio_runtime_sync(self) -> None: ...
 
     def _layout_settings(self) -> QtCore.QSettings:
         return QtCore.QSettings()
@@ -379,6 +380,17 @@ class MainWindowStateMixin:
         self._schedule_studio_runtime_sync()
         if self._auto_deploy_enabled:
             self._auto_deploy_timer.start()
+
+    @QtCore.Slot()
+    def _on_graph_inserted(self) -> None:
+        self._exit_autosaved = False
+        self._schedule_studio_runtime_sync()
+        if self._auto_deploy_enabled:
+            self._auto_deploy_timer.start()
+
+    @QtCore.Slot()
+    def _on_graph_session_loaded(self) -> None:
+        self._schedule_studio_runtime_sync()
 
     @QtCore.Slot()
     def _on_deferred_auto_deploy_fingerprint_timeout(self) -> None:

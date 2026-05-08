@@ -19,7 +19,14 @@ from .process_lifecycle import (
     StopServiceRequest,
     StopServiceResult,
 )
-from .process_manager import ServiceProcessConfig, ServiceProcessManager
+from .process_manager import (
+    ServiceProcessConfig,
+    ServiceProcessManager,
+    ServiceProcessMatch,
+    ServiceProcessTerminateResult,
+    find_service_processes_by_service_id,
+    terminate_service_processes_by_service_id,
+)
 from .remote_state_sync import ApplyWatchTargetsRequest, RemoteStateGateway, RemoteStateGatewayAdapter
 from .remote_state_watcher import RemoteStateWatcher, WatchTarget
 from .runtime_session_controller import RuntimeSessionControllerMixin
@@ -87,6 +94,8 @@ __all__ = [
     "ServiceLifecycleControllerMixin",
     "ServiceProcessConfig",
     "ServiceProcessManager",
+    "ServiceProcessMatch",
+    "ServiceProcessTerminateResult",
     "DeployStateControllerMixin",
     "RemoteCommandControllerMixin",
     "ServiceStatusStore",
@@ -104,6 +113,8 @@ __all__ = [
     "coerce_json_value",
     "collect_managed_service_inventory",
     "dedupe_fields",
+    "find_service_processes_by_service_id",
+    "terminate_service_processes_by_service_id",
     "message_data_bytes",
     "request_service_status",
     "request_service_terminate",

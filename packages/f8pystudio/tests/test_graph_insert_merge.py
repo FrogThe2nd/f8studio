@@ -102,6 +102,7 @@ def _new_graph_stub() -> F8StudioGraph:
     graph._strip_invalid_connections = lambda layout: layout  # type: ignore[method-assign]
     graph._rebind_container_children = lambda: None  # type: ignore[method-assign]
     graph._refresh_all_inline_state_read_only = lambda: None  # type: ignore[method-assign]
+    graph._emit_graph_inserted = lambda: None  # type: ignore[method-assign]
     graph.session_layer_defs = lambda: graph._session_layer_defs  # type: ignore[method-assign]
     graph.active_layer_ids = lambda: graph._active_layer_ids  # type: ignore[method-assign]
     graph.set_session_layer_defs = (  # type: ignore[method-assign]
@@ -337,6 +338,67 @@ def test_apply_insert_graph_schedules_global_hotkey_refresh_after_batch_insert()
 
     assert result.inserted_node_ids == ["triggerA"]
     assert controller.schedule_calls == 1
+
+
+def test_apply_insert_graph_emits_inserted_signal_after_batch_insert() -> None:
+    _ensure_app()
+    graph = F8StudioGraph()
+    graph.node_factory.clear_registered_nodes()
+    graph.node_factory.register_node(BackdropRenderNode)
+    emitted_count = 0
+
+    def _on_inserted() -> None:
+        nonlocal emitted_count
+        emitted_count += 1
+
+    graph.graph_inserted.connect(_on_inserted)  # type: ignore[attr-defined]
+
+    node_type = str(BackdropRenderNode.type_ or "")
+    source = F8StudioGraph()
+    source.node_factory.clear_registered_nodes()
+    source.node_factory.register_node(BackdropRenderNode)
+    _ = source.create_node(node_type, name="Source", selected=False, push_undo=False, pos=(10.0, 20.0))
+    request = graph.prepare_insert_graph_from_component(source.serialize_publish_session(), component_name="Signal Test")
+
+    result = graph.apply_insert_graph(request, anchor_x=300.0, anchor_y=400.0)
+
+    assert result.inserted_node_ids
+    assert emitted_count == 1
+
+
+def test_load_session_payload_emits_session_loaded_signal() -> None:
+    _ensure_app()
+    graph = F8StudioGraph()
+    graph.node_factory.clear_registered_nodes()
+    graph.node_factory.register_node(BackdropRenderNode)
+    emitted_count = 0
+
+    def _on_loaded() -> None:
+        nonlocal emitted_count
+        emitted_count += 1
+
+    graph.session_loaded.connect(_on_loaded)  # type: ignore[attr-defined]
+
+    node_type = str(BackdropRenderNode.type_ or "")
+    payload = {
+        "schemaVersion": "f8studio-session/1",
+        "layout": {
+            "nodes": {
+                "nodeA": {
+                    "id": "nodeA",
+                    "type_": node_type,
+                    "name": "Loaded A",
+                    "pos": [10.0, 20.0],
+                },
+            },
+            "connections": [],
+        },
+    }
+
+    graph.load_session_payload(payload)
+
+    assert graph.get_node_by_id("nodeA") is not None
+    assert emitted_count == 1
 
 
 def test_apply_insert_graph_remaps_conflicting_layer_ids() -> None:

@@ -3,7 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Protocol
 
-from f8pystudio.bridge.process_manager import ServiceProcessConfig, ServiceProcessManager
+from f8pystudio.bridge.process_manager import (
+    ServiceProcessConfig,
+    ServiceProcessManager,
+    ServiceProcessMatch,
+    ServiceProcessTerminateResult,
+    find_service_processes_by_service_id,
+    terminate_service_processes_by_service_id,
+)
 
 
 @dataclass(frozen=True)
@@ -26,6 +33,10 @@ class StopServiceResult:
 class ServiceProcessGateway(Protocol):
     def service_ids(self) -> list[str]: ...
 
+    def external_processes(self, service_id: str) -> list[ServiceProcessMatch]: ...
+
+    def terminate_external_processes(self, service_id: str) -> ServiceProcessTerminateResult: ...
+
     def is_running(self, service_id: str) -> bool: ...
 
     def start(self, req: StartServiceRequest) -> None: ...
@@ -39,6 +50,15 @@ class LocalServiceProcessGateway:
 
     def service_ids(self) -> list[str]:
         return [str(service_id) for service_id in self.manager.service_ids()]
+
+    def external_processes(self, service_id: str) -> list[ServiceProcessMatch]:
+        tracked_ids = set(str(item) for item in self.manager.service_ids())
+        if str(service_id) in tracked_ids:
+            return []
+        return find_service_processes_by_service_id(str(service_id))
+
+    def terminate_external_processes(self, service_id: str) -> ServiceProcessTerminateResult:
+        return terminate_service_processes_by_service_id(str(service_id))
 
     def is_running(self, service_id: str) -> bool:
         return bool(self.manager.is_running(str(service_id)))

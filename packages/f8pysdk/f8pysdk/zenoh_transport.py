@@ -170,7 +170,11 @@ class ZenohTransport:
             session = self._session
             self._session = None
             if session is not None:
-                close_zenoh_session_best_effort(session, context=f"runtime:{self._config.service_id}")
+                close_zenoh_session_best_effort(
+                    session,
+                    context=f"runtime:{self._config.service_id}",
+                    native_close=False,
+                )
 
     async def publish(self, key: str, payload: bytes) -> None:
         await self.publish_stream(key, payload, delivery="latest")

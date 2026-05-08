@@ -22,6 +22,8 @@ bool DemoService::start() {
   bus_cfg.service_id = cfg_.service_id;
   const auto runtime_backend = f8::cppsdk::normalize_runtime_backend_config(cfg_.runtime_backend);
   bus_cfg.apply_runtime_backend(runtime_backend);
+  bus_cfg.service_class = cfg_.service_class;
+  bus_cfg.service_name = "SDK Demo";
   bus_ = std::make_unique<f8::cppsdk::ServiceBus>(bus_cfg);
   bus_->add_lifecycle_node(this);
   bus_->add_stateful_node(this);

@@ -135,10 +135,15 @@ class _FakeTimer:
 
 class _FakeRuntimeSyncMain:
     _schedule_studio_runtime_sync = F8StudioMainWin._schedule_studio_runtime_sync
+    _on_graph_inserted = F8StudioMainWin._on_graph_inserted
+    _on_graph_session_loaded = F8StudioMainWin._on_graph_session_loaded
 
     def __init__(self) -> None:
         self._closing = False
         self._studio_runtime_sync_timer = _FakeTimer()
+        self._auto_deploy_enabled = False
+        self._auto_deploy_timer = _FakeTimer()
+        self._exit_autosaved = True
 
 
 def test_auto_load_project_starts_background_worker_once(monkeypatch) -> None:
@@ -208,6 +213,34 @@ def test_schedule_studio_runtime_sync_runs_only_when_open() -> None:
 
     fake_main._closing = True
     F8StudioMainWin._schedule_studio_runtime_sync(fake_main)
+    assert fake_main._studio_runtime_sync_timer.start_calls == 1
+
+
+def test_graph_inserted_schedules_runtime_sync_even_during_session_insert() -> None:
+    fake_main = _FakeRuntimeSyncMain()
+
+    F8StudioMainWin._on_graph_inserted(fake_main)
+
+    assert fake_main._exit_autosaved is False
+    assert fake_main._studio_runtime_sync_timer.start_calls == 1
+    assert fake_main._auto_deploy_timer.start_calls == 0
+
+
+def test_graph_inserted_schedules_auto_deploy_when_enabled() -> None:
+    fake_main = _FakeRuntimeSyncMain()
+    fake_main._auto_deploy_enabled = True
+
+    F8StudioMainWin._on_graph_inserted(fake_main)
+
+    assert fake_main._studio_runtime_sync_timer.start_calls == 1
+    assert fake_main._auto_deploy_timer.start_calls == 1
+
+
+def test_graph_session_loaded_schedules_runtime_sync_for_direct_graph_loads() -> None:
+    fake_main = _FakeRuntimeSyncMain()
+
+    F8StudioMainWin._on_graph_session_loaded(fake_main)
+
     assert fake_main._studio_runtime_sync_timer.start_calls == 1
 
 

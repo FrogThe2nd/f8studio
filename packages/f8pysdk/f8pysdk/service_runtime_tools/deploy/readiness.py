@@ -27,6 +27,10 @@ class RungraphDeployStatus:
     ts_ms: int
 
 
+class RungraphDeployStatusTimeout(Exception):
+    """Raised when a rungraph deploy request reports progress but no final status."""
+
+
 RUNGRAPH_DEPLOY_PROTOCOL = "f8.rungraphDeployStatus/1"
 
 
@@ -197,8 +201,10 @@ async def wait_rungraph_deploy_status(
     graph_id_s = str(graph_id or "").strip()
     revision_s = str(revision or "").strip()
     key = rungraph_deploy_request_status_key(service_id_s, req_id_s)
+    last_status: RungraphDeployStatus | None = None
 
     def _accept(payload: Any) -> RungraphDeployStatus | None:
+        nonlocal last_status
         status = _rungraph_status_from_payload(payload)
         if status is None:
             return None
@@ -210,6 +216,7 @@ async def wait_rungraph_deploy_status(
             return None
         if revision_s and status.revision != revision_s:
             return None
+        last_status = status
         if status.phase not in ("applied", "failed"):
             return None
         return status
@@ -263,7 +270,17 @@ async def wait_rungraph_deploy_status(
             status2 = _accept(payload2)
             if status2 is not None:
                 return status2
-        return await asyncio.wait_for(fut, timeout=float(timeout_s))
+        try:
+            return await asyncio.wait_for(fut, timeout=float(timeout_s))
+        except asyncio.TimeoutError as exc:
+            if last_status is None:
+                raise RungraphDeployStatusTimeout(
+                    f"rungraph apply status not received within {float(timeout_s):g}s (key={key})"
+                ) from exc
+            raise RungraphDeployStatusTimeout(
+                f"rungraph apply status not final within {float(timeout_s):g}s "
+                f"(last phase={last_status.phase or '<empty>'}, key={key})"
+            ) from exc
     finally:
         if watch is not None:
             if isinstance(watch, tuple):
@@ -289,6 +306,7 @@ async def wait_rungraph_deploy_status(
 __all__ = [
     "RUNGRAPH_DEPLOY_PROTOCOL",
     "RungraphDeployStatus",
+    "RungraphDeployStatusTimeout",
     "rungraph_deploy_request_status_key",
     "rungraph_deploy_status_key",
     "wait_rungraph_deploy_status",

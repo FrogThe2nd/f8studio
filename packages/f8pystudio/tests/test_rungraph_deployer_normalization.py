@@ -152,11 +152,40 @@ class _GatewayTransportStub:
                     }
                 ),
             )
+
     def remove_watch(self, key: str, cb: Callable[[str, bytes], Awaitable[None]]) -> None:
         try:
             self._watchers.remove((str(key), cb))
         except ValueError:
             return
+
+
+class _ApplyingOnlyGatewayTransportStub(_GatewayTransportStub):
+    async def _publish_apply_evidence(self, req_id: str) -> None:
+        await asyncio.sleep(0)
+        await self.retained_put(
+            rungraph_deploy_request_status_key("svc1", req_id),
+            encode_obj(
+                {
+                    "schemaVersion": "f8.rungraphDeployStatus/1",
+                    "serviceId": "svc1",
+                    "reqId": req_id,
+                    "graphId": "g1",
+                    "revision": "r1",
+                    "phase": "applying",
+                    "ok": True,
+                    "source": "test",
+                    "errorMessage": "",
+                    "ts": 1,
+                }
+            ),
+        )
+
+
+class _NoEvidenceGatewayTransportStub(_GatewayTransportStub):
+    async def _publish_apply_evidence(self, req_id: str) -> None:
+        _ = req_id
+        await asyncio.sleep(0)
 
 
 class _WatchStub:
@@ -222,6 +251,50 @@ def test_gateway_uses_rungraph_status_when_ack_times_out() -> None:
 
         assert result.success is True
         assert result.error_message == ""
+
+    asyncio.run(_run())
+
+
+def test_gateway_reports_last_rungraph_apply_phase_on_timeout() -> None:
+    async def _run() -> None:
+        transport = _ApplyingOnlyGatewayTransportStub()
+        transport.retained["f8/svc/svc1/status/ready"] = encode_obj(_ready_payload())
+        graph = F8RuntimeGraph(
+            graphId="g1",
+            revision="r1",
+            nodes=[F8RuntimeNode(nodeId="svc1", serviceId="svc1", serviceClass="svc.a", operatorClass=None)],
+            edges=[],
+        )
+        gateway = RuntimeRungraphGateway(RungraphDeployConfig(apply_timeout_s=0.01))
+        gateway._transport = transport
+
+        result = await gateway.deploy_runtime_graph(_DeployRequest(service_id="svc1", graph=graph, source="test"))
+
+        assert result.success is False
+        assert "last phase=applying" in result.error_message
+        assert "f8/svc/svc1/status/rungraph/requests/" in result.error_message
+
+    asyncio.run(_run())
+
+
+def test_gateway_reports_request_status_key_when_apply_evidence_is_missing() -> None:
+    async def _run() -> None:
+        transport = _NoEvidenceGatewayTransportStub()
+        transport.retained["f8/svc/svc1/status/ready"] = encode_obj(_ready_payload())
+        graph = F8RuntimeGraph(
+            graphId="g1",
+            revision="r1",
+            nodes=[F8RuntimeNode(nodeId="svc1", serviceId="svc1", serviceClass="svc.a", operatorClass=None)],
+            edges=[],
+        )
+        gateway = RuntimeRungraphGateway(RungraphDeployConfig(apply_timeout_s=0.01))
+        gateway._transport = transport
+
+        result = await gateway.deploy_runtime_graph(_DeployRequest(service_id="svc1", graph=graph, source="test"))
+
+        assert result.success is False
+        assert "rungraph apply status not received within 0.01s" in result.error_message
+        assert "f8/svc/svc1/status/rungraph/requests/" in result.error_message
 
     asyncio.run(_run())
 

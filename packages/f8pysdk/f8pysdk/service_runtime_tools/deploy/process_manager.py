@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import os
+import shlex
+import signal
 import subprocess
 import sys
 import threading
@@ -31,6 +33,175 @@ class ServiceProcessConfig:
     zenoh_connect: tuple[str, ...] = ()
     zenoh_listen: tuple[str, ...] = ()
     zenoh_shm_pool_bytes: int = 256 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class ServiceProcessMatch:
+    pid: int
+    cmdline: tuple[str, ...]
+
+    def display_command(self) -> str:
+        return " ".join(shlex.quote(part) for part in self.cmdline)
+
+
+@dataclass(frozen=True)
+class ServiceProcessTerminateResult:
+    service_id: str
+    matched_pids: tuple[int, ...]
+    terminated_pids: tuple[int, ...]
+    remaining_pids: tuple[int, ...]
+
+    @property
+    def success(self) -> bool:
+        return not self.remaining_pids
+
+
+def _cmdline_matches_service_id(cmdline: tuple[str, ...], service_id: str) -> bool:
+    sid = str(service_id or "").strip()
+    if not sid:
+        return False
+    for index, token in enumerate(cmdline):
+        text = str(token)
+        if text == "--service-id":
+            value_index = index + 1
+            if value_index < len(cmdline) and str(cmdline[value_index]) == sid:
+                return True
+            continue
+        prefix = "--service-id="
+        if text.startswith(prefix) and text[len(prefix) :] == sid:
+            return True
+    return False
+
+
+def _read_proc_cmdline(path: Path) -> tuple[str, ...]:
+    try:
+        raw = path.read_bytes()
+    except (FileNotFoundError, NotADirectoryError, PermissionError, OSError):
+        return ()
+    return tuple(part.decode("utf-8", errors="replace") for part in raw.split(b"\0") if part)
+
+
+def find_service_processes_by_service_id(service_id: str, *, current_pid: int | None = None) -> list[ServiceProcessMatch]:
+    sid = str(service_id or "").strip()
+    if not sid:
+        return []
+    if os.name != "posix":
+        return []
+    own_pid = os.getpid() if current_pid is None else int(current_pid)
+    matches: list[ServiceProcessMatch] = []
+    proc_root = Path("/proc")
+    try:
+        entries = list(proc_root.iterdir())
+    except (FileNotFoundError, NotADirectoryError, PermissionError, OSError) as exc:
+        logger.debug("Process scan failed: cannot list /proc", exc_info=exc)
+        return []
+    for entry in entries:
+        name = entry.name
+        if not name.isdecimal():
+            continue
+        pid = int(name)
+        if pid == own_pid:
+            continue
+        cmdline = _read_proc_cmdline(entry / "cmdline")
+        if not cmdline:
+            continue
+        if _cmdline_matches_service_id(cmdline, sid):
+            matches.append(ServiceProcessMatch(pid=pid, cmdline=cmdline))
+    return sorted(matches, key=lambda item: item.pid)
+
+
+def _process_group_ids(matches: list[ServiceProcessMatch]) -> list[int]:
+    own_pgid = os.getpgrp() if os.name == "posix" else -1
+    groups: set[int] = set()
+    for match in matches:
+        try:
+            pgid = os.getpgid(int(match.pid))
+        except ProcessLookupError:
+            continue
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Process group lookup failed pid=%s", match.pid, exc_info=exc)
+            continue
+        if pgid <= 0 or pgid == own_pgid:
+            continue
+        groups.add(int(pgid))
+    return sorted(groups)
+
+
+def _wait_until_service_processes_exit(service_id: str, *, deadline_s: float) -> list[ServiceProcessMatch]:
+    remaining = find_service_processes_by_service_id(service_id)
+    while remaining and time.monotonic() < deadline_s:
+        time.sleep(0.05)
+        remaining = find_service_processes_by_service_id(service_id)
+    return remaining
+
+
+def terminate_service_processes_by_service_id(
+    service_id: str,
+    *,
+    grace_s: float = 2.0,
+    kill_s: float = 2.0,
+) -> ServiceProcessTerminateResult:
+    sid = str(service_id or "").strip()
+    matches = find_service_processes_by_service_id(sid)
+    matched_pids = tuple(match.pid for match in matches)
+    if not matches:
+        return ServiceProcessTerminateResult(
+            service_id=sid,
+            matched_pids=(),
+            terminated_pids=(),
+            remaining_pids=(),
+        )
+
+    if os.name == "posix":
+        groups = _process_group_ids(matches)
+        for pgid in groups:
+            try:
+                os.killpg(pgid, signal.SIGTERM)
+            except ProcessLookupError:
+                continue
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                logger.debug("SIGTERM service process group failed service_id=%s pgid=%s", sid, pgid, exc_info=exc)
+        remaining = _wait_until_service_processes_exit(sid, deadline_s=time.monotonic() + max(0.0, float(grace_s)))
+        if remaining:
+            for pgid in _process_group_ids(remaining):
+                try:
+                    os.killpg(pgid, signal.SIGKILL)
+                except ProcessLookupError:
+                    continue
+                except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                    logger.debug("SIGKILL service process group failed service_id=%s pgid=%s", sid, pgid, exc_info=exc)
+            remaining = _wait_until_service_processes_exit(
+                sid,
+                deadline_s=time.monotonic() + max(0.0, float(kill_s)),
+            )
+        remaining_pids = tuple(match.pid for match in remaining)
+        return ServiceProcessTerminateResult(
+            service_id=sid,
+            matched_pids=matched_pids,
+            terminated_pids=tuple(pid for pid in matched_pids if pid not in set(remaining_pids)),
+            remaining_pids=remaining_pids,
+        )
+
+    remaining_pids: tuple[int, ...] = matched_pids
+    for match in matches:
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(int(match.pid)), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=2,
+                check=False,
+            )
+        except (OSError, RuntimeError, TypeError, ValueError, subprocess.SubprocessError) as exc:
+            logger.debug("taskkill external service process failed service_id=%s pid=%s", sid, match.pid, exc_info=exc)
+    remaining = _wait_until_service_processes_exit(sid, deadline_s=time.monotonic() + max(0.0, float(kill_s)))
+    remaining_pids = tuple(match.pid for match in remaining)
+    return ServiceProcessTerminateResult(
+        service_id=sid,
+        matched_pids=matched_pids,
+        terminated_pids=tuple(pid for pid in matched_pids if pid not in set(remaining_pids)),
+        remaining_pids=remaining_pids,
+    )
 
 
 class ServiceProcessManager:

@@ -14,6 +14,7 @@ from f8pysdk.f8_naming import new_id, svc_endpoint_key
 from f8pysdk.runtime_transport import RuntimeTransport
 from f8pysdk.zenoh_transport import ZenohTransport, ZenohTransportConfig
 from f8pysdk.service_runtime_tools.deploy.readiness import (
+    RungraphDeployStatusTimeout,
     wait_rungraph_deploy_status,
     wait_service_ready,
 )
@@ -107,6 +108,12 @@ class RuntimeRungraphGateway:
                     error_message=result.error_message or "rungraph apply failed",
                 )
             return RungraphDeployResult(service_id=service_id, success=True, error_message="")
+        except RungraphDeployStatusTimeout as exc:
+            return RungraphDeployResult(
+                service_id=service_id,
+                success=False,
+                error_message=str(exc),
+            )
         except asyncio.TimeoutError:
             return RungraphDeployResult(
                 service_id=service_id,

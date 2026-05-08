@@ -168,7 +168,11 @@ class ZenohLatestBinaryStreamTransport:
         session = self._session
         self._session = None
         if session is not None:
-            close_zenoh_session_best_effort(session, context=f"{self._log_context}:{self.key_expr}")
+            close_zenoh_session_best_effort(
+                session,
+                context=f"{self._log_context}:{self.key_expr}",
+                native_close=False,
+            )
 
     def publish_raw(self, payload: bytes | bytearray | memoryview) -> None:
         session = self._session

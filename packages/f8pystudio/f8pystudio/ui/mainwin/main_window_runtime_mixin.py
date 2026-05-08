@@ -112,20 +112,20 @@ class MainWindowRuntimeMixin:
 
     @QtCore.Slot()
     def _on_stop_all_services_action(self) -> None:
-        service_ids = collect_declared_service_ids(
+        declared_service_ids = collect_declared_service_ids(
             nodes=list(self.studio_graph.all_nodes() or []),
             studio_service_class=STUDIO_SERVICE_CLASS,
         )
-        normalized_ids = sorted(str(service_id) for service_id in service_ids)
-        if not normalized_ids:
-            self._log_dock.append("studio", "[service] no graph service instances to stop\n")
+        try:
+            self._bridge.stop_all_services()
+        except Exception as exc:
+            self._log_dock.report_exception("studio", "stop all services failed", exc)
             return
-        for service_id in normalized_ids:
-            try:
-                self._bridge.stop_service(service_id)
-                self._log_dock.append("studio", f"[service] stop requested: {service_id}\n")
-            except Exception as exc:
-                self._log_dock.report_exception("studio", f"stop service failed ({service_id})", exc)
+        normalized_ids = sorted(str(service_id) for service_id in declared_service_ids)
+        if normalized_ids:
+            self._log_dock.append("studio", f"[service] stop all requested ({len(normalized_ids)} graph service(s))\n")
+            return
+        self._log_dock.append("studio", "[service] stop all requested\n")
 
     @QtCore.Slot(str)
     def _focus_node_by_id(self, node_id: str) -> None:

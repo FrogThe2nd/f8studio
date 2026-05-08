@@ -75,7 +75,44 @@ def test_request_service_status_marks_old_protocol_identity_invalid() -> None:
 
     result = asyncio.run(request_service_status(requester, service_id="svc_demo", timeout_s=0.4))
 
-    assert result == {"alive": True, "identityValid": False}
+    assert result == {
+        "alive": True,
+        "identityValid": False,
+        "serviceId": "svc_demo",
+        "active": False,
+    }
+    assert requester.calls[0][0] == svc_endpoint_key("svc_demo", "status")
+
+
+def test_request_service_status_fallback_preserves_identity() -> None:
+    requester = _FakeRequester(
+        [
+            encode_obj(
+                {
+                    "reqId": "r1",
+                    "ok": True,
+                    "result": {
+                        "serviceId": "svc_demo",
+                        "serviceClass": "f8.tests.demo",
+                        "runtimeInstanceId": "inst_demo",
+                        "futureField": "ignored",
+                    },
+                    "error": None,
+                    "futureWrapperField": "ignored",
+                }
+            )
+        ]
+    )
+
+    result = asyncio.run(request_service_status(requester, service_id="svc_demo", timeout_s=0.4))
+
+    assert result == {
+        "alive": True,
+        "identityValid": True,
+        "serviceId": "svc_demo",
+        "serviceClass": "f8.tests.demo",
+        "runtimeInstanceId": "inst_demo",
+    }
     assert requester.calls[0][0] == svc_endpoint_key("svc_demo", "status")
 
 

@@ -5,6 +5,7 @@ import sys
 from types import SimpleNamespace
 
 from f8pystudio.bridge.runtime_lifecycle import SINGLETON_GUARD_DIALOG_MESSAGE
+from f8pysdk import zenoh_shutdown
 from f8pystudio.bridge.runtime_session_controller import (
     ServiceLivelinessIdentity,
     RuntimeSessionControllerMixin,
@@ -23,27 +24,42 @@ class _FakeMonitorCenter:
 
 class _FakeStudioService:
     instances: list["_FakeStudioService"] = []
+    start_delay_s = 0.0
+    fail_start = False
 
     def __init__(self, cfg: object, *, registry: object) -> None:
         self.cfg = cfg
         self.registry = registry
         self.bus = object()
         self.started = False
+        self.stopped = False
         self.on_ui_command = None
         self.__class__.instances.append(self)
 
     async def start(self, *, on_ui_command: object) -> None:
+        if self.start_delay_s > 0:
+            await asyncio.sleep(float(self.start_delay_s))
+        if self.fail_start:
+            raise RuntimeError("start failed")
         self.on_ui_command = on_ui_command
         self.started = True
+
+    async def stop(self) -> None:
+        self.stopped = True
 
 
 class _Controller(RuntimeSessionControllerMixin):
     def __init__(self) -> None:
         self._svc = None
+        self._studio_service_lock = None
+        self._studio_service_lock_loop = None
         self._remote_state_watcher = None
         self._remote_state_gateway = None
         self._monitor_sub = None
         self._watch_targets_cache = None
+        self._last_compiled = None
+        self.refresh_calls: list[object] = []
+        self.set_active_calls: list[bool] = []
         self._zenoh_service_liveliness_session = None
         self._zenoh_service_liveliness_sub = None
         self._service_liveliness_instances_by_service: dict[str, set[str]] = {}
@@ -71,9 +87,18 @@ class _Controller(RuntimeSessionControllerMixin):
     def request_service_status(self, service_id: str) -> None:
         self.status_requests.append(str(service_id))
 
+    async def _refresh_studio_runtime_async(self, *, compiled: object | None = None) -> None:
+        self.refresh_calls.append(compiled)
+
+    async def _set_managed_active_async(self, active: bool) -> bool:
+        self.set_active_calls.append(bool(active))
+        return True
+
 
 def test_ensure_studio_runtime_starts_missing_builtin_service(monkeypatch) -> None:
     _FakeStudioService.instances.clear()
+    _FakeStudioService.start_delay_s = 0.0
+    _FakeStudioService.fail_start = False
     monkeypatch.setattr(
         "f8pystudio.bridge.runtime_session_controller.PyStudioService",
         _FakeStudioService,
@@ -102,6 +127,134 @@ def test_ensure_studio_runtime_starts_missing_builtin_service(monkeypatch) -> No
     assert controller.active_updates == [("studio", True)]
     assert controller._monitor_center.ready_updates == [("studio", True)]
     assert controller.logged == []
+
+
+def test_ensure_studio_runtime_serializes_concurrent_builtin_service_start(monkeypatch) -> None:
+    _FakeStudioService.instances.clear()
+    _FakeStudioService.start_delay_s = 0.02
+    _FakeStudioService.fail_start = False
+    monkeypatch.setattr(
+        "f8pystudio.bridge.runtime_session_controller.PyStudioService",
+        _FakeStudioService,
+    )
+    monkeypatch.setattr(
+        "f8pystudio.bridge.runtime_session_controller.shared_pystudio_registry",
+        lambda: object(),
+    )
+
+    controller = _Controller()
+    controller._cfg = SimpleNamespace(
+        bus_backend="mem",
+        zenoh_config_path=None,
+        zenoh_connect=(),
+        zenoh_listen=(),
+        zenoh_shm_pool_bytes=256 * 1024 * 1024,
+    )
+
+    async def _run() -> tuple[bool, bool]:
+        first, second = await asyncio.gather(
+            controller._ensure_studio_runtime_async(timeout_s=0.0),
+            controller._ensure_studio_runtime_async(timeout_s=0.0),
+        )
+        return bool(first), bool(second)
+
+    try:
+        assert asyncio.run(_run()) == (True, True)
+    finally:
+        _FakeStudioService.start_delay_s = 0.0
+
+    assert len(_FakeStudioService.instances) == 1
+    assert _FakeStudioService.instances[0].started is True
+    assert controller.alive_updates == [("studio", True)]
+    assert controller.active_updates == [("studio", True)]
+    assert controller._monitor_center.ready_updates == [("studio", True)]
+
+
+def test_studio_service_lock_recreates_for_new_event_loop() -> None:
+    controller = _Controller()
+
+    async def _capture_lock() -> tuple[asyncio.Lock, asyncio.AbstractEventLoop | None]:
+        lock = controller._studio_service_lock_for_loop()
+        return lock, controller._studio_service_lock_loop
+
+    first_lock, first_loop = asyncio.run(_capture_lock())
+    second_lock, second_loop = asyncio.run(_capture_lock())
+
+    assert first_loop is not None
+    assert second_loop is not None
+    assert first_loop is not second_loop
+    assert first_lock is not second_lock
+    assert controller._studio_service_lock is second_lock
+    assert controller._studio_service_lock_loop is second_loop
+
+
+def test_ensure_studio_runtime_cleans_up_failed_builtin_service_start(monkeypatch) -> None:
+    _FakeStudioService.instances.clear()
+    _FakeStudioService.start_delay_s = 0.0
+    _FakeStudioService.fail_start = True
+    monkeypatch.setattr(
+        "f8pystudio.bridge.runtime_session_controller.PyStudioService",
+        _FakeStudioService,
+    )
+    monkeypatch.setattr(
+        "f8pystudio.bridge.runtime_session_controller.shared_pystudio_registry",
+        lambda: object(),
+    )
+
+    controller = _Controller()
+    controller._cfg = SimpleNamespace(
+        bus_backend="mem",
+        zenoh_config_path=None,
+        zenoh_connect=(),
+        zenoh_listen=(),
+        zenoh_shm_pool_bytes=256 * 1024 * 1024,
+    )
+
+    try:
+        ok = asyncio.run(controller._ensure_studio_runtime_async(timeout_s=0.0))
+    finally:
+        _FakeStudioService.fail_start = False
+
+    assert ok is False
+    assert len(_FakeStudioService.instances) == 1
+    assert _FakeStudioService.instances[0].stopped is True
+    assert controller._svc is None
+    assert controller.alive_updates == [("studio", False)]
+    assert controller.active_updates == [("studio", None)]
+    assert controller._monitor_center.ready_updates == [("studio", False)]
+    assert any("studio runtime start failed" in line for line in controller.logged)
+
+
+def test_start_after_preflight_refreshes_last_compiled_studio_runtime(monkeypatch) -> None:
+    _FakeStudioService.instances.clear()
+    _FakeStudioService.start_delay_s = 0.0
+    _FakeStudioService.fail_start = False
+    monkeypatch.setattr(
+        "f8pystudio.bridge.runtime_session_controller.PyStudioService",
+        _FakeStudioService,
+    )
+    monkeypatch.setattr(
+        "f8pystudio.bridge.runtime_session_controller.shared_pystudio_registry",
+        lambda: object(),
+    )
+
+    controller = _Controller()
+    compiled = object()
+    controller._last_compiled = compiled
+    controller._cfg = SimpleNamespace(
+        bus_backend="mem",
+        zenoh_config_path=None,
+        zenoh_connect=(),
+        zenoh_listen=(),
+        zenoh_shm_pool_bytes=256 * 1024 * 1024,
+    )
+
+    result = asyncio.run(controller._start_after_preflight_async())
+
+    assert result is None
+    assert controller.refresh_calls == [compiled]
+    assert controller.set_active_calls == [True]
+    assert len(_FakeStudioService.instances) == 1
 
 
 def test_zenoh_liveliness_key_extracts_service_id() -> None:
@@ -167,7 +320,8 @@ def test_runtime_session_returns_block_message_when_singleton_detected(monkeypat
 
     assert controller._svc is None
     assert result == SINGLETON_GUARD_DIALOG_MESSAGE
-    assert fake_session.closed is True
+    assert fake_session.closed is False
+    assert zenoh_shutdown._abandoned_sessions[-1] is fake_session
 
 
 def test_runtime_session_defaults_to_zenoh_backend() -> None:

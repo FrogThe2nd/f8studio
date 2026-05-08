@@ -133,33 +133,52 @@ class RuntimeSessionControllerMixin:
             return None
         return svc.bus
 
+    def _studio_service_lock_for_loop(self) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        lock = self._studio_service_lock
+        if lock is None or self._studio_service_lock_loop is not loop:
+            lock = asyncio.Lock()
+            self._studio_service_lock = lock
+            self._studio_service_lock_loop = loop
+        return lock
+
     async def _ensure_studio_service_started_async(self) -> bool:
         if self._studio_service_bus() is not None:
             return True
-        try:
-            cfg = PyStudioServiceConfig(
-                bus_backend=self._runtime_bus_backend(),
-                zenoh_config_path=self._runtime_zenoh_config_path(),
-                zenoh_connect=self._runtime_zenoh_connect(),
-                zenoh_listen=self._runtime_zenoh_listen(),
-                zenoh_shm_pool_bytes=self._runtime_zenoh_shm_pool_bytes(),
-                studio_service_id=self.studio_service_id,
-            )
-            self._svc = PyStudioService(cfg, registry=shared_pystudio_registry())
-            await self._svc.start(
-                on_ui_command=lambda cmd: self.ui_command.emit(cmd),
-            )
-            self._cache_service_alive(self.studio_service_id, True)
-            self._cache_service_active(self.studio_service_id, True)
-            self._monitor_center.update_service_status(service_id=self.studio_service_id, ready=True)
-            return True
-        except Exception as exc:
-            self._emit_log_line(f"studio runtime start failed: {exc}")
-            self._svc = None
-            self._cache_service_alive(self.studio_service_id, False)
-            self._cache_service_active(self.studio_service_id, None)
-            self._monitor_center.update_service_status(service_id=self.studio_service_id, ready=False)
-            return False
+        async with self._studio_service_lock_for_loop():
+            if self._studio_service_bus() is not None:
+                return True
+            svc: PyStudioService | None = None
+            try:
+                cfg = PyStudioServiceConfig(
+                    bus_backend=self._runtime_bus_backend(),
+                    zenoh_config_path=self._runtime_zenoh_config_path(),
+                    zenoh_connect=self._runtime_zenoh_connect(),
+                    zenoh_listen=self._runtime_zenoh_listen(),
+                    zenoh_shm_pool_bytes=self._runtime_zenoh_shm_pool_bytes(),
+                    studio_service_id=self.studio_service_id,
+                )
+                svc = PyStudioService(cfg, registry=shared_pystudio_registry())
+                await svc.start(
+                    on_ui_command=lambda cmd: self.ui_command.emit(cmd),
+                )
+                self._svc = svc
+                self._cache_service_alive(self.studio_service_id, True)
+                self._cache_service_active(self.studio_service_id, True)
+                self._monitor_center.update_service_status(service_id=self.studio_service_id, ready=True)
+                return True
+            except Exception as exc:
+                self._emit_log_line(f"studio runtime start failed: {exc}")
+                if svc is not None:
+                    try:
+                        await svc.stop()
+                    except Exception as stop_exc:
+                        self._report_exception("cleanup failed studio runtime start failed", stop_exc)
+                self._svc = None
+                self._cache_service_alive(self.studio_service_id, False)
+                self._cache_service_active(self.studio_service_id, None)
+                self._monitor_center.update_service_status(service_id=self.studio_service_id, ready=False)
+                return False
 
     def _emit_monitor_ui_update_now(self, *, service_id: str, update: PendingMonitorUpdate) -> None:
         try:
@@ -262,13 +281,21 @@ class RuntimeSessionControllerMixin:
                     await asyncio.sleep(0.01)
                     continue
                 if reply.ok is not None:
-                    close_zenoh_session_best_effort(session, context="pystudio-singleton-conflict")
+                    close_zenoh_session_best_effort(
+                        session,
+                        context="pystudio-singleton-conflict",
+                        native_close=False,
+                    )
                     return SINGLETON_GUARD_DIALOG_MESSAGE
             self._zenoh_singleton_session = session
             self._zenoh_singleton_token = session.liveliness().declare_token(key)
         except Exception as exc:
             self._report_exception("zenoh singleton guard failed", exc)
-            close_zenoh_session_best_effort(session, context="pystudio-singleton-guard-error")
+            close_zenoh_session_best_effort(
+                session,
+                context="pystudio-singleton-guard-error",
+                native_close=False,
+            )
         return None
 
     async def _start_zenoh_service_liveliness_watch_async(self) -> None:
@@ -330,7 +357,11 @@ class RuntimeSessionControllerMixin:
             self._report_exception("declare zenoh service liveliness watch failed", exc)
             if owns_session:
                 try:
-                    close_zenoh_session_best_effort(session, context="pystudio-liveliness-watch-declare-failed")
+                    close_zenoh_session_best_effort(
+                        session,
+                        context="pystudio-liveliness-watch-declare-failed",
+                        native_close=False,
+                    )
                 except Exception as close_exc:
                     self._report_exception("close zenoh service liveliness session failed", close_exc)
 
@@ -359,7 +390,7 @@ class RuntimeSessionControllerMixin:
         service_id: str,
         *,
         timeout_s: float = 0.25,
-    ) -> set[str]:
+    ) -> set[str] | None:
         sid = str(service_id or "").strip()
         if not sid or self._runtime_bus_backend() != "zenoh":
             return set()
@@ -367,7 +398,7 @@ class RuntimeSessionControllerMixin:
             import zenoh  # type: ignore[import-not-found]
         except ImportError as exc:
             self._report_exception("import zenoh for service liveliness query failed", exc)
-            return set()
+            return None
 
         owns_session = False
         session = self._zenoh_singleton_session
@@ -378,7 +409,7 @@ class RuntimeSessionControllerMixin:
                 owns_session = True
             except Exception as exc:
                 self._report_exception("open zenoh for service liveliness query failed", exc)
-                return set()
+                return None
 
         instances: set[str] = set()
         key_expr = f"{_ZENOH_SERVICE_LIVELINESS_PREFIX}{sid}/instances/**"
@@ -407,13 +438,18 @@ class RuntimeSessionControllerMixin:
             self._report_exception(f"query zenoh service liveliness failed serviceId={sid}", exc)
         finally:
             if owns_session:
-                close_zenoh_session_best_effort(session, context="pystudio-service-liveliness-query")
+                close_zenoh_session_best_effort(
+                    session,
+                    context="pystudio-service-liveliness-query",
+                    native_close=False,
+                )
         if instances:
             self._service_liveliness_instances_by_service[sid] = set(instances)
         elif query_ok:
             self._service_liveliness_instances_by_service.pop(sid, None)
         else:
-            return set(self._service_liveliness_instances_by_service.get(sid, set()))
+            cached = self._service_liveliness_instances_by_service.get(sid)
+            return set(cached) if cached is not None else None
         return instances
 
     async def _start_after_preflight_async(self) -> str | None:
@@ -509,6 +545,13 @@ class RuntimeSessionControllerMixin:
             await self._set_managed_active_async(bool(self._managed_active))
         except Exception as exc:
             self._report_exception("re-apply managed active failed", exc)
+
+        compiled = self._last_compiled
+        if compiled is not None:
+            try:
+                await self._refresh_studio_runtime_async(compiled=compiled)
+            except Exception as exc:
+                self._report_exception("refresh studio runtime after bridge start failed", exc)
         return None
 
     async def _start_async(self) -> str | None:
@@ -549,7 +592,11 @@ class RuntimeSessionControllerMixin:
         self._zenoh_service_liveliness_session = None
         if liveliness_session is not None:
             try:
-                close_zenoh_session_best_effort(liveliness_session, context="pystudio-service-liveliness")
+                close_zenoh_session_best_effort(
+                    liveliness_session,
+                    context="pystudio-service-liveliness",
+                    native_close=False,
+                )
             except Exception as exc:
                 self._report_exception("close zenoh service liveliness session failed", exc)
         try:
@@ -562,15 +609,19 @@ class RuntimeSessionControllerMixin:
         self._remote_state_gateway = None
         self._remote_state_watcher = None
         self._watch_targets_cache = None
-        try:
-            if self._svc is not None:
-                await self._svc.stop()
-        except Exception as exc:
-            self._report_exception("stop studio service failed", exc)
-        self._svc = None
+        async with self._studio_service_lock_for_loop():
+            svc = self._svc
+            self._svc = None
+            try:
+                if svc is not None:
+                    await svc.stop()
+            except Exception as exc:
+                self._report_exception("stop studio service failed", exc)
         self._cache_service_alive(self.studio_service_id, False)
         self._cache_service_active(self.studio_service_id, None)
         self._monitor_center.update_service_status(service_id=self.studio_service_id, ready=False)
+        self._studio_service_lock = None
+        self._studio_service_lock_loop = None
 
         try:
             await self._command_gateway.close()
@@ -601,7 +652,11 @@ class RuntimeSessionControllerMixin:
         self._zenoh_singleton_session = None
         if session is not None:
             try:
-                close_zenoh_session_best_effort(session, context="pystudio-singleton")
+                close_zenoh_session_best_effort(
+                    session,
+                    context="pystudio-singleton",
+                    native_close=False,
+                )
             except Exception as exc:
                 self._report_exception("close zenoh singleton session failed", exc)
 
