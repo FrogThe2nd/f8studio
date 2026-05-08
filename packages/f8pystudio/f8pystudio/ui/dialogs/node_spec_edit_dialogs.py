@@ -16,9 +16,12 @@ from f8pysdk.codec import copy_model
 from qtpy import QtCore, QtGui, QtWidgets
 
 from ...global_hotkeys.parser import parse_global_hotkey
+from ...nodegraph.state_schema import schema_enum_items as _schema_enum_items
 from ...nodegraph.state_schema import schema_type_any as _schema_type
 from .schema_builder_dialog import SchemaBuilderDialog, schema_from_json_obj
 from ...ui.support.ui_control import parse_ui_control
+
+_GLOBAL_HOTKEY_UI_CONTROLS = {"button", "select", "dropdown", "dropbox", "combo", "combobox"}
 from ...ui.support.ui_icons import StudioIcon, icon_for
 from ...ui.support.ui_notifications import show_warning
 from ...ui.support.studio_theme import label_qss, studio_dark_theme
@@ -533,12 +536,12 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
             self._global_hotkey.setEnabled(False)
             self._refresh_accept_enabled()
             return
-        enabled = parse_ui_control(str(self._ui_control.text() or "")).control_name == "button"
+        enabled = self._global_hotkey_control_is_supported()
         self._global_hotkey.setEnabled(enabled)
         if enabled:
             self._global_hotkey.setToolTip("Click and press a shortcut, for example Ctrl+Alt+P")
         else:
-            self._global_hotkey.setToolTip("Global hotkeys are only used for uiControl=button fields.")
+            self._global_hotkey.setToolTip("Global hotkeys are only used for button and combo/select fields.")
         self._refresh_accept_enabled()
 
     def _refresh_accept_enabled(self) -> None:
@@ -548,7 +551,7 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
         if self._read_only:
             ok_btn.setEnabled(False)
             return
-        if parse_ui_control(str(self._ui_control.text() or "")).control_name != "button":
+        if not self._global_hotkey_control_is_supported():
             ok_btn.setEnabled(True)
             return
         ok_btn.setEnabled(self._global_hotkey.is_submittable())
@@ -584,9 +587,13 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
         )
 
     def global_hotkey(self) -> str:
-        if parse_ui_control(str(self._ui_control.text() or "")).control_name != "button":
+        if not self._global_hotkey_control_is_supported():
             return ""
         return self._global_hotkey.value()
+
+    def _global_hotkey_control_is_supported(self) -> bool:
+        control_name = parse_ui_control(str(self._ui_control.text() or "")).control_name
+        return control_name in _GLOBAL_HOTKEY_UI_CONTROLS or (not control_name and bool(_schema_enum_items(self._schema)))
 
     def accept(self) -> None:  # type: ignore[override]
         hotkey = self.global_hotkey()

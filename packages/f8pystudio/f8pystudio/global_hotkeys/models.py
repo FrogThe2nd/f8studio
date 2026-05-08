@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal, TypeAlias
 
 
 class GlobalHotkeyError(RuntimeError):
@@ -17,6 +18,9 @@ class GlobalHotkeyRegistrationError(GlobalHotkeyError):
 
 class GlobalHotkeyUnsupportedError(GlobalHotkeyError):
     """Raised when the current platform/session cannot support global hotkeys."""
+
+
+GlobalHotkeyAction: TypeAlias = Literal["increment", "select_next"]
 
 
 @dataclass(frozen=True)
@@ -39,6 +43,7 @@ class GlobalHotkeyBinding:
     hotkey_text: str
     hotkey_spec: GlobalHotkeySpec
     numeric_type: str
+    action: GlobalHotkeyAction = "increment"
     allow_repeat: bool = True
 
 

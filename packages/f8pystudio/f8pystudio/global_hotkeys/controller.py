@@ -5,11 +5,13 @@ from typing import Any, Callable
 
 from qtpy import QtCore
 
-from ..ui.support.ui_control import parse_ui_control
-from ..nodegraph.state_schema import effective_state_fields, schema_type_any
+from ..nodegraph.state_pool_resolver import resolve_pool_items
+from ..ui.support.ui_control import ParsedUiControl, parse_ui_control
+from ..nodegraph.state_schema import effective_state_fields, schema_enum_items, schema_type_any
 from ..nodegraph.ui_state_mutations import state_field_global_hotkey
 from .backend import GlobalHotkeyBackend, create_global_hotkey_backend
 from .models import (
+    GlobalHotkeyAction,
     GlobalHotkeyBinding,
     GlobalHotkeyParseError,
     GlobalHotkeyRegistrationError,
@@ -19,6 +21,7 @@ from .models import (
 from .parser import parse_global_hotkey
 
 logger = logging.getLogger(__name__)
+_HOTKEY_COMBO_CONTROLS = {"select", "dropdown", "dropbox", "combo", "combobox"}
 
 
 class ControlPanelGlobalHotkeyController(QtCore.QObject):
@@ -258,11 +261,15 @@ class ControlPanelGlobalHotkeyController(QtCore.QObject):
                 field_name = self._field_name(field)
                 if not field_name:
                     continue
-                ui_control = self._field_ui_control(field)
-                if ui_control != "button":
-                    continue
-                numeric_type = schema_type_any(self._field_schema(field))
-                if numeric_type not in {"integer", "number"}:
+                parsed_ui_control = self._field_ui_control(field)
+                schema = self._field_schema(field)
+                numeric_type = schema_type_any(schema)
+                action = self._binding_action(
+                    parsed_ui_control=parsed_ui_control,
+                    numeric_type=numeric_type,
+                    field_has_enum=bool(schema_enum_items(schema)),
+                )
+                if action is None:
                     continue
                 hotkey_text = state_field_global_hotkey(node, field_name)
                 if not hotkey_text:
@@ -285,6 +292,7 @@ class ControlPanelGlobalHotkeyController(QtCore.QObject):
                         hotkey_text=hotkey_spec.display_text,
                         hotkey_spec=hotkey_spec,
                         numeric_type=numeric_type,
+                        action=action,
                         allow_repeat=True,
                     )
                 )
@@ -304,11 +312,9 @@ class ControlPanelGlobalHotkeyController(QtCore.QObject):
                 f"[hotkey] target node missing nodeId={binding.node_id} field={binding.field_name}",
             )
             return
-        try:
-            current_value = node.get_property(binding.field_name)
-        except Exception:
-            current_value = None
-        next_value = self._increment_value(binding.numeric_type, current_value)
+        next_value = self._next_value_for_binding(node=node, binding=binding)
+        if next_value is None:
+            return
         try:
             node.set_property(binding.field_name, next_value, push_undo=False)
         except TypeError:
@@ -318,6 +324,20 @@ class ControlPanelGlobalHotkeyController(QtCore.QObject):
                 f"trigger:{binding.binding_id}:{type(exc).__name__}:{exc}",
                 f"[hotkey] trigger failed nodeId={binding.node_id} field={binding.field_name}: {exc}",
             )
+
+    def _next_value_for_binding(self, *, node: Any, binding: GlobalHotkeyBinding) -> Any | None:
+        try:
+            current_value = node.get_property(binding.field_name)
+        except Exception:
+            current_value = None
+        if binding.action == "select_next":
+            field = self._state_field_for_binding(node=node, field_name=binding.field_name)
+            if field is None:
+                return None
+            parsed_ui_control = self._field_ui_control(field)
+            choices = self._choice_values(node=node, field=field, parsed_ui_control=parsed_ui_control)
+            return self._next_choice_value(choices, current_value)
+        return self._increment_value(binding.numeric_type, current_value)
 
     @staticmethod
     def _increment_value(numeric_type: str, value: Any) -> int | float:
@@ -332,6 +352,51 @@ class ControlPanelGlobalHotkeyController(QtCore.QObject):
             return 1
 
     @staticmethod
+    def _next_choice_value(choices: list[str], current_value: Any) -> str | None:
+        if not choices:
+            return None
+        current_text = "" if current_value is None else str(current_value)
+        try:
+            current_index = choices.index(current_text)
+        except ValueError:
+            return choices[0]
+        return choices[(current_index + 1) % len(choices)]
+
+    @staticmethod
+    def _binding_action(
+        *,
+        parsed_ui_control: ParsedUiControl,
+        numeric_type: str,
+        field_has_enum: bool,
+    ) -> GlobalHotkeyAction | None:
+        control_name = parsed_ui_control.control_name
+        if control_name == "button" and numeric_type in {"integer", "number"}:
+            return "increment"
+        if control_name in _HOTKEY_COMBO_CONTROLS or (not control_name and field_has_enum):
+            return "select_next"
+        return None
+
+    @staticmethod
+    def _choice_values(*, node: Any, field: Any, parsed_ui_control: ParsedUiControl) -> list[str]:
+        pool_field = parsed_ui_control.select_pool_field
+        if pool_field:
+            try:
+                return resolve_pool_items(node.get_property(pool_field))
+            except (AttributeError, KeyError, TypeError):
+                return []
+        return schema_enum_items(ControlPanelGlobalHotkeyController._field_schema(field))
+
+    @staticmethod
+    def _state_field_for_binding(*, node: Any, field_name: str) -> Any | None:
+        target_name = str(field_name or "").strip()
+        if not target_name:
+            return None
+        for field in effective_state_fields(node):
+            if ControlPanelGlobalHotkeyController._field_name(field) == target_name:
+                return field
+        return None
+
+    @staticmethod
     def _field_name(field: Any) -> str:
         try:
             return str(field.name or "").strip()
@@ -339,11 +404,11 @@ class ControlPanelGlobalHotkeyController(QtCore.QObject):
             return ""
 
     @staticmethod
-    def _field_ui_control(field: Any) -> str:
+    def _field_ui_control(field: Any) -> ParsedUiControl:
         try:
-            return parse_ui_control(str(field.uiControl or "")).control_name
+            return parse_ui_control(str(field.uiControl or ""))
         except Exception:
-            return ""
+            return parse_ui_control("")
 
     @staticmethod
     def _field_schema(field: Any) -> Any | None:

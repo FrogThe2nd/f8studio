@@ -59,11 +59,14 @@ class _HotkeyNodeStub:
         field: F8StateSpec,
         hotkey: str,
         value: Any,
+        extra_fields: list[F8StateSpec] | None = None,
+        extra_values: dict[str, Any] | None = None,
     ) -> None:
         self.id = node_id
         self._node_name = f"Node {node_id}"
-        self._fields = [field]
+        self._fields = [field] + list(extra_fields or [])
         self._values = {str(field.name): value}
+        self._values.update(dict(extra_values or {}))
         self._ui_state = {"stateFieldHotkeys": {str(field.name): hotkey}}
         self.set_calls: list[tuple[str, Any, bool]] = []
 
@@ -496,6 +499,42 @@ def test_state_field_dialog_enables_hotkey_for_button_ui_control_with_whitespace
     assert dialog.global_hotkey() == "Ctrl+Alt+P"
 
 
+def test_state_field_dialog_enables_hotkey_for_select_ui_control() -> None:
+    _ensure_app()
+    dialog = npw._F8EditStateFieldDialog(
+        None,
+        title="State",
+        field=F8StateSpec(
+            name="mode",
+            valueSchema=string_schema(default="a", enum=["a", "b"]),
+            access=F8StateAccess.rw,
+            uiControl="select",
+        ),
+        global_hotkey="Ctrl+Alt+P",
+    )
+
+    assert dialog._global_hotkey.isEnabled() is True
+    assert dialog.global_hotkey() == "Ctrl+Alt+P"
+
+
+def test_state_field_dialog_enables_hotkey_for_implicit_enum_combo() -> None:
+    _ensure_app()
+    dialog = npw._F8EditStateFieldDialog(
+        None,
+        title="State",
+        field=F8StateSpec(
+            name="mode",
+            valueSchema=string_schema(default="a", enum=["a", "b"]),
+            access=F8StateAccess.rw,
+            uiControl="",
+        ),
+        global_hotkey="Ctrl+Alt+P",
+    )
+
+    assert dialog._global_hotkey.isEnabled() is True
+    assert dialog.global_hotkey() == "Ctrl+Alt+P"
+
+
 def test_state_field_dialog_shows_conflict_for_existing_hotkey() -> None:
     _ensure_app()
     dialog = npw._F8EditStateFieldDialog(
@@ -788,6 +827,81 @@ def test_controller_discovers_button_bindings_from_canonical_ui_control_text() -
     controller.refresh_bindings()
 
     assert [binding.binding_id for binding in backend.registered] == ["nodeA:trigger"]
+
+
+def test_controller_discovers_select_bindings_and_cycles_enum_values() -> None:
+    _ensure_app()
+    field = F8StateSpec(
+        name="mode",
+        valueSchema=string_schema(default="b", enum=["a", "b", "c"]),
+        access=F8StateAccess.rw,
+        uiControl="select",
+    )
+    node = _HotkeyNodeStub(node_id="nodeA", field=field, hotkey="Ctrl+Alt+P", value="b")
+    backend = _BackendStub()
+    graph = _GraphStub([node])
+    controller = ControlPanelGlobalHotkeyController(studio_graph=graph, backend=backend)
+
+    controller.refresh_bindings()
+
+    assert [(binding.binding_id, binding.action) for binding in backend.registered] == [("nodeA:mode", "select_next")]
+    controller.binding_activated.emit("nodeA:mode")
+    controller.binding_activated.emit("nodeA:mode")
+    assert node.set_calls == [("mode", "c", False), ("mode", "a", False)]
+
+
+def test_controller_discovers_implicit_enum_combo_bindings() -> None:
+    _ensure_app()
+    field = F8StateSpec(
+        name="mode",
+        valueSchema=string_schema(default="a", enum=["a", "b"]),
+        access=F8StateAccess.rw,
+        uiControl="",
+    )
+    node = _HotkeyNodeStub(node_id="nodeA", field=field, hotkey="Ctrl+Alt+P", value="a")
+    backend = _BackendStub()
+    graph = _GraphStub([node])
+    controller = ControlPanelGlobalHotkeyController(studio_graph=graph, backend=backend)
+
+    controller.refresh_bindings()
+
+    assert [binding.binding_id for binding in backend.registered] == ["nodeA:mode"]
+    controller.binding_activated.emit("nodeA:mode")
+    assert node.set_calls == [("mode", "b", False)]
+
+
+def test_controller_cycles_select_pool_values() -> None:
+    _ensure_app()
+    choices_field = F8StateSpec(
+        name="choices",
+        valueSchema=string_schema(default="[]"),
+        access=F8StateAccess.rw,
+        uiControl="wrapline",
+    )
+    field = F8StateSpec(
+        name="mode",
+        valueSchema=string_schema(default=""),
+        access=F8StateAccess.rw,
+        uiControl="select[choices]",
+    )
+    node = _HotkeyNodeStub(
+        node_id="nodeA",
+        field=field,
+        hotkey="Ctrl+Alt+P",
+        value="",
+        extra_fields=[choices_field],
+        extra_values={"choices": '["idle", "run"]'},
+    )
+    backend = _BackendStub()
+    graph = _GraphStub([node])
+    controller = ControlPanelGlobalHotkeyController(studio_graph=graph, backend=backend)
+
+    controller.refresh_bindings()
+
+    assert [binding.binding_id for binding in backend.registered] == ["nodeA:mode"]
+    controller.binding_activated.emit("nodeA:mode")
+    controller.binding_activated.emit("nodeA:mode")
+    assert node.set_calls == [("mode", "idle", False), ("mode", "run", False)]
 
 
 def test_controller_increments_float_bindings_and_ignores_invalid_hotkeys() -> None:
