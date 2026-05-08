@@ -19,6 +19,7 @@ node_modules/
 *.log
 *.tmp
 tmp/
+benchmark_results/
 .ccache-tmp/
 .uv-cache/
 .uv/

@@ -1,9 +1,0 @@
-name,backend,category,payload_bytes,iterations,delivered,lost,throughput_ops_s,publish_throughput_ops_s,throughput_mib_s,publish_throughput_mib_s,p50_ms,p95_ms,p99_ms,ok,note
-legacy_shm_cpp.video_roundtrip.1920x1080x3,legacy_shm,video_roundtrip,6220800,120,120,0,697.583,1136.857,4138.492,6744.538,1.367692,1.799844,2.108112,true,BGR24 synthetic fmt=99
-legacy_shm_cpp.video_firehose_latest.1920x1080x3,legacy_shm,video_firehose_latest,6220800,180,1,179,8.848,1600.328,52.493,9494.135,1.100175,1.100175,1.100175,true,published frames; delivered count intentionally latest-slot only
-zenoh_cpp.video_roundtrip.1920x1080x3,zenoh,video_roundtrip,6220800,120,120,0,598.454,1171.160,3550.400,6948.044,1.674939,2.028935,2.186142,true,BGR24 synthetic fmt=99
-zenoh_cpp.video_firehose_latest.1920x1080x3,zenoh,video_firehose_latest,6220800,180,1,179,7.466,1350.514,44.294,8012.080,1.810733,1.810733,1.810733,true,published frames; delivered count intentionally latest-slot only
-legacy_shm_cpp.video_roundtrip.1920x1080x4,legacy_shm,video_roundtrip,8294400,120,120,0,633.835,1008.232,5013.737,7975.276,1.564252,1.857968,1.958009,true,BGRA32
-legacy_shm_cpp.video_firehose_latest.1920x1080x4,legacy_shm,video_firehose_latest,8294400,180,1,179,7.211,1303.575,57.040,10311.482,1.485886,1.485886,1.485886,true,published frames; delivered count intentionally latest-slot only
-zenoh_cpp.video_roundtrip.1920x1080x4,zenoh,video_roundtrip,8294400,120,120,0,529.800,1291.053,4190.804,10212.435,1.926674,2.141036,2.289378,true,BGRA32
-zenoh_cpp.video_firehose_latest.1920x1080x4,zenoh,video_firehose_latest,8294400,180,1,179,8.813,1599.052,69.715,12648.749,1.604689,1.604689,1.604689,true,published frames; delivered count intentionally latest-slot only
