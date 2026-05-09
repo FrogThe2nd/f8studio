@@ -26,6 +26,7 @@ SUPERVISOR_GRACEFUL_STOP_TIMEOUT_S = 0.8
 TERMINATE_WAIT_TIMEOUT_S = 0.8
 TASKKILL_TIMEOUT_S = 1.0
 FINAL_EXIT_WAIT_TIMEOUT_S = 0.8
+READER_THREAD_JOIN_TIMEOUT_S = 0.5
 
 
 @dataclass(frozen=True)
@@ -288,10 +289,12 @@ class ServiceProcessManager:
         self._catalog = catalog or ServiceCatalog.instance()
         self._procs: dict[str, subprocess.Popen[Any]] = {}
         self._threads: dict[str, threading.Thread] = {}
+        self._entries_lock = threading.Lock()
         self._exception_log_once = ExceptionLogOnce()
 
     def service_ids(self) -> list[str]:
-        return list(self._procs.keys())
+        with self._entries_lock:
+            return list(self._procs.keys())
 
     def _start_reader(self, *, service_id: str, proc: subprocess.Popen[Any], on_output: Any | None) -> None:
         if on_output is None:
@@ -317,12 +320,14 @@ class ServiceProcessManager:
                     logger.error("Service output reader thread failed (service_id=%s)", service_id, exc_info=exc)
 
         t = threading.Thread(target=_run, name=f"svc-log:{service_id}", daemon=True)
-        self._threads[service_id] = t
+        with self._entries_lock:
+            self._threads[service_id] = t
         t.start()
 
     def is_running(self, service_id: str) -> bool:
         sid = str(service_id)
-        proc = self._procs.get(sid)
+        with self._entries_lock:
+            proc = self._procs.get(sid)
         if proc is None:
             return False
         if proc.poll() is None:
@@ -332,14 +337,27 @@ class ServiceProcessManager:
 
     def _cleanup_entry(self, service_id: str) -> None:
         sid = str(service_id)
-        proc = self._procs.pop(sid, None)
-        thread = self._threads.pop(sid, None)
+        with self._entries_lock:
+            proc = self._procs.pop(sid, None)
+            thread = self._threads.pop(sid, None)
         if proc is None:
             return
         try:
-            if (thread is None or not thread.is_alive()) and proc.stdout:
-                proc.stdout.close()
-        except (AttributeError, RuntimeError, TypeError) as exc:
+            stdin = proc.stdin
+            if stdin:
+                stdin.close()
+        except (AttributeError, BrokenPipeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Service process stdin close failed (service_id=%s)", sid, exc_info=exc)
+        if thread is not None and thread.is_alive():
+            try:
+                thread.join(timeout=READER_THREAD_JOIN_TIMEOUT_S)
+            except RuntimeError as exc:
+                logger.debug("Service process reader thread join failed (service_id=%s)", sid, exc_info=exc)
+        try:
+            stdout = proc.stdout
+            if stdout:
+                stdout.close()
+        except (AttributeError, BrokenPipeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             logger.debug("Service process stdout close failed (service_id=%s)", sid, exc_info=exc)
 
     def _request_graceful_stop(self, *, service_id: str, proc: subprocess.Popen[Any]) -> bool:
@@ -370,7 +388,8 @@ class ServiceProcessManager:
 
     def stop(self, service_id: str) -> bool:
         sid = str(service_id)
-        proc = self._procs.get(sid)
+        with self._entries_lock:
+            proc = self._procs.get(sid)
         if proc is None:
             return True
 
@@ -542,7 +561,8 @@ class ServiceProcessManager:
             errors="replace",
             bufsize=1,
         )
-        self._procs[service_id] = proc
+        with self._entries_lock:
+            self._procs[service_id] = proc
         if on_output is not None:
             try:
                 pid_txt = str(proc.pid)

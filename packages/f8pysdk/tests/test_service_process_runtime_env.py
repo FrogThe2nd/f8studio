@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from io import StringIO
 from pathlib import Path
 from typing import Any
 
@@ -23,12 +22,42 @@ class _Catalog:
         return None
 
 
+class _FakeStdin:
+    def __init__(self) -> None:
+        self.value = ""
+        self.closed = False
+
+    def write(self, text: str) -> int:
+        if self.closed:
+            raise ValueError("I/O operation on closed file")
+        self.value += str(text)
+        return len(str(text))
+
+    def flush(self) -> None:
+        if self.closed:
+            raise ValueError("I/O operation on closed file")
+        return None
+
+    def close(self) -> None:
+        self.closed = True
+        return None
+
+
+class _FakeStdout:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+        return None
+
+
 class _FakeProcess:
     pid = 4242
 
     def __init__(self) -> None:
         self.stdout = None
-        self.stdin = StringIO()
+        self.stdin = _FakeStdin()
         self.wait_timeouts: list[float] = []
         self.killed = False
         self.terminated = False
@@ -46,7 +75,7 @@ class _FakeProcess:
 
     def wait(self, timeout: float | None = None) -> None:
         self.wait_timeouts.append(float(timeout or 0.0))
-        if "stop\n" in self.stdin.getvalue():
+        if "stop\n" in self.stdin.value:
             self.terminated = True
             return None
         if self.terminated:
@@ -244,11 +273,36 @@ def test_process_manager_stop_requests_supervisor_graceful_stop_first(
 
     manager.stop("svc1")
 
-    assert proc.stdin.getvalue() == "stop\n"
+    assert proc.stdin.value == "stop\n"
+    assert proc.stdin.closed is True
     assert proc.wait_timeouts
     assert proc.wait_timeouts[0] == SUPERVISOR_GRACEFUL_STOP_TIMEOUT_S
     assert proc.terminated is True
     assert proc.killed is False
+
+
+def test_process_manager_stop_closes_stdio_handles(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    entry_path = _write_service_entry(tmp_path)
+    proc = _FakeProcess()
+    stdout = _FakeStdout()
+    proc.stdout = stdout
+
+    def fake_popen(cmd: list[str], **kwargs: Any) -> _FakeProcess:
+        _ = (cmd, kwargs)
+        return proc
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+
+    manager = ServiceProcessManager(_Catalog(entry_path))
+    manager.start(ServiceProcessConfig(service_class="f8.test", service_id="svc1"))
+
+    manager.stop("svc1")
+
+    assert proc.stdin.closed is True
+    assert stdout.closed is True
 
 
 def test_process_manager_stop_falls_back_to_terminate_when_supervisor_stdin_is_closed(

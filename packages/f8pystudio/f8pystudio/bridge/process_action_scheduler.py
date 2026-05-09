@@ -123,7 +123,7 @@ class ServiceProcessActionScheduler(Generic[_StopResultT]):
 
     def close(self) -> None:
         self.cancel_all()
-        self._executor.shutdown(wait=False, cancel_futures=True)
+        self._executor.shutdown(wait=True, cancel_futures=True)
 
     def _ensure_timer(self, service_id: str) -> QtCore.QTimer:
         sid = str(service_id)
