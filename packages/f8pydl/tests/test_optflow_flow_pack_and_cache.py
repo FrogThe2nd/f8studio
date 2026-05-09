@@ -293,6 +293,38 @@ class OptflowServiceNodeErrorTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await node.close()
 
+    async def test_close_cancels_attach_init_task(self) -> None:
+        started = asyncio.Event()
+        finalized = asyncio.Event()
+
+        class _SlowInitNode(OnnxOptflowServiceNode):
+            async def _ensure_config_loaded(self) -> None:
+                started.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    finalized.set()
+
+            async def _loop(self) -> None:
+                await asyncio.Event().wait()
+
+        bus = ServiceBus(ServiceBusConfig(service_id="dl_service", bus_backend="mem"))
+        node = _SlowInitNode(
+            node_id="optflowF",
+            node=SimpleNamespace(stateFields=[]),
+            initial_state=None,
+            service_class="f8.dl.optflow",
+            allowed_tasks={"optflow_neuflowv2"},
+        )
+
+        node.attach(bus)
+        await started.wait()
+        await node.close()
+
+        self.assertIsNone(node._init_task)
+        self.assertIsNone(node._task)
+        self.assertTrue(finalized.is_set())
+
 
 if __name__ == "__main__":
     unittest.main()

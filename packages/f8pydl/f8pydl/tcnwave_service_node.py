@@ -287,6 +287,7 @@ class OnnxTcnWaveServiceNode(ServiceNode):
 
         self._active = True
         self._config_loaded = False
+        self._init_task: asyncio.Task[object] | None = None
         self._task: asyncio.Task[object] | None = None
 
         self._weights_dir = _default_weights_dir()
@@ -323,15 +324,24 @@ class OnnxTcnWaveServiceNode(ServiceNode):
         super().attach(bus)
         self._video_source = LatestVideoFrameSource(config=VideoFrameSourceConfig.from_bus(bus))
         loop = asyncio.get_running_loop()
-        loop.create_task(self._ensure_config_loaded(), name=f"f8dl-tcn:init:{self.node_id}")
+        self._init_task = loop.create_task(self._ensure_config_loaded(), name=f"f8dl-tcn:init:{self.node_id}")
         self._task = loop.create_task(self._loop(), name=f"f8dl-tcn:loop:{self.node_id}")
 
     async def close(self) -> None:
+        self._active = False
+        tasks: list[asyncio.Task[object]] = []
+        init_task = self._init_task
+        self._init_task = None
+        if init_task is not None:
+            tasks.append(init_task)
         t = self._task
         self._task = None
         if t is not None:
-            t.cancel()
-            await asyncio.gather(t, return_exceptions=True)
+            tasks.append(t)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         self._close_video_source()
         self._window.clear()
         self._sequence_buffer = None

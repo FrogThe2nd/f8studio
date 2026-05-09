@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Any
 
 import msgspec
 
+from .capabilities import ClosableNode
 from .bus import ServiceBus
 from .generated import F8RuntimeGraph, F8RuntimeNode
 from .codec import unwrap_json_value
@@ -25,6 +27,7 @@ class ServiceHostConfig:
     """
 
     service_class: str | None = None
+    node_close_timeout_s: float = 1.5
 
 
 class ServiceHost:
@@ -74,6 +77,36 @@ class ServiceHost:
         except Exception as exc:
             self._service_node = None
             raise RuntimeError(f"failed to register service node node_id={node_id}") from exc
+
+    async def stop(self) -> None:
+        """
+        Close runtime nodes owned by this host before the bus transport shuts down.
+        """
+        nodes: list[RuntimeNode] = []
+        nodes.extend(list(self._operator_nodes.values()))
+        if self._service_node is not None:
+            nodes.append(self._service_node)
+
+        self._operator_nodes.clear()
+        self._service_node = None
+
+        timeout_s = max(0.05, float(self._config.node_close_timeout_s))
+        for node in nodes:
+            node_id = str(node.node_id or "").strip()
+            if node_id:
+                self._bus.detach_node(node_id)
+            if not isinstance(node, ClosableNode):
+                continue
+            try:
+                await asyncio.wait_for(node.close(), timeout=timeout_s)
+            except asyncio.TimeoutError:
+                log.error(
+                    "timed out closing runtime node node_id=%s timeout_s=%.3f",
+                    node_id or "<unknown>",
+                    timeout_s,
+                )
+            except Exception as exc:
+                log.exception("failed to close runtime node node_id=%s", node_id or "<unknown>", exc_info=exc)
 
     async def apply_rungraph(self, graph: F8RuntimeGraph) -> None:
         """

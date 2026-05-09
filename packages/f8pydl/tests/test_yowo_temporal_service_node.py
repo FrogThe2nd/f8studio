@@ -253,6 +253,40 @@ class OnnxVisionServiceNodeLoopTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(bus.errors, [])
 
+    async def test_close_cancels_attach_init_task(self) -> None:
+        started = asyncio.Event()
+        finalized = asyncio.Event()
+
+        class _SlowInitNode(OnnxVisionServiceNode):
+            async def _ensure_config_loaded(self) -> None:
+                started.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    finalized.set()
+
+            async def _loop(self) -> None:
+                await asyncio.Event().wait()
+
+        bus = ServiceBus(ServiceBusConfig(service_id="detector", service_class="f8.dl.detector", bus_backend="mem"))
+        node = _SlowInitNode(
+            node_id="detector",
+            node=SimpleNamespace(stateFields=[]),
+            initial_state=None,
+            service_class="f8.dl.detector",
+            service_task="detector",
+            output_port="detections",
+            allowed_tasks={"yolo_det"},
+        )
+
+        node.attach(bus)
+        await started.wait()
+        await node.close()
+
+        self.assertIsNone(node._init_task)
+        self.assertIsNone(node._task)
+        self.assertTrue(finalized.is_set())
+
 
 if __name__ == "__main__":
     unittest.main()

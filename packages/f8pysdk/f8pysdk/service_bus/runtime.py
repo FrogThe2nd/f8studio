@@ -506,12 +506,16 @@ class ServiceBus:
         if self._graph is not None:
             self._command_gateway.refresh_bindings()
 
-    def unregister_node(self, node_id: str) -> None:
+    def detach_node(self, node_id: str) -> _ServiceBusNode | None:
         node_id = ensure_token(node_id, label="node_id")
         node = self._nodes.pop(node_id, None)
         self._data_router.remove_node_inputs(node_id)
         if self._graph is not None:
             self._command_gateway.refresh_bindings()
+        return node
+
+    def unregister_node(self, node_id: str) -> None:
+        node = self.detach_node(node_id)
         if node is not None and isinstance(node, ClosableNode):
             try:
                 loop = asyncio.get_running_loop()

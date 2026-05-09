@@ -72,7 +72,12 @@ class ServiceRuntime:
         await self.bus.start()
 
     async def stop(self) -> None:
-        await self.bus.stop()
-        self._closed = True
+        try:
+            await self.host.stop()
+        finally:
+            try:
+                await self.bus.stop()
+            finally:
+                self._closed = True
 
 __all__ = ["ServiceRuntime", "ServiceRuntimeConfig"]
