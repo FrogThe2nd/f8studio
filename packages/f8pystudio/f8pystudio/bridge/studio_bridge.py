@@ -62,9 +62,16 @@ from .deploy_state_controller import DeployStateControllerMixin
 
 logger = logging.getLogger(__name__)
 STARTUP_GATE_TIMEOUT_S = 6.0
+RUNGRAPH_ENDPOINT_READY_TIMEOUT_S = 15.0
 
 
-class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleControllerMixin, DeployStateControllerMixin, RemoteCommandControllerMixin, QtCore.QObject):
+class PyStudioServiceBridge(
+    RuntimeSessionControllerMixin,
+    ServiceLifecycleControllerMixin,
+    DeployStateControllerMixin,
+    RemoteCommandControllerMixin,
+    QtCore.QObject,
+):
     """
     Orchestrate:
     - singleton studio presence (Zenoh liveliness)
@@ -159,6 +166,7 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
 
     def _build_rungraph_config(self) -> RungraphDeployConfig:
         return RungraphDeployConfig(
+            endpoint_ready_timeout_s=RUNGRAPH_ENDPOINT_READY_TIMEOUT_S,
             bus_backend=self._cfg.bus_backend,
             client_service_id=self.studio_service_id,
             zenoh_config_path=self._cfg.zenoh_config_path,
@@ -426,13 +434,3 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
         self._startup_preflight_ready = threading.Event()
         self._startup_continue_requested = threading.Event()
         self._startup_preflight_message = None
-
-
-
-
-
-
-
-
-
-

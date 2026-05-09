@@ -329,13 +329,69 @@ def test_process_manager_stop_falls_back_to_terminate_when_supervisor_stdin_is_c
 
 def test_windows_service_process_scan_matches_service_id(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(process_manager_module.os, "name", "nt")
-    monkeypatch.setattr(process_manager_module, "_windows_process_command_rows", lambda: [
-        {"ProcessId": 111, "CommandLine": '"svc.exe" --service-id player'},
-        {"ProcessId": 222, "CommandLine": '"svc.exe" --service-id other'},
-        {"ProcessId": 333, "CommandLine": '"svc.exe" --service-id=player'},
-        {"ProcessId": 444, "CommandLine": ""},
-    ])
+    monkeypatch.setattr(
+        process_manager_module,
+        "_windows_process_command_rows",
+        lambda: [
+            {"ProcessId": 111, "CommandLine": '"svc.exe" --service-id player'},
+            {"ProcessId": 222, "CommandLine": '"svc.exe" --service-id other'},
+            {"ProcessId": 333, "CommandLine": '"svc.exe" --service-id=player'},
+            {"ProcessId": 444, "CommandLine": ""},
+        ],
+    )
 
     matches = process_manager_module.find_service_processes_by_service_id("player", current_pid=111)
 
     assert [match.pid for match in matches] == [333]
+
+
+def test_windows_service_process_scan_cache_reuses_process_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(process_manager_module.os, "name", "nt")
+    monkeypatch.setattr(process_manager_module, "_WINDOWS_PROCESS_ROWS_CACHE", None)
+    monkeypatch.setattr(process_manager_module, "_WINDOWS_PROCESS_ROWS_CACHE_TS_S", 0.0)
+    calls: list[str] = []
+
+    def fake_rows() -> list[dict[str, object]]:
+        calls.append("scan")
+        return [
+            {"ProcessId": 101, "CommandLine": '"engine.exe" --service-id engine'},
+            {"ProcessId": 202, "CommandLine": '"player.exe" --service-id player'},
+        ]
+
+    monkeypatch.setattr(process_manager_module, "_windows_process_command_rows", fake_rows)
+
+    engine_matches = process_manager_module.find_service_processes_by_service_id(
+        "engine",
+        current_pid=999,
+        use_cached_windows_rows=True,
+    )
+    player_matches = process_manager_module.find_service_processes_by_service_id(
+        "player",
+        current_pid=999,
+        use_cached_windows_rows=True,
+    )
+
+    assert calls == ["scan"]
+    assert [match.pid for match in engine_matches] == [101]
+    assert [match.pid for match in player_matches] == [202]
+
+
+def test_windows_service_process_scan_default_uses_fresh_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(process_manager_module.os, "name", "nt")
+    monkeypatch.setattr(
+        process_manager_module,
+        "_WINDOWS_PROCESS_ROWS_CACHE",
+        [{"ProcessId": 101, "CommandLine": '"engine.exe" --service-id stale'}],
+    )
+    calls: list[str] = []
+
+    def fake_rows() -> list[dict[str, object]]:
+        calls.append("scan")
+        return [{"ProcessId": 202, "CommandLine": '"engine.exe" --service-id engine'}]
+
+    monkeypatch.setattr(process_manager_module, "_windows_process_command_rows", fake_rows)
+
+    matches = process_manager_module.find_service_processes_by_service_id("engine", current_pid=999)
+
+    assert calls == ["scan"]
+    assert [match.pid for match in matches] == [202]

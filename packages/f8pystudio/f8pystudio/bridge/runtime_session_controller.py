@@ -31,6 +31,13 @@ class ServiceLivelinessIdentity:
     runtime_instance_id: str
 
 
+@dataclass(frozen=True)
+class ServiceLivelinessQueryResult:
+    instances: set[str]
+    query_ok: bool
+    error: BaseException | None = None
+
+
 def _is_zenoh_liveliness_reply_channel_drained(exc: BaseException) -> bool:
     return "channel is empty and closed" in str(exc).strip().lower()
 
@@ -53,6 +60,40 @@ def _service_id_from_zenoh_liveliness_key(key: str) -> str | None:
     if identity is None:
         return None
     return identity.service_id
+
+
+def _query_service_liveliness_instances_sync(
+    *,
+    zenoh_module: Any,
+    session: Any,
+    service_id: str,
+    timeout_s: float,
+) -> ServiceLivelinessQueryResult:
+    sid = str(service_id or "").strip()
+    instances: set[str] = set()
+    key_expr = f"{_ZENOH_SERVICE_LIVELINESS_PREFIX}{sid}/instances/**"
+    try:
+        replies = session.liveliness().get(key_expr, timeout=float(timeout_s))
+        deadline = time.monotonic() + max(0.02, float(timeout_s)) + 0.05
+        while time.monotonic() < deadline:
+            try:
+                reply = replies.try_recv()
+            except zenoh_module.ZError as exc:
+                if _is_zenoh_liveliness_reply_channel_drained(exc):
+                    break
+                raise
+            if reply is None:
+                time.sleep(0.01)
+                continue
+            sample = reply.ok
+            if sample is None:
+                continue
+            identity = _service_liveliness_identity_from_zenoh_key(str(sample.key_expr))
+            if identity is not None and identity.service_id == sid:
+                instances.add(identity.runtime_instance_id)
+        return ServiceLivelinessQueryResult(instances=instances, query_ok=True)
+    except Exception as exc:
+        return ServiceLivelinessQueryResult(instances=set(), query_ok=False, error=exc)
 
 
 @dataclass(frozen=True)
@@ -412,31 +453,17 @@ class RuntimeSessionControllerMixin:
                 self._report_exception("open zenoh for service liveliness query failed", exc)
                 return None
 
-        instances: set[str] = set()
-        key_expr = f"{_ZENOH_SERVICE_LIVELINESS_PREFIX}{sid}/instances/**"
-        query_ok = False
+        result: ServiceLivelinessQueryResult | None = None
         try:
-            replies = session.liveliness().get(key_expr, timeout=float(timeout_s))
-            deadline = time.monotonic() + max(0.02, float(timeout_s)) + 0.05
-            while time.monotonic() < deadline:
-                try:
-                    reply = replies.try_recv()
-                except zenoh.ZError as exc:  # type: ignore[attr-defined]
-                    if _is_zenoh_liveliness_reply_channel_drained(exc):
-                        break
-                    raise
-                if reply is None:
-                    await asyncio.sleep(0.01)
-                    continue
-                sample = reply.ok
-                if sample is None:
-                    continue
-                identity = _service_liveliness_identity_from_zenoh_key(str(sample.key_expr))
-                if identity is not None and identity.service_id == sid:
-                    instances.add(identity.runtime_instance_id)
-            query_ok = True
-        except Exception as exc:
-            self._report_exception(f"query zenoh service liveliness failed serviceId={sid}", exc)
+            result = await asyncio.to_thread(
+                _query_service_liveliness_instances_sync,
+                zenoh_module=zenoh,
+                session=session,
+                service_id=sid,
+                timeout_s=float(timeout_s),
+            )
+            if result.error is not None:
+                self._report_exception(f"query zenoh service liveliness failed serviceId={sid}", result.error)
         finally:
             if owns_session:
                 close_zenoh_session_best_effort(
@@ -444,9 +471,12 @@ class RuntimeSessionControllerMixin:
                     context="pystudio-service-liveliness-query",
                     native_close=False,
                 )
+        if result is None:
+            return None
+        instances = set(result.instances)
         if instances:
             self._service_liveliness_instances_by_service[sid] = set(instances)
-        elif query_ok:
+        elif result.query_ok:
             self._service_liveliness_instances_by_service.pop(sid, None)
         else:
             cached = self._service_liveliness_instances_by_service.get(sid)
@@ -458,6 +488,7 @@ class RuntimeSessionControllerMixin:
 
         # Studio-side remote KV watcher (monitors all remote node state and mirrors into UI).
         if self._remote_state_watcher is None:
+
             async def _on_state(
                 service_id: str,
                 node_id: str,
@@ -502,6 +533,7 @@ class RuntimeSessionControllerMixin:
             self._report_exception("start zenoh service liveliness watch failed", exc)
 
         if self._monitor_sub is None:
+
             async def _on_monitor_payload(raw: bytes) -> None:
                 if not raw:
                     return

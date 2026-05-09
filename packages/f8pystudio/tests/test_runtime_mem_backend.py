@@ -9,6 +9,8 @@ from f8pystudio.bridge.command_client import RuntimeCommandGatewayConfig
 from f8pystudio.bridge.command_client import _build_runtime_transport as build_command_transport
 from f8pystudio.bridge.remote_state_watcher import RemoteStateWatcher
 from f8pystudio.bridge.rungraph_deployer import RungraphDeployConfig, RuntimeRungraphGateway
+from f8pystudio.bridge.studio_bridge import PyStudioServiceBridge, PyStudioServiceBridgeConfig
+from f8pystudio.bridge.studio_bridge import RUNGRAPH_ENDPOINT_READY_TIMEOUT_S
 
 
 async def _noop_state(*_args: object) -> None:
@@ -35,6 +37,16 @@ def test_runtime_rungraph_gateway_mem_uses_in_memory_transport() -> None:
     )
 
     assert isinstance(gateway._build_transport(), InMemoryTransport)
+
+
+def test_studio_bridge_uses_longer_rungraph_endpoint_ready_timeout_for_cold_start() -> None:
+    bridge = PyStudioServiceBridge(PyStudioServiceBridgeConfig(bus_backend="mem"))
+    try:
+        config = bridge._build_rungraph_config()
+    finally:
+        bridge._process_actions.close()
+
+    assert config.endpoint_ready_timeout_s == RUNGRAPH_ENDPOINT_READY_TIMEOUT_S
 
 
 def test_runtime_rungraph_gateway_reuses_mem_transport_until_close() -> None:

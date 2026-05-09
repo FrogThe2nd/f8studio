@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import time
 from types import SimpleNamespace
 
 from f8pystudio.bridge.runtime_lifecycle import SINGLETON_GUARD_DIALOG_MESSAGE
@@ -515,3 +516,50 @@ def test_zenoh_service_liveliness_query_clears_stale_cache(monkeypatch) -> None:
 
     assert "engine" not in controller._service_liveliness_instances_by_service
     assert controller.reported == []
+
+
+def test_zenoh_service_liveliness_queries_do_not_block_event_loop(monkeypatch) -> None:
+    class _FakeZError(Exception):
+        pass
+
+    class _FakeReplies:
+        def try_recv(self):
+            time.sleep(0.08)
+            raise _FakeZError("channel is empty and closed")
+
+    class _FakeLiveliness:
+        def get(self, key_expr: str, *, timeout: float):
+            assert key_expr.startswith("f8/live/svc/")
+            assert timeout == 0.25
+            return _FakeReplies()
+
+    class _FakeSession:
+        def __init__(self) -> None:
+            self.liveliness_api = _FakeLiveliness()
+
+        def liveliness(self) -> _FakeLiveliness:
+            return self.liveliness_api
+
+    fake_session = _FakeSession()
+    fake_zenoh = SimpleNamespace(ZError=_FakeZError)
+    monkeypatch.setitem(sys.modules, "zenoh", fake_zenoh)
+
+    async def _run() -> float:
+        controller = _Controller()
+        controller._cfg = SimpleNamespace(bus_backend="zenoh")
+        controller._zenoh_singleton_session = fake_session
+
+        async def _tick() -> float:
+            started = time.perf_counter()
+            await asyncio.sleep(0.005)
+            return time.perf_counter() - started
+
+        query_task = asyncio.create_task(controller._query_zenoh_service_liveliness_instances_async("engine"))
+        tick_task = asyncio.create_task(_tick())
+        tick_elapsed_s = await tick_task
+        await query_task
+        return tick_elapsed_s
+
+    tick_elapsed_s = asyncio.run(_run())
+
+    assert tick_elapsed_s < 0.05

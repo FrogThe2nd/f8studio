@@ -13,7 +13,11 @@ from f8pysdk.state import StateWriteError
 from .json_codec import coerce_json_value
 from .managed_service_inventory import collect_managed_service_inventory
 from .rungraph_deploy_flow import pick_compiled
-from .runtime_graph_projection import build_local_state_field_index, build_remote_watch_targets, build_studio_runtime_graph
+from .runtime_graph_projection import (
+    build_local_state_field_index,
+    build_remote_watch_targets,
+    build_studio_runtime_graph,
+)
 from .service_endpoint_client import request_set_remote_state
 from .studio_runtime_flow import apply_remote_state_watches_if_changed, install_studio_runtime_graph
 from .remote_state_watcher import WatchTarget
@@ -21,6 +25,7 @@ from ..nodegraph.runtime_compiler import CompiledRuntimeGraphs
 from f8pystudio.studio_specs.registry import SERVICE_CLASS
 
 logger = logging.getLogger(__name__)
+REMOTE_SERVICE_ENSURE_CONCURRENCY = 4
 
 
 class DeployStateControllerMixin:
@@ -122,7 +127,9 @@ class DeployStateControllerMixin:
         )
         self._watch_targets_cache = next_cache
 
-    async def _deploy_service_rungraph_async(self, service_id: str, *, compiled: CompiledRuntimeGraphs | None = None) -> None:
+    async def _deploy_service_rungraph_async(
+        self, service_id: str, *, compiled: CompiledRuntimeGraphs | None = None
+    ) -> None:
         """
         Deploy the last compiled per-service rungraph for a single service (best-effort).
         """
@@ -166,20 +173,31 @@ class DeployStateControllerMixin:
         start_order: tuple[tuple[str, str], ...],
         previous_service_classes: dict[str, str],
     ) -> None:
-        ensured_service_ids: set[str] = set()
-        for service_id, service_class in list(start_order):
+        semaphore = asyncio.Semaphore(REMOTE_SERVICE_ENSURE_CONCURRENCY)
+
+        async def _ensure_one(service_id: str, service_class: str) -> str | None:
             try:
                 sid = ensure_token(str(service_id), label="service_id")
             except ValueError as exc:
                 self._emit_log_line(f"deploy blocked: invalid serviceId {service_id!r}: {exc}")
-                continue
-            ok = await self.ensure_service_available(
-                sid,
-                str(service_class),
-                local_known_service_class=previous_service_classes.get(sid),
-            )
-            if ok:
-                ensured_service_ids.add(sid)
+                return None
+            async with semaphore:
+                try:
+                    ok = await self.ensure_service_available(
+                        sid,
+                        str(service_class),
+                        local_known_service_class=previous_service_classes.get(sid),
+                    )
+                except Exception as exc:
+                    self._report_exception(f"ensure service available failed serviceId={sid}", exc)
+                    return None
+            return sid if ok else None
+
+        tasks = [
+            asyncio.create_task(_ensure_one(service_id, service_class), name=f"ensure_service:{service_id}")
+            for service_id, service_class in list(start_order)
+        ]
+        ensured_service_ids = {sid for sid in await asyncio.gather(*tasks) if sid is not None}
         await self._rungraph_deploy_flow.deploy_selected_service_rungraphs(
             compiled=compiled,
             allowed_service_ids=ensured_service_ids,

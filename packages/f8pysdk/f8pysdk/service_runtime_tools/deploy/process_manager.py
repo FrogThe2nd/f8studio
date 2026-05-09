@@ -27,6 +27,10 @@ TERMINATE_WAIT_TIMEOUT_S = 0.8
 TASKKILL_TIMEOUT_S = 1.0
 FINAL_EXIT_WAIT_TIMEOUT_S = 0.8
 READER_THREAD_JOIN_TIMEOUT_S = 0.5
+WINDOWS_PROCESS_SCAN_CACHE_TTL_S = 0.75
+_WINDOWS_PROCESS_ROWS_CACHE_LOCK = threading.Lock()
+_WINDOWS_PROCESS_ROWS_CACHE_TS_S = 0.0
+_WINDOWS_PROCESS_ROWS_CACHE: list[dict[str, Any]] | None = None
 
 
 @dataclass(frozen=True)
@@ -87,13 +91,22 @@ def _read_proc_cmdline(path: Path) -> tuple[str, ...]:
     return tuple(part.decode("utf-8", errors="replace") for part in raw.split(b"\0") if part)
 
 
-def find_service_processes_by_service_id(service_id: str, *, current_pid: int | None = None) -> list[ServiceProcessMatch]:
+def find_service_processes_by_service_id(
+    service_id: str,
+    *,
+    current_pid: int | None = None,
+    use_cached_windows_rows: bool = False,
+) -> list[ServiceProcessMatch]:
     sid = str(service_id or "").strip()
     if not sid:
         return []
     own_pid = os.getpid() if current_pid is None else int(current_pid)
     if os.name == "nt":
-        return _find_windows_service_processes_by_service_id(sid, current_pid=own_pid)
+        return _find_windows_service_processes_by_service_id(
+            sid,
+            current_pid=own_pid,
+            rows=(_cached_windows_process_command_rows() if use_cached_windows_rows else None),
+        )
     if os.name != "posix":
         return []
     matches: list[ServiceProcessMatch] = []
@@ -128,9 +141,7 @@ def _windows_process_command_rows() -> list[dict[str, Any]]:
                 "-NoProfile",
                 "-NonInteractive",
                 "-Command",
-                "Get-CimInstance Win32_Process | "
-                "Select-Object ProcessId,CommandLine | "
-                "ConvertTo-Json -Compress",
+                "Get-CimInstance Win32_Process | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -161,12 +172,35 @@ def _windows_process_command_rows() -> list[dict[str, Any]]:
     return []
 
 
-def _find_windows_service_processes_by_service_id(service_id: str, *, current_pid: int) -> list[ServiceProcessMatch]:
+def _cached_windows_process_command_rows() -> list[dict[str, Any]]:
+    global _WINDOWS_PROCESS_ROWS_CACHE
+    global _WINDOWS_PROCESS_ROWS_CACHE_TS_S
+
+    now_s = time.monotonic()
+    with _WINDOWS_PROCESS_ROWS_CACHE_LOCK:
+        cached = _WINDOWS_PROCESS_ROWS_CACHE
+        if cached is not None and (now_s - float(_WINDOWS_PROCESS_ROWS_CACHE_TS_S)) <= WINDOWS_PROCESS_SCAN_CACHE_TTL_S:
+            return [dict(row) for row in cached]
+
+    rows = _windows_process_command_rows()
+    with _WINDOWS_PROCESS_ROWS_CACHE_LOCK:
+        _WINDOWS_PROCESS_ROWS_CACHE = [dict(row) for row in rows]
+        _WINDOWS_PROCESS_ROWS_CACHE_TS_S = time.monotonic()
+        return [dict(row) for row in rows]
+
+
+def _find_windows_service_processes_by_service_id(
+    service_id: str,
+    *,
+    current_pid: int,
+    rows: list[dict[str, Any]] | None = None,
+) -> list[ServiceProcessMatch]:
     sid = str(service_id or "").strip()
     if not sid:
         return []
     matches: list[ServiceProcessMatch] = []
-    for row in _windows_process_command_rows():
+    command_rows = _windows_process_command_rows() if rows is None else list(rows)
+    for row in command_rows:
         pid_raw = row.get("ProcessId")
         try:
             pid = int(pid_raw)
@@ -542,7 +576,9 @@ class ServiceProcessManager:
         env.setdefault("PYTHONIOENCODING", "utf-8")
 
         workdir_value = launch.workdir
-        workdir_raw = "./" if workdir_value is None or isinstance(workdir_value, msgspec.UnsetType) else str(workdir_value)
+        workdir_raw = (
+            "./" if workdir_value is None or isinstance(workdir_value, msgspec.UnsetType) else str(workdir_value)
+        )
         workdir = Path(workdir_raw).expanduser()
         if not workdir.is_absolute():
             workdir = (service_dir / workdir).resolve()

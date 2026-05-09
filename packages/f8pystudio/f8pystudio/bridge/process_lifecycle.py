@@ -55,7 +55,7 @@ class LocalServiceProcessGateway:
         tracked_ids = set(str(item) for item in self.manager.service_ids())
         if str(service_id) in tracked_ids:
             return []
-        return find_service_processes_by_service_id(str(service_id))
+        return find_service_processes_by_service_id(str(service_id), use_cached_windows_rows=True)
 
     def terminate_external_processes(self, service_id: str) -> ServiceProcessTerminateResult:
         return terminate_service_processes_by_service_id(str(service_id))
