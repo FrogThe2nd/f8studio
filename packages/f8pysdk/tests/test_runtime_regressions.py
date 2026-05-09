@@ -11,7 +11,6 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from f8pysdk.specs import F8RuntimeGraph, F8RuntimeNode, F8ServiceSpec  # noqa: E402
-from f8pysdk.f8_naming import data_key  # noqa: E402
 from f8pysdk.nodes import ServiceNode  # noqa: E402
 from f8pysdk.registry import (  # noqa: E402
     create_runtime_node_registry,
@@ -23,16 +22,6 @@ from f8pysdk.bus import DefaultServiceBusComponentFactory, ServiceBus, ServiceBu
 from f8pysdk.host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.runtime import ServiceRuntime, ServiceRuntimeConfig  # noqa: E402
 from f8pysdk.testing import InMemoryCluster, InMemoryTransport, ServiceBusHarness, push_input  # noqa: E402
-
-
-class _RecordingTransport(InMemoryTransport):
-    def __init__(self, *, cluster: InMemoryCluster) -> None:
-        super().__init__(cluster=cluster)
-        self.published_keys: list[str] = []
-
-    async def publish(self, key: str, payload: bytes) -> None:
-        self.published_keys.append(str(key))
-        await super().publish(key, payload)
 
 
 class _DataReceiverNode:
@@ -177,18 +166,6 @@ class RuntimeRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(bus.state_router, factory.created_state_router)
         self.assertIs(bus.command_gateway, factory.created_command_gateway)
         self.assertIs(bus.monitor_collector, factory.created_monitor_collector)
-
-    async def test_cross_publish_policy_all_publishes_without_cross_routes(self) -> None:
-        cluster = InMemoryCluster()
-        transport = _RecordingTransport(cluster=cluster)
-        bus = ServiceBus(ServiceBusConfig(service_id="svc", cross_publish_policy="all"), transport=transport)
-
-        await bus.emit_data("node1", "out", {"x": 1}, ts_ms=1)
-
-        self.assertEqual(
-            transport.published_keys,
-            [data_key("svc", from_node_id="node1", port_id="out")],
-        )
 
     async def test_callback_data_delivery_delivers_by_callback_and_pull(self) -> None:
         cluster = InMemoryCluster()

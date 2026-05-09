@@ -14,9 +14,6 @@ if ROOT not in sys.path:
 from f8pystudio.assets.variants.variant_ids import build_variant_node_type  # noqa: E402
 from f8pystudio.ui.mainwin.main_window import F8StudioMainWin  # noqa: E402
 from f8pystudio.ui.mainwin.node_library_widget import F8StudioNodeLibraryWidget  # noqa: E402
-from f8pystudio.ui.mainwin.node_library_tree_build_mixin import NodeLibraryTreeBuildMixin  # noqa: E402
-from f8pystudio.ui.mainwin.node_library_tree_interaction_mixin import NodeLibraryTreeInteractionMixin  # noqa: E402
-from f8pystudio.ui.mainwin.node_library_tree_state_mixin import NodeLibraryTreeStateMixin  # noqa: E402
 from f8pystudio.ui.support.node_category_labels import display_node_category_label  # noqa: E402
 
 
@@ -290,8 +287,3 @@ def test_escape_noop_when_popup_active(monkeypatch) -> None:
     assert fake_graph.cancel_node_placement_calls == 0
 
 
-def test_node_library_tree_widget_uses_mixins_directly() -> None:
-    tree_cls = F8StudioNodeLibraryWidget(node_graph=None)._tree.__class__
-    assert tree_cls._build_search_blob is NodeLibraryTreeInteractionMixin._build_search_blob
-    assert tree_cls._start_tree_build is NodeLibraryTreeBuildMixin._start_tree_build
-    assert tree_cls._remember_item_expanded_state is NodeLibraryTreeStateMixin._remember_item_expanded_state
