@@ -53,6 +53,7 @@ from .items.state_inline_controls import (
     refresh_state_inline_control_read_only as _refresh_state_inline_control_read_only_impl,
     refresh_state_inline_option_pools as _refresh_state_inline_option_pools_impl,
     set_state_inline_control_read_only as _set_state_inline_control_read_only_impl,
+    has_state_inline_option_pool_dependents as _has_state_inline_option_pool_dependents_impl,
     sync_state_inline_controls_from_graph_property as _sync_state_inline_controls_from_graph_property_impl,
     toggle_state_inline_section as _toggle_state_inline_section_impl,
 )
@@ -363,6 +364,9 @@ class F8StudioServiceNodeItem(
 
     def _refresh_state_inline_option_pools(self, changed_field: str) -> None:
         _refresh_state_inline_option_pools_impl(self, changed_field)
+
+    def _has_state_inline_option_pool_dependents(self, changed_field: str) -> bool:
+        return _has_state_inline_option_pool_dependents_impl(self, changed_field)
 
     def _toggle_state_inline_section(self, name: str, expanded: bool) -> None:
         _toggle_state_inline_section_impl(self, name, expanded)
