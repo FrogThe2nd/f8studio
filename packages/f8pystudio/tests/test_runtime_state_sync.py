@@ -21,11 +21,15 @@ class _WidgetStub:
 class _EditorStub:
     def __init__(self, widget: _WidgetStub) -> None:
         self._widget = widget
+        self.refreshed_pools: list[str] = []
 
     def get_widget(self, name: str) -> _WidgetStub | None:
         if name == "ortActiveProviders":
             return self._widget
         return None
+
+    def refresh_option_pool(self, pool_name: str) -> None:
+        self.refreshed_pools.append(str(pool_name))
 
 
 class _ModelStub:
@@ -102,9 +106,10 @@ def test_runtime_state_update_refreshes_inline_option_pool_dependents() -> None:
     node.model.custom_properties["availableModels"] = []
     node_item = _NodeItemStub()
     node.view = node_item
+    editor = _EditorStub(_WidgetStub())
     controller = RuntimeStateSyncController(
         studio_graph=_GraphStub(node),
-        property_editor=_PropertyPanelStub(_EditorStub(_WidgetStub())),
+        property_editor=_PropertyPanelStub(editor),
         bridge=_BridgeStub(),
         studio_service_class="f8.pystudio",
     )
@@ -119,6 +124,7 @@ def test_runtime_state_update_refreshes_inline_option_pool_dependents() -> None:
 
     assert node.model.custom_properties["availableModels"] == ["nudenet-320n", "erax_nsfw_yolo11n"]
     assert node_item.refreshed_fields == ["availableModels"]
+    assert editor.refreshed_pools == ["availableModels"]
 
 
 def test_single_node_property_panel_exposes_current_editor_for_runtime_sync() -> None:

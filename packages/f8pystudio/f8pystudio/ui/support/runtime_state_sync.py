@@ -93,6 +93,11 @@ class RuntimeStateSyncController:
         try:
             node_id = str(node.id or "")
             editor = self._property_editor.property_editor_for_node_id(node_id)
+            if editor is not None:
+                try:
+                    editor.refresh_option_pool(field)
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    pass
             widget = editor.get_widget(field) if editor is not None else None
             if widget is None:
                 return
