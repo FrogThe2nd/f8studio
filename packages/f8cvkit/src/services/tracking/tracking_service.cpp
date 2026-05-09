@@ -38,6 +38,7 @@ namespace fs = std::filesystem;
 constexpr std::int64_t kModelDownloadRetryCooldownMs = 30000;
 constexpr long kModelDownloadTimeoutSeconds = 300;
 constexpr std::int64_t kInitVideoReadErrorDelayMs = 1000;
+constexpr std::int64_t kInitVideoReadLogIntervalMs = 5000;
 constexpr std::chrono::milliseconds kInitVideoReadTimeout{100};
 
 bool json_number_to_int(const json& v, int& out) {
@@ -659,6 +660,7 @@ bool TrackingService::start() {
   next_tracking_due_ts_ms_ = 0.0;
   last_video_open_attempt_ms_ = 0;
   init_video_wait_started_ms_ = 0;
+  init_video_wait_last_log_ms_ = 0;
   init_video_wait_misses_ = 0;
 
   tracker_.release();
@@ -1012,6 +1014,7 @@ void TrackingService::apply_init_box_if_any() {
       ++pending_init_box_generation_;
     }
     init_video_wait_started_ms_ = 0;
+    init_video_wait_last_log_ms_ = 0;
     init_video_wait_misses_ = 0;
     return;
   }
@@ -1033,17 +1036,23 @@ void TrackingService::apply_init_box_if_any() {
     const std::int64_t now = f8::cppsdk::now_ms();
     if (init_video_wait_started_ms_ <= 0) {
       init_video_wait_started_ms_ = now;
+      init_video_wait_last_log_ms_ = 0;
       init_video_wait_misses_ = 0;
     }
     ++init_video_wait_misses_;
     if ((now - init_video_wait_started_ms_) >= kInitVideoReadErrorDelayMs) {
-      publish_error_if_changed("failed to read video frame for init", "runtime",
-                               json::object({{"waitMs", now - init_video_wait_started_ms_},
-                                             {"misses", init_video_wait_misses_}}));
+      const bool should_log = init_video_wait_last_log_ms_ <= 0 ||
+                              (now - init_video_wait_last_log_ms_) >= kInitVideoReadLogIntervalMs;
+      if (should_log) {
+        init_video_wait_last_log_ms_ = now;
+        spdlog::debug("cvkit_tracking waiting for video frame before tracker init serviceId={} waitMs={} misses={}",
+                      cfg_.service_id, now - init_video_wait_started_ms_, init_video_wait_misses_);
+      }
     }
     return;
   }
   init_video_wait_started_ms_ = 0;
+  init_video_wait_last_log_ms_ = 0;
   init_video_wait_misses_ = 0;
   {
     std::lock_guard<std::mutex> lock(tracking_mu_);

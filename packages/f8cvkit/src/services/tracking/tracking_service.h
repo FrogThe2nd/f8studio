@@ -120,6 +120,7 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
   double next_tracking_due_ts_ms_ = 0.0;
   std::int64_t last_video_open_attempt_ms_ = 0;
   std::int64_t init_video_wait_started_ms_ = 0;
+  std::int64_t init_video_wait_last_log_ms_ = 0;
   std::uint32_t init_video_wait_misses_ = 0;
   TrackingInitSelectMode init_select_mode_ = TrackingInitSelectMode::ClosestCenter;
   std::string init_select_state_ = "closest_center";
