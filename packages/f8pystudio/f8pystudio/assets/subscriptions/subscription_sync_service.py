@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 RequestKind = Literal["idle", "manual", "startup"]
 AssetKind = Literal["component", "variant"]
+_WORKER_IDLE_TIMEOUT_S = 0.1
 
 
 class VariantSyncClientLike(Protocol):
@@ -95,6 +96,7 @@ class SubscriptionSyncService(QtCore.QObject):
         self._last_completed_request_kind: RequestKind = "idle"
         self._pending_request_kind: RequestKind | None = None
         self._cancel_requested = False
+        self._shutdown_requested = False
 
     def start_initial_sync(self) -> None:
         self._enqueue_request("startup")
@@ -105,6 +107,18 @@ class SubscriptionSyncService(QtCore.QObject):
     def cancel(self) -> None:
         with self._state_lock:
             self._cancel_requested = True
+
+    def shutdown(self, *, wait: bool = True, timeout_s: float = 2.0) -> None:
+        with self._state_lock:
+            self._shutdown_requested = True
+            self._cancel_requested = True
+            self._pending_request_kind = None
+            worker_thread = self._worker_thread
+        if worker_thread is None:
+            return
+        self._request_queue.put(None)
+        if wait and worker_thread is not threading.current_thread():
+            worker_thread.join(timeout=max(0.0, float(timeout_s)))
 
     def is_running(self) -> bool:
         with self._state_lock:
@@ -121,8 +135,13 @@ class SubscriptionSyncService(QtCore.QObject):
     def _enqueue_request(self, request_kind: RequestKind) -> None:
         if self._variant_client.current_user() is None:
             return
+        with self._state_lock:
+            if self._shutdown_requested:
+                return
         self._ensure_worker_thread()
         with self._state_lock:
+            if self._shutdown_requested:
+                return
             if self._running:
                 if self._pending_request_kind != "manual":
                     self._pending_request_kind = request_kind
@@ -135,7 +154,8 @@ class SubscriptionSyncService(QtCore.QObject):
         self._request_queue.put(request_kind)
 
     def _ensure_worker_thread(self) -> None:
-        if self._worker_thread is not None:
+        worker_thread = self._worker_thread
+        if worker_thread is not None and worker_thread.is_alive():
             return
         worker_thread = threading.Thread(
             target=self._worker_loop,
@@ -147,8 +167,19 @@ class SubscriptionSyncService(QtCore.QObject):
 
     def _worker_loop(self) -> None:
         while True:
-            request_kind = self._request_queue.get()
+            try:
+                request_kind = self._request_queue.get(timeout=_WORKER_IDLE_TIMEOUT_S)
+            except queue.Empty:
+                with self._state_lock:
+                    if self._running or self._pending_request_kind is not None:
+                        continue
+                    if self._worker_thread is threading.current_thread():
+                        self._worker_thread = None
+                    return
             if request_kind is None:
+                with self._state_lock:
+                    if self._worker_thread is threading.current_thread():
+                        self._worker_thread = None
                 return
             next_request_kind: RequestKind | None = request_kind
             while next_request_kind is not None:

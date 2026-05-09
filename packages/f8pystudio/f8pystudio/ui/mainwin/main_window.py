@@ -368,6 +368,10 @@ class F8StudioMainWin(
         )
         self._run_shutdown_step("save-window-layout", self._save_window_layout)
         self._run_shutdown_step("auto-save-project", self._auto_save_project)
+        sync_service = self._subscription_sync_service
+        if sync_service is not None:
+            self._run_shutdown_step("subscription-sync-shutdown", sync_service.shutdown)
+            self._subscription_sync_service = None
         self._run_shutdown_step("global-hotkeys-close", self._global_hotkey_controller.close)
         self._run_shutdown_step("ai-assist-sidebar-shutdown", self._shutdown_ai_assist_sidebar)
         self._run_shutdown_step("graph-node-teardown", self._teardown_graph_nodes_for_exit)

@@ -12,6 +12,8 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+ChildProcess = subprocess.Popen[bytes]
+
 
 @dataclass
 class _SupervisorStopState:
@@ -90,7 +92,7 @@ if os.name == "nt":
         ]
 
 
-def _create_windows_kill_on_close_job(proc: subprocess.Popen[object]) -> object | None:
+def _create_windows_kill_on_close_job(proc: ChildProcess) -> object | None:
     if os.name != "nt" or _KERNEL32 is None:
         return None
     job = _KERNEL32.CreateJobObjectW(None, None)
@@ -151,7 +153,7 @@ def _parent_alive(parent_pid: int) -> bool:
     return True
 
 
-def _kill_process_tree(proc: subprocess.Popen[object]) -> None:
+def _kill_process_tree(proc: ChildProcess) -> None:
     if os.name == "nt":
         try:
             subprocess.run(
@@ -178,7 +180,7 @@ def _kill_process_tree(proc: subprocess.Popen[object]) -> None:
         print(f"[supervisor] wait after kill failed pid={proc.pid}: {type(exc).__name__}: {exc}", file=sys.stderr)
 
 
-def _terminate_process_tree(proc: subprocess.Popen[object], *, grace_s: float) -> None:
+def _terminate_process_tree(proc: ChildProcess, *, grace_s: float) -> None:
     if proc.poll() is not None:
         return
     if os.name == "nt":
@@ -199,7 +201,7 @@ def _terminate_process_tree(proc: subprocess.Popen[object], *, grace_s: float) -
         _kill_process_tree(proc)
 
 
-def _wait_then_terminate_process_tree(proc: subprocess.Popen[object], *, wait_s: float, terminate_grace_s: float) -> None:
+def _wait_then_terminate_process_tree(proc: ChildProcess, *, wait_s: float, terminate_grace_s: float) -> None:
     if proc.poll() is not None:
         return
     try:
@@ -213,7 +215,7 @@ def _wait_then_terminate_process_tree(proc: subprocess.Popen[object], *, wait_s:
 
 
 def _install_signal_handlers(
-    proc: subprocess.Popen[object],
+    proc: ChildProcess,
     *,
     grace_s: float,
     soft_wait_s: float,
@@ -253,7 +255,7 @@ def _install_signal_handlers(
 
 
 def _start_stdin_control_thread(
-    proc: subprocess.Popen[object],
+    proc: ChildProcess,
     *,
     grace_s: float,
     soft_wait_s: float,

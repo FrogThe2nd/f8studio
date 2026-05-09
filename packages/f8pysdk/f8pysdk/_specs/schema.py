@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from msgspec import UNSET
+from msgspec import UNSET, UnsetType
 
 from ..generated import (
     F8AnyTypeSchema,
@@ -33,7 +33,7 @@ _AUDIO_CHUNK_METADATA_FIELDS: frozenset[str] = frozenset(
 
 
 def _is_unset(value: object) -> bool:
-    return isinstance(value, type(UNSET))
+    return isinstance(value, UnsetType)
 
 
 def _payload_kind_from_value(value: object) -> F8DataPortPayloadKind:
@@ -145,7 +145,7 @@ def _legacy_payload_kind_from_schema(schema: F8DataTypeSchema) -> F8DataPortPayl
 
 def data_port_payload_kind(port: F8DataPortSpec) -> F8DataPortPayloadKind:
     payload = port.payload
-    if payload is not None and not _is_unset(payload):
+    if isinstance(payload, F8DataPayloadSpec):
         return _payload_kind_from_value(payload.kind)
     payload_kind = _payload_kind_from_value(port.payloadKind)
     if payload_kind != F8DataPortPayloadKind.json:
@@ -165,7 +165,7 @@ def _delivery_from_value(value: object) -> F8DataPortDelivery:
 
 def data_port_stream_delivery(port: F8DataPortSpec) -> F8DataPortDelivery:
     stream = port.stream
-    if stream is not None and not _is_unset(stream):
+    if isinstance(stream, F8DataStreamSpec):
         return _delivery_from_value(stream.delivery)
     payload_kind = data_port_payload_kind(port)
     if payload_kind in (F8DataPortPayloadKind.video_frame, F8DataPortPayloadKind.audio_chunk):

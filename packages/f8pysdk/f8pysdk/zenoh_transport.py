@@ -20,6 +20,7 @@ log = logging.getLogger(__name__)
 # visible to other sessions. This small setup-only pause prevents losing the
 # first state/data sample immediately after a watch is installed.
 _SUBSCRIPTION_SETTLE_S = 0.01
+_QUERYABLE_SETTLE_S = 0.05
 
 
 @dataclass(frozen=True)
@@ -303,7 +304,7 @@ class ZenohTransport:
         )
         handle = _ZenohServeHandle(declaration, task)
         self._serve_handles.append(handle)
-        await asyncio.sleep(_SUBSCRIPTION_SETTLE_S)
+        await asyncio.sleep(_QUERYABLE_SETTLE_S)
         return handle
 
     async def retained_put(self, key: str, value: bytes) -> None:

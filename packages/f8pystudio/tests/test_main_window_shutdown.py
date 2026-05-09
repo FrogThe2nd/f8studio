@@ -24,6 +24,7 @@ class _ShutdownHarness:
         self._deferred_auto_deploy_fingerprint_timer = None
         self._studio_runtime_sync_timer = None
         self._asset_cloud_last_sync_timer = None
+        self._subscription_sync_service = None
         self._global_hotkey_controller = _FakeHotkeyController(self.events)
 
     def _clear_asset_cache_changed_subscription(self) -> None:

@@ -29,7 +29,7 @@ async def on_remote_state_kv(
     is_initial: bool,
     no_fanout: bool = False,
 ) -> None:
-    await bus.state_router.on_remote_state_kv(
+    await bus.state_router.on_remote_state_retained(
         peer_service_id,
         key,
         value,

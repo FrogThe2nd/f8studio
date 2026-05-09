@@ -519,7 +519,7 @@ class OnnxVisionServiceNode(ServiceNode):
             await self._set_last_error(self._model_index_warning)
 
     def _resolve_video_stream_key(self) -> str:
-        return self.input_zenoh_key("video")
+        return self.input_zenoh_key("video") or ""
 
     def _normalize_enabled_classes(self, values: list[str], *, allowed_classes: list[str] | None = None) -> list[str]:
         if allowed_classes is not None:

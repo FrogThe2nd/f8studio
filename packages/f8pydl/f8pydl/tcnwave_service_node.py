@@ -569,7 +569,7 @@ class OnnxTcnWaveServiceNode(ServiceNode):
         self._dup_skipped_since_last_processed = 0
 
     def _resolve_video_stream_key(self) -> str:
-        return self.input_zenoh_key("video")
+        return self.input_zenoh_key("video") or ""
 
     def _close_video_source(self) -> None:
         source = self._video_source
