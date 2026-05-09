@@ -13,7 +13,6 @@ from f8pysdk.zenoh_shutdown import close_zenoh_session_best_effort
 from .runtime_lifecycle import (
     SINGLETON_GUARD_DIALOG_MESSAGE,
 )
-from .process_lifecycle import StopServiceRequest
 from .remote_state_sync import RemoteStateGatewayAdapter
 from .studio_runtime_flow import wait_for_studio_runtime_ready
 from f8pystudio.bridge.studio_service import PyStudioService, PyStudioServiceConfig
@@ -571,9 +570,32 @@ class RuntimeSessionControllerMixin:
             await asyncio.gather(monitor_ui_flush_task, return_exceptions=True)
 
         if self.kill_managed_services_on_exit():
-            for sid in list(self._process_gateway.service_ids()):
+            service_ids = self._known_non_studio_service_ids()
+            if service_ids:
+                self._emit_log_line(f"[service] shutdown stopping {len(service_ids)} known service(s)")
+            terminate_tasks: list[asyncio.Task[object]] = []
+            for sid in service_ids:
+                terminate_tasks.append(
+                    asyncio.create_task(
+                        self._request_service_terminate_async(sid),
+                        name=f"pystudio:shutdown_terminate:{sid}",
+                    )
+                )
+            if terminate_tasks:
+                terminate_results = await asyncio.gather(*terminate_tasks, return_exceptions=True)
+                for sid, result in zip(service_ids, terminate_results, strict=False):
+                    if isinstance(result, BaseException):
+                        self._report_exception(
+                            f"request service terminate failed during shutdown serviceId={sid}",
+                            result,
+                        )
+            for sid in service_ids:
                 try:
-                    self._process_gateway.stop(StopServiceRequest(service_id=sid))
+                    self._stop_process_once_local(sid)
+                    if not self.is_service_running(sid):
+                        self._cache_stopped_service(sid)
+                    else:
+                        self._emit_log_line(f"[service] shutdown stop incomplete serviceId={sid}")
                 except Exception as exc:
                     self._report_exception(f"stop service process failed serviceId={sid}", exc)
 

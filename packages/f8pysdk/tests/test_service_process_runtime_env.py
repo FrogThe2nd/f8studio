@@ -9,6 +9,8 @@ from typing import Any
 import pytest
 
 from f8pysdk.service_runtime_tools.deploy import ServiceProcessConfig, ServiceProcessManager
+from f8pysdk.service_runtime_tools.deploy import process_manager as process_manager_module
+from f8pysdk.service_runtime_tools.deploy.process_manager import SUPERVISOR_GRACEFUL_STOP_TIMEOUT_S
 
 
 class _Catalog:
@@ -244,7 +246,7 @@ def test_process_manager_stop_requests_supervisor_graceful_stop_first(
 
     assert proc.stdin.getvalue() == "stop\n"
     assert proc.wait_timeouts
-    assert proc.wait_timeouts[0] >= 2.5
+    assert proc.wait_timeouts[0] == SUPERVISOR_GRACEFUL_STOP_TIMEOUT_S
     assert proc.terminated is True
     assert proc.killed is False
 
@@ -269,3 +271,17 @@ def test_process_manager_stop_falls_back_to_terminate_when_supervisor_stdin_is_c
     manager.stop("svc1")
 
     assert proc.terminated is True
+
+
+def test_windows_service_process_scan_matches_service_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(process_manager_module.os, "name", "nt")
+    monkeypatch.setattr(process_manager_module, "_windows_process_command_rows", lambda: [
+        {"ProcessId": 111, "CommandLine": '"svc.exe" --service-id player'},
+        {"ProcessId": 222, "CommandLine": '"svc.exe" --service-id other'},
+        {"ProcessId": 333, "CommandLine": '"svc.exe" --service-id=player'},
+        {"ProcessId": 444, "CommandLine": ""},
+    ])
+
+    matches = process_manager_module.find_service_processes_by_service_id("player", current_pid=111)
+
+    assert [match.pid for match in matches] == [333]

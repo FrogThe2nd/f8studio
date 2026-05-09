@@ -6,7 +6,7 @@ from typing import Any
 
 from f8pysdk.specs import F8RuntimeGraph, F8RuntimeService
 from f8pystudio.bridge import service_lifecycle_controller as lifecycle_module
-from f8pystudio.bridge.service_lifecycle_controller import ServiceLifecycleControllerMixin
+from f8pystudio.bridge.service_lifecycle_controller import SERVICE_STOP_GRACE_S, ServiceLifecycleControllerMixin
 
 
 class _MonitorCenter:
@@ -14,12 +14,20 @@ class _MonitorCenter:
         self.status_updates: list[dict[str, Any]] = []
         self.dropped_services: list[str] = []
 
-    def update_service_status(self, *, service_id: str, active: bool | None = None, alive: bool | None = None) -> None:
+    def update_service_status(
+        self,
+        *,
+        service_id: str,
+        active: bool | None = None,
+        alive: bool | None = None,
+        ready: bool | None = None,
+    ) -> None:
         self.status_updates.append(
             {
                 "service_id": str(service_id),
                 "active": active,
                 "alive": alive,
+                "ready": ready,
             }
         )
 
@@ -69,15 +77,14 @@ class _ProcessGateway:
 class _ProcessActions:
     def __init__(self) -> None:
         self.cancelled_services: list[str] = []
-        self.scheduled_stops: list[str] = []
+        self.scheduled_stops: list[tuple[str, float]] = []
         self.scheduled_restarts: list[str] = []
 
     def cancel(self, service_id: str) -> None:
         self.cancelled_services.append(str(service_id))
 
     def schedule_stop(self, *, service_id: str, grace_s: float) -> None:
-        _ = grace_s
-        self.scheduled_stops.append(str(service_id))
+        self.scheduled_stops.append((str(service_id), float(grace_s)))
 
     def schedule_restart(self, *, service_id: str, service_class: str, grace_s: float) -> None:
         _ = (service_class, grace_s)
@@ -732,13 +739,29 @@ def test_stop_all_services_covers_known_and_process_services() -> None:
     _close_submitted(bridge)
 
     assert bridge._process_actions.scheduled_stops == [
-        "svc_alive",
-        "svc_class",
-        "svc_live",
-        "svc_managed",
-        "svc_proc",
-        "svc_status",
+        ("svc_alive", SERVICE_STOP_GRACE_S),
+        ("svc_class", SERVICE_STOP_GRACE_S),
+        ("svc_live", SERVICE_STOP_GRACE_S),
+        ("svc_managed", SERVICE_STOP_GRACE_S),
+        ("svc_proc", SERVICE_STOP_GRACE_S),
+        ("svc_status", SERVICE_STOP_GRACE_S),
     ]
+
+
+def test_stop_process_once_falls_back_to_untracked_process_cleanup() -> None:
+    bridge = _Harness()
+    bridge._service_liveliness_instances_by_service["svc_reused"] = {"inst_reused"}
+    bridge._service_alive_cache["svc_reused"] = (True, 0.0)
+    bridge._process_gateway.external_by_service["svc_reused"] = [SimpleNamespace(pid=4321)]
+
+    ok = bridge._stop_process_once_local("svc_reused")
+
+    assert ok is True
+    assert bridge._process_gateway.stop_calls
+    assert bridge._process_gateway.terminate_external_calls == ["svc_reused"]
+    assert "svc_reused" not in bridge._service_liveliness_instances_by_service
+    assert bridge._service_alive_cache["svc_reused"][0] is False
+    assert bridge.emitted_states[-1] == ("svc_reused", False)
 
 
 def test_liveliness_instance_counts_as_running_after_alive_cache_expires() -> None:

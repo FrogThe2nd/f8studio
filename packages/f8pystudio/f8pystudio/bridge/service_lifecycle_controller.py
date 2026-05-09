@@ -16,6 +16,9 @@ from .service_endpoint_client import request_service_status, request_service_ter
 from f8pystudio.bridge.process_manager import ServiceProcessConfig
 from f8pystudio.nodegraph.runtime_compiler import CompiledRuntimeGraphs
 
+SERVICE_STOP_GRACE_S = 0.8
+SERVICE_RESTART_GRACE_S = 2.2
+
 
 class ServiceLifecycleControllerMixin:
     def _runtime_bus_backend(self) -> BusBackend:
@@ -66,12 +69,43 @@ class ServiceLifecycleControllerMixin:
         sid = str(service_id or "").strip()
         if not sid:
             return False
+        tracked_before_stop = False
+        try:
+            tracked_before_stop = sid in set(str(item) for item in self._process_gateway.service_ids())
+        except Exception as exc:
+            self._report_exception(f"list process service ids before stop failed serviceId={sid}", exc)
+        process_stop_ok = False
         try:
             stop_result = self._process_gateway.stop(StopServiceRequest(service_id=sid))
-            return bool(stop_result.success)
+            process_stop_ok = bool(stop_result.success)
         except Exception as exc:
             self._emit_log_line(f"stop_service failed: {exc}")
-            return False
+        if tracked_before_stop and process_stop_ok:
+            self._cache_stopped_service(sid)
+            return True
+        if not self.is_service_running(sid):
+            self._cache_stopped_service(sid)
+            return True
+        try:
+            result = self._process_gateway.terminate_external_processes(sid)
+        except AttributeError:
+            result = None
+        except Exception as exc:
+            self._report_exception(f"terminate untracked service processes failed serviceId={sid}", exc)
+            result = None
+        if result is not None and bool(result.success):
+            if result.terminated_pids:
+                terminated_text = ",".join(str(pid) for pid in result.terminated_pids)
+                self._emit_log_line(f"cleaned untracked local service processes serviceId={sid} pids={terminated_text}")
+            matched_pids = tuple(result.matched_pids or ())
+            terminated_pids = tuple(result.terminated_pids or ())
+            if matched_pids or terminated_pids:
+                self._cache_stopped_service(sid)
+                return True
+            if not self.is_service_running(sid):
+                self._cache_stopped_service(sid)
+                return True
+        return bool(process_stop_ok and not self.is_service_running(sid))
 
     def set_managed_active(self, active: bool) -> None:
         """
@@ -107,6 +141,32 @@ class ServiceLifecycleControllerMixin:
         self._service_status_inflight.discard(sid)
         self._monitor_center.drop_service(service_id=sid)
         self._process_actions.cancel(service_id=sid)
+
+    def _known_non_studio_service_ids(self) -> list[str]:
+        service_ids: set[str] = set()
+        service_ids.update(str(sid) for sid in self._managed_service_ids if str(sid or "").strip())
+        service_ids.update(str(sid) for sid in self._managed_service_classes.keys() if str(sid or "").strip())
+        service_ids.update(str(sid) for sid in self._service_alive_cache.keys() if str(sid or "").strip())
+        service_ids.update(str(sid) for sid in self._service_status_cache.keys() if str(sid or "").strip())
+        service_ids.update(
+            str(sid) for sid in self._service_liveliness_instances_by_service.keys() if str(sid or "").strip()
+        )
+        try:
+            service_ids.update(str(sid) for sid in self._process_gateway.service_ids() if str(sid or "").strip())
+        except Exception as exc:
+            self._report_exception("list process service ids failed", exc)
+        service_ids.discard(str(self.studio_service_id))
+        return sorted(service_ids)
+
+    def _cache_stopped_service(self, service_id: str) -> None:
+        sid = str(service_id or "").strip()
+        if not sid:
+            return
+        self._service_liveliness_instances_by_service.pop(sid, None)
+        self._cache_service_alive(sid, False)
+        self._cache_service_active(sid, None)
+        self._monitor_center.update_service_status(service_id=sid, ready=False)
+        self._emit_service_process_state_safe(sid, False)
 
     def reclaim_service(self, service_id: str) -> None:
         """
@@ -607,7 +667,7 @@ class ServiceLifecycleControllerMixin:
         )
 
         # 2) Poll for graceful exit, then fall back to local kill-tree.
-        self._process_actions.schedule_stop(service_id=sid, grace_s=2.2)
+        self._process_actions.schedule_stop(service_id=sid, grace_s=SERVICE_STOP_GRACE_S)
 
     @QtCore.Slot(str, object)
     def _on_restart_service_after_guard(self, service_id: str, service_class: object) -> None:
@@ -618,7 +678,7 @@ class ServiceLifecycleControllerMixin:
         if sid == self.studio_service_id:
             return
         svc_class = str(service_class or "")
-        self._process_actions.schedule_restart(service_id=sid, service_class=svc_class, grace_s=2.2)
+        self._process_actions.schedule_restart(service_id=sid, service_class=svc_class, grace_s=SERVICE_RESTART_GRACE_S)
 
     def restart_service(self, service_id: str, *, service_class: str | None = None) -> None:
         try:
@@ -737,19 +797,9 @@ class ServiceLifecycleControllerMixin:
                 self._emit_log_line(f"lifecycle {cmd} failed serviceId={sid}")
 
     def stop_all_services(self) -> None:
-        service_ids: set[str] = set()
-        service_ids.update(str(sid) for sid in self._managed_service_ids if str(sid or "").strip())
-        service_ids.update(str(sid) for sid in self._managed_service_classes.keys() if str(sid or "").strip())
-        service_ids.update(str(sid) for sid in self._service_alive_cache.keys() if str(sid or "").strip())
-        service_ids.update(str(sid) for sid in self._service_status_cache.keys() if str(sid or "").strip())
-        service_ids.update(str(sid) for sid in self._service_liveliness_instances_by_service.keys() if str(sid or "").strip())
-        try:
-            service_ids.update(str(sid) for sid in self._process_gateway.service_ids() if str(sid or "").strip())
-        except Exception as exc:
-            self._report_exception("list process service ids for stop_all failed", exc)
-        service_ids.discard(str(self.studio_service_id))
+        service_ids = self._known_non_studio_service_ids()
         if not service_ids:
             self._emit_log_line("[service] no known service instances to stop")
             return
-        for sid in sorted(service_ids):
+        for sid in service_ids:
             self.stop_service(sid)

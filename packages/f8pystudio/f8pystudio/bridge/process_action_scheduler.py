@@ -148,7 +148,7 @@ class ServiceProcessActionScheduler:
 
         stop_ok = self._stop_process_once(sid)
         still_running = bool(self._is_service_running(sid))
-        if not stop_ok and still_running:
+        if still_running:
             self._emit_log(f"stop_service incomplete (process still running): serviceId={sid}")
             self._actions[sid] = _PendingProcessAction(
                 action=action.action,

@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 import time
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -21,6 +22,10 @@ from ..inventory.entry import load_service_entry
 
 
 logger = logging.getLogger(__name__)
+SUPERVISOR_GRACEFUL_STOP_TIMEOUT_S = 0.8
+TERMINATE_WAIT_TIMEOUT_S = 0.8
+TASKKILL_TIMEOUT_S = 1.0
+FINAL_EXIT_WAIT_TIMEOUT_S = 0.8
 
 
 @dataclass(frozen=True)
@@ -85,9 +90,11 @@ def find_service_processes_by_service_id(service_id: str, *, current_pid: int | 
     sid = str(service_id or "").strip()
     if not sid:
         return []
+    own_pid = os.getpid() if current_pid is None else int(current_pid)
+    if os.name == "nt":
+        return _find_windows_service_processes_by_service_id(sid, current_pid=own_pid)
     if os.name != "posix":
         return []
-    own_pid = os.getpid() if current_pid is None else int(current_pid)
     matches: list[ServiceProcessMatch] = []
     proc_root = Path("/proc")
     try:
@@ -107,6 +114,74 @@ def find_service_processes_by_service_id(service_id: str, *, current_pid: int | 
             continue
         if _cmdline_matches_service_id(cmdline, sid):
             matches.append(ServiceProcessMatch(pid=pid, cmdline=cmdline))
+    return sorted(matches, key=lambda item: item.pid)
+
+
+def _windows_process_command_rows() -> list[dict[str, Any]]:
+    if os.name != "nt":
+        return []
+    try:
+        completed = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Get-CimInstance Win32_Process | "
+                "Select-Object ProcessId,CommandLine | "
+                "ConvertTo-Json -Compress",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=3.0,
+            check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError, subprocess.SubprocessError) as exc:
+        logger.debug("Windows process command line scan failed", exc_info=exc)
+        return []
+    if int(completed.returncode or 0) != 0:
+        return []
+    raw = str(completed.stdout or "").strip()
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        logger.debug("Windows process command line JSON decode failed", exc_info=exc)
+        return []
+    if isinstance(parsed, dict):
+        return [parsed]
+    if isinstance(parsed, list):
+        return [item for item in parsed if isinstance(item, dict)]
+    return []
+
+
+def _find_windows_service_processes_by_service_id(service_id: str, *, current_pid: int) -> list[ServiceProcessMatch]:
+    sid = str(service_id or "").strip()
+    if not sid:
+        return []
+    matches: list[ServiceProcessMatch] = []
+    for row in _windows_process_command_rows():
+        pid_raw = row.get("ProcessId")
+        try:
+            pid = int(pid_raw)
+        except (TypeError, ValueError):
+            continue
+        if int(pid) == int(current_pid):
+            continue
+        command_line = str(row.get("CommandLine") or "").strip()
+        if not command_line:
+            continue
+        try:
+            cmdline = tuple(shlex.split(command_line, posix=False))
+        except ValueError:
+            cmdline = (command_line,)
+        if _cmdline_matches_service_id(cmdline, sid):
+            matches.append(ServiceProcessMatch(pid=int(pid), cmdline=cmdline))
     return sorted(matches, key=lambda item: item.pid)
 
 
@@ -308,7 +383,7 @@ class ServiceProcessManager:
         if self._request_graceful_stop(service_id=sid, proc=proc) and self._wait_for_exit(
             service_id=sid,
             proc=proc,
-            timeout_s=2.5,
+            timeout_s=SUPERVISOR_GRACEFUL_STOP_TIMEOUT_S,
         ):
             self._cleanup_entry(sid)
             return True
@@ -317,7 +392,7 @@ class ServiceProcessManager:
             proc.terminate()
         except (AttributeError, RuntimeError, TypeError) as exc:
             logger.debug("Service process terminate failed (service_id=%s)", sid, exc_info=exc)
-        if not self._wait_for_exit(service_id=sid, proc=proc, timeout_s=3.0):
+        if not self._wait_for_exit(service_id=sid, proc=proc, timeout_s=TERMINATE_WAIT_TIMEOUT_S):
             logger.debug("Service process wait after terminate timed out (service_id=%s)", sid)
 
         if os.name == "nt" and pid:
@@ -331,7 +406,7 @@ class ServiceProcessManager:
                     ["taskkill", "/PID", str(int(pid)), "/T", "/F"],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
-                    timeout=2,
+                    timeout=TASKKILL_TIMEOUT_S,
                     check=False,
                     creationflags=creationflags,
                 )
@@ -344,7 +419,7 @@ class ServiceProcessManager:
             except (AttributeError, RuntimeError, TypeError) as exc:
                 logger.debug("Service process kill failed (service_id=%s)", sid, exc_info=exc)
 
-        deadline = time.monotonic() + 3.0
+        deadline = time.monotonic() + FINAL_EXIT_WAIT_TIMEOUT_S
         while time.monotonic() < deadline:
             try:
                 if proc.poll() is not None:

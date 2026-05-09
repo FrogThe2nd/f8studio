@@ -78,3 +78,29 @@ def test_schedule_restart_when_already_stopped_relaunches_immediately() -> None:
     QtCore.QCoreApplication.sendPostedEvents(None, int(QtCore.QEvent.Type.DeferredDelete))
     QtWidgets.QApplication.processEvents()
     assert owner.findChildren(QtCore.QTimer) == []
+
+
+def test_schedule_stop_keeps_polling_when_stop_reports_success_but_service_still_running() -> None:
+    _ensure_app()
+    owner = QtCore.QObject()
+    stop_calls: list[str] = []
+    emitted_states: list[tuple[str, bool]] = []
+    log_lines: list[str] = []
+
+    scheduler = ServiceProcessActionScheduler(
+        owner=owner,
+        is_service_running=lambda service_id: str(service_id) == "svc.stuck",
+        stop_process_once=lambda service_id: stop_calls.append(str(service_id)) or True,
+        emit_service_process_state=lambda sid, running: emitted_states.append((str(sid), bool(running))),
+        start_service=lambda sid, service_class: None,
+        emit_log=lambda line: log_lines.append(str(line)),
+        report_exception=lambda context, exc: None,
+    )
+
+    scheduler.schedule_stop(service_id="svc.stuck", grace_s=0.0)
+
+    assert stop_calls == ["svc.stuck"]
+    assert emitted_states == []
+    assert log_lines == ["stop_service incomplete (process still running): serviceId=svc.stuck"]
+    assert "svc.stuck" in scheduler._actions
+    scheduler.cancel_all()
