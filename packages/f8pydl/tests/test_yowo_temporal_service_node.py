@@ -18,11 +18,17 @@ for p in (PKG_PYDL, PKG_SDK):
 
 
 from f8pydl.service_node import OnnxVisionServiceNode  # noqa: E402
+from f8pysdk.bus import ServiceBus, ServiceBusConfig  # noqa: E402
+from f8pysdk.codec import decode_obj  # noqa: E402
+from f8pysdk.specs import F8RuntimeNode, F8StateAccess  # noqa: E402
+from f8pysdk.testing import InMemoryCluster, InMemoryTransport  # noqa: E402
+from f8pysdk.zenoh_naming import zenoh_state_key  # noqa: E402
 
 
 class _BusStub:
     def __init__(self) -> None:
         self.errors: list[tuple[str, str, str]] = []
+        self.state_updates: list[tuple[str, str, Any]] = []
 
     def report_error(
         self,
@@ -38,6 +44,10 @@ class _BusStub:
 
     def clear_error(self, node_id: str, fingerprint: str | None = None, ts_ms: int | None = None) -> None:
         del node_id, fingerprint, ts_ms
+
+    async def publish_state_runtime(self, node_id: str, field: str, value: Any, *, ts_ms: int | None = None) -> None:
+        del ts_ms
+        self.state_updates.append((str(node_id), str(field), value))
 
 
 @dataclass(frozen=True)
@@ -161,6 +171,52 @@ class YowoTemporalServiceNodeTests(unittest.TestCase):
 
 
 class OnnxVisionServiceNodeLoopTests(unittest.IsolatedAsyncioTestCase):
+    async def test_publish_model_index_scans_local_detector_models(self) -> None:
+        bus = _BusStub()
+        node = OnnxVisionServiceNode(
+            node_id="detector",
+            node=SimpleNamespace(stateFields=[]),
+            initial_state=None,
+            service_class="f8.dl.detector",
+            service_task="detector",
+            output_port="detections",
+            allowed_tasks={"yolo_det", "yolo_obb", "yowo_temporal_det"},
+        )
+        node._bus = bus
+
+        await node._publish_model_index()
+
+        updates = {(field, str(node_id)): value for node_id, field, value in bus.state_updates}
+        available = updates[("availableModels", "detector")]
+        self.assertIsInstance(available, list)
+        self.assertIn("nudenet-320n", available)
+        self.assertIn("erax_nsfw_yolo11n", available)
+        self.assertIn("f8_motion_yowov3", available)
+        self.assertEqual(updates[("modelId", "detector")], available[0])
+
+    async def test_detector_model_index_persists_runtime_state_on_bus(self) -> None:
+        transport = InMemoryTransport(cluster=InMemoryCluster())
+        bus = ServiceBus(ServiceBusConfig(service_id="detector", service_class="f8.dl.detector"), transport=transport)
+        node = OnnxVisionServiceNode(
+            node_id="detector",
+            node=F8RuntimeNode(nodeId="detector", serviceId="detector", serviceClass="f8.dl.detector"),
+            initial_state=None,
+            service_class="f8.dl.detector",
+            service_task="detector",
+            output_port="detections",
+            allowed_tasks={"yolo_det", "yolo_obb", "yowo_temporal_det"},
+        )
+        bus.register_node(node)
+        bus.state_store.access_by_node_field[("detector", "availableModels")] = F8StateAccess.ro
+        bus.state_store.access_by_node_field[("detector", "modelId")] = F8StateAccess.rw
+
+        await node._publish_model_index()
+
+        raw = await transport.retained_get(zenoh_state_key("detector", node_id="detector", field="availableModels"))
+        payload = decode_obj(raw) if raw is not None else {}
+        self.assertEqual(payload.get("origin"), "runtime")
+        self.assertIn("nudenet-320n", payload.get("value") or [])
+
     async def test_loop_retries_when_runtime_is_reset_after_ensure(self) -> None:
         class _RuntimeResetNode(OnnxVisionServiceNode):
             async def _ensure_config_loaded(self) -> None:

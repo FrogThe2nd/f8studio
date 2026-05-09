@@ -195,6 +195,8 @@ def schema_type(schema: F8DataTypeSchema) -> str:
 
 def schema_default(schema: F8DataTypeSchema) -> object:
     default_value = schema.default
+    if _is_unset(default_value):
+        return None
     return None if default_value is None else default_value
 
 
@@ -249,8 +251,12 @@ def boolean_schema(*, default: bool | None = None) -> F8BooleanTypeSchema:
 def array_schema(
     *,
     items: F8DataTypeSchema,
+    default: list[object] | None = None,
 ) -> F8ArrayTypeSchema:
-    return F8ArrayTypeSchema(items=items)
+    kwargs: dict[str, object] = {"items": items}
+    if default is not None:
+        kwargs["default"] = list(default)
+    return F8ArrayTypeSchema(**kwargs)
 
 
 def any_schema() -> F8AnyTypeSchema:

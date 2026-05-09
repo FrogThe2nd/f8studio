@@ -52,7 +52,8 @@ class _BusStub:
         self.clear_count += 1
 
     async def publish_state_runtime(self, node_id: str, field: str, value: Any, *, ts_ms: int | None = None) -> None:
-        del node_id, field, value, ts_ms
+        del ts_ms
+        self.state[field] = value
 
     async def get_state(self, node_id: str, field: str) -> StateRead:
         del node_id
@@ -113,6 +114,23 @@ class OptflowPackAndCacheTests(unittest.TestCase):
 
 
 class OptflowServiceNodeErrorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_publish_model_index_scans_local_optflow_models(self) -> None:
+        bus = _BusStub()
+        node = OnnxOptflowServiceNode(
+            node_id="optflowA",
+            node=SimpleNamespace(stateFields=[]),
+            initial_state=None,
+            service_class="f8.dl.optflow",
+            allowed_tasks={"optflow_neuflowv2"},
+        )
+        node._bus = bus
+
+        await node._publish_model_index()
+
+        available = bus.state["availableModels"]
+        self.assertEqual(available, ["neuflow_mixed", "neuflow_sintel", "neuflow_things"])
+        self.assertEqual(bus.state["modelId"], "neuflow_mixed")
+
     async def test_set_last_error_dedupes_repeated_message(self) -> None:
         bus = _BusStub()
         node = OnnxOptflowServiceNode(

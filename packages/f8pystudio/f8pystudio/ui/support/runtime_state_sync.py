@@ -42,6 +42,7 @@ class RuntimeStateSyncController:
                 node.set_property(field, value, push_undo=False)
             except Exception:
                 return
+            self._refresh_inline_option_pools(node=node, field=field)
             self._sync_property_widget(node=node, field=field, value=value)
         finally:
             self._applying_runtime_state = False
@@ -106,5 +107,12 @@ class RuntimeStateSyncController:
                     widget.blockSignals(False)
                 except (AttributeError, RuntimeError, TypeError):
                     pass
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return
+
+    @staticmethod
+    def _refresh_inline_option_pools(*, node: Any, field: str) -> None:
+        try:
+            node.view._refresh_state_inline_option_pools(str(field))
         except (AttributeError, RuntimeError, TypeError, ValueError):
             return

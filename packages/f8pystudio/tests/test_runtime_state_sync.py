@@ -38,6 +38,7 @@ class _NodeStub:
     def __init__(self) -> None:
         self.id = "ftdW"
         self.model = _ModelStub()
+        self.view: object | None = None
 
     def set_property(self, name: str, value: object, push_undo: bool = True) -> None:
         assert push_undo is False
@@ -70,6 +71,14 @@ class _BridgeStub:
     pass
 
 
+class _NodeItemStub:
+    def __init__(self) -> None:
+        self.refreshed_fields: list[str] = []
+
+    def _refresh_state_inline_option_pools(self, changed_field: str) -> None:
+        self.refreshed_fields.append(str(changed_field))
+
+
 def test_runtime_state_update_refreshes_active_property_widget() -> None:
     node = _NodeStub()
     widget = _WidgetStub()
@@ -86,6 +95,30 @@ def test_runtime_state_update_refreshes_active_property_widget() -> None:
     assert node.model.custom_properties["ortActiveProviders"] == value
     assert widget.value == value
     assert widget.blocked == [True, False]
+
+
+def test_runtime_state_update_refreshes_inline_option_pool_dependents() -> None:
+    node = _NodeStub()
+    node.model.custom_properties["availableModels"] = []
+    node_item = _NodeItemStub()
+    node.view = node_item
+    controller = RuntimeStateSyncController(
+        studio_graph=_GraphStub(node),
+        property_editor=_PropertyPanelStub(_EditorStub(_WidgetStub())),
+        bridge=_BridgeStub(),
+        studio_service_class="f8.pystudio",
+    )
+
+    controller.on_runtime_state_updated(
+        "ftdW",
+        "ftdW",
+        "availableModels",
+        ["nudenet-320n", "erax_nsfw_yolo11n"],
+        123,
+    )
+
+    assert node.model.custom_properties["availableModels"] == ["nudenet-320n", "erax_nsfw_yolo11n"]
+    assert node_item.refreshed_fields == ["availableModels"]
 
 
 def test_single_node_property_panel_exposes_current_editor_for_runtime_sync() -> None:
