@@ -31,7 +31,7 @@ No description.
 ### How to Run
 
 ```bash
-../linux/f8cvkit_dense_optflow_service
+../win/f8cvkit_dense_optflow_service.exe
 ```
 
 - Workdir: `./`

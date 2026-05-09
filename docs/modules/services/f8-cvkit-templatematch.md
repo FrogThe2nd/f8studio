@@ -31,7 +31,7 @@ No description.
 ### How to Run
 
 ```bash
-../linux/f8cvkit_template_match_service
+../win/f8cvkit_template_match_service.exe
 ```
 
 - Workdir: `./`

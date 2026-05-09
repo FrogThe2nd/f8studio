@@ -31,7 +31,7 @@ No description.
 ### How to Run
 
 ```bash
-../linux/f8cvkit_video_stab_service
+../win/f8cvkit_video_stab_service.exe
 ```
 
 - Workdir: `./`

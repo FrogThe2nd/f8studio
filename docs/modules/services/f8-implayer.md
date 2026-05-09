@@ -31,7 +31,7 @@ C++ MPV-based player service with Zenoh latest-frame video output.
 ### How to Run
 
 ```bash
-linux/f8implayer_service
+win/f8implayer_service.exe
 ```
 
 - Workdir: `./`
