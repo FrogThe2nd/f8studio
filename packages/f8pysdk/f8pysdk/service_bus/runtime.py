@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol, TYPE_CHECKING
@@ -13,11 +14,15 @@ from ..capabilities import (
     ServiceHook,
     StatefulNode,
 )
+from ..codec import encode_obj
 from ..command import CommandExecutionResult, CommandOutputPolicy
 from ..data import CrossPublishPolicy, DataDeliveryMode
 from ..generated import F8RuntimeGraph
-from ..nats_naming import ensure_token, kv_bucket_for_service, kv_key_ready, kv_key_rungraph
-from ..transport import NatsTransport, NatsTransportConfig
+from ..f8_naming import ensure_token
+from ..service_runtime_tools.deploy.readiness import rungraph_deploy_request_status_key
+from ..runtime_transport import RuntimeTransport
+from ..zenoh_transport import ZenohTransport, ZenohTransportConfig
+from ..zenoh_naming import zenoh_data_key, zenoh_state_path_key
 from ..state import StateRead, StateWriteOrigin, StateWriteSource
 from ..time_utils import now_ms
 from .config import ServiceBusConfig, _debug_state_enabled
@@ -33,7 +38,7 @@ from .workflow.lifecycle import stop as _stop_impl
 from .workflow.rungraph import set_rungraph as _set_rungraph_impl
 
 if TYPE_CHECKING:
-    from .internal.micro import ServiceBusMicroEndpoints
+    from .internal.control_endpoints import ServiceControlEndpointServer
 
 
 log = logging.getLogger(__name__)
@@ -162,10 +167,10 @@ class ServiceBus:
     """
     Service bus (clean, protocol-first).
 
-    - Shared NATS connection (pub/sub + JetStream KV).
-    - Rungraph updates are applied via micro endpoints.
+    - Shared RuntimeTransport connection (Zenoh by default; mem is for tests).
+    - Rungraph, lifecycle, and command requests are applied via backend-neutral control endpoints.
     - Builds intra/cross routing tables for data edges.
-    - Provides a shared state KV API for nodes.
+    - Provides a latest-value state API backed by service-owned KV/state snapshots.
     - Local data delivery is configured explicitly as buffered or callback.
     - Pull-based consumers may trigger intra-service computation via `compute_output(...)`.
     """
@@ -174,11 +179,14 @@ class ServiceBus:
         self,
         config: ServiceBusConfig,
         *,
-        transport: NatsTransport | None = None,
+        transport: RuntimeTransport | None = None,
         component_factory: ServiceBusComponentFactory | None = None,
     ) -> None:
         config = config.normalized()
+        self._config = config
+        self._bus_backend = config.bus_backend
         self.service_id = ensure_token(config.service_id, label="service_id")
+        self._runtime_instance_id = uuid.uuid4().hex
         self._service_name = str(config.service_name or "") or self.service_id
         self._service_class = str(config.service_class or "")
         self._debug_state = _debug_state_enabled()
@@ -197,26 +205,35 @@ class ServiceBus:
         self._data_input_max_buffers = max(0, int(config.data_input_max_buffers))
         self._data_input_default_queue_size = max(1, int(config.data_input_default_queue_size))
 
-        bucket = kv_bucket_for_service(self.service_id)
         if transport is None:
-            self._transport = NatsTransport(
-                NatsTransportConfig(
-                    url=str(config.nats_url),
-                    kv_bucket=str(bucket),
-                    kv_storage=config.kv_storage,
-                    delete_bucket_on_connect=bool(config.delete_bucket_on_start),
-                    delete_bucket_on_close=bool(config.delete_bucket_on_stop),
+            if config.bus_backend == "zenoh":
+                self._transport = ZenohTransport(
+                    ZenohTransportConfig(
+                        service_id=self.service_id,
+                        runtime_instance_id=self._runtime_instance_id,
+                        announce_service_liveliness=True,
+                        config_path=config.zenoh_config_path,
+                        connect=config.zenoh_connect,
+                        listen=config.zenoh_listen,
+                        shm_pool_bytes=config.zenoh_shm_pool_bytes,
+                    )
                 )
-            )
+            elif config.bus_backend == "mem":
+                from ..testing.in_memory_transport import InMemoryCluster, InMemoryTransport
+
+                self._transport = InMemoryTransport(cluster=InMemoryCluster())
+            else:
+                raise ValueError(f"Invalid bus_backend={config.bus_backend!r}; expected 'zenoh' or 'mem'.")
         else:
             self._transport = transport
 
         self._nodes: dict[str, _ServiceBusNode] = {}
         self._graph: F8RuntimeGraph | None = None
 
-        self._rungraph_key = kv_key_rungraph()
-        self._ready_key = kv_key_ready()
-        self._micro_endpoints: ServiceBusMicroEndpoints | None = None
+        self._rungraph_key = f"f8/svc/{self.service_id}/config/rungraph"
+        self._rungraph_status_key = f"f8/svc/{self.service_id}/status/rungraph"
+        self._ready_key = f"f8/svc/{self.service_id}/status/ready"
+        self._control_endpoints: ServiceControlEndpointServer | None = None
         self._component_factory = component_factory if component_factory is not None else DefaultServiceBusComponentFactory()
 
         self._data_router = self._component_factory.create_data_router(
@@ -240,6 +257,9 @@ class ServiceBus:
         self._rungraph_apply_error_once: set[str] = set()
         # Generic error dedupe for high-frequency paths (watchers/fanout/loops).
         self._error_once: set[str] = set()
+        self._state_publish_seq = 0
+        self._rungraph_apply_lock = asyncio.Lock()
+        self._rungraph_apply_tasks: set[asyncio.Task[None]] = set()
 
         # Process-level termination request (set via `svc.<serviceId>.terminate`).
         # Service entrypoints may `await bus.wait_terminate()` to exit gracefully.
@@ -280,6 +300,10 @@ class ServiceBus:
 
     async def wait_terminate(self) -> None:
         await self._terminate_event.wait()
+
+    def _next_state_publish_seq(self) -> int:
+        self._state_publish_seq += 1
+        return int(self._state_publish_seq)
 
     @staticmethod
     def _noop_record_emit(node_id: str, port: str, ts: int) -> None:
@@ -356,6 +380,18 @@ class ServiceBus:
         return self._service_class
 
     @property
+    def runtime_instance_id(self) -> str:
+        return self._runtime_instance_id
+
+    @property
+    def config(self) -> ServiceBusConfig:
+        return self._config
+
+    @property
+    def bus_backend(self) -> str:
+        return self._bus_backend
+
+    @property
     def cross_publish_policy(self) -> CrossPublishPolicy:
         return self._data_router.cross_publish_policy
 
@@ -422,6 +458,9 @@ class ServiceBus:
     def active(self) -> bool:
         return bool(self._active)
 
+    def has_rungraph(self) -> bool:
+        return self._graph is not None
+
     @property
     def command_gateway(self) -> CommandGateway:
         return self._command_gateway
@@ -467,12 +506,16 @@ class ServiceBus:
         if self._graph is not None:
             self._command_gateway.refresh_bindings()
 
-    def unregister_node(self, node_id: str) -> None:
+    def detach_node(self, node_id: str) -> _ServiceBusNode | None:
         node_id = ensure_token(node_id, label="node_id")
         node = self._nodes.pop(node_id, None)
         self._data_router.remove_node_inputs(node_id)
         if self._graph is not None:
             self._command_gateway.refresh_bindings()
+        return node
+
+    def unregister_node(self, node_id: str) -> None:
+        node = self.detach_node(node_id)
         if node is not None and isinstance(node, ClosableNode):
             try:
                 loop = asyncio.get_running_loop()
@@ -498,21 +541,27 @@ class ServiceBus:
     async def stop(self) -> None:
         if self._closed:
             return
+        tasks = list(self._rungraph_apply_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._rungraph_apply_tasks.clear()
         await _stop_impl(self)
         self._started = False
         self._closed = True
 
-    async def subscribe_subject(
+    async def subscribe_key(
         self,
-        subject: str,
+        key_expr: str,
         *,
         queue: str | None = None,
         cb: Callable[[str, bytes], Awaitable[None]] | None = None,
     ) -> Any:
-        return await self._data_router.subscribe_subject(subject, queue=queue, cb=cb)
+        return await self._data_router.subscribe_key(key_expr, queue=queue, cb=cb)
 
-    async def unsubscribe_subject(self, handle: Any) -> None:
-        await self._data_router.unsubscribe_subject(handle)
+    async def unsubscribe_key(self, handle: Any) -> None:
+        await self._data_router.unsubscribe_key(handle)
 
     async def publish_state_external(
         self,
@@ -610,21 +659,95 @@ class ServiceBus:
     async def set_rungraph(self, graph: F8RuntimeGraph) -> None:
         await _set_rungraph_impl(self, graph)
 
-    async def publish(self, subject: str, payload: bytes) -> None:
-        """Publish a message to a subject."""
+    def submit_rungraph(self, graph: F8RuntimeGraph, *, req_id: str, source: str = "control") -> None:
+        """
+        Accept a remote rungraph deployment request and apply it asynchronously.
+
+        The control endpoint should return quickly after this method succeeds;
+        deployment progress and final result are published to the retained
+        rungraph status key.
+        """
+        req_id_s = str(req_id or "").strip()
+        if not req_id_s:
+            raise ValueError("req_id is empty")
+        source_s = str(source or "control").strip() or "control"
+        task = asyncio.create_task(
+            self._rungraph_apply_worker(graph, req_id=req_id_s, source=source_s),
+            name=f"service_bus:set_rungraph:{self.service_id}:{req_id_s}",
+        )
+        self._rungraph_apply_tasks.add(task)
+        task.add_done_callback(self._on_rungraph_apply_task_done)
+
+    def _on_rungraph_apply_task_done(self, task: asyncio.Task[None]) -> None:
+        self._rungraph_apply_tasks.discard(task)
+        if task.cancelled():
+            return
+        try:
+            task.result()
+        except Exception as exc:
+            log.error("rungraph apply task failed service_id=%s", self.service_id, exc_info=exc)
+
+    async def _rungraph_apply_worker(self, graph: F8RuntimeGraph, *, req_id: str, source: str) -> None:
+        await self._publish_rungraph_status(graph, req_id=req_id, phase="accepted", source=source)
+        async with self._rungraph_apply_lock:
+            await self._publish_rungraph_status(graph, req_id=req_id, phase="applying", source=source)
+            try:
+                await self.set_rungraph(graph)
+            except Exception as exc:
+                await self._publish_rungraph_status(
+                    graph,
+                    req_id=req_id,
+                    phase="failed",
+                    source=source,
+                    error_message=f"{type(exc).__name__}: {exc}",
+                )
+                log.error("rungraph async apply failed service_id=%s req_id=%s", self.service_id, req_id, exc_info=exc)
+                return
+            await self._publish_rungraph_status(graph, req_id=req_id, phase="applied", source=source)
+
+    async def _publish_rungraph_status(
+        self,
+        graph: F8RuntimeGraph,
+        *,
+        req_id: str,
+        phase: str,
+        source: str,
+        error_message: str = "",
+    ) -> None:
+        graph_id = str(graph.graphId or "")
+        revision = str(graph.revision or "")
+        phase_s = str(phase or "").strip()
+        payload = {
+            "schemaVersion": "f8.rungraphDeployStatus/1",
+            "serviceId": self.service_id,
+            "reqId": str(req_id or ""),
+            "graphId": graph_id,
+            "revision": revision,
+            "phase": phase_s,
+            "ok": phase_s == "applied",
+            "source": str(source or ""),
+            "errorMessage": str(error_message or ""),
+            "ts": int(now_ms()),
+        }
+        raw = encode_obj(payload)
+        await self._transport.retained_put(self._rungraph_status_key, raw)
+        await self._transport.retained_put(rungraph_deploy_request_status_key(self.service_id, str(req_id or "")), raw)
+
+    async def publish(self, key: str, payload: bytes) -> None:
+        """Publish a message to a Zenoh key."""
         if not self._active:
             return
-        await self._transport.publish(str(subject), bytes(payload))
+        await self._transport.publish(str(key), bytes(payload))
 
     async def subscribe(
         self,
-        subject: str,
+        key_expr: str,
         *,
         queue: str | None = None,
         cb: Callable[[str, bytes], Awaitable[None]] | None = None,
     ) -> Any:
-        """Subscribe to a subject."""
-        return await self._transport.subscribe(str(subject), queue=queue, cb=cb)
+        """Subscribe to a Zenoh key expression."""
+        return await self._transport.subscribe(str(key_expr), queue=queue, cb=cb)
 
     async def emit_data(
         self,
@@ -673,3 +796,14 @@ class ServiceBus:
         node_id_s = ensure_token(node_id, label="node_id")
         port_s = ensure_token(port, label="port_id")
         return await self._data_router.pull_data(node_id_s, port_s, ctx_id=ctx_id)
+
+    def data_input_zenoh_key(self, node_id: str, port: str) -> str | None:
+        """
+        Resolve the Zenoh stream key feeding a local typed stream input port.
+
+        Media/binary data ports use this runtime-resolved key internally instead
+        of exposing transport-specific media state fields to user graphs.
+        """
+        node_id_s = ensure_token(node_id, label="node_id")
+        port_s = ensure_token(port, label="port_id")
+        return self._data_router.input_stream_key(node_id=node_id_s, port=port_s)

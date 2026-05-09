@@ -21,6 +21,30 @@ nlohmann::json schema_object(
     const nlohmann::json& props,
     const nlohmann::json& required = nlohmann::json::array());
 nlohmann::json schema_array(const nlohmann::json& item_schema);
+nlohmann::json schema_video_frame_metadata();
+nlohmann::json schema_video_frame();
+nlohmann::json schema_audio_chunk_metadata();
+nlohmann::json schema_audio_chunk();
+nlohmann::json data_stream(
+    std::string delivery = "fifo",
+    std::string reliability = "best_effort",
+    std::string congestion = "drop",
+    std::string priority = "data");
+nlohmann::json data_port(
+    std::string name,
+    const nlohmann::json& value_schema,
+    std::string payload_kind = "json",
+    std::string delivery = "fifo",
+    std::string description = {},
+    bool required = true,
+    bool show_on_node = true,
+    const nlohmann::json& metadata_schema = nlohmann::json(),
+    const std::vector<std::string>& formats = {},
+    std::string reliability = "best_effort",
+    std::string congestion = "drop",
+    std::string priority = "data");
+nlohmann::json video_frame_port(std::string name, std::string description = {}, bool required = true);
+nlohmann::json audio_chunk_port(std::string name, std::string description = {}, bool required = true);
 nlohmann::json state_field(
     std::string name,
     const nlohmann::json& value_schema,

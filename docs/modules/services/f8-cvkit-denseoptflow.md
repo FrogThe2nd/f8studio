@@ -31,7 +31,7 @@ No description.
 ### How to Run
 
 ```bash
-../linux/f8cvkit_dense_optflow_service
+../win/f8cvkit_dense_optflow_service.exe
 ```
 
 - Workdir: `./`
@@ -39,29 +39,31 @@ No description.
 
 ### Typical Inputs / Outputs
 
-- Data inputs: none
-- Data outputs: `monitor`
+- Data inputs: `video`
+- Data outputs: `flow`, `monitor`
 - Commands: none
 
 ### Service State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `inputShmName` | `rw` | `true` | `true` | `string` | Input SHM name (e.g. shm.xxx.video). |
 | `computeEveryNFrames` | `rw` | `true` | `false` | `integer / default=2` | Compute flow once per N new frames. |
-| `flowShmName` | `ro` | `true` | `true` | `string` | Output SHM name for UV flow field. |
-| `flowShmFormat` | `ro` | `true` | `false` | `string` | Flow payload format. Fixed to flow2_f16. |
+| `flowFormat` | `ro` | `true` | `false` | `string / enum[flow2_f16]` | Flow payload format. Fixed to flow2_f16. |
+| `flowFrameSchemaVersion` | `ro` | `true` | `false` | `integer / default=1` | Output flow frame schema version. |
 | `computeScale` | `rw` | `true` | `false` | `number / default=0.5` | Farneback compute scale; output flow stays at compute scale. |
+| `flowOutputScaleX` | `ro` | `true` | `false` | `number` | Output flow width / source width. |
+| `flowOutputScaleY` | `ro` | `true` | `false` | `number` | Output flow height / source height. |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
 ### Key Fields That Matter
 
-- `inputShmName` (Input Video SHM, `rw`): Input SHM name (e.g. shm.xxx.video). Schema: `string`.
 - `computeEveryNFrames` (Compute Every N Frames, `rw`): Compute flow once per N new frames. Schema: `integer / default=2`.
-- `flowShmName` (Flow SHM Name, `ro`): Output SHM name for UV flow field. Schema: `string`.
-- `flowShmFormat` (Flow SHM Format, `ro`): Flow payload format. Fixed to flow2_f16. Schema: `string`.
+- `flowFormat` (Flow Format, `ro`): Flow payload format. Fixed to flow2_f16. Schema: `string / enum[flow2_f16]`.
+- `flowFrameSchemaVersion` (Flow Frame Schema, `ro`): Output flow frame schema version. Schema: `integer / default=1`.
 - `computeScale` (Compute Scale, `rw`): Farneback compute scale; output flow stays at compute scale. Schema: `number / default=0.5`.
+- `flowOutputScaleX` (Flow Output Scale X, `ro`): Output flow width / source width. Schema: `number`.
+- `flowOutputScaleY` (Flow Output Scale Y, `ro`): Output flow height / source height. Schema: `number`.
 - `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 
@@ -71,12 +73,15 @@ _None_
 
 ### Service Data Input Ports
 
-_None_
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `video` | `true` | `true` | `object{format, frameId, height, pitch, ...}` | Input video frame stream. |
 
 ### Service Data Output Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
+| `flow` | `true` | `true` | `object{format, frameId, height, pitch, ...}` | Dense optical-flow frame stream. |
 | `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators

@@ -230,6 +230,17 @@ class DataIOBus(Protocol):
 
     async def pull_data(self, node_id: str, port: str, *, ctx_id: str | int | None = None) -> Any: ...
 
+    def data_input_zenoh_key(self, node_id: str, port: str) -> str | None: ...
+
+
+@runtime_checkable
+class RuntimeGraphBus(Protocol):
+    """
+    Runtime graph snapshot visibility for node-side startup gating.
+    """
+
+    def has_rungraph(self) -> bool: ...
+
 
 @runtime_checkable
 class ExecIOBus(Protocol):
@@ -273,7 +284,7 @@ class MonitorErrorBus(Protocol):
 
 
 @runtime_checkable
-class NodeBus(StateIOBus, DataIOBus, ExecIOBus, MonitorErrorBus, BusActive, Protocol):
+class NodeBus(StateIOBus, DataIOBus, RuntimeGraphBus, ExecIOBus, MonitorErrorBus, BusActive, Protocol):
     """
     Composition of bus capabilities used by `RuntimeNode`.
     """

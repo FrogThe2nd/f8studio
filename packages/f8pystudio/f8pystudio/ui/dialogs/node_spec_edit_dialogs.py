@@ -4,6 +4,7 @@ from typing import Any, Callable
 
 import msgspec
 from f8pysdk.specs import (
+    F8DataPortPayloadKind,
     F8DataPortSpec,
     F8StateAccess,
     F8StateSpec,
@@ -11,6 +12,8 @@ from f8pysdk.specs import (
     can_edit_state_field_required,
     can_edit_state_field_value_schema,
     can_rename_state_field,
+    data_port_payload_kind,
+    data_port_stream_delivery,
 )
 from f8pysdk.codec import copy_model
 from qtpy import QtCore, QtGui, QtWidgets
@@ -292,6 +295,8 @@ class _F8EditDataPortDialog(QtWidgets.QDialog):
         self._ui_only = bool(ui_only)
         self._lock_identity_fields = bool(lock_identity_fields)
         self._read_only = bool(read_only)
+        self._base_port = port
+        self._payload_kind = data_port_payload_kind(port)
         self._schema = port.valueSchema or schema_from_json_obj({"type": "any"})
 
         self._name = QtWidgets.QLineEdit(str(port.name or ""))
@@ -302,11 +307,14 @@ class _F8EditDataPortDialog(QtWidgets.QDialog):
         self._show_on_node.setChecked(bool(port.showOnNode))
         self._desc = QtWidgets.QPlainTextEdit(str(port.description or ""))
 
+        self._payload_summary = QtWidgets.QLabel(self._payload_summary_text(port))
+        self._payload_summary.setStyleSheet(label_qss(color=studio_dark_theme().palette.text_muted))
         self._schema_summary = QtWidgets.QLabel("")
         self._schema_summary.setStyleSheet(label_qss(color=studio_dark_theme().palette.text_muted))
         self._refresh_schema_summary()
 
-        self._schema_btn = QtWidgets.QPushButton("View Schema..." if self._read_only else "Edit Schema...")
+        schema_read_only = bool(self._read_only or self._payload_kind != F8DataPortPayloadKind.json)
+        self._schema_btn = QtWidgets.QPushButton("View Schema..." if schema_read_only else "Edit Schema...")
         self._schema_btn.clicked.connect(self._edit_schema)
 
         form = QtWidgets.QFormLayout()
@@ -314,11 +322,13 @@ class _F8EditDataPortDialog(QtWidgets.QDialog):
         form.addRow("Required", self._required)
         form.addRow("Show On Node", self._show_on_node)
         form.addRow("Description", self._desc)
+        form.addRow("Payload", self._payload_summary)
 
         schema_row = QtWidgets.QHBoxLayout()
         schema_row.addWidget(self._schema_summary, 1)
         schema_row.addWidget(self._schema_btn)
-        form.addRow("valueSchema", schema_row)
+        schema_label = "metadataSchema" if self._payload_kind != F8DataPortPayloadKind.json else "valueSchema"
+        form.addRow(schema_label, schema_row)
 
         self._buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
         self._buttons.accepted.connect(self.accept)
@@ -342,13 +352,33 @@ class _F8EditDataPortDialog(QtWidgets.QDialog):
         t = _schema_type(self._schema)
         self._schema_summary.setText(t or "unknown")
 
+    def _payload_summary_text(self, port: F8DataPortSpec) -> str:
+        kind = data_port_payload_kind(port).value
+        delivery = data_port_stream_delivery(port).value
+        payload = port.payload
+        formats_text = ""
+        if payload is not None and not isinstance(payload, msgspec.UnsetType):
+            formats = payload.formats
+            if formats is not None and not isinstance(formats, msgspec.UnsetType):
+                values = [str(item) for item in list(formats or []) if str(item or "").strip()]
+                if values:
+                    formats_text = " | " + ", ".join(values)
+        if kind == F8DataPortPayloadKind.json.value:
+            return f"json | {delivery}"
+        return f"{kind} stream | {delivery}{formats_text}"
+
     def _edit_schema(self) -> None:
+        schema_read_only = bool(self._ui_only or self._read_only or self._payload_kind != F8DataPortPayloadKind.json)
         dialog_type = SchemaBuilderDialog
         dlg = dialog_type(
             self,
-            title="View valueSchema" if self._read_only else "Edit valueSchema",
+            title=(
+                f"View {self._payload_kind.value} metadataSchema"
+                if self._payload_kind != F8DataPortPayloadKind.json
+                else ("View valueSchema" if schema_read_only else "Edit valueSchema")
+            ),
             schema=self._schema,
-            read_only=bool(self._ui_only or self._read_only),
+            read_only=schema_read_only,
         )
         if dlg.exec_() != QtWidgets.QDialog.Accepted:
             return
@@ -364,7 +394,20 @@ class _F8EditDataPortDialog(QtWidgets.QDialog):
         required = bool(self._required.isChecked())
         show_on_node = bool(self._show_on_node.isChecked())
         desc = str(self._desc.toPlainText() or "").strip() or msgspec.UNSET
-        port = F8DataPortSpec(name=name, required=required, description=desc, valueSchema=self._schema)
+        updates: dict[str, object] = {
+            "name": name,
+            "required": required,
+            "description": desc,
+            "valueSchema": self._schema,
+            "showOnNode": bool(show_on_node),
+        }
+        payload = self._base_port.payload
+        if payload is not None and not isinstance(payload, msgspec.UnsetType):
+            if self._payload_kind == F8DataPortPayloadKind.json:
+                updates["payload"] = copy_model(payload, update={"valueSchema": self._schema})
+            else:
+                updates["payload"] = copy_model(payload, update={"metadataSchema": self._schema})
+        port = copy_model(self._base_port, update=updates)
         try:
             return copy_model(port, update={"showOnNode": bool(show_on_node)})
         except Exception:

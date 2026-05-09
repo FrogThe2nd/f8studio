@@ -37,36 +37,38 @@ def _python_files(root: Path) -> list[Path]:
     return sorted(path for path in root.rglob("*.py") if "__pycache__" not in path.parts)
 
 
-def _annotate_parents(tree: ast.AST) -> None:
+def _parent_map(tree: ast.AST) -> dict[ast.AST, ast.AST]:
+    parents: dict[ast.AST, ast.AST] = {}
     for parent in ast.walk(tree):
         for child in ast.iter_child_nodes(parent):
-            setattr(child, "_parent", parent)
+            parents[child] = parent
+    return parents
 
 
-def _is_type_checking_only(node: ast.AST) -> bool:
-    parent = getattr(node, "_parent", None)
+def _is_type_checking_only(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> bool:
+    parent = parents.get(node)
     while parent is not None:
         if isinstance(parent, ast.If):
             test = parent.test
             if isinstance(test, ast.Name) and test.id == "TYPE_CHECKING":
                 return True
-        parent = getattr(parent, "_parent", None)
+        parent = parents.get(parent)
     return False
 
 
 def _import_targets(path: Path) -> set[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    _annotate_parents(tree)
+    parents = _parent_map(tree)
     package_parts = _package_module_for_path(path)[:-1]
     targets: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            if _is_type_checking_only(node):
+            if _is_type_checking_only(node, parents):
                 continue
             for alias in node.names:
                 targets.add(str(alias.name))
         elif isinstance(node, ast.ImportFrom):
-            if _is_type_checking_only(node):
+            if _is_type_checking_only(node, parents):
                 continue
             if node.level:
                 keep = len(package_parts) - (node.level - 1)
@@ -90,71 +92,6 @@ def test_root_python_files_are_only_entrypoints() -> None:
 def test_nodegraph_init_has_no_dynamic_getattr_export() -> None:
     source = (PACKAGE_ROOT / "nodegraph" / "__init__.py").read_text(encoding="utf-8")
     assert "__getattr__" not in source
-
-
-def test_service_basenode_imports_concern_mixins_instead_of_helper_wrappers() -> None:
-    imports = _import_targets(PACKAGE_ROOT / "nodegraph" / "service_basenode.py")
-    required_targets = {
-        "f8pystudio.nodegraph.service_node_graph_mixin",
-        "f8pystudio.nodegraph.service_node_layout_mixin",
-        "f8pystudio.nodegraph.service_node_ports_mixin",
-        "f8pystudio.nodegraph.service_node_toolbar_mixin",
-        "f8pystudio.nodegraph.items.service_node_painting",
-    }
-    assert required_targets <= imports
-    removed_targets = {
-        "f8pystudio.nodegraph.items.service_node_graph_hooks",
-        "f8pystudio.nodegraph.items.service_node_layout",
-        "f8pystudio.nodegraph.items.service_node_ports",
-    }
-    assert not (removed_targets & imports)
-
-
-def test_ai_assist_sidebar_imports_mixins_instead_of_internal_helper_modules() -> None:
-    imports = _import_targets(PACKAGE_ROOT / "ui" / "mainwin" / "ai_assist_sidebar.py")
-    required_targets = {
-        "f8pystudio.ui.mainwin.ai_assist_sidebar_graph_context_mixin",
-        "f8pystudio.ui.mainwin.ai_assist_sidebar_toolbar_mixin",
-    }
-    assert required_targets <= imports
-    removed_targets = {
-        "f8pystudio.ui.mainwin.ai_assist_sidebar_graph_context",
-        "f8pystudio.ui.mainwin.ai_assist_sidebar_toolbar",
-    }
-    assert not (removed_targets & imports)
-
-
-def test_schema_builder_dialog_imports_concern_mixins() -> None:
-    imports = _import_targets(PACKAGE_ROOT / "ui" / "dialogs" / "schema_builder_dialog.py")
-    required_targets = {
-        "f8pystudio.ui.dialogs.schema_builder_common",
-        "f8pystudio.ui.dialogs.schema_builder_form_mixin",
-        "f8pystudio.ui.dialogs.schema_builder_sync_mixin",
-        "f8pystudio.ui.dialogs.schema_builder_tree_mixin",
-    }
-    assert required_targets <= imports
-
-
-def test_node_library_widget_imports_tree_mixins() -> None:
-    imports = _import_targets(PACKAGE_ROOT / "ui" / "mainwin" / "node_library_widget.py")
-    required_targets = {
-        "f8pystudio.ui.mainwin.node_library_tree_build_mixin",
-        "f8pystudio.ui.mainwin.node_library_tree_interaction_mixin",
-        "f8pystudio.ui.mainwin.node_library_tree_state_mixin",
-    }
-    assert required_targets <= imports
-
-
-def test_node_property_panel_editor_imports_selection_and_sync_mixins() -> None:
-    imports = _import_targets(PACKAGE_ROOT / "ui" / "widgets" / "node_property_panel" / "editor.py")
-    required_targets = {
-        "f8pystudio.ui.widgets.node_property_panel.editor_build_mixin",
-        "f8pystudio.ui.widgets.node_property_panel.editor_view_state_mixin",
-        "f8pystudio.ui.widgets.node_property_panel.graph_sync_mixin",
-        "f8pystudio.ui.widgets.node_property_panel.selection_mixin",
-        "f8pystudio.ui.widgets.node_property_panel.state_fields_mixin",
-    }
-    assert required_targets <= imports
 
 
 def test_lightweight_core_packages_avoid_runtime_qt_imports() -> None:
@@ -228,12 +165,6 @@ def test_assets_catalog_browsers_share_explicit_state_factory() -> None:
         assert required_targets <= imports
 
 
-def test_assets_catalog_refresh_queue_mixin_uses_worker_mixin() -> None:
-    imports = _import_targets(PACKAGE_ROOT / "assets" / "ui" / "catalog_refresh_queue_mixin.py")
-    assert "f8pystudio.assets.ui.catalog_auth_state_mixin" in imports
-    assert "f8pystudio.assets.ui.catalog_remote_refresh_worker_mixin" in imports
-
-
 def test_assets_forbid_private_chain_shortcuts_and_dynamic_attribute_probing() -> None:
     forbidden_patterns = (
         "_sync_client._catalog_service",
@@ -298,10 +229,6 @@ def test_debug_launchers_live_under_app_package() -> None:
     app_root = PACKAGE_ROOT / "app"
     assert debug_files, "Expected at least one app debug launcher"
     assert all(path.parent == app_root for path in debug_files), [str(path) for path in debug_files]
-
-
-def test_unused_runtime_export_module_is_removed() -> None:
-    assert not (PACKAGE_ROOT / "nodegraph" / "runtime_export.py").exists()
 
 
 def test_app_debug_launchers_import() -> None:

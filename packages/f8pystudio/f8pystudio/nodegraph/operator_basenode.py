@@ -18,9 +18,9 @@ from NodeGraphQt.constants import (
 
 from .port_painter import (
     COMMAND_PORT_COLOR,
-    DATA_PORT_COLOR,
     EXEC_PORT_COLOR,
     STATE_PORT_COLOR,
+    data_port_color,
     draw_exec_port,
     draw_square_port,
 )
@@ -85,7 +85,7 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
             self.add_input(
                 f"[D]{p.name}",
                 multi_input=False,
-                color=DATA_PORT_COLOR,
+                color=data_port_color(p),
             )
 
         for p in self.ordered_data_port_specs(is_in=False):
@@ -94,7 +94,7 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
             self.add_output(
                 f"{p.name}[D]",
                 multi_output=True,
-                color=DATA_PORT_COLOR,
+                color=data_port_color(p),
             )
 
     def _build_state_port(self):
@@ -315,7 +315,7 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
                 except (AttributeError, RuntimeError, TypeError):
                     pass
             if show_on_node:
-                desired_inputs[port_name] = {"color": DATA_PORT_COLOR, "multi_input": False}
+                desired_inputs[port_name] = {"color": data_port_color(p), "multi_input": False}
 
         for p in list(self.ordered_data_port_specs(is_in=False) or []):
             try:
@@ -333,7 +333,7 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
                 except (AttributeError, RuntimeError, TypeError):
                     pass
             if show_on_node:
-                desired_outputs[port_name] = {"color": DATA_PORT_COLOR, "multi_output": True}
+                desired_outputs[port_name] = {"color": data_port_color(p), "multi_output": True}
 
         for s in list(self.ordered_state_field_specs() or []):
             name = str(s.name or "").strip()
@@ -619,4 +619,3 @@ class F8StudioOperatorNodeItem(F8StudioServiceNodeItem):
 
     def _ensure_inline_command_rows(self) -> None:  # type: ignore[override]
         _ensure_inline_command_rows_impl(self)
-

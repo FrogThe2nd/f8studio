@@ -173,7 +173,8 @@ def _build_command_row_widget(
         enabled=enabled,
         disabled_reason=disabled_reason,
     )
-    button.pressed.connect(lambda _checked=False, _c=command: _on_command_pressed(node_item, _c))
+    button.setAutoRepeat(False)
+    button.clicked.connect(lambda _checked=False, _c=command: _on_command_clicked(node_item, _c))
 
     panel_lay = QtWidgets.QVBoxLayout(panel)
     panel_lay.setContentsMargins(0, 0, 0, 0)
@@ -316,7 +317,7 @@ def _restore_selected_node_ids(node_item: Any, ids: list[str]) -> None:
             continue
 
 
-def _on_command_pressed(node_item: Any, command: Any) -> None:
+def _on_command_clicked(node_item: Any, command: Any) -> None:
     selected_ids = _snapshot_selected_node_ids(node_item)
     node_item._invoke_command(command)
     QtCore.QTimer.singleShot(0, lambda: _restore_selected_node_ids(node_item, selected_ids))

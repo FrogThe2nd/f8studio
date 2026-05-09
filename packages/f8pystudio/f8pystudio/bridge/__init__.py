@@ -1,13 +1,16 @@
 from .async_runtime import AsyncRuntimeThread
-from .command_client import CommandGateway, CommandRequest, CommandResponse, NatsCommandGateway
+from .command_client import (
+    CommandGateway,
+    CommandRequest,
+    CommandResponse,
+    RuntimeCommandGateway,
+    RuntimeCommandGatewayConfig,
+)
 from .facade_qt import BridgeFacadeContext
 from .json_codec import coerce_json_dict, coerce_json_value
 from .managed_service_inventory import ManagedServiceInventory, collect_managed_service_inventory
-from .nats_lifecycle import (
-    NatsConnectionManager,
-    NatsSingletonGuardResult,
-    ensure_nats_server_owned_pid,
-    stop_owned_nats_server,
+from .runtime_lifecycle import (
+    RuntimeSingletonGuardResult,
 )
 from .process_lifecycle import (
     LocalServiceProcessGateway,
@@ -16,7 +19,14 @@ from .process_lifecycle import (
     StopServiceRequest,
     StopServiceResult,
 )
-from .process_manager import ServiceProcessConfig, ServiceProcessManager
+from .process_manager import (
+    ServiceProcessConfig,
+    ServiceProcessManager,
+    ServiceProcessMatch,
+    ServiceProcessTerminateResult,
+    find_service_processes_by_service_id,
+    terminate_service_processes_by_service_id,
+)
 from .remote_state_sync import ApplyWatchTargetsRequest, RemoteStateGateway, RemoteStateGatewayAdapter
 from .remote_state_watcher import RemoteStateWatcher, WatchTarget
 from .runtime_session_controller import RuntimeSessionControllerMixin
@@ -25,11 +35,11 @@ from .deploy_state_controller import DeployStateControllerMixin
 from .remote_command_controller import RemoteCommandControllerMixin
 from .service_status_store import ServiceStatusStore
 from .rungraph_deployer import (
-    NatsRungraphGateway,
     RungraphDeployConfig,
     RungraphDeployRequest,
     RungraphDeployResult,
     RungraphGateway,
+    RuntimeRungraphGateway,
 )
 from .rungraph_deploy_flow import RungraphDeployFlow, pick_compiled
 from .runtime_graph_projection import (
@@ -43,7 +53,8 @@ from .studio_runtime_flow import (
     install_studio_runtime_graph,
     wait_for_studio_runtime_ready,
 )
-from .studio_bridge import PyStudioServiceBridge, PyStudioServiceBridgeConfig, STARTUP_GATE_TIMEOUT_S
+from .runtime_config import PyStudioServiceBridgeConfig
+from .studio_bridge import PyStudioServiceBridge, STARTUP_GATE_TIMEOUT_S
 from .studio_service import PyStudioService, PyStudioServiceConfig
 from .service_endpoint_client import (
     SetStateRequestResult,
@@ -66,10 +77,7 @@ __all__ = [
     "PyStudioServiceBridgeConfig",
     "PyStudioServiceConfig",
     "ManagedServiceInventory",
-    "NatsCommandGateway",
-    "NatsConnectionManager",
-    "NatsRungraphGateway",
-    "NatsSingletonGuardResult",
+    "RuntimeSingletonGuardResult",
     "ApplyWatchTargetsRequest",
     "RemoteStateGateway",
     "RemoteStateGatewayAdapter",
@@ -79,10 +87,15 @@ __all__ = [
     "RungraphDeployRequest",
     "RungraphDeployResult",
     "RungraphGateway",
+    "RuntimeCommandGateway",
+    "RuntimeCommandGatewayConfig",
+    "RuntimeRungraphGateway",
     "RuntimeSessionControllerMixin",
     "ServiceLifecycleControllerMixin",
     "ServiceProcessConfig",
     "ServiceProcessManager",
+    "ServiceProcessMatch",
+    "ServiceProcessTerminateResult",
     "DeployStateControllerMixin",
     "RemoteCommandControllerMixin",
     "ServiceStatusStore",
@@ -100,6 +113,8 @@ __all__ = [
     "coerce_json_value",
     "collect_managed_service_inventory",
     "dedupe_fields",
+    "find_service_processes_by_service_id",
+    "terminate_service_processes_by_service_id",
     "message_data_bytes",
     "request_service_status",
     "request_service_terminate",
@@ -109,6 +124,4 @@ __all__ = [
     "install_studio_runtime_graph",
     "apply_remote_state_watches_if_changed",
     "pick_compiled",
-    "ensure_nats_server_owned_pid",
-    "stop_owned_nats_server",
 ]

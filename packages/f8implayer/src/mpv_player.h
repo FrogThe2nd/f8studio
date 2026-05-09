@@ -17,17 +17,13 @@ extern "C" {
 #include <mpv/render_gl.h>
 }
 
-namespace f8::cppsdk {
-class VideoSharedMemorySink;
-}
-
 namespace f8::implayer {
 
-using VideoSharedMemorySink = ::f8::cppsdk::VideoSharedMemorySink;
+class VideoFrameSink;
 
- class MpvPlayer {
-  public:
-  enum class ShmViewMode {
+class MpvPlayer {
+ public:
+  enum class FrameExportViewMode {
     FullFrame = 0,
     SbsLeft = 1,
     SbsRight = 2,
@@ -45,22 +41,22 @@ using VideoSharedMemorySink = ::f8::cppsdk::VideoSharedMemorySink;
     std::uint64_t stutterCount = 0;
     double lastStutterMs = 0.0;
 
-    std::uint64_t shmWritten = 0;
-    std::uint64_t shmSkipNoSink = 0;
-    std::uint64_t shmSkipInterval = 0;
-    std::uint64_t shmSkipTarget = 0;
-    std::uint64_t shmSkipSinkConfig = 0;
-    std::uint64_t shmSkipReadbackBusy = 0;
-    std::uint64_t shmReadbacksIssued = 0;
-    std::uint64_t shmReadbacksMapped = 0;
+    std::uint64_t framesExported = 0;
+    std::uint64_t exportSkipNoSink = 0;
+    std::uint64_t exportSkipInterval = 0;
+    std::uint64_t exportSkipTarget = 0;
+    std::uint64_t exportSkipSinkConfig = 0;
+    std::uint64_t exportSkipReadbackBusy = 0;
+    std::uint64_t exportReadbacksIssued = 0;
+    std::uint64_t exportReadbacksMapped = 0;
 
-    unsigned lastShmWidth = 0;
-    unsigned lastShmHeight = 0;
-    double lastShmIssueMs = 0.0;
-    double lastShmMapWriteMs = 0.0;
-    double emaShmMapWriteMs = 0.0;
-    double shmSinceLastWriteMs = 0.0;
-    std::uint64_t lastShmWriteSteadyNs = 0;
+    unsigned lastExportWidth = 0;
+    unsigned lastExportHeight = 0;
+    double lastExportIssueMs = 0.0;
+    double lastExportMapWriteMs = 0.0;
+    double emaExportMapWriteMs = 0.0;
+    double exportSinceLastWriteMs = 0.0;
+    std::uint64_t lastExportWriteSteadyNs = 0;
 
     std::uint64_t estVideoTargetBytes = 0;
     std::uint64_t estDownsampleTargetBytes = 0;
@@ -70,9 +66,9 @@ using VideoSharedMemorySink = ::f8::cppsdk::VideoSharedMemorySink;
 
   struct VideoConfig {
     bool offline = false;
-    std::uint32_t videoShmMaxWidth = 1920;
-    std::uint32_t videoShmMaxHeight = 1080;
-    double videoShmMaxFps = 30.0;
+    std::uint32_t videoOutputMaxWidth = 1920;
+    std::uint32_t videoOutputMaxHeight = 1080;
+    double videoOutputMaxFps = 30.0;
   };
 
   using TimeCallback = std::function<void(double positionSeconds, double durationSeconds)>;
@@ -97,13 +93,13 @@ using VideoSharedMemorySink = ::f8::cppsdk::VideoSharedMemorySink;
   bool setCookiesFile(const std::string& cookies_file);
   void resetVideoOutput();
   void resetPlaybackState();
-  void setSharedMemorySink(std::shared_ptr<VideoSharedMemorySink> sink);
-  void setVideoShmMaxSize(std::uint32_t max_width, std::uint32_t max_height);
-  void setVideoShmMaxFps(double max_fps);
-  void setShmViewMode(ShmViewMode mode);
-  std::uint32_t videoShmMaxWidth() const;
-  std::uint32_t videoShmMaxHeight() const;
-  double videoShmMaxFps() const;
+  void setVideoFrameSink(std::shared_ptr<VideoFrameSink> sink);
+  void setVideoOutputMaxSize(std::uint32_t max_width, std::uint32_t max_height);
+  void setVideoOutputMaxFps(double max_fps);
+  void setFrameExportViewMode(FrameExportViewMode mode);
+  std::uint32_t videoOutputMaxWidth() const;
+  std::uint32_t videoOutputMaxHeight() const;
+  double videoOutputMaxFps() const;
 
   bool initializeGl();
   void shutdownGl();
@@ -133,24 +129,24 @@ using VideoSharedMemorySink = ::f8::cppsdk::VideoSharedMemorySink;
   void notifyEofReachedOnce();
   void handleVideoReconfig();
   std::pair<unsigned, unsigned> targetDimensions(unsigned width, unsigned height) const;
-  std::shared_ptr<VideoSharedMemorySink> sharedSink() const;
+  std::shared_ptr<VideoFrameSink> sharedSink() const;
   bool ensureVideoTargets(unsigned width, unsigned height);
   bool ensureDownsampleTargets(unsigned width, unsigned height);
   bool ensureReadbackPbos(std::size_t bytes);
   void destroyReadbackPbos();
-  bool copyFrameToSharedMemory(unsigned width, unsigned height, double& copyMs);
-  bool shouldCopyToSharedMemory(std::chrono::steady_clock::time_point now);
+  bool copyFrameToSink(unsigned width, unsigned height, double& copyMs);
+  bool shouldExportFrame(std::chrono::steady_clock::time_point now);
 
   static void HandleMpvWakeup(void* userdata);
   static void HandleRenderUpdate(void* userdata);
   static void* GetProcAddress(void* ctx, const char* name);
 
   VideoConfig config_;
-  std::atomic<std::uint32_t> shm_max_width_{0};
-  std::atomic<std::uint32_t> shm_max_height_{0};
-  std::atomic<double> shm_max_fps_{0.0};
-  std::atomic<double> shm_frame_interval_s_{0.0};
-  std::atomic<int> shm_view_mode_{static_cast<int>(ShmViewMode::FullFrame)};
+  std::atomic<std::uint32_t> export_max_width_{0};
+  std::atomic<std::uint32_t> export_max_height_{0};
+  std::atomic<double> export_max_fps_{0.0};
+  std::atomic<double> export_frame_interval_s_{0.0};
+  std::atomic<int> export_view_mode_{static_cast<int>(FrameExportViewMode::FullFrame)};
   TimeCallback timeCallback_;
   PlayingCallback playingCallback_;
   FinishedCallback finishedCallback_;
@@ -166,13 +162,13 @@ using VideoSharedMemorySink = ::f8::cppsdk::VideoSharedMemorySink;
   bool eventNotified_ = false;
 
   mutable std::mutex sinkMutex_;
-  std::shared_ptr<VideoSharedMemorySink> sink_;
+  std::shared_ptr<VideoFrameSink> sink_;
 
-  // SHM rate-limiter state (render thread).
-  mutable std::mutex shmRateMutex_;
-  bool shm_due_initialized_ = false;
-  std::chrono::steady_clock::time_point shm_next_due_{};
-  std::atomic<bool> shm_rate_reset_{false};
+  // Frame export rate-limiter state (render thread).
+  mutable std::mutex exportRateMutex_;
+  bool export_due_initialized_ = false;
+  std::chrono::steady_clock::time_point export_next_due_{};
+  std::atomic<bool> export_rate_reset_{false};
 
   std::atomic<unsigned> videoWidth_{0};
   std::atomic<unsigned> videoHeight_{0};

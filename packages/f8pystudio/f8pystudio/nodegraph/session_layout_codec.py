@@ -38,6 +38,9 @@ logger = logging.getLogger(__name__)
 
 
 class SessionLayoutCodecMixin:
+    def _emit_session_loaded(self) -> None:
+        return None
+
     def _deserialize_session_fast(self, layout_data: dict) -> None:
         def _convert_last_list_to_set(data_obj: dict[str, Any]) -> None:
             for key, value in data_obj.items():
@@ -951,3 +954,4 @@ class SessionLayoutCodecMixin:
             QtCore.QTimer.singleShot(0, self._refresh_all_inline_state_read_only)
             if isinstance(viewer, F8StudioNodeViewer):
                 QtCore.QTimer.singleShot(0, lambda: viewer.refresh_auto_proxy_mode(force=True))
+        self._emit_session_loaded()

@@ -4,7 +4,8 @@ Python engine-side runtime service (`serviceClass=f8.pyengine`).
 
 Entry wiring lives in `f8pyengine/pyengine_service.py` and is exposed via `f8pyengine/main.py`:
 - `python -m f8pyengine.main --describe`
-- `python -m f8pyengine.main --service-id engine1 --nats-url nats://127.0.0.1:4222`
+- `python -m f8pyengine.main --service-id engine1`
+- Local in-memory tests: `python -m f8pyengine.main --service-id engine1 --bus-backend mem`
 
 ### Lovense mock input
 

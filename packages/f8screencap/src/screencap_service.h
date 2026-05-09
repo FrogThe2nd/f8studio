@@ -12,14 +12,14 @@
 
 #include "f8cppsdk/capabilities.h"
 #include "f8cppsdk/service_bus.h"
-#include "f8cppsdk/shm/video.h"
 
 namespace f8::cppsdk {
-class VideoSharedMemorySink;
+class ZenohLatestVideoFramePublisher;
 }
 
 namespace f8::screencap {
 
+class CaptureFrameSink;
 class Win32WgcCapture;
 class LinuxX11Capture;
 
@@ -38,10 +38,7 @@ class ScreenCapService final : public f8::cppsdk::LifecycleNode,
   struct Config {
     std::string service_id;
     std::string service_class = "f8.screencap";
-    std::string nats_url = "nats://127.0.0.1:4222";
-
-    std::size_t video_shm_bytes = f8::cppsdk::shm::kDefaultVideoShmBytes;
-    std::uint32_t video_shm_slots = f8::cppsdk::shm::kDefaultVideoShmSlots;
+    f8::cppsdk::RuntimeBackendConfig runtime_backend;
 
     std::string mode = "display";  // display|window|region
     double fps = 30.0;
@@ -91,7 +88,9 @@ class ScreenCapService final : public f8::cppsdk::LifecycleNode,
   std::atomic<bool> armed_{false};
 
   std::unique_ptr<f8::cppsdk::ServiceBus> bus_;
-  std::shared_ptr<f8::cppsdk::VideoSharedMemorySink> shm_;
+  std::shared_ptr<CaptureFrameSink> frame_sink_;
+  std::shared_ptr<f8::cppsdk::ZenohLatestVideoFramePublisher> zenoh_video_publisher_;
+  std::string zenoh_video_key_;
   std::unique_ptr<CaptureBackend> capture_;
 
   mutable std::mutex state_mu_;

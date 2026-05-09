@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
-from typing import Any
+from typing import Any, cast
 
 from f8pysdk.specs import (
     F8OperatorSchemaVersion,
     F8OperatorSpec,
+    F8RuntimeGraph,
     F8RuntimeNode,
     F8StateAccess,
     F8StateSpec,
@@ -14,11 +16,12 @@ from f8pysdk.specs import (
     integer_schema,
     number_schema,
     string_schema,
+    video_frame_port,
 )
-from f8pysdk.nats_naming import ensure_token
+from f8pysdk.capabilities import RungraphHookBus
+from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import OperatorNode
 from f8pysdk.registry import Registry
-from f8pysdk.shm import video_shm_name
 
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
 from f8pystudio.contracts.ui_commands import emit_ui_command
@@ -27,19 +30,15 @@ from .categories import PALETTE_CATEGORY_VIZ
 
 OPERATOR_CLASS = "f8.viz.video"
 RENDERER_CLASS = "viz_video"
-
-
-def _default_video_shm_name(service_id: str) -> str:
-    s = str(service_id or "").strip()
-    return video_shm_name(s) if s else ""
+log = logging.getLogger(__name__)
 
 
 class VizVideoRuntimeNode(OperatorNode):
     """
-    Studio-only visualization node: view a Video SHM (BGRA32) in a Qt widget.
+    Studio-only visualization node: view Zenoh latest-frame video in a Qt widget.
 
-    This runtime node only pushes config to the UI layer; the Qt widget reads
-    shared memory directly (avoids pushing frame payloads through UiCommand).
+    This runtime node only pushes config to the UI layer; the Qt widget owns
+    the selected latest-frame reader to avoid pushing frame payloads through UiCommand.
     """
 
     SPEC = F8OperatorSpec(
@@ -49,9 +48,25 @@ class VizVideoRuntimeNode(OperatorNode):
         operatorClass=OPERATOR_CLASS,
         version="0.0.1",
         label="Video Viz",
-        description="Display frames from a VideoSHM region (BGRA32).",
-        tags=["ui", "shm", "video", "viewer"],
-        dataInPorts=[],
+        description="Display frames from Zenoh latest-frame video streams.",
+        tags=["ui", "zenoh", "video", "viewer"],
+        dataInPorts=[
+            video_frame_port(
+                name="video",
+                description="Input video frame stream.",
+                required=True,
+            ),
+            video_frame_port(
+                name="flow",
+                description="Optional dense optical-flow frame stream.",
+                required=False,
+            ),
+            video_frame_port(
+                name="scalar",
+                description="Optional scalar metric frame stream.",
+                required=False,
+            ),
+        ],
         dataOutPorts=[],
         rendererClass=RENDERER_CLASS,
         stateFields=[
@@ -65,24 +80,6 @@ class VizVideoRuntimeNode(OperatorNode):
                 showOnNode=False,
             ),
             F8StateSpec(
-                name="serviceId",
-                label="Service Id",
-                description="If set and shmName is empty, uses shm.<serviceId>.video",
-                valueSchema=string_schema(default=""),
-                access=F8StateAccess.rw,
-                required=True,
-                showOnNode=False,
-            ),
-            F8StateSpec(
-                name="shmName",
-                label="SHM Name",
-                description="Video SHM mapping name (e.g. shm.implayer.video). Overrides serviceId.",
-                valueSchema=string_schema(default=""),
-                access=F8StateAccess.rw,
-                required=True,
-                showOnNode=True,
-            ),
-            F8StateSpec(
                 name="throttleMs",
                 label="Refresh (ms)",
                 description="UI refresh interval in milliseconds (0 = as fast as possible).",
@@ -90,15 +87,6 @@ class VizVideoRuntimeNode(OperatorNode):
                 access=F8StateAccess.rw,
                 required=True,
                 showOnNode=False,
-            ),
-            F8StateSpec(
-                name="flowShmName",
-                label="Flow SHM Name",
-                description="Optional flow SHM mapping name (format flow2_f16).",
-                valueSchema=string_schema(default=""),
-                access=F8StateAccess.rw,
-                required=True,
-                showOnNode=True,
             ),
             F8StateSpec(
                 name="flowDisplayMode",
@@ -135,15 +123,6 @@ class VizVideoRuntimeNode(OperatorNode):
                 access=F8StateAccess.rw,
                 required=True,
                 showOnNode=False,
-            ),
-            F8StateSpec(
-                name="scalarShmName",
-                label="Scalar SHM Name",
-                description="Optional scalar field SHM mapping name (format scalar1_f32).",
-                valueSchema=string_schema(default=""),
-                access=F8StateAccess.rw,
-                required=True,
-                showOnNode=True,
             ),
             F8StateSpec(
                 name="scalarDisplayMode",
@@ -238,15 +217,11 @@ class VizVideoRuntimeNode(OperatorNode):
         )
         self._initial_state = dict(initial_state or {})
         self._config_loaded = False
-        self._service_id = ""
-        self._shm_name = ""
         self._throttle_ms = 33
-        self._flow_shm_name = ""
         self._flow_display_mode = "off"
         self._flow_mag_scale = 20.0
         self._flow_stride = 12
         self._scale_mode = "native"
-        self._scalar_shm_name = ""
         self._scalar_display_mode = "off"
         self._scalar_colormap = "turbo"
         self._scalar_range_mode = "auto"
@@ -257,38 +232,50 @@ class VizVideoRuntimeNode(OperatorNode):
         self._scalar_invert = False
         self._scalar_nan_mode = "transparent"
         self._pending_task: asyncio.Task[object] | None = None
+        self._rungraph_bus: RungraphHookBus | None = None
 
     def attach(self, bus: Any) -> None:
         super().attach(bus)
+        rungraph_bus = cast(RungraphHookBus, bus)
+        rungraph_bus.register_rungraph_hook(self)
+        self._rungraph_bus = rungraph_bus
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(self._ensure_config_loaded(), name=f"pystudio:videoshm:init:{self.node_id}")
+            loop.create_task(self._ensure_config_loaded(), name=f"pystudio:video:init:{self.node_id}")
         except RuntimeError:
             pass
 
     async def close(self) -> None:
         try:
+            rungraph_bus = self._rungraph_bus
+            self._rungraph_bus = None
+            if rungraph_bus is not None:
+                rungraph_bus.unregister_rungraph_hook(self)
             t = self._pending_task
             self._pending_task = None
             if t is not None:
                 t.cancel()
                 await asyncio.gather(t, return_exceptions=True)
-        except (RuntimeError, TypeError):
-            pass
+        except (RuntimeError, TypeError, ValueError) as exc:
+            log.debug("viz video node close cleanup failed node_id=%s", self.node_id, exc_info=exc)
         emit_ui_command(self.node_id, "viz.video.detach", {}, ts_ms=int(time.time() * 1000))
+
+    async def validate_rungraph(self, graph: F8RuntimeGraph) -> None:
+        del graph
+
+    async def on_rungraph(self, graph: F8RuntimeGraph) -> None:
+        del graph
+        await self._ensure_config_loaded()
+        await self._push_config(now_ms=int(time.time() * 1000))
 
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
         f = str(field or "").strip()
         if f not in (
-            "serviceId",
-            "shmName",
             "throttleMs",
-            "flowShmName",
             "flowDisplayMode",
             "flowMagScale",
             "flowStride",
             "scaleMode",
-            "scalarShmName",
             "scalarDisplayMode",
             "scalarColormap",
             "scalarRangeMode",
@@ -301,14 +288,8 @@ class VizVideoRuntimeNode(OperatorNode):
         ):
             return
         await self._ensure_config_loaded()
-        if f == "serviceId":
-            self._service_id = str(await self._get_str_state("serviceId", default=self._service_id)).strip()
-        elif f == "shmName":
-            self._shm_name = str(await self._get_str_state("shmName", default=self._shm_name)).strip()
-        elif f == "throttleMs":
+        if f == "throttleMs":
             self._throttle_ms = await self._get_int_state("throttleMs", default=self._throttle_ms, minimum=0, maximum=60000)
-        elif f == "flowShmName":
-            self._flow_shm_name = str(await self._get_str_state("flowShmName", default=self._flow_shm_name)).strip()
         elif f == "flowDisplayMode":
             mode = str(await self._get_str_state("flowDisplayMode", default=self._flow_display_mode)).strip().lower()
             self._flow_display_mode = mode if mode in ("off", "hsv", "arrows") else "off"
@@ -319,8 +300,6 @@ class VizVideoRuntimeNode(OperatorNode):
         elif f == "scaleMode":
             mode = str(await self._get_str_state("scaleMode", default=self._scale_mode)).strip().lower()
             self._scale_mode = mode if mode in ("native", "fit") else "native"
-        elif f == "scalarShmName":
-            self._scalar_shm_name = str(await self._get_str_state("scalarShmName", default=self._scalar_shm_name)).strip()
         elif f == "scalarDisplayMode":
             mode = str(await self._get_str_state("scalarDisplayMode", default=self._scalar_display_mode)).strip().lower()
             self._scalar_display_mode = self._normalize_scalar_display_mode(mode)
@@ -368,19 +347,13 @@ class VizVideoRuntimeNode(OperatorNode):
     async def _ensure_config_loaded(self) -> None:
         if self._config_loaded:
             return
-        self._service_id = str(await self._get_str_state("serviceId", default=str(self._initial_state.get("serviceId", "")))).strip()
-        self._shm_name = str(await self._get_str_state("shmName", default=str(self._initial_state.get("shmName", "")))).strip()
         self._throttle_ms = await self._get_int_state("throttleMs", default=33, minimum=0, maximum=60000)
-        self._flow_shm_name = str(await self._get_str_state("flowShmName", default=str(self._initial_state.get("flowShmName", "")))).strip()
         flow_mode = str(await self._get_str_state("flowDisplayMode", default=str(self._initial_state.get("flowDisplayMode", "off")))).strip().lower()
         self._flow_display_mode = flow_mode if flow_mode in ("off", "hsv", "arrows") else "off"
         self._flow_mag_scale = await self._get_float_state("flowMagScale", default=20.0, minimum=0.1, maximum=500.0)
         self._flow_stride = await self._get_int_state("flowStride", default=12, minimum=2, maximum=128)
         mode = str(await self._get_str_state("scaleMode", default=str(self._initial_state.get("scaleMode", "native")))).strip().lower()
         self._scale_mode = mode if mode in ("native", "fit") else "native"
-        self._scalar_shm_name = str(
-            await self._get_str_state("scalarShmName", default=str(self._initial_state.get("scalarShmName", "")))
-        ).strip()
         scalar_display = str(
             await self._get_str_state("scalarDisplayMode", default=str(self._initial_state.get("scalarDisplayMode", "off")))
         ).strip().lower()
@@ -425,35 +398,35 @@ class VizVideoRuntimeNode(OperatorNode):
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
-        self._pending_task = loop.create_task(self._push_config_async(now_ms), name=f"pystudio:videoshm:cfg:{self.node_id}")
+        self._pending_task = loop.create_task(self._push_config_async(now_ms), name=f"pystudio:video:cfg:{self.node_id}")
 
     async def _push_config_async(self, now_ms: int) -> None:
-        shm_name = str(self._shm_name or "").strip()
-        if not shm_name:
-            shm_name = _default_video_shm_name(self._service_id)
+        video_stream_key = str(self.input_zenoh_key("video") or "").strip()
+        flow_stream_key = str(self.input_zenoh_key("flow") or "").strip()
+        scalar_stream_key = str(self.input_zenoh_key("scalar") or "").strip()
+        payload: dict[str, object] = {
+            "videoStreamKey": video_stream_key,
+            "throttleMs": int(self._throttle_ms),
+            "flowStreamKey": flow_stream_key,
+            "flowDisplayMode": str(self._flow_display_mode or "off"),
+            "flowMagScale": float(self._flow_mag_scale),
+            "flowStride": int(self._flow_stride),
+            "scaleMode": str(self._scale_mode or "native"),
+            "scalarStreamKey": scalar_stream_key,
+            "scalarDisplayMode": self._normalize_scalar_display_mode(self._scalar_display_mode),
+            "scalarColormap": self._normalize_scalar_colormap(self._scalar_colormap),
+            "scalarRangeMode": self._normalize_scalar_range_mode(self._scalar_range_mode),
+            "scalarMin": float(self._scalar_min),
+            "scalarMax": float(self._scalar_max),
+            "scalarAutoPercentileLo": float(self._scalar_auto_percentile_lo),
+            "scalarAutoPercentileHi": float(self._scalar_auto_percentile_hi),
+            "scalarInvert": bool(self._scalar_invert),
+            "scalarNanMode": self._normalize_scalar_nan_mode(self._scalar_nan_mode),
+        }
         emit_ui_command(
             self.node_id,
             "viz.video.set",
-            {
-                "shmName": shm_name,
-                "serviceId": str(self._service_id or "").strip(),
-                "throttleMs": int(self._throttle_ms),
-                "flowShmName": str(self._flow_shm_name or "").strip(),
-                "flowDisplayMode": str(self._flow_display_mode or "off"),
-                "flowMagScale": float(self._flow_mag_scale),
-                "flowStride": int(self._flow_stride),
-                "scaleMode": str(self._scale_mode or "native"),
-                "scalarShmName": str(self._scalar_shm_name or "").strip(),
-                "scalarDisplayMode": self._normalize_scalar_display_mode(self._scalar_display_mode),
-                "scalarColormap": self._normalize_scalar_colormap(self._scalar_colormap),
-                "scalarRangeMode": self._normalize_scalar_range_mode(self._scalar_range_mode),
-                "scalarMin": float(self._scalar_min),
-                "scalarMax": float(self._scalar_max),
-                "scalarAutoPercentileLo": float(self._scalar_auto_percentile_lo),
-                "scalarAutoPercentileHi": float(self._scalar_auto_percentile_hi),
-                "scalarInvert": bool(self._scalar_invert),
-                "scalarNanMode": self._normalize_scalar_nan_mode(self._scalar_nan_mode),
-            },
+            payload,
             ts_ms=int(now_ms),
         )
 

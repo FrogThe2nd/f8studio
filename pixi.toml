@@ -42,6 +42,7 @@ f8pydl_bench = "python scripts/bench_dl_baseline.py"
 
 [feature.sdk.pypi-dependencies]
 f8pysdk = { path = "packages/f8pysdk", editable = true }
+eclipse-zenoh = ">=1.9.0"
 
 [feature.sdk.tasks]
 update_describes = "python scripts/update_static_describes.py"
@@ -63,6 +64,7 @@ pytest_studio = "python -m pytest -q packages/f8pystudio/tests"
 # checked surface incrementally as more packages are annotated and cleaned up.
 lint = "ruff check packages/f8proclauncher/f8proclauncher packages/f8pystudio/f8pystudio/global_hotkeys packages/f8pymppose/f8pymppose packages/f8pyscript/f8pyscript packages/f8pyaudiofeat/f8pyaudiofeat packages/f8pydl/f8pydl packages/f8pystudio_ext_viz_tcode/f8pystudio_ext_viz_tcode packages/f8pystudio_ext_template_match/f8pystudio_ext_template_match packages/f8pysdk/f8pysdk packages/f8pyengine/f8pyengine"
 typecheck = "basedpyright -p pyrightconfig.json"
+quality_exceptions = "python packages/f8pystudio/tools/quality/except_metrics.py packages --exclude-glob '**/tests/**' --max-broad 844 --max-silent 40"
 
 [feature.audio.pypi-dependencies]
 librosa = ">=0.11.0, <0.12"
@@ -127,6 +129,8 @@ conan = ">=2.23.0,<3"
 cmake = ">=3.30,<5"
 ninja = ">=1.13.0,<2"
 pkg-config = ">=0.29,<1"
+libzenohc = ">=1.9.0,<1.10"
+libzenohcxx = ">=1.9.0,<1.10"
 sdl3 = ">=3.2,<4"
 yt-dlp = ">=2025.8,<2027"
 
@@ -151,6 +155,7 @@ cpp_lock_refresh = "python scripts/cpp_ci.py lock-refresh"
 cpp_bootstrap = "python scripts/cpp_ci.py bootstrap"
 cpp_configure_release = "python scripts/cpp_ci.py configure"
 cpp_build_release = "python scripts/cpp_ci.py build"
+cpp_bench_latest_video = "python scripts/cpp_ci.py configure && python scripts/cpp_ci.py build-target f8cpp_bench_latest_video_transport && build/Release/bin/f8cpp_bench_latest_video_transport"
 
 [feature.ci.dependencies]
 python = ">=3.13,<3.14"

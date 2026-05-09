@@ -1,6 +1,6 @@
 # Scenarios
 
-This section provides five scenario guides that map directly to the session scripts, with practical setup, key parameters, and validation checks.
+This section provides scenario guides with practical setup, key parameters, and validation checks.
 
 ## Scene List
 
@@ -12,7 +12,5 @@ This section provides five scenario guides that map directly to the session scri
 
 ## Script Downloads
 
-1. [scene-01-cvkit_template_tracking.json](scripts/scene-01-cvkit_template_tracking.json)
-2. [scene-02-gamemod_skeleton.json](scripts/scene-02-gamemod_skeleton.json)
-3. [scene-03-audio_driven.json](scripts/scene-03-audio_driven.json)
-4. [scene-04-functional_tcode.json](scripts/scene-04-functional_tcode.json)
+1. [scene-02-gamemod_skeleton.json](scripts/scene-02-gamemod_skeleton.json)
+2. [scene-04-functional_tcode.json](scripts/scene-04-functional_tcode.json)

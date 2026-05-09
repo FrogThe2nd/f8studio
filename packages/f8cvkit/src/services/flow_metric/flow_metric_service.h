@@ -12,8 +12,8 @@
 #include <opencv2/core.hpp>
 
 #include "f8cppsdk/capabilities.h"
+#include "f8cppsdk/latest_video_frame_transport.h"
 #include "f8cppsdk/service_bus.h"
-#include "f8cppsdk/video_shared_memory_sink.h"
 
 namespace f8::cvkit::flow_metric {
 
@@ -24,7 +24,7 @@ class FlowMetricService final : public f8::cppsdk::LifecycleNode,
   struct Config {
     std::string service_id;
     std::string service_class = "f8.cvkit.flowmetric";
-    std::string nats_url = "nats://127.0.0.1:4222";
+    f8::cppsdk::RuntimeBackendConfig runtime_backend;
   };
 
   explicit FlowMetricService(Config cfg);
@@ -73,24 +73,24 @@ class FlowMetricService final : public f8::cppsdk::LifecycleNode,
 
   std::mutex io_mu_;
 
-  // Input flow SHM settings and reader state.
-  std::string input_flow_shm_name_;
+  // Input flow settings and reader state.
+  std::string input_flow_stream_key_;
   int compute_every_n_frames_ = 1;
   MetricMode metric_mode_ = MetricMode::Divergence;
   std::string metric_mode_state_ = "divergence";
   double metric_scale_ = 1.0;
-  f8::cppsdk::VideoSharedMemoryReader flow_reader_;
+  std::unique_ptr<f8::cppsdk::ZenohLatestVideoFrameSubscriber> input_zenoh_flow_;
   std::vector<std::byte> flow_payload_;
-  std::uint32_t last_notify_seq_ = 0;
   std::uint64_t last_frame_id_ = 0;
   std::int64_t last_flow_open_attempt_ms_ = 0;
   std::uint64_t frame_counter_ = 0;
 
-  // Output scalar SHM settings and writer state.
-  std::string scalar_shm_name_;
-  std::string scalar_shm_format_ = "scalar1_f32";
-  f8::cppsdk::VideoSharedMemorySink scalar_sink_;
+  // Output scalar settings and writer state.
+  std::string scalar_stream_key_;
+  std::string scalar_format_ = "scalar1_f32";
+  std::shared_ptr<f8::cppsdk::ZenohLatestVideoFramePublisher> scalar_zenoh_publisher_;
   std::vector<std::byte> scalar_payload_;
+  std::uint64_t scalar_output_frame_id_ = 0;
 
   // Temporary compute buffers.
   cv::Mat flow_u_;

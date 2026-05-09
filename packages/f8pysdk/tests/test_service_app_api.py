@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import sys
 from typing import Any
 
@@ -125,6 +126,45 @@ def test_service_app_run_async_calls_setup_and_teardown_hooks() -> None:
     asyncio.run(app.run_async(service_id="svc-a"))
 
     assert events == ["setup", "start", "wait", "teardown", "stop"]
+
+
+def test_service_app_run_async_converts_sigterm_to_graceful_terminate() -> None:
+    events: list[str] = []
+
+    class _FakeBus:
+        def __init__(self) -> None:
+            self._terminate_event = asyncio.Event()
+
+        async def wait_terminate(self) -> None:
+            events.append("wait")
+            await self._terminate_event.wait()
+            events.append("terminated")
+
+    class _FakeRuntime:
+        def __init__(self) -> None:
+            self.bus = _FakeBus()
+
+        async def start(self) -> None:
+            events.append("start")
+
+        async def stop(self) -> None:
+            events.append("stop")
+
+    async def _teardown(_runtime: object) -> None:
+        events.append("teardown")
+
+    async def _run() -> None:
+        app = ServiceApp(service_class="svc.demo", teardown=_teardown)
+        fake_runtime = _FakeRuntime()
+        app.build_runtime = lambda **kwargs: fake_runtime  # type: ignore[method-assign]
+        task = asyncio.create_task(app.run_async(service_id="svc-a"))
+        await asyncio.sleep(0)
+        signal.raise_signal(signal.SIGTERM)
+        await asyncio.wait_for(task, timeout=1.0)
+
+    asyncio.run(_run())
+
+    assert events == ["start", "wait", "terminated", "teardown", "stop"]
 
 
 def test_service_app_cli_describe_uses_single_explicit_owner(capsys: pytest.CaptureFixture[str]) -> None:

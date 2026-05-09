@@ -8,6 +8,11 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+from f8pysdk.codec import decode_obj  # noqa: E402
+from f8pysdk.service_runtime_tools.deploy.readiness import (  # noqa: E402
+    rungraph_deploy_status_key,
+    wait_rungraph_deploy_status,
+)
 from f8pysdk.specs import (  # noqa: E402
     F8RuntimeGraph,
     F8RuntimeNode,
@@ -22,6 +27,7 @@ class RungraphApplyTests(unittest.IsolatedAsyncioTestCase):
     async def test_apply_rungraph_accepts_decoded_model(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svc")
+        self.assertFalse(bus.has_rungraph())
 
         service_node = F8RuntimeNode(
             nodeId="svc",
@@ -36,6 +42,7 @@ class RungraphApplyTests(unittest.IsolatedAsyncioTestCase):
 
         await bus.set_rungraph(graph)
         self.assertIsNotNone(bus._graph)
+        self.assertTrue(bus.has_rungraph())
 
     async def test_apply_rungraph_accepts_service_node_with_unset_operator_class(self) -> None:
         harness = ServiceBusHarness()
@@ -72,6 +79,61 @@ class RungraphApplyTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(RuntimeError):
             await bus.set_rungraph(graph)
+
+    async def test_submit_rungraph_publishes_retained_applied_status(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svc")
+        service_node = F8RuntimeNode(
+            nodeId="svc",
+            serviceId="svc",
+            serviceClass="svc",
+            operatorClass=None,
+            stateFields=[],
+        )
+        graph = F8RuntimeGraph(graphId="g4", revision="r1", nodes=[service_node], edges=[])
+
+        bus.submit_rungraph(graph, req_id="req-apply", source="test")
+        status = await wait_rungraph_deploy_status(
+            bus._transport,
+            service_id="svc",
+            req_id="req-apply",
+            graph_id="g4",
+            revision="r1",
+            timeout_s=1.0,
+        )
+
+        self.assertEqual(status.phase, "applied")
+        self.assertTrue(status.ok)
+        self.assertTrue(bus.has_rungraph())
+
+    async def test_submit_rungraph_publishes_retained_failed_status(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svc")
+        service_node = F8RuntimeNode(
+            nodeId="not-svc",
+            serviceId="svc",
+            serviceClass="svc",
+            operatorClass=msgspec.UNSET,
+            stateFields=[],
+        )
+        graph = F8RuntimeGraph(graphId="g5", revision="r1", nodes=[service_node], edges=[])
+
+        bus.submit_rungraph(graph, req_id="req-fail", source="test")
+        status = await wait_rungraph_deploy_status(
+            bus._transport,
+            service_id="svc",
+            req_id="req-fail",
+            graph_id="g5",
+            revision="r1",
+            timeout_s=1.0,
+        )
+        raw = await bus._transport.retained_get(rungraph_deploy_status_key("svc"))
+        payload = decode_obj(raw) if raw is not None else {}
+
+        self.assertEqual(status.phase, "failed")
+        self.assertFalse(status.ok)
+        self.assertIn("set_rungraph", status.error_message)
+        self.assertEqual(payload.get("phase"), "failed")
 
 
 if __name__ == "__main__":

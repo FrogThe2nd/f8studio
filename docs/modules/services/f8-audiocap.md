@@ -6,19 +6,19 @@ No description.
 - Service class: `f8.audiocap`
 - Version: `0.0.1`
 - Source directory: `f8/audiocap`
-- Tags: `audio`, `capture`, `shm`
+- Tags: `audio`, `capture`, `zenoh`
 
 ## When to Use
 
 - Use `f8.audiocap` as the audio capture entry point for microphone, loopback, or ASIO input.
-- Choose it when the graph needs a reusable low-latency audio SHM producer.
+- Choose it when the graph needs a reusable low-latency Zenoh audio producer.
 - It is the usual starting point for audio-reactive graphs.
 
 ## Common Wiring Patterns
 
 - A standard chain is `f8.audiocap -> f8.audiofeat.core / f8.audiofeat.rhythm`.
 - During setup, keep a `f8.viz.audio` branch connected so you can confirm that audio is really flowing.
-- If multiple services consume the same stream, keep `audioShmName` consistent across the branch.
+- If multiple services consume the same stream, connect the producer `audio` data port to each downstream typed audio input.
 
 ## Pitfalls / Gotchas
 
@@ -31,7 +31,7 @@ No description.
 ### How to Run
 
 ```bash
-linux/f8audiocap_service
+win/f8audiocap_service.exe
 ```
 
 - Workdir: `./`
@@ -40,21 +40,20 @@ linux/f8audiocap_service
 ### Typical Inputs / Outputs
 
 - Data inputs: none
-- Data outputs: `monitor`
+- Data outputs: `audio`, `monitor`
 - Commands: none
 
 ### Service State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `audioShmName` | `ro` | `true` | `true` | `string` | Name of the audio shared memory segment |
 | `audioDevice` | `ro` | `true` | `false` | `string` | Name of the audio capture device in use |
 | `audioSampleRate` | `ro` | `true` | `false` | `integer` | Sample rate of the audio capture device |
 | `audioChannels` | `ro` | `true` | `false` | `integer` | Number of audio channels |
 | `audioFormat` | `ro` | `true` | `false` | `string` | Format of the audio data |
 | `audioFramesPerChunk` | `ro` | `true` | `false` | `integer` | Number of audio frames per chunk |
 | `audioChunkCount` | `ro` | `true` | `false` | `integer` | Number of audio chunks |
-| `writeSeq` | `ro` | `true` | `false` | `integer` | Sequence number of the last written audio chunk |
+| `audioChunkSchemaVersion` | `ro` | `true` | `false` | `integer` | Zenoh audio chunk schema version. |
 | `mode` | `rw` | `true` | `false` | `string` | Current mode of the audio capture service |
 | `toneHz` | `rw` | `true` | `false` | `number` | Frequency of the generated tone |
 | `gain` | `rw` | `true` | `false` | `number` | Gain applied to the audio signal |
@@ -63,14 +62,14 @@ linux/f8audiocap_service
 
 ### Key Fields That Matter
 
-- `audioShmName` (Audio SHM, `ro`): Name of the audio shared memory segment Schema: `string`.
 - `audioDevice` (Audio Device, `ro`): Name of the audio capture device in use Schema: `string`.
 - `audioSampleRate` (Audio Sample Rate, `ro`): Sample rate of the audio capture device Schema: `integer`.
 - `audioChannels` (Audio Channels, `ro`): Number of audio channels Schema: `integer`.
 - `audioFormat` (Audio Format, `ro`): Format of the audio data Schema: `string`.
 - `audioFramesPerChunk` (Audio Frames Per Chunk, `ro`): Number of audio frames per chunk Schema: `integer`.
 - `audioChunkCount` (Audio Chunk Count, `ro`): Number of audio chunks Schema: `integer`.
-- `writeSeq` (Write Sequence, `ro`): Sequence number of the last written audio chunk Schema: `integer`.
+- `audioChunkSchemaVersion` (Audio Chunk Schema Version, `ro`): Zenoh audio chunk schema version. Schema: `integer`.
+- `mode` (Mode, `rw`): Current mode of the audio capture service Schema: `string`.
 
 ### Service Commands
 
@@ -84,6 +83,7 @@ _None_
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
+| `audio` | `true` | `true` | `object{bytesPerFrame, channels, format, frameIndex, ...}` | Captured audio chunk stream. |
 | `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators
@@ -92,4 +92,4 @@ _None_
 
 ## Related Scenarios
 
-- [Scene 03: Audio Driven TCode](../../scenarios/scene-03-audio_driven.md)
+- No bundled scenario references this node yet.

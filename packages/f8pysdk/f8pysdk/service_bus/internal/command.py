@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-_HIDDEN_COMMAND_FORWARD_EXCLUDED_KEYS = frozenset(("value", "actor", "ts", "origin"))
+_HIDDEN_COMMAND_FORWARD_EXCLUDED_KEYS = frozenset(("value", "actor", "ts", "origin", "seq"))
 
 
 @dataclass(frozen=True)

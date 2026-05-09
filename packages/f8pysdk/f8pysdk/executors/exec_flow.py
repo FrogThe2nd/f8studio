@@ -8,7 +8,7 @@ from typing import Any
 from ..bus import ServiceBus
 from ..capabilities import BusAttachableNode, ComputableNode, EntrypointNode, ExecutableNode
 from ..generated import F8EdgeDirection, F8EdgeKindEnum, F8RuntimeGraph
-from ..nats_naming import ensure_token
+from ..f8_naming import ensure_token
 from ..time_utils import now_ms
 
 logger = logging.getLogger(__name__)
@@ -468,7 +468,7 @@ class ExecFlowExecutor:
                 continue
 
             # Tick-driven cross-service publishing for outgoing half-edges (direction=out).
-            # This bridges pull-based compute into NATS data subjects so remote services can subscribe.
+            # This bridges pull-based compute into runtime data subjects so remote services can subscribe.
             await self._emit_half_edge_outputs(to_node, exec_id=exec_id)
 
             # DFS scheduling: push in reverse so earlier ports run first.

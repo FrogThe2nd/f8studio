@@ -11,6 +11,14 @@ from f8pysdk.bus import ServiceBus, ServiceBusConfig  # noqa: E402
 from f8pysdk.testing import buffer_input  # noqa: E402
 
 
+class _RungraphBusStub:
+    def __init__(self, *, has_rungraph: bool) -> None:
+        self._has_rungraph = bool(has_rungraph)
+
+    def has_rungraph(self) -> bool:
+        return self._has_rungraph
+
+
 class ServiceBusCapTests(unittest.TestCase):
     def test_state_cache_lru_cap(self) -> None:
         bus = ServiceBus(ServiceBusConfig(service_id="svc", state_cache_max_entries=2))
@@ -64,6 +72,13 @@ class ServiceBusCapTests(unittest.TestCase):
         bus.state_store.cache[("n1", "k")] = ("vk", 11)
         node.attach(bus)
         self.assertEqual(node.get_state_cached("k", "d"), "vk")
+
+    def test_runtime_node_has_rungraph_delegates_to_bus(self) -> None:
+        node = RuntimeNode(node_id="n1")
+        self.assertFalse(node.has_rungraph())
+
+        node.attach(_RungraphBusStub(has_rungraph=True))
+        self.assertTrue(node.has_rungraph())
 
 
 if __name__ == "__main__":

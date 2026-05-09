@@ -5,13 +5,14 @@ import asyncio
 import concurrent.futures
 import logging
 import threading
-from dataclasses import dataclass
 from typing import Any, Callable
 
 from qtpy import QtCore
 
+from f8pysdk.runtime_transport import RuntimeTransport
 from f8pysdk.specs import F8RuntimeGraph
-from f8pysdk.nats_naming import ensure_token, new_id
+from f8pysdk.f8_naming import ensure_token, new_id
+from f8pysdk.zenoh_transport import ZenohTransport, ZenohTransportConfig
 from f8pysdk.registry import RuntimeNodeRegistry
 from f8pysdk.state import StateWriteError
 from f8pystudio.contracts.ui_commands import UiCommand
@@ -19,28 +20,21 @@ from f8pystudio.diagnostics.error_reporting import ExceptionLogOnce, report_exce
 from f8pystudio.monitoring import MonitorCenter
 from f8pystudio.monitoring.service_rows import ServiceMonitorRow, build_service_monitor_rows, collect_known_service_ids
 from f8pystudio.nodegraph.runtime_compiler import CompiledRuntimeGraphs
-from f8pystudio.studio_specs.registry import SERVICE_CLASS, STUDIO_SERVICE_ID
+from f8pystudio.studio_specs.registry import SERVICE_CLASS
 
 from .async_runtime import AsyncRuntimeThread
-from .command_client import CommandRequest, NatsCommandGateway
+from .command_client import CommandRequest, RuntimeCommandGateway, RuntimeCommandGatewayConfig
 from .json_codec import coerce_json_value
 from .managed_service_inventory import collect_managed_service_inventory
-from .nats_lifecycle import (
-    NatsConnectionManager,
-)
 from .process_action_scheduler import ServiceProcessActionScheduler
-from .process_lifecycle import (
-    LocalServiceProcessGateway,
-    StartServiceRequest,
-    StopServiceRequest,
-)
+from .process_lifecycle import LocalServiceProcessGateway
 from .process_manager import ServiceProcessManager
 from .remote_command_controller import RemoteCommandControllerMixin
 from .remote_state_sync import RemoteStateGatewayAdapter
 from .remote_state_watcher import RemoteStateWatcher, WatchTarget
 from .rungraph_deployer import (
-    NatsRungraphGateway,
     RungraphDeployConfig,
+    RuntimeRungraphGateway,
 )
 from .rungraph_deploy_flow import RungraphDeployFlow, pick_compiled
 from .runtime_graph_projection import (
@@ -48,6 +42,7 @@ from .runtime_graph_projection import (
     build_remote_watch_targets,
     build_studio_runtime_graph,
 )
+from .runtime_config import PyStudioServiceBridgeConfig
 from .runtime_session_controller import PendingMonitorUpdate, RuntimeSessionControllerMixin
 from .service_endpoint_client import (
     request_service_status,
@@ -67,18 +62,19 @@ from .deploy_state_controller import DeployStateControllerMixin
 
 logger = logging.getLogger(__name__)
 STARTUP_GATE_TIMEOUT_S = 6.0
+RUNGRAPH_ENDPOINT_READY_TIMEOUT_S = 15.0
 
 
-@dataclass(frozen=True)
-class PyStudioServiceBridgeConfig:
-    nats_url: str = "nats://127.0.0.1:4222"
-    studio_service_id: str = STUDIO_SERVICE_ID
-
-
-class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleControllerMixin, DeployStateControllerMixin, RemoteCommandControllerMixin, QtCore.QObject):
+class PyStudioServiceBridge(
+    RuntimeSessionControllerMixin,
+    ServiceLifecycleControllerMixin,
+    DeployStateControllerMixin,
+    RemoteCommandControllerMixin,
+    QtCore.QObject,
+):
     """
     Orchestrate:
-    - singleton studio presence (NATS micro ping/info)
+    - singleton studio presence (Zenoh liveliness)
     - start service processes
     - deploy per-service rungraphs
     - monitor remote state via Studio-side KV watches (UI reflection)
@@ -90,6 +86,7 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
     log = QtCore.Signal(str)
     service_process_state = QtCore.Signal(str, bool)  # serviceId, running
     _remote_command_response = QtCore.Signal(str, object, object)  # reqId, result, err
+    _restart_service_after_guard = QtCore.Signal(str, object)  # serviceId, serviceClass
 
     def __init__(self, config: PyStudioServiceBridgeConfig, parent: QtCore.QObject | None = None) -> None:
         super().__init__(parent)
@@ -97,24 +94,20 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
         self._async = AsyncRuntimeThread()
         self._proc_mgr = ServiceProcessManager()
         self._process_gateway = LocalServiceProcessGateway(self._proc_mgr)
-        self._rungraph_gateway = NatsRungraphGateway(RungraphDeployConfig(nats_url=self._cfg.nats_url))
+        self._rungraph_gateway = self._build_rungraph_gateway()
         self._rungraph_deploy_flow = RungraphDeployFlow(
             studio_service_id=self.studio_service_id,
             rungraph_gateway=self._rungraph_gateway,
             emit_log=self._emit_log_line,
         )
-        self._command_gateway = NatsCommandGateway(nats_url=self._cfg.nats_url)
+        self._command_gateway = self._build_command_gateway()
         self._exception_log_once = ExceptionLogOnce()
-        self._nats_connection_manager = NatsConnectionManager(
-            nats_url=str(self._cfg.nats_url).strip() or "nats://127.0.0.1:4222",
-            emit_log=self._emit_log_line,
-            report_exception=self._report_exception,
-        )
         self._managed_service_ids: set[str] = set()
         self._managed_service_classes: dict[str, str] = {}  # serviceId -> serviceClass
         self._managed_active: bool = True
         self._service_status_cache: dict[str, tuple[bool | None, float]] = {}  # serviceId -> (active, monotonic_ts)
         self._service_alive_cache: dict[str, tuple[bool, float]] = {}  # serviceId -> (alive, monotonic_ts)
+        self._service_liveliness_instances_by_service: dict[str, set[str]] = {}
         self._service_status_inflight: set[str] = set()
         self._service_status_req_s: dict[str, float] = {}
         self._status_store = ServiceStatusStore(
@@ -128,6 +121,8 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
         self._shutting_down: bool = False
 
         self._svc: PyStudioService | None = None
+        self._studio_service_lock: asyncio.Lock | None = None
+        self._studio_service_lock_loop: asyncio.AbstractEventLoop | None = None
         self._remote_state_watcher: RemoteStateWatcher | None = None
         self._remote_state_gateway: RemoteStateGatewayAdapter | None = None
         self._watch_targets_cache: tuple[WatchTarget, ...] | None = None
@@ -136,8 +131,13 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
         self._monitor_ui_last_emit_s_by_service: dict[str, float] = {}
         self._monitor_ui_pending_by_service: dict[str, PendingMonitorUpdate] = {}
         self._monitor_ui_flush_task: asyncio.Task[object] | None = None
-        self._nc: Any = None
-        self._owned_nats_server_pid: int | None = None
+        self._runtime_transport: RuntimeTransport | None = None
+        self._runtime_transport_lock: asyncio.Lock | None = None
+        self._runtime_transport_lock_loop: asyncio.AbstractEventLoop | None = None
+        self._zenoh_singleton_session: Any = None
+        self._zenoh_singleton_token: Any = None
+        self._zenoh_service_liveliness_session: Any = None
+        self._zenoh_service_liveliness_sub: Any = None
         self._pending_remote_command_cbs: dict[str, Callable[[dict[str, Any] | None, str | None], None]] = {}
         self._async_started: bool = False
         self._startup_future: concurrent.futures.Future[Any] | None = None
@@ -147,17 +147,77 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
         self._process_actions = ServiceProcessActionScheduler(
             owner=self,
             is_service_running=self.is_service_running,
-            stop_process_once=self._stop_process_once_local,
+            stop_process_once=self._stop_process_once_worker,
             emit_service_process_state=self._emit_service_process_state_safe,
             start_service=lambda sid, svc_class: self.start_service(sid, service_class=svc_class),
             emit_log=self._emit_log_line,
             report_exception=self._report_exception,
+            handle_stop_result=self._handle_stop_process_once_result,
         )
 
         try:
             self._remote_command_response.connect(self._on_remote_command_response)  # type: ignore[attr-defined]
         except Exception as exc:
             self._report_exception("connect remote_command_response failed", exc)
+        try:
+            self._restart_service_after_guard.connect(self._on_restart_service_after_guard)  # type: ignore[attr-defined]
+        except Exception as exc:
+            self._report_exception("connect restart_service_after_guard failed", exc)
+
+    def _build_rungraph_config(self) -> RungraphDeployConfig:
+        return RungraphDeployConfig(
+            endpoint_ready_timeout_s=RUNGRAPH_ENDPOINT_READY_TIMEOUT_S,
+            bus_backend=self._cfg.bus_backend,
+            client_service_id=self.studio_service_id,
+            zenoh_config_path=self._cfg.zenoh_config_path,
+            zenoh_connect=self._cfg.zenoh_connect,
+            zenoh_listen=self._cfg.zenoh_listen,
+            zenoh_shm_pool_bytes=self._cfg.zenoh_shm_pool_bytes,
+        )
+
+    def _build_rungraph_gateway(self) -> Any:
+        config = self._build_rungraph_config()
+        return RuntimeRungraphGateway(config)
+
+    def _build_command_gateway(self) -> Any:
+        return RuntimeCommandGateway(
+            RuntimeCommandGatewayConfig(
+                bus_backend=self._cfg.bus_backend,
+                client_service_id=self.studio_service_id,
+                zenoh_config_path=self._cfg.zenoh_config_path,
+                zenoh_connect=self._cfg.zenoh_connect,
+                zenoh_listen=self._cfg.zenoh_listen,
+                zenoh_shm_pool_bytes=self._cfg.zenoh_shm_pool_bytes,
+            )
+        )
+
+    def _build_runtime_transport(self) -> RuntimeTransport:
+        if self._cfg.bus_backend == "mem":
+            from f8pysdk.testing import InMemoryCluster, InMemoryTransport
+
+            return InMemoryTransport(cluster=InMemoryCluster())
+        if self._cfg.bus_backend != "zenoh":
+            raise ValueError("Unsupported runtime transport backend; use bus_backend='zenoh' or 'mem'.")
+        return ZenohTransport(
+            ZenohTransportConfig(
+                service_id=self.studio_service_id,
+                config_path=self._cfg.zenoh_config_path,
+                connect=self._cfg.zenoh_connect,
+                listen=self._cfg.zenoh_listen,
+                shm_pool_bytes=self._cfg.zenoh_shm_pool_bytes,
+            )
+        )
+
+    def kill_managed_services_on_exit(self) -> bool:
+        return bool(self._cfg.kill_managed_services_on_exit)
+
+    def set_kill_managed_services_on_exit(self, enabled: bool) -> None:
+        from dataclasses import replace
+
+        self._cfg = replace(
+            self._cfg,
+            kill_managed_services_on_exit=bool(enabled),
+        )
 
     def _emit_log_line(self, line: str) -> None:
         try:
@@ -357,13 +417,13 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
 
     def stop(self) -> None:
         self._shutting_down = True
-        self._process_actions.cancel_all()
+        self._process_actions.close()
         self._startup_continue_requested.set()
         if self._async_started:
             try:
                 fut = self._async.submit(self._stop_async())
                 try:
-                    fut.result(timeout=2)
+                    fut.result(timeout=5)
                 except concurrent.futures.TimeoutError:
                     self._emit_log_line("bridge stop timeout; continue shutdown")
             except Exception as exc:
@@ -374,41 +434,3 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
         self._startup_preflight_ready = threading.Event()
         self._startup_continue_requested = threading.Event()
         self._startup_preflight_message = None
-
-        # Best-effort stop all launched processes.
-        for sid in list(self._process_gateway.service_ids()):
-            try:
-                self._process_gateway.stop(StopServiceRequest(service_id=sid))
-            except Exception as exc:
-                self._report_exception(f"stop service process failed serviceId={sid}", exc)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

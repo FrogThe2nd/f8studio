@@ -7,7 +7,6 @@ from f8pysdk.specs import F8RuntimeNode, F8ServiceSchemaVersion, F8ServiceSpec
 from f8pysdk.specs import F8StateAccess, F8StateSpec, integer_schema
 from f8pysdk.registry import Registry, RuntimeNodeRegistry, create_runtime_node_registry, shared_runtime_node_registry
 
-from f8pystudio.operators import register_operator
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS, STUDIO_SERVICE_ID
 
 
@@ -26,6 +25,8 @@ def register_pystudio_specs(registry: Registry) -> Registry:
     """
     Register f8.pystudio service/operator specs for discovery / `--describe`.
     """
+    from f8pystudio.operators import register_operator
+
     registry.register_service(
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,

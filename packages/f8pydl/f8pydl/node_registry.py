@@ -15,6 +15,7 @@ from f8pysdk.specs import (
     integer_schema,
     number_schema,
     string_schema,
+    video_frame_port,
 )
 from f8pysdk.nodes import RuntimeNode
 from f8pysdk.registry import Registry, RuntimeNodeRegistry, create_runtime_node_registry, shared_runtime_node_registry
@@ -92,6 +93,14 @@ def _detections_payload_schema():
     )
 
 
+def _video_input_port() -> F8DataPortSpec:
+    return video_frame_port(
+        name="video",
+        description="Input video frame stream.",
+        required=True,
+    )
+
+
 def _detection_sorter_state_fields() -> list[F8StateSpec]:
     return [
         F8StateSpec(
@@ -110,15 +119,6 @@ def _detection_sorter_state_fields() -> list[F8StateSpec]:
             required=True,
             uiControl="code[json]",
             showOnNode=False,
-        ),
-        F8StateSpec(
-            name="scoreShmName",
-            label="Score SHM",
-            description="Score-map SHM name (supports scalar1_f32 and flow2_f16).",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.rw,
-            required=True,
-            showOnNode=True,
         ),
         F8StateSpec(
             name="sortDirection",
@@ -148,15 +148,6 @@ def _common_state_fields(
     include_class_filter: bool,
 ) -> list[F8StateSpec]:
     fields = [
-        F8StateSpec(
-            name="shmName",
-            label="Video SHM",
-            description="Video SHM mapping name (e.g. shm.implayer.video).",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.rw,
-            required=True,
-            showOnNode=True,
-        ),
         F8StateSpec(
             name="weightsDir",
             label="Weights Dir",
@@ -257,7 +248,7 @@ def _common_state_fields(
                     name="enabledClasses",
                     label="Enabled Classes",
                     description="Optional class whitelist for output. Empty means all classes.",
-                    valueSchema=array_schema(items=string_schema()),
+                    valueSchema=array_schema(items=string_schema(), default=[]),
                     access=F8StateAccess.rw,
                     required=True,
                     uiControl="multiselect[modelClasses]",
@@ -276,7 +267,7 @@ def _common_state_fields(
                     name="modelClasses",
                     label="Model Classes",
                     description="Current loaded model class labels.",
-                    valueSchema=array_schema(items=string_schema()),
+                    valueSchema=array_schema(items=string_schema(), default=[]),
                     access=F8StateAccess.ro,
                     required=True,
                     showOnNode=False,
@@ -288,7 +279,7 @@ def _common_state_fields(
             name="availableModels",
             label="Available Models",
             description="List of model ids discovered from weightsDir.",
-            valueSchema=array_schema(items=string_schema()),
+            valueSchema=array_schema(items=string_schema(), default=[]),
             access=F8StateAccess.ro,
             required=True,
             showOnNode=False,
@@ -322,15 +313,6 @@ def _common_state_fields(
 
 def _optflow_state_fields() -> list[F8StateSpec]:
     return [
-        F8StateSpec(
-            name="inputShmName",
-            label="Input Video SHM",
-            description="Input SHM name (e.g. shm.xxx.video).",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.rw,
-            required=True,
-            showOnNode=True,
-        ),
         F8StateSpec(
             name="computeEveryNFrames",
             label="Compute Every N Frames",
@@ -392,7 +374,7 @@ def _optflow_state_fields() -> list[F8StateSpec]:
             name="availableModels",
             label="Available Models",
             description="List of model ids discovered from weightsDir.",
-            valueSchema=array_schema(items=string_schema()),
+            valueSchema=array_schema(items=string_schema(), default=[]),
             access=F8StateAccess.ro,
             required=True,
             showOnNode=False,
@@ -416,19 +398,10 @@ def _optflow_state_fields() -> list[F8StateSpec]:
             showOnNode=False,
         ),
         F8StateSpec(
-            name="flowShmName",
-            label="Flow SHM Name",
-            description="Output flow SHM name.",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=True,
-        ),
-        F8StateSpec(
-            name="flowShmFormat",
-            label="Flow SHM Format",
+            name="flowFormat",
+            label="Flow Format",
             description="Flow payload format. Fixed to flow2_f16.",
-            valueSchema=string_schema(default="flow2_f16"),
+            valueSchema=string_schema(default="flow2_f16", enum=["flow2_f16"]),
             access=F8StateAccess.ro,
             required=True,
             showOnNode=False,
@@ -470,7 +443,7 @@ def _tcn_wave_state_fields() -> list[F8StateSpec]:
             label="VR Focus Crop",
             description=(
                 "Apply focus crop before inference. "
-                "This assumes SHM already provides the target eye view and crops top 20% + left/right 10%."
+                "This assumes the selected video input already provides the target eye view and crops top 20% + left/right 10%."
             ),
             valueSchema=boolean_schema(default=False),
             access=F8StateAccess.rw,
@@ -508,6 +481,7 @@ def _register_classifier(registry: Registry) -> None:
                 include_top_k=True,
                 include_class_filter=False,
             ),
+            dataInPorts=[_video_input_port()],
             dataOutPorts=[
                 F8DataPortSpec(
                     name="classifications",
@@ -548,6 +522,7 @@ def _register_detector(registry: Registry) -> None:
                 include_top_k=False,
                 include_class_filter=True,
             ),
+            dataInPorts=[_video_input_port()],
             dataOutPorts=[
                 F8DataPortSpec(
                     name="detections",
@@ -588,6 +563,7 @@ def _register_human_detector(registry: Registry) -> None:
                 include_top_k=False,
                 include_class_filter=True,
             ),
+            dataInPorts=[_video_input_port()],
             dataOutPorts=[
                 F8DataPortSpec(
                     name="detections",
@@ -618,11 +594,18 @@ def _register_optflow(registry: Registry) -> None:
             paletteCategory="svc",
             version="0.0.1",
             label="DL Optical Flow",
-            description="ONNXRuntime NeuFlowV2 dense optical flow service (flow SHM output).",
-            tags=["onnx", "vision", "optical_flow", "flow_shm"],
+            description="ONNXRuntime NeuFlowV2 dense optical flow service (Zenoh latest-frame flow output).",
+            tags=["onnx", "vision", "optical_flow", "zenoh_flow"],
             rendererClass="default_svc",
             stateFields=_optflow_state_fields(),
-            dataOutPorts=[],
+            dataInPorts=[_video_input_port()],
+            dataOutPorts=[
+                video_frame_port(
+                    name="flow",
+                    description="Dense optical-flow frame stream.",
+                    required=True,
+                ),
+            ],
         ),
         _factory,
         overwrite=True,
@@ -637,7 +620,7 @@ def _register_detection_sorter(registry: Registry) -> None:
             paletteCategory="svc",
             version="0.0.1",
             label="DL Detection Sorter",
-            description="Sort detection payloads by a score-map SHM metric.",
+            description="Sort detection payloads by a score-map metric.",
             tags=["vision", "detection", "sort", "score_map"],
             rendererClass="default_svc",
             stateFields=_detection_sorter_state_fields(),
@@ -646,6 +629,11 @@ def _register_detection_sorter(registry: Registry) -> None:
                     name="detections",
                     description="Detection input in schema f8visionDetections/1.",
                     valueSchema=_detections_payload_schema(),
+                    required=True,
+                ),
+                video_frame_port(
+                    name="score",
+                    description="Scalar or flow score-map frame stream used to rank detections.",
                     required=True,
                 ),
             ],
@@ -683,6 +671,7 @@ def _register_tcn_wave(registry: Registry) -> None:
             tags=["onnx", "vision", "temporal", "wave", "signal"],
             rendererClass="default_svc",
             stateFields=_tcn_wave_state_fields(),
+            dataInPorts=[_video_input_port()],
             dataOutPorts=[
                 F8DataPortSpec(
                     name="predictedChange",

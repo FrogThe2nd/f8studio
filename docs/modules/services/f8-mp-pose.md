@@ -39,7 +39,7 @@ pixi run -e mediapipe f8pymppose
 
 ### Typical Inputs / Outputs
 
-- Data inputs: none
+- Data inputs: `video`
 - Data outputs: `detections`, `skeletons`, `monitor`
 - Commands: none
 
@@ -47,7 +47,6 @@ pixi run -e mediapipe f8pymppose
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `shmName` | `rw` | `true` | `true` | `string / default=` | Video SHM mapping name (e.g. shm.implayer.video). |
 | `inferEveryN` | `rw` | `true` | `false` | `integer / default=1` | Run pose inference every N frames (>=1). |
 | `modelComplexity` | `rw` | `true` | `false` | `string / enum[lite, full, heavy] / default=full` | MediaPipe pose model variant. |
 | `minDetectionConfidence` | `rw` | `true` | `false` | `number / default=0.5` | Minimum confidence threshold for pose detection. |
@@ -59,7 +58,6 @@ pixi run -e mediapipe f8pymppose
 
 ### Key Fields That Matter
 
-- `shmName` (Video SHM, `rw`): Video SHM mapping name (e.g. shm.implayer.video). Schema: `string / default=`.
 - `inferEveryN` (Infer Every N Frames, `rw`): Run pose inference every N frames (>=1). Schema: `integer / default=1`.
 - `modelComplexity` (Model Complexity, `rw`): MediaPipe pose model variant. Schema: `string / enum[lite, full, heavy] / default=full`.
 - `minDetectionConfidence` (Min Detection Confidence, `rw`): Minimum confidence threshold for pose detection. Schema: `number / default=0.5`.
@@ -67,6 +65,7 @@ pixi run -e mediapipe f8pymppose
 - `visibilityThreshold` (Visibility Threshold, `rw`): Landmark visibility threshold (below threshold => hidden point). Schema: `number / default=0.5`.
 - `skeletonSource` (Skeleton Source, `rw`): Skeleton data source (camera-relative vs world-relative). Schema: `string / enum[camera, world] / default=camera`.
 - `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 
 ### Service Commands
 
@@ -74,7 +73,9 @@ _None_
 
 ### Service Data Input Ports
 
-_None_
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `video` | `true` | `true` | `object{format, frameId, height, pitch, ...}` | Input video frame stream. |
 
 ### Service Data Output Ports
 

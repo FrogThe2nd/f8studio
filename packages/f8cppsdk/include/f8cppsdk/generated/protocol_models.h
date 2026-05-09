@@ -59,6 +59,69 @@ inline std::optional<F8CommandError_code_Enum> parse_F8CommandError_code_Enum(co
   return std::nullopt;
 }
 
+enum class F8DataPortDelivery {
+  latest,
+  fifo,
+  reliable,
+};
+
+inline std::optional<F8DataPortDelivery> parse_F8DataPortDelivery(const std::string& s) {
+  if (s == "latest") return F8DataPortDelivery::latest;
+  if (s == "fifo") return F8DataPortDelivery::fifo;
+  if (s == "reliable") return F8DataPortDelivery::reliable;
+  return std::nullopt;
+}
+
+enum class F8DataPortPayloadKind {
+  json,
+  bytes,
+  video_frame,
+  audio_chunk,
+};
+
+inline std::optional<F8DataPortPayloadKind> parse_F8DataPortPayloadKind(const std::string& s) {
+  if (s == "json") return F8DataPortPayloadKind::json;
+  if (s == "bytes") return F8DataPortPayloadKind::bytes;
+  if (s == "video_frame") return F8DataPortPayloadKind::video_frame;
+  if (s == "audio_chunk") return F8DataPortPayloadKind::audio_chunk;
+  return std::nullopt;
+}
+
+enum class F8DataStreamCongestion {
+  drop,
+  block,
+};
+
+inline std::optional<F8DataStreamCongestion> parse_F8DataStreamCongestion(const std::string& s) {
+  if (s == "drop") return F8DataStreamCongestion::drop;
+  if (s == "block") return F8DataStreamCongestion::block;
+  return std::nullopt;
+}
+
+enum class F8DataStreamPriority {
+  real_time,
+  interactive,
+  data,
+};
+
+inline std::optional<F8DataStreamPriority> parse_F8DataStreamPriority(const std::string& s) {
+  if (s == "real_time") return F8DataStreamPriority::real_time;
+  if (s == "interactive") return F8DataStreamPriority::interactive;
+  if (s == "data") return F8DataStreamPriority::data;
+  return std::nullopt;
+}
+
+enum class F8DataStreamReliability {
+  best_effort,
+  reliable,
+};
+
+inline std::optional<F8DataStreamReliability> parse_F8DataStreamReliability(const std::string& s) {
+  if (s == "best_effort") return F8DataStreamReliability::best_effort;
+  if (s == "reliable") return F8DataStreamReliability::reliable;
+  return std::nullopt;
+}
+
 enum class F8DynamicBindingsInputsSpec_access_mode_Enum {
   object_and_mapping,
 };
@@ -490,12 +553,55 @@ inline bool parse_F8ComponentRecord(const nlohmann::json& j, F8ComponentRecord& 
   return true;
 }
 
+struct F8DataPayloadSpec {
+  F8DataPortPayloadKind kind;
+  nlohmann::json valueSchema = nlohmann::json::object();
+  nlohmann::json metadataSchema = nlohmann::json::object();
+  std::optional<std::int64_t> schemaVersion;
+  std::optional<std::vector<std::string>> formats;
+};
+
+inline bool parse_F8DataPayloadSpec(const nlohmann::json& j, F8DataPayloadSpec& out, ParseError& err) {
+  if (!j.is_object()) { err.code="INVALID_SCHEMA"; err.message="object expected"; return false; }
+  { std::string s; if (!_get_str_req(j, "kind", s, err)) return false;
+    auto v = parse_F8DataPortPayloadKind(s); if (!v) { err.code="INVALID_SCHEMA"; err.message="invalid enum"; return false; } out.kind = *v; }
+  if (j.contains("valueSchema") && j["valueSchema"].is_object()) out.valueSchema = j["valueSchema"];
+  if (j.contains("metadataSchema") && j["metadataSchema"].is_object()) out.metadataSchema = j["metadataSchema"];
+  if (j.contains("schemaVersion") && j["schemaVersion"].is_number_integer()) out.schemaVersion = j["schemaVersion"].get<std::int64_t>();
+  if (j.contains("formats") && j["formats"].is_array()) {
+    std::vector<std::string> vec; vec.reserve(j["formats"].size());
+    for (const auto& it : j["formats"]) if (it.is_string()) vec.push_back(it.get<std::string>());
+    out.formats = std::move(vec);
+  }
+  return true;
+}
+
+struct F8DataStreamSpec {
+  std::optional<F8DataPortDelivery> delivery;
+  std::optional<F8DataStreamReliability> reliability;
+  std::optional<F8DataStreamCongestion> congestion;
+  std::optional<F8DataStreamPriority> priority;
+};
+
+inline bool parse_F8DataStreamSpec(const nlohmann::json& j, F8DataStreamSpec& out, ParseError& err) {
+  if (!j.is_object()) { err.code="INVALID_SCHEMA"; err.message="object expected"; return false; }
+  if (auto s2 = _get_str_opt(j, "delivery")) out.delivery = parse_F8DataPortDelivery(*s2);
+  if (auto s2 = _get_str_opt(j, "reliability")) out.reliability = parse_F8DataStreamReliability(*s2);
+  if (auto s2 = _get_str_opt(j, "congestion")) out.congestion = parse_F8DataStreamCongestion(*s2);
+  if (auto s2 = _get_str_opt(j, "priority")) out.priority = parse_F8DataStreamPriority(*s2);
+  return true;
+}
+
 struct F8DataPortSpec {
   std::string name;
   nlohmann::json valueSchema = nlohmann::json::object();
+  std::optional<F8DataPayloadSpec> payload;
+  std::optional<F8DataStreamSpec> stream;
   std::optional<std::string> description;
   std::optional<bool> required;
   std::optional<bool> showOnNode;
+  std::optional<F8DataPortPayloadKind> payloadKind;
+  std::optional<F8DataPortDelivery> delivery;
 };
 
 inline bool parse_F8DataPortSpec(const nlohmann::json& j, F8DataPortSpec& out, ParseError& err) {
@@ -503,9 +609,17 @@ inline bool parse_F8DataPortSpec(const nlohmann::json& j, F8DataPortSpec& out, P
   if (!_get_str_req(j, "name", out.name, err)) return false;
   if (!j.contains("valueSchema")) { err.code="INVALID_SCHEMA"; err.message="missing required"; return false; }
   out.valueSchema = j["valueSchema"];
+  if (j.contains("payload") && j["payload"].is_object()) {
+    F8DataPayloadSpec tmp; ParseError e2; if (parse_F8DataPayloadSpec(j["payload"], tmp, e2)) out.payload = std::move(tmp);
+  }
+  if (j.contains("stream") && j["stream"].is_object()) {
+    F8DataStreamSpec tmp; ParseError e2; if (parse_F8DataStreamSpec(j["stream"], tmp, e2)) out.stream = std::move(tmp);
+  }
   out.description = _get_str_opt(j, "description");
   if (j.contains("required") && j["required"].is_boolean()) out.required = j["required"].get<bool>();
   if (j.contains("showOnNode") && j["showOnNode"].is_boolean()) out.showOnNode = j["showOnNode"].get<bool>();
+  if (auto s2 = _get_str_opt(j, "payloadKind")) out.payloadKind = parse_F8DataPortPayloadKind(*s2);
+  if (auto s2 = _get_str_opt(j, "delivery")) out.delivery = parse_F8DataPortDelivery(*s2);
   return true;
 }
 
@@ -1664,12 +1778,16 @@ inline bool parse_F8StatusReply(const nlohmann::json& j, F8StatusReply& out, Par
 
 struct F8StatusReplyResult {
   std::string serviceId;
+  std::string serviceClass;
+  std::string runtimeInstanceId;
   bool active;
 };
 
 inline bool parse_F8StatusReplyResult(const nlohmann::json& j, F8StatusReplyResult& out, ParseError& err) {
   if (!j.is_object()) { err.code="INVALID_SCHEMA"; err.message="object expected"; return false; }
   if (!_get_str_req(j, "serviceId", out.serviceId, err)) return false;
+  if (!_get_str_req(j, "serviceClass", out.serviceClass, err)) return false;
+  if (!_get_str_req(j, "runtimeInstanceId", out.runtimeInstanceId, err)) return false;
   if (!j.contains("active") || j["active"].is_null() || !j["active"].is_boolean()) {
     err.code="INVALID_SCHEMA"; err.message="missing/invalid required boolean"; return false; }
   out.active = j["active"].get<bool>();

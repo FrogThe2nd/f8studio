@@ -39,7 +39,7 @@ pixi run -e onnx f8pydl_tcnwave
 
 ### Typical Inputs / Outputs
 
-- Data inputs: none
+- Data inputs: `video`
 - Data outputs: `predictedChange`, `monitor`
 - Commands: none
 
@@ -47,32 +47,31 @@ pixi run -e onnx f8pydl_tcnwave
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `shmName` | `rw` | `true` | `true` | `string / default=` | Video SHM mapping name (e.g. shm.implayer.video). |
 | `weightsDir` | `rw` | `true` | `true` | `string / default=services/f8/dl/weights` | Directory containing *.yaml + *.onnx model files. Reset to the default relative path when exporting publish JSON. |
 | `modelId` | `rw` | `true` | `true` | `string / default=` | Model id selected from weightsDir (ignored if modelYamlPath is set). |
 | `modelYamlPath` | `rw` | `true` | `false` | `string / default=` | Optional explicit model yaml path (overrides modelId). Cleared when exporting publish JSON. |
 | `ortProvider` | `rw` | `true` | `true` | `string / enum[auto, cuda, cpu] / default=auto` | auto prefers CUDAExecutionProvider when available. |
 | `autoDownloadWeights` | `rw` | `true` | `false` | `boolean / default=True` | When model file is missing, download from onnxUrl in model yaml. |
 | `inferEveryN` | `rw` | `true` | `true` | `integer / default=1` | Run model inference every N frames (>=1). |
-| `availableModels` | `ro` | `true` | `false` | `array[string]` | List of model ids discovered from weightsDir. |
+| `availableModels` | `ro` | `true` | `false` | `array[string] / default=[]` | List of model ids discovered from weightsDir. |
 | `loadedModel` | `ro` | `true` | `false` | `string / default=` | Current loaded model id/task. |
 | `ortActiveProviders` | `ro` | `true` | `false` | `string / default=` | JSON list of active ONNX Runtime providers for this session. |
 | `outputScale` | `rw` | `true` | `false` | `number / default=10.0` | Denormalization scale applied to raw model output values. |
 | `outputBias` | `rw` | `true` | `false` | `number / default=0.0` | Denormalization bias applied after outputScale. |
-| `useVrFocusCrop` | `rw` | `true` | `false` | `boolean / default=False` | Apply focus crop before inference. This assumes SHM already provides the target eye view and crops top 20% + left/right 10%. |
+| `useVrFocusCrop` | `rw` | `true` | `false` | `boolean / default=False` | Apply focus crop before inference. This assumes the selected video input already provides the target eye view and crops top 20% + left/right 10%. |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
 ### Key Fields That Matter
 
-- `shmName` (Video SHM, `rw`): Video SHM mapping name (e.g. shm.implayer.video). Schema: `string / default=`.
 - `weightsDir` (Weights Dir, `rw`): Directory containing *.yaml + *.onnx model files. Reset to the default relative path when exporting publish JSON. Schema: `string / default=services/f8/dl/weights`.
 - `modelId` (Model Id, `rw`): Model id selected from weightsDir (ignored if modelYamlPath is set). Schema: `string / default=`.
 - `modelYamlPath` (Model YAML Path, `rw`): Optional explicit model yaml path (overrides modelId). Cleared when exporting publish JSON. Schema: `string / default=`.
 - `ortProvider` (ONNX Runtime Provider, `rw`): auto prefers CUDAExecutionProvider when available. Schema: `string / enum[auto, cuda, cpu] / default=auto`.
 - `autoDownloadWeights` (Auto Download Weights, `rw`): When model file is missing, download from onnxUrl in model yaml. Schema: `boolean / default=True`.
 - `inferEveryN` (Infer Every N Frames, `rw`): Run model inference every N frames (>=1). Schema: `integer / default=1`.
-- `availableModels` (Available Models, `ro`): List of model ids discovered from weightsDir. Schema: `array[string]`.
+- `availableModels` (Available Models, `ro`): List of model ids discovered from weightsDir. Schema: `array[string] / default=[]`.
+- `loadedModel` (Loaded Model, `ro`): Current loaded model id/task. Schema: `string / default=`.
 
 ### Service Commands
 
@@ -80,7 +79,9 @@ _None_
 
 ### Service Data Input Ports
 
-_None_
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `video` | `true` | `true` | `object{format, frameId, height, pitch, ...}` | Input video frame stream. |
 
 ### Service Data Output Ports
 

@@ -3,11 +3,11 @@ from __future__ import annotations
 from qtpy import QtWidgets
 
 from f8pystudio.render_nodes.note import _NoteWidget
-from f8pystudio.render_nodes.viz_audio import _AudioShmPane
+from f8pystudio.render_nodes.viz_audio import _LatestAudioPane
 from f8pystudio.render_nodes.viz_text import _PrintPreviewPane
 from f8pystudio.render_nodes.viz_three_d import _Skeleton3DControlPane
 from f8pystudio.render_nodes.viz_track import _TrackVizPane
-from f8pystudio.render_nodes.viz_video import _VideoShmPane
+from f8pystudio.render_nodes.viz_video import _LatestVideoPane
 from f8pystudio.render_nodes.viz_wave import _TimeSeriesPane
 
 
@@ -22,8 +22,8 @@ def test_render_preview_pane_children_are_parented_at_construction() -> None:
     _ensure_app()
     panes = [
         _PrintPreviewPane(),
-        _AudioShmPane(),
-        _VideoShmPane(),
+        _LatestAudioPane(),
+        _LatestVideoPane(),
         _TrackVizPane(),
         _TimeSeriesPane(),
         _Skeleton3DControlPane(on_open_clicked=lambda: None),

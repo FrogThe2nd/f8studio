@@ -8,7 +8,7 @@ from ...capabilities import LifecycleNode
 from ...state import StateWriteOrigin, StateWriteSource
 from ...time_utils import now_ms
 from ..state.pipeline import publish_state
-from ..internal.micro import ServiceBusMicroEndpoints
+from ..internal.control_endpoints import create_service_control_endpoint_server
 from ...codec import encode_obj
 from .metadata import build_lifecycle_event_meta, build_lifecycle_state_meta
 
@@ -19,19 +19,19 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-async def _ensure_micro_endpoints_started(bus: "ServiceBus") -> None:
-    if bus._micro_endpoints is not None:
+async def _ensure_control_endpoints_started(bus: "ServiceBus") -> None:
+    if bus._control_endpoints is not None:
         return
-    endpoints = ServiceBusMicroEndpoints(bus)
-    bus._micro_endpoints = endpoints
+    endpoints = create_service_control_endpoint_server(bus)
+    bus._control_endpoints = endpoints
     await endpoints.start()
 
 
-async def _stop_micro_endpoints(bus: "ServiceBus") -> None:
-    endpoints = bus._micro_endpoints
+async def _stop_control_endpoints(bus: "ServiceBus") -> None:
+    endpoints = bus._control_endpoints
     if endpoints is not None:
         await endpoints.stop()
-    bus._micro_endpoints = None
+    bus._control_endpoints = None
 
 
 async def set_active(
@@ -44,7 +44,7 @@ async def set_active(
     """
     Set service active state.
 
-    - Persists `active` into KV under `nodes.<service_id>.state.active`
+    - Persists `active` into the retained service state key
     - Notifies lifecycle nodes + service hooks (engine/executor can pause/resume)
     """
     await apply_active(bus, active, persist=True, source=source, meta=meta)
@@ -58,8 +58,8 @@ async def start(bus: "ServiceBus") -> None:
         await bus._monitor_collector.start()
     # Clear any stale ready flag from a previous run as early as possible.
     await announce_ready(bus, False, reason="starting")
-    if bus._micro_endpoints is None:
-        await _ensure_micro_endpoints_started(bus)
+    if bus._control_endpoints is None:
+        await _ensure_control_endpoints_started(bus)
     # Ensure lifecycle state always exists in KV, even when no service code writes it explicitly.
     await apply_active(
         bus,
@@ -77,7 +77,7 @@ async def stop(bus: "ServiceBus") -> None:
     await notify_before_stop(bus)
     await announce_ready(bus, False, reason="stop")
 
-    await _stop_micro_endpoints(bus)
+    await _stop_control_endpoints(bus)
     await bus.data_router.stop()
     await bus.state_router.stop()
     bus.state_store.clear_cache()
@@ -100,7 +100,7 @@ async def announce_ready(bus: "ServiceBus", ready: bool, *, reason: str) -> None
         "ts": int(now_ms()),
     }
     raw = encode_obj(payload)
-    await bus._transport.kv_put(bus._ready_key, raw)
+    await bus._transport.retained_put(bus._ready_key, raw)
 
 
 async def notify_before_ready(bus: "ServiceBus") -> None:

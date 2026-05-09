@@ -245,20 +245,28 @@ class F8StudioNodePropEditorWidget(
         self.property_changing.emit(self.__node_id, name, value)
         self.refresh_option_pool(str(name or ""))
 
-    def refresh_option_pool(self, pool_name: str) -> None:
+    def has_option_pool_dependents(self, pool_name: str) -> bool:
+        pool = str(pool_name or "").strip()
+        if not pool:
+            return False
+        return bool(self._option_pool_dependents.get(pool))
+
+    def refresh_option_pool(self, pool_name: str) -> bool:
         """
         Refresh option widgets that depend on a given pool state field.
         """
         pool = str(pool_name or "").strip()
         if not pool:
-            return
-        if pool not in self._option_pool_dependents:
-            return
-        for w in list(self._option_pool_dependents.get(pool) or []):
+            return False
+        dependents = list(self._option_pool_dependents.get(pool) or [])
+        if not dependents:
+            return False
+        for w in dependents:
             try:
                 w.refresh_options()
             except (AttributeError, RuntimeError, TypeError):
                 continue
+        return True
 
     def node_id(self):
         """

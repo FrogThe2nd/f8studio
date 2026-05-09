@@ -7,7 +7,7 @@ from f8pysdk.app import ServiceApp
 from f8pysdk.capabilities import ExecutableNode, ServiceHookBase
 from f8pysdk.executors.exec_flow import ExecFlowExecutor
 from f8pysdk.executors.exec_flow import validate_exec_topology_or_raise
-from f8pysdk.nats_naming import ensure_token
+from f8pysdk.f8_naming import ensure_token
 from f8pysdk.registry import Registry
 from f8pysdk.runtime import ServiceRuntime
 from f8pysdk.specs import F8RuntimeGraph

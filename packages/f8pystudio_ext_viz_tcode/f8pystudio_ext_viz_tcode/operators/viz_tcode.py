@@ -16,7 +16,7 @@ from f8pysdk.specs import (
     integer_schema,
     string_schema,
 )
-from f8pysdk.nats_naming import ensure_token
+from f8pysdk.f8_naming import ensure_token
 from f8pysdk.registry import Registry
 
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS

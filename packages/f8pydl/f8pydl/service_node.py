@@ -10,13 +10,18 @@ from pathlib import Path
 from typing import Any, Literal
 
 from f8pysdk.codec import coerce_bool, coerce_float, coerce_int, coerce_str, parse_str_list
-from f8pysdk.nats_naming import ensure_token
+from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
-from f8pysdk.shm.video import VideoShmReader
+from f8pysdk.video_transport import VIDEO_FORMAT_BGRA32
 
 from .constants import CLASSIFICATION_SCHEMA_VERSION, DETECTION_SCHEMA_VERSION
 from .model_config import ModelSpec, ModelTask, build_model_index, build_model_index_with_errors, load_model_spec
 from .onnx_runtime import OnnxClassifierRuntime, OnnxYoloDetectorRuntime, OnnxYowoTemporalDetectorRuntime
+from .video_frame_source import (
+    LatestVideoFrameSource,
+    VideoFrameSourceConfig,
+    video_source_metadata,
+)
 from .vision_utils import clamp_xyxy
 from .weights_downloader import ensure_onnx_file, onnx_file_matches_sha256
 
@@ -141,7 +146,6 @@ class _Telemetry:
         service_class: str,
         model: ModelSpec | None,
         ort_provider: str,
-        shm_name: str,
         frame_id_last_seen: int | None,
         frame_id_last_processed: int | None,
     ) -> dict[str, Any]:
@@ -159,7 +163,7 @@ class _Telemetry:
                 "provider": (model.provider if model else ""),
             },
             "windowMs": int(win_ms),
-            "source": {"shmName": str(shm_name)},
+            "source": video_source_metadata(),
             "frameId": {
                 "lastSeen": int(frame_id_last_seen) if frame_id_last_seen is not None else None,
                 "lastProcessed": int(frame_id_last_processed) if frame_id_last_processed is not None else None,
@@ -200,6 +204,7 @@ class OnnxVisionServiceNode(ServiceNode):
 
         self._active = True
         self._config_loaded = False
+        self._init_task: asyncio.Task[object] | None = None
         self._task: asyncio.Task[object] | None = None
 
         self._weights_dir = _default_weights_dir()
@@ -210,14 +215,12 @@ class OnnxVisionServiceNode(ServiceNode):
         self._conf_override = -1.0
         self._iou_override = -1.0
         self._top_k = 5
-        self._shm_name = ""
         self._enabled_classes: list[str] = []
         self._per_class_k = 0
         self._auto_download_weights = True
         self._download_retry_at_monotonic = 0.0
 
-        self._shm: VideoShmReader | None = None
-        self._shm_open_name = ""
+        self._video_source: LatestVideoFrameSource | None = None
 
         self._model: ModelSpec | None = None
         self._det_runtime: OnnxYoloDetectorRuntime | None = None
@@ -237,17 +240,27 @@ class OnnxVisionServiceNode(ServiceNode):
 
     def attach(self, bus: Any) -> None:
         super().attach(bus)
+        self._video_source = LatestVideoFrameSource(config=VideoFrameSourceConfig.from_bus(bus))
         loop = asyncio.get_running_loop()
-        loop.create_task(self._ensure_config_loaded(), name=f"f8dl:init:{self.node_id}")
+        self._init_task = loop.create_task(self._ensure_config_loaded(), name=f"f8dl:init:{self.node_id}")
         self._task = loop.create_task(self._loop(), name=f"f8dl:loop:{self.node_id}")
 
     async def close(self) -> None:
+        self._active = False
+        tasks: list[asyncio.Task[object]] = []
+        init_task = self._init_task
+        self._init_task = None
+        if init_task is not None:
+            tasks.append(init_task)
         t = self._task
         self._task = None
         if t is not None:
-            t.cancel()
-            await asyncio.gather(t, return_exceptions=True)
-        self._close_shm()
+            tasks.append(t)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._close_video_source()
         self._reset_temporal_buffer()
 
     async def on_lifecycle(self, active: bool, meta: dict[str, Any]) -> None:
@@ -308,11 +321,6 @@ class OnnxVisionServiceNode(ServiceNode):
 
         if name == "topK":
             self._top_k = coerce_int(await self.get_state_value("topK"), default=self._top_k, minimum=1, maximum=100)
-            return
-
-        if name == "shmName":
-            self._shm_name = coerce_str(await self.get_state_value("shmName"), default=self._shm_name)
-            await self._maybe_reopen_shm()
             return
 
         if name == "enabledClasses":
@@ -399,9 +407,6 @@ class OnnxVisionServiceNode(ServiceNode):
         self._auto_download_weights = coerce_bool(
             await self.get_state_value("autoDownloadWeights"),
             default=bool(self._initial_state.get("autoDownloadWeights", True)),
-        )
-        self._shm_name = coerce_str(
-            await self.get_state_value("shmName"), default=str(self._initial_state.get("shmName") or "")
         )
         self._config_loaded = True
         await self._publish_model_index()
@@ -513,21 +518,8 @@ class OnnxVisionServiceNode(ServiceNode):
         if self._model_index_warning:
             await self._set_last_error(self._model_index_warning)
 
-    async def _maybe_reopen_shm(self) -> None:
-        want = self._resolve_shm_name()
-        if want == self._shm_open_name:
-            return
-        self._close_shm()
-        self._reset_temporal_buffer()
-        self._last_infer_frame_id = None
-        self._last_processed_frame_id = None
-        self._dup_skipped_since_last_processed = 0
-
-    def _resolve_shm_name(self) -> str:
-        shm = str(self._shm_name or "").strip()
-        if shm:
-            return shm
-        return ""
+    def _resolve_video_stream_key(self) -> str:
+        return self.input_zenoh_key("video") or ""
 
     def _normalize_enabled_classes(self, values: list[str], *, allowed_classes: list[str] | None = None) -> list[str]:
         if allowed_classes is not None:
@@ -583,14 +575,19 @@ class OnnxVisionServiceNode(ServiceNode):
         picked.sort(key=lambda item: float(item.conf), reverse=True)
         return picked
 
-    def _close_shm(self) -> None:
-        if self._shm is not None:
-            try:
-                self._shm.close()
-            except Exception:
-                self._shm = None
-        self._shm = None
-        self._shm_open_name = ""
+    def _close_video_source(self) -> None:
+        source = self._video_source
+        self._video_source = None
+        if source is not None:
+            source.close()
+
+    def _ensure_video_source(self) -> LatestVideoFrameSource:
+        source = self._video_source
+        if source is not None:
+            return source
+        source = LatestVideoFrameSource(config=VideoFrameSourceConfig.from_bus(self._bus))
+        self._video_source = source
+        return source
 
     def _reset_temporal_buffer(self, *, maxlen: int | None = None) -> None:
         next_maxlen = maxlen if maxlen is not None else self._temporal_frame_buffer.maxlen
@@ -642,13 +639,14 @@ class OnnxVisionServiceNode(ServiceNode):
             selected.append(frames[index].prepared_frame)
         return np.stack(tuple(selected), axis=0)
 
-    def _open_shm(self, shm_name: str) -> bool:
-        self._close_shm()
-        shm = VideoShmReader(shm_name)
-        shm.open(use_event=True)
-        self._shm = shm
-        self._shm_open_name = shm_name
-        return True
+    def _reset_video_source(self) -> None:
+        source = self._video_source
+        if source is not None:
+            source.reset()
+        self._reset_temporal_buffer()
+        self._last_infer_frame_id = None
+        self._last_processed_frame_id = None
+        self._dup_skipped_since_last_processed = 0
 
     def _resolve_model_yaml(self) -> Path:
         if self._model_yaml_path:
@@ -791,28 +789,39 @@ class OnnxVisionServiceNode(ServiceNode):
                     await asyncio.sleep(0.1)
                     continue
 
-                shm_name = self._resolve_shm_name()
-                if not shm_name:
+                temporal_runtime = self._temporal_det_runtime
+                det_runtime = self._det_runtime
+                cls_runtime = self._cls_runtime
+                if temporal_runtime is None and det_runtime is None and cls_runtime is None:
                     await asyncio.sleep(0.05)
                     continue
 
-                if self._shm is None:
-                    try:
-                        self._open_shm(shm_name)
-                    except Exception as exc:
-                        await self._record_exception(where="open_shm", exc=exc)
-                        await asyncio.sleep(0.1)
-                        continue
-
-                assert self._shm is not None
-                t0 = time.perf_counter()
-                self._shm.wait_new_frame(timeout_ms=10)
-                header, payload = self._shm.read_latest_bgra()
-                if header is None or payload is None:
+                source = self._ensure_video_source()
+                video_stream_key = self._resolve_video_stream_key()
+                if not video_stream_key:
+                    await asyncio.sleep(0.05)
                     continue
-                frame_id_seen = int(header.frame_id)
+
+                t0 = time.perf_counter()
+                try:
+                    frame = source.read_latest(stream_key=video_stream_key, timeout_ms=10)
+                except Exception as exc:
+                    await self._record_exception(where="open_video_source", exc=exc)
+                    await asyncio.sleep(0.1)
+                    continue
+                if frame is None:
+                    continue
+                if int(frame.fmt) != VIDEO_FORMAT_BGRA32:
+                    frame.release()
+                    await self._set_last_error(
+                        f"input video format must be BGRA32(fmt={VIDEO_FORMAT_BGRA32}), got fmt={int(frame.fmt)}"
+                    )
+                    await asyncio.sleep(0.05)
+                    continue
+                frame_id_seen = int(frame.frame_id)
                 if self._last_processed_frame_id is not None and frame_id_seen == int(self._last_processed_frame_id):
                     self._dup_skipped_since_last_processed += 1
+                    frame.release()
                     continue
                 self._dup_skipped_since_last_processed = 0
 
@@ -820,72 +829,76 @@ class OnnxVisionServiceNode(ServiceNode):
                 if self._last_infer_frame_id is None:
                     do_infer = True
                 else:
-                    do_infer = (int(header.frame_id) - int(self._last_infer_frame_id)) >= int(self._infer_every_n)
+                    do_infer = (int(frame.frame_id) - int(self._last_infer_frame_id)) >= int(self._infer_every_n)
                 if not do_infer:
                     self._last_processed_frame_id = frame_id_seen
+                    frame.release()
                     continue
 
-                width = int(header.width)
-                height = int(header.height)
-                pitch = int(header.pitch)
+                width = int(frame.width)
+                height = int(frame.height)
+                pitch = int(frame.pitch)
                 if width <= 0 or height <= 0 or pitch <= 0:
+                    frame.release()
                     continue
                 frame_bytes = int(pitch) * int(height)
-                if len(payload) < frame_bytes:
+                if len(frame.payload) < frame_bytes:
+                    frame.release()
                     continue
                 self._last_processed_frame_id = frame_id_seen
 
-                buf = np.frombuffer(payload, dtype=np.uint8)
-                rows = buf.reshape((height, pitch))
-                bgra = rows[:, : width * 4].reshape((height, width, 4))
-                frame_bgr = bgra[:, :, 0:3]
+                try:
+                    buf = np.frombuffer(frame.payload, dtype=np.uint8)
+                    rows = buf.reshape((height, pitch))
+                    bgra = rows[:, : width * 4].reshape((height, width, 4))
+                    frame_bgr = bgra[:, :, 0:3]
 
-                t_infer0 = time.perf_counter()
-                if self._temporal_det_runtime is not None:
-                    prepared = self._temporal_det_runtime.prepare_frame(frame_bgr)
-                    self._append_temporal_frame(
-                        prepared_frame=prepared,
-                        frame_id=frame_id_seen,
-                        ts_ms=int(header.ts_ms),
-                    )
-                    if not self._temporal_window_ready():
-                        continue
-                    if not self._should_infer_temporal():
-                        continue
-                    sequence = self._build_temporal_sequence()
-                    detections, _meta = self._temporal_det_runtime.infer_sequence(
-                        sequence,
-                        frame_size_hw=(height, width),
-                    )
-                    payload_out = self._build_detection_payload(
-                        width=width,
-                        height=height,
-                        frame_id=frame_id_seen,
-                        ts_ms=int(header.ts_ms),
-                        detections=detections,
-                    )
-                    await self.emit("detections", payload_out, ts_ms=int(header.ts_ms))
-                elif self._det_runtime is not None:
-                    detections, _meta = self._det_runtime.infer(frame_bgr)
-                    payload_out = self._build_detection_payload(
-                        width=width,
-                        height=height,
-                        frame_id=frame_id_seen,
-                        ts_ms=int(header.ts_ms),
-                        detections=detections,
-                    )
-                    await self.emit("detections", payload_out, ts_ms=int(header.ts_ms))
-                elif self._cls_runtime is not None:
-                    topk, _meta = self._cls_runtime.infer(frame_bgr, top_k=self._top_k)
-                    payload_out = self._build_classification_payload(
-                        frame_id=frame_id_seen,
-                        ts_ms=int(header.ts_ms),
-                        topk=topk,
-                    )
-                    await self.emit("classifications", payload_out, ts_ms=int(header.ts_ms))
-                else:
-                    raise RuntimeError("Inference runtime is not initialized.")
-                t_infer1 = time.perf_counter()
+                    t_infer0 = time.perf_counter()
+                    if temporal_runtime is not None:
+                        prepared = temporal_runtime.prepare_frame(frame_bgr)
+                        self._append_temporal_frame(
+                            prepared_frame=prepared,
+                            frame_id=frame_id_seen,
+                            ts_ms=int(frame.ts_ms),
+                        )
+                        if not self._temporal_window_ready():
+                            continue
+                        if not self._should_infer_temporal():
+                            continue
+                        sequence = self._build_temporal_sequence()
+                        detections, _meta = temporal_runtime.infer_sequence(
+                            sequence,
+                            frame_size_hw=(height, width),
+                        )
+                        payload_out = self._build_detection_payload(
+                            width=width,
+                            height=height,
+                            frame_id=frame_id_seen,
+                            ts_ms=int(frame.ts_ms),
+                            detections=detections,
+                        )
+                        await self.emit("detections", payload_out, ts_ms=int(frame.ts_ms))
+                    elif det_runtime is not None:
+                        detections, _meta = det_runtime.infer(frame_bgr)
+                        payload_out = self._build_detection_payload(
+                            width=width,
+                            height=height,
+                            frame_id=frame_id_seen,
+                            ts_ms=int(frame.ts_ms),
+                            detections=detections,
+                        )
+                        await self.emit("detections", payload_out, ts_ms=int(frame.ts_ms))
+                    elif cls_runtime is not None:
+                        topk, _meta = cls_runtime.infer(frame_bgr, top_k=self._top_k)
+                        payload_out = self._build_classification_payload(
+                            frame_id=frame_id_seen,
+                            ts_ms=int(frame.ts_ms),
+                            topk=topk,
+                        )
+                        await self.emit("classifications", payload_out, ts_ms=int(frame.ts_ms))
+                    t_infer1 = time.perf_counter()
+                finally:
+                    frame.release()
 
                 self._last_infer_frame_id = frame_id_seen
                 _ = t_infer1

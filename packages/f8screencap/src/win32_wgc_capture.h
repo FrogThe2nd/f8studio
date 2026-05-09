@@ -8,11 +8,9 @@
 #include <string>
 #include <vector>
 
-namespace f8::cppsdk {
-class VideoSharedMemorySink;
-}
-
 namespace f8::screencap {
+
+class CaptureFrameSink;
 
 // Windows Graphics Capture (WinRT) backend.
 //
@@ -34,7 +32,7 @@ class Win32WgcCapture final {
     std::string scale_csv;   // w,h (optional; 0,0 disables)
   };
 
-  Win32WgcCapture(std::string service_id, std::shared_ptr<f8::cppsdk::VideoSharedMemorySink> sink);
+  Win32WgcCapture(std::string service_id, std::shared_ptr<CaptureFrameSink> sink);
   ~Win32WgcCapture();
 
   void configure(std::string mode, double fps, int display_id, std::string window_id, std::string region_csv,
@@ -57,7 +55,7 @@ class Win32WgcCapture final {
                                   int dst_w, int dst_h, int dst_stride);
 
   std::string service_id_;
-  std::shared_ptr<f8::cppsdk::VideoSharedMemorySink> sink_;
+  std::shared_ptr<CaptureFrameSink> sink_;
 
   std::atomic<bool> active_{true};
   std::atomic<bool> want_restart_{false};

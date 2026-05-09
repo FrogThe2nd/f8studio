@@ -14,6 +14,8 @@ from f8pysdk.specs import (
     can_delete as _policy_can_delete,
     can_edit_existing as _policy_can_edit_existing,
     can_rename_state_field as _policy_can_rename_state_field,
+    data_port_payload_kind,
+    data_port_stream_delivery,
 )
 from f8pysdk.codec import copy_model
 
@@ -425,7 +427,9 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         desc = str(port.description or "").strip()
         vs = port.valueSchema
         t = _schema_type(vs)
-        parts = [f"required={req}", f"type={t or 'unknown'}"]
+        payload_text = data_port_payload_kind(port).value
+        delivery_text = data_port_stream_delivery(port).value
+        parts = [f"required={req}", f"payload={payload_text}", f"delivery={delivery_text}", f"schema={t or 'unknown'}"]
         if desc:
             parts.append(desc)
         return "\n".join(parts)

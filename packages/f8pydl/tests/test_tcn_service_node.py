@@ -79,7 +79,7 @@ class _FakeBus:
 
 
 class TcnServiceNodeTests(unittest.TestCase):
-    def test_missing_shm_name_sets_last_error_and_does_not_crash(self) -> None:
+    def test_missing_default_video_input_requests_zenoh_key(self) -> None:
         async def _run() -> None:
             node = OnnxTcnWaveServiceNode(
                 node_id="tcn_node",
@@ -91,8 +91,8 @@ class TcnServiceNodeTests(unittest.TestCase):
             bus = _FakeBus()
             RuntimeNode.attach(node, bus)
             await node._ensure_config_loaded()
-            await node._handle_missing_shm_name(now_ms=1234)
-            self.assertEqual(bus.errors[-1][2], "missing shmName")
+            await node._handle_missing_video_input()
+            self.assertEqual(bus.errors[-1][2], "missing video data input")
 
         asyncio.run(_run())
 
@@ -115,6 +115,46 @@ class TcnServiceNodeTests(unittest.TestCase):
             await node._ensure_config_loaded()
             self.assertEqual(node._output_scale, 7.0)
             self.assertEqual(node._output_bias, -2.5)
+
+        asyncio.run(_run())
+
+    def test_loop_retries_when_runtime_is_reset_after_ensure(self) -> None:
+        class _RuntimeResetNode(OnnxTcnWaveServiceNode):
+            async def _ensure_config_loaded(self) -> None:
+                return None
+
+            async def _ensure_runtime(self) -> bool:
+                self._runtime = None
+                return True
+
+            def _resolve_video_stream_key(self) -> str:
+                return "f8/svc/source/nodes/camera/data/video"
+
+            def _ensure_video_source(self) -> Any:
+                raise AssertionError("video source should not be opened without runtime")
+
+        async def _run() -> None:
+            node = _RuntimeResetNode(
+                node_id="tcn_node",
+                node=_NodeStub(stateFields=[]),
+                initial_state={},
+                service_class="f8.dl.tcnwave",
+                allowed_tasks={"tcn_wave"},
+            )
+            bus = _FakeBus()
+            node._bus = bus
+
+            task = asyncio.create_task(node._loop())
+            await asyncio.sleep(0.08)
+            if task.done():
+                task.result()
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+            self.assertEqual(bus.errors, [])
 
         asyncio.run(_run())
 

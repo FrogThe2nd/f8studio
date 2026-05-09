@@ -376,9 +376,7 @@ def refresh_state_inline_option_pools(node_item: Any, changed_field: str) -> Non
     If `changed_field` is used as an option-pool, refresh all dependent option controls.
     """
     pool = str(changed_field or "").strip()
-    if not pool:
-        return
-    if pool not in set(node_item._state_inline_option_pools.values()):
+    if not has_state_inline_option_pool_dependents(node_item, pool):
         return
     node = node_item._backend_node()
     if node is None:
@@ -417,6 +415,20 @@ def refresh_state_inline_option_pools(node_item: Any, changed_field: str) -> Non
             ctrl.set_value(selected_value)
         except (AttributeError, RuntimeError, TypeError):
             continue
+
+
+def has_state_inline_option_pool_dependents(node_item: Any, changed_field: str) -> bool:
+    pool = str(changed_field or "").strip()
+    if not pool:
+        return False
+    try:
+        option_pools = node_item._state_inline_option_pools
+    except AttributeError:
+        return False
+    for pool_name in option_pools.values():
+        if str(pool_name or "").strip() == pool:
+            return True
+    return False
 
 
 def toggle_state_inline_section(node_item: Any, name: str, expanded: bool) -> None:

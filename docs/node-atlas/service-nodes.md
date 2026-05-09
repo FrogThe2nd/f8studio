@@ -8,9 +8,9 @@ Canonical service documentation lives under `Modules > Services`; this page is t
 | Service Node | Label | Main Role | Operators | Canonical Doc |
 | --- | --- | --- | --- | --- |
 | `f8.audiocap` | Audio Capture | No description. | `0` | [Open](../modules/services/f8-audiocap.md) |
-| `f8.audiofeat.core` | Audio Feature Core | Audio SHM core feature extraction service (rms, onset, centroid). | `0` | [Open](../modules/services/f8-audiofeat-core.md) |
+| `f8.audiofeat.core` | Audio Feature Core | Zenoh latest-audio core feature extraction service (rms, onset, centroid). | `0` | [Open](../modules/services/f8-audiofeat-core.md) |
 | `f8.audiofeat.rhythm` | Audio Feature Rhythm | Rhythm analysis service consuming core features (tempo + pulse clarity). | `0` | [Open](../modules/services/f8-audiofeat-rhythm.md) |
-| `f8.implayer` | IM Player | C++ MPV-based player service with shared-memory video output. | `0` | [Open](../modules/services/f8-implayer.md) |
+| `f8.implayer` | IM Player | C++ MPV-based player service with Zenoh latest-frame video output. | `0` | [Open](../modules/services/f8-implayer.md) |
 | `f8.proclauncher` | Proc Launcher | Launches an external OS process (optionally detached). | `0` | [Open](../modules/services/f8-proclauncher.md) |
 | `f8.pyengine` | PyEngine | Python-based execution engine for Feel8 operators. | `42` | [Open](../modules/services/f8-pyengine.md) |
 | `f8.pyexpr` | Python Expr Service | Standalone expression runtime service for simplified data-flow transforms. | `0` | [Open](../modules/services/f8-pyexpr.md) |
@@ -33,9 +33,9 @@ Canonical service documentation lives under `Modules > Services`; this page is t
 | --- | --- | --- | --- | --- |
 | `f8.dl.classifier` | DL Classifier | ONNXRuntime image classifier service (no tracking). | `0` | [Open](../modules/services/f8-dl-classifier.md) |
 | `f8.dl.detector` | DL Detector | ONNXRuntime object detector service (no tracking). | `0` | [Open](../modules/services/f8-dl-detector.md) |
-| `f8.dl.detsorter` | DL Detection Sorter | Sort detection payloads by a score-map SHM metric. | `0` | [Open](../modules/services/f8-dl-detsorter.md) |
+| `f8.dl.detsorter` | DL Detection Sorter | Sort detection payloads by a score-map metric. | `0` | [Open](../modules/services/f8-dl-detsorter.md) |
 | `f8.dl.humandetector` | DL Human Detector | ONNXRuntime human detection/pose service (no tracking). | `0` | [Open](../modules/services/f8-dl-humandetector.md) |
-| `f8.dl.optflow` | DL Optical Flow | ONNXRuntime NeuFlowV2 dense optical flow service (flow SHM output). | `0` | [Open](../modules/services/f8-dl-optflow.md) |
+| `f8.dl.optflow` | DL Optical Flow | ONNXRuntime NeuFlowV2 dense optical flow service (Zenoh latest-frame flow output). | `0` | [Open](../modules/services/f8-dl-optflow.md) |
 | `f8.dl.tcnwave` | DL TCN Wave | ONNXRuntime temporal convolution wave inference service (port output). | `0` | [Open](../modules/services/f8-dl-tcnwave.md) |
 
 ## MediaPipe

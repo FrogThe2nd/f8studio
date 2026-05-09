@@ -84,4 +84,4 @@ _None_
 
 ## Related Scenarios
 
-- [Scene 03: Audio Driven TCode](../../scenarios/scene-03-audio_driven.md)
+- No bundled scenario references this node yet.

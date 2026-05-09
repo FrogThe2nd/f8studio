@@ -13,10 +13,9 @@
 #include <opencv2/video/tracking.hpp>
 
 #include "f8cppsdk/describe_schema.h"
-#include "f8cppsdk/shm/naming.h"
-#include "f8cppsdk/shm/sizing.h"
-#include "f8cppsdk/state_kv.h"
+#include "f8cppsdk/latest_video_frame_transport.h"
 #include "f8cppsdk/time_utils.h"
+#include "f8cppsdk/zenoh_naming.h"
 #include "../common/service_runtime_utils.h"
 
 namespace f8::cvkit::video_stab {
@@ -29,6 +28,7 @@ using f8::cppsdk::describe::schema_object;
 using f8::cppsdk::describe::schema_string;
 using f8::cppsdk::describe::schema_string_enum;
 using f8::cppsdk::describe::state_field;
+using f8::cppsdk::describe::video_frame_port;
 
 namespace {
 
@@ -130,8 +130,8 @@ bool VideoStabService::start() {
 
   f8::cppsdk::ServiceBus::Config bus_cfg;
   bus_cfg.service_id = cfg_.service_id;
-  bus_cfg.nats_url = cfg_.nats_url;
-  bus_cfg.kv_memory_storage = true;
+  const auto runtime_backend = f8::cppsdk::normalize_runtime_backend_config(cfg_.runtime_backend);
+  bus_cfg.apply_runtime_backend(runtime_backend);
   bus_cfg.service_class = cfg_.service_class;
   bus_cfg.service_name = "CVKit Video Stabilizer";
   bus_ = std::make_unique<f8::cppsdk::ServiceBus>(bus_cfg);
@@ -145,9 +145,10 @@ bool VideoStabService::start() {
     return false;
   }
 
-  output_shm_name_ = f8::cppsdk::shm::video_shm_name(cfg_.service_id);
-  input_shm_name_.clear();
-  input_video_.close();
+  input_stream_key_.clear();
+  input_zenoh_video_.reset();
+  output_stream_key_ = f8::cppsdk::zenoh_data_key(cfg_.service_id, cfg_.service_id, "video");
+  output_frame_id_ = 0;
   output_initialized_ = false;
   has_prev_gray_ = false;
   prev_gray_.release();
@@ -160,10 +161,8 @@ bool VideoStabService::start() {
   scene_change_count_ = 0;
   scene_cut_cooldown_remaining_ = 0;
 
-  input_last_notify_seq_ = 0;
   input_last_frame_id_ = 0;
   input_last_open_attempt_ms_ = 0;
-  output_last_open_attempt_ms_ = 0;
 
   monitor_observed_frames_ = 0;
   monitor_processed_frames_ = 0;
@@ -174,9 +173,21 @@ bool VideoStabService::start() {
   monitor_total_process_ms_ = 0.0;
   monitor_fps_ = 0.0;
 
+  auto publisher = std::make_shared<f8::cppsdk::ZenohLatestVideoFramePublisher>();
+  if (publisher->open(runtime_backend, output_stream_key_)) {
+    output_zenoh_video_ = publisher;
+    spdlog::info("video_stab zenoh video publisher enabled serviceId={} key={}", cfg_.service_id, output_stream_key_);
+  } else {
+    output_zenoh_video_.reset();
+    spdlog::error("video_stab zenoh video publisher unavailable serviceId={} key={}", cfg_.service_id, output_stream_key_);
+    bus_->stop();
+    bus_.reset();
+    return false;
+  }
+
   publish_state_if_changed("serviceClass", cfg_.service_class, "init", json::object());
-  publish_state_if_changed("inputShmName", input_shm_name_, "init", json::object());
-  publish_state_if_changed("outputShmName", output_shm_name_, "init", json::object());
+  publish_state_if_changed("videoFormat", "bgra32", "init", json::object());
+  publish_state_if_changed("videoFrameSchemaVersion", 1, "init", json::object());
   publish_state_if_changed("motionModel", motion_model_state_, "init", json::object());
   publish_state_if_changed("stabilizationMode", stabilization_mode_state_, "init", json::object());
   publish_state_if_changed("smoothAlpha", smooth_alpha_, "init", json::object());
@@ -193,7 +204,8 @@ bool VideoStabService::start() {
 
   running_.store(true, std::memory_order_release);
   stop_requested_.store(false, std::memory_order_release);
-  spdlog::info("cvkit_video_stab started serviceId={} natsUrl={}", cfg_.service_id, cfg_.nats_url);
+  spdlog::info("cvkit_video_stab started serviceId={} backend={}", cfg_.service_id,
+               f8::cppsdk::bus_backend_to_string(runtime_backend.bus_backend));
   return true;
 }
 
@@ -207,8 +219,14 @@ void VideoStabService::stop() {
   bus_.reset();
 
   std::lock_guard<std::mutex> lock(io_mu_);
-  input_video_.close();
-  output_video_.reset();
+  if (input_zenoh_video_) {
+    input_zenoh_video_->close();
+  }
+  input_zenoh_video_.reset();
+  if (output_zenoh_video_) {
+    output_zenoh_video_->close();
+  }
+  output_zenoh_video_.reset();
   output_initialized_ = false;
 }
 
@@ -279,26 +297,6 @@ bool VideoStabService::parse_int_field(const json& value, int& out) const {
   return service_runtime::parse_json_int(value, out);
 }
 
-void VideoStabService::set_input_shm_name(const std::string& shm_name, const json& meta) {
-  const std::string trimmed = service_runtime::trim_copy(shm_name);
-  if (trimmed == input_shm_name_) {
-    publish_state_if_changed("inputShmName", input_shm_name_, "state", meta);
-    return;
-  }
-
-  {
-    std::lock_guard<std::mutex> lock(io_mu_);
-    input_shm_name_ = trimmed;
-    input_video_.close();
-    input_last_open_attempt_ms_ = 0;
-    input_last_notify_seq_ = 0;
-    input_last_frame_id_ = 0;
-  }
-
-  reset_stabilizer_internal(meta, "input_shm_changed");
-  publish_state_if_changed("inputShmName", input_shm_name_, "state", meta);
-}
-
 void VideoStabService::set_motion_model(const std::string& model, const json& meta) {
   const std::string normalized = service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(model));
   if (normalized == "affine") {
@@ -339,10 +337,6 @@ void VideoStabService::on_state(const std::string& node_id, const std::string& f
   if (node_id != cfg_.service_id)
     return;
 
-  if (field == "inputShmName" && value.is_string()) {
-    set_input_shm_name(value.get<std::string>(), meta);
-    return;
-  }
   if (field == "motionModel" && value.is_string()) {
     set_motion_model(value.get<std::string>(), meta);
     return;
@@ -479,7 +473,7 @@ void VideoStabService::on_data(const std::string& node_id, const std::string& po
   (void)value;
   (void)ts_ms;
   (void)meta;
-  // Pull-only service, no dataIn.
+  // Pull-based latest-frame stream input.
 }
 
 bool VideoStabService::on_command(const std::string& call, const json& args, const json& meta, json& result,
@@ -515,8 +509,18 @@ void VideoStabService::reset_stabilizer_internal(const json& meta, const std::st
 }
 
 bool VideoStabService::ensure_input_open() {
-  f8::cppsdk::VideoSharedMemoryHeader hdr{};
-  if (input_video_.readHeader(hdr)) {
+  std::string key;
+  if (bus_) {
+    const auto resolved = bus_->data_input_zenoh_key(cfg_.service_id, "video");
+    if (resolved.has_value()) {
+      key = service_runtime::trim_copy(*resolved);
+    }
+  }
+  if (key.empty()) {
+    publish_error_if_changed("missing video data input", "runtime", json::object());
+    return false;
+  }
+  if (input_zenoh_video_ && input_zenoh_video_->valid() && input_stream_key_ == key) {
     return true;
   }
 
@@ -526,17 +530,21 @@ bool VideoStabService::ensure_input_open() {
   }
   input_last_open_attempt_ms_ = now;
 
-  if (input_shm_name_.empty()) {
-    publish_error_if_changed("missing inputShmName", "runtime", json::object());
+  if (input_zenoh_video_) {
+    input_zenoh_video_->close();
+  }
+  input_zenoh_video_.reset();
+  auto subscriber = std::make_unique<f8::cppsdk::ZenohLatestVideoFrameSubscriber>();
+  const auto runtime_backend = f8::cppsdk::normalize_runtime_backend_config(cfg_.runtime_backend);
+  if (!subscriber->open(runtime_backend, key)) {
+    publish_error_if_changed("zenoh video subscribe failed: " + key, "runtime", json::object());
     return false;
   }
-
-  if (!input_video_.open(input_shm_name_, f8::cppsdk::shm::kDefaultVideoShmBytes)) {
-    publish_error_if_changed("video shm open failed: " + input_shm_name_, "runtime", json::object());
-    return false;
-  }
-
-  input_last_notify_seq_ = 0;
+  input_stream_key_ = key;
+  input_zenoh_video_ = std::move(subscriber);
+  input_last_frame_id_ = 0;
+  input_frame_bgra_.clear();
+  reset_stabilizer_internal(json::object(), "input_stream_changed");
   publish_error_if_changed("", "runtime", json::object());
   return true;
 }
@@ -545,23 +553,16 @@ bool VideoStabService::ensure_output_open() {
   if (output_initialized_)
     return true;
 
-  const std::int64_t now = f8::cppsdk::now_ms();
-  if (output_last_open_attempt_ms_ > 0 && (now - output_last_open_attempt_ms_) < 1000) {
-    return false;
-  }
-  output_last_open_attempt_ms_ = now;
-
-  output_video_ = std::make_unique<f8::cppsdk::VideoSharedMemorySink>();
-  if (!output_video_->initialize(output_shm_name_, f8::cppsdk::shm::kDefaultVideoShmBytes,
-                                 f8::cppsdk::shm::kDefaultVideoShmSlots)) {
-    output_video_.reset();
-    publish_error_if_changed("output shm init failed: " + output_shm_name_, "runtime", json::object());
-    return false;
+  if (output_zenoh_video_ && output_zenoh_video_->valid()) {
+    output_initialized_ = true;
+    publish_state_if_changed("videoFormat", "bgra32", "runtime", json::object());
+    publish_state_if_changed("videoFrameSchemaVersion", 1, "runtime", json::object());
+    publish_error_if_changed("", "runtime", json::object());
+    return true;
   }
 
-  output_initialized_ = true;
-  publish_error_if_changed("", "runtime", json::object());
-  return true;
+  publish_error_if_changed("output zenoh publisher unavailable: " + output_stream_key_, "runtime", json::object());
+  return false;
 }
 
 void VideoStabService::process_frame_once() {
@@ -577,42 +578,46 @@ void VideoStabService::process_frame_once() {
     return;
   }
 
-  std::uint32_t observed_notify_seq = input_last_notify_seq_;
-  if (!input_video_.waitNewFrame(input_last_notify_seq_, 20, &observed_notify_seq)) {
+  if (!input_zenoh_video_) {
     return;
   }
-  input_last_notify_seq_ = observed_notify_seq;
-
-  f8::cppsdk::VideoSharedMemoryHeader hdr{};
-  if (!input_video_.copyLatestFrame(input_frame_bgra_, hdr)) {
+  auto latest = input_zenoh_video_->wait_latest(std::chrono::milliseconds(20));
+  if (!latest.has_value()) {
     return;
   }
-  if (hdr.frame_id == 0 || hdr.frame_id == input_last_frame_id_) {
+  if (latest->frame_id == 0 || latest->frame_id == input_last_frame_id_) {
     return;
   }
+  const unsigned frame_width = latest->width;
+  const unsigned frame_height = latest->height;
+  const unsigned frame_pitch = latest->pitch;
+  const std::uint32_t frame_format = latest->format;
+  const std::uint64_t source_frame_id = latest->frame_id;
+  const std::int64_t source_ts_ms = latest->ts_ms;
+  input_frame_bgra_ = std::move(latest->payload);
 
   ++monitor_observed_frames_;
-  input_last_frame_id_ = hdr.frame_id;
+  input_last_frame_id_ = source_frame_id;
   const std::int64_t process_start_ms = f8::cppsdk::now_ms();
 
-  if (hdr.format != 1 || hdr.width == 0 || hdr.height == 0 || hdr.pitch == 0) {
+  if (frame_format != 1 || frame_width == 0 || frame_height == 0 || frame_pitch == 0) {
     ++monitor_fail_frames_;
-    publish_error_if_changed("unsupported video shm format", "runtime", json::object());
+    publish_error_if_changed("unsupported video frame format", "runtime", json::object());
     return;
   }
-  const std::size_t row_bytes = static_cast<std::size_t>(hdr.pitch);
-  if (row_bytes < static_cast<std::size_t>(hdr.width) * 4) {
+  const std::size_t row_bytes = static_cast<std::size_t>(frame_pitch);
+  if (row_bytes < static_cast<std::size_t>(frame_width) * 4) {
     ++monitor_fail_frames_;
-    publish_error_if_changed("invalid video shm pitch", "runtime", json::object());
+    publish_error_if_changed("invalid video frame pitch", "runtime", json::object());
     return;
   }
-  if (input_frame_bgra_.size() < row_bytes * static_cast<std::size_t>(hdr.height)) {
+  if (input_frame_bgra_.size() < row_bytes * static_cast<std::size_t>(frame_height)) {
     ++monitor_fail_frames_;
-    publish_error_if_changed("video shm frame too small", "runtime", json::object());
+    publish_error_if_changed("video frame too small", "runtime", json::object());
     return;
   }
 
-  cv::Mat src_bgra(static_cast<int>(hdr.height), static_cast<int>(hdr.width), CV_8UC4,
+  cv::Mat src_bgra(static_cast<int>(frame_height), static_cast<int>(frame_width), CV_8UC4,
                    const_cast<std::byte*>(input_frame_bgra_.data()), row_bytes);
 
   cv::Mat gray;
@@ -669,8 +674,8 @@ void VideoStabService::process_frame_once() {
     std::vector<cv::Point2f> curr_valid;
     prev_valid.reserve(prev_pts.size());
     curr_valid.reserve(curr_pts.size());
-    const int w = static_cast<int>(hdr.width);
-    const int h = static_cast<int>(hdr.height);
+    const int w = static_cast<int>(frame_width);
+    const int h = static_cast<int>(frame_height);
 
     for (std::size_t i = 0; i < prev_pts.size() && i < curr_pts.size() && i < status.size(); ++i) {
       if (status[i] == 0)
@@ -772,16 +777,16 @@ void VideoStabService::process_frame_once() {
       corr_params.scale = correction_smooth_params.scale / base_scale;
 
       const cv::Mat correction_affine = correction_affine_2x3(
-          correction_raw_params, correction_smooth_params, static_cast<int>(hdr.width), static_cast<int>(hdr.height));
+          correction_raw_params, correction_smooth_params, static_cast<int>(frame_width), static_cast<int>(frame_height));
       try {
         if (motion_model_ == MotionModel::Affine) {
           cv::warpAffine(src_bgra, stabilized, correction_affine,
-                         cv::Size(static_cast<int>(hdr.width), static_cast<int>(hdr.height)), cv::INTER_LINEAR,
+                         cv::Size(static_cast<int>(frame_width), static_cast<int>(frame_height)), cv::INTER_LINEAR,
                          cv::BORDER_CONSTANT, cv::Scalar(0, 0, 0, 255));
         } else {
           const cv::Mat correction_h = affine_2x3_to_homography_3x3(correction_affine);
           cv::warpPerspective(src_bgra, stabilized, correction_h,
-                              cv::Size(static_cast<int>(hdr.width), static_cast<int>(hdr.height)), cv::INTER_LINEAR,
+                              cv::Size(static_cast<int>(frame_width), static_cast<int>(frame_height)), cv::INTER_LINEAR,
                               cv::BORDER_CONSTANT, cv::Scalar(0, 0, 0, 255));
         }
       } catch (const cv::Exception& ex) {
@@ -811,23 +816,33 @@ void VideoStabService::process_frame_once() {
     has_prev_gray_ = true;
   }
 
-  if (!output_video_ || !output_video_->ensureConfiguration(hdr.width, hdr.height)) {
+  if (!output_zenoh_video_ || !output_zenoh_video_->valid()) {
     ++monitor_fail_frames_;
-    publish_error_if_changed("output shm ensureConfiguration failed", "runtime", json::object());
+    publish_error_if_changed("output zenoh publisher unavailable: " + output_stream_key_, "runtime", json::object());
     return;
   }
-
-  if (!output_video_->writeFrame(stabilized.data, static_cast<unsigned>(stabilized.step[0]))) {
+  f8::cppsdk::VideoFrameView frame;
+  frame.width = frame_width;
+  frame.height = frame_height;
+  frame.pitch = static_cast<unsigned>(stabilized.step[0]);
+  frame.format = f8::cppsdk::kVideoFormatBgra32;
+  frame.frame_id = ++output_frame_id_;
+  frame.ts_ms = f8::cppsdk::now_ms();
+  frame.payload = reinterpret_cast<const std::byte*>(stabilized.data);
+  frame.payload_bytes = stabilized.step[0] * static_cast<std::size_t>(stabilized.rows);
+  if (!output_zenoh_video_->publish_frame(frame)) {
     ++monitor_fail_frames_;
-    publish_error_if_changed("output shm writeFrame failed", "runtime", json::object());
+    publish_error_if_changed("output zenoh publish failed: " + output_stream_key_, "runtime", json::object());
     return;
   }
+  publish_state_if_changed("videoFormat", "bgra32", "runtime", json::object());
+  publish_state_if_changed("videoFrameSchemaVersion", 1, "runtime", json::object());
 
   json motion = json::object();
-  motion["frameId"] = hdr.frame_id;
-  motion["tsMs"] = hdr.ts_ms;
-  motion["width"] = hdr.width;
-  motion["height"] = hdr.height;
+  motion["frameId"] = source_frame_id;
+  motion["tsMs"] = source_ts_ms;
+  motion["width"] = frame_width;
+  motion["height"] = frame_height;
   motion["model"] = motion_model_state_;
   motion["stabilizationMode"] = stabilization_mode_state_;
   motion["valid"] = motion_valid;
@@ -860,7 +875,7 @@ void VideoStabService::process_frame_once() {
   (void)bus_->emit_data(cfg_.service_id, "motion", motion);
 
   const std::int64_t end_ts_ms = f8::cppsdk::now_ms();
-  emit_monitor_snapshot(end_ts_ms, hdr.frame_id, static_cast<double>(end_ts_ms - process_start_ms));
+  emit_monitor_snapshot(end_ts_ms, source_frame_id, static_cast<double>(end_ts_ms - process_start_ms));
 }
 
 json VideoStabService::describe() {
@@ -907,10 +922,10 @@ json VideoStabService::describe() {
   service["tags"] = json::array({"cv", "stabilization", "video"});
 
   service["stateFields"] = json::array({
-      state_field("inputShmName", schema_string(), "rw", "Input Video SHM", "Input SHM name (e.g. shm.xxx.video).",
-                  true),
-      state_field("outputShmName", schema_string(), "ro", "Output Video SHM",
-                  "Output SHM name generated from serviceId.", true),
+      state_field("videoFormat", schema_string_enum({"bgra32"}), "ro", "Video Format", "Output video payload format.",
+                  false),
+      state_field("videoFrameSchemaVersion", schema_integer(1, 1, 1), "ro", "Video Frame Schema",
+                  "Output video frame schema version.", false),
       state_field("motionModel", schema_string_enum({"affine", "homography"}, "affine"), "rw", "Motion Model",
                   "Global motion model used by stabilizer.", false),
       state_field("stabilizationMode", schema_string_enum({"trajectory", "instant"}, "trajectory"), "rw",
@@ -942,8 +957,11 @@ json VideoStabService::describe() {
            {"showOnNode", true}},
   });
 
-  service["dataInPorts"] = json::array();
+  service["dataInPorts"] = json::array({
+      video_frame_port("video", "Input video frame stream."),
+  });
   service["dataOutPorts"] = json::array({
+      video_frame_port("video", "Stabilized video frame stream."),
       json{{"name", "motion"},
            {"valueSchema", motion_schema},
            {"description", "Per-frame estimated and smoothed motion parameters."},

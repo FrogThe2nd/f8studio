@@ -12,8 +12,6 @@ from qtpy import QtCore, QtWidgets
 from f8pysdk.specs import F8OperatorSpec
 
 from f8pystudio.ui.mainwin.ai_assist_sidebar import AiAssistSidebarWidget
-from f8pystudio.ui.mainwin.ai_assist_sidebar_graph_context_mixin import AiAssistSidebarGraphContextMixin
-from f8pystudio.ui.mainwin.ai_assist_sidebar_toolbar_mixin import AiAssistSidebarToolbarMixin
 from f8pystudio.ui.support import webengine_utils
 
 
@@ -41,6 +39,9 @@ class _FakeWebEngineView(QtWidgets.QWidget):
         self._page = _FakeWebPage(self)
         self.html = ""
         self.base_url = None
+        self.stopped = False
+        self.urls: list[object] = []
+        self.deleted = False
         self.created.append(self)
 
     def page(self) -> _FakeWebPage:
@@ -49,6 +50,16 @@ class _FakeWebEngineView(QtWidgets.QWidget):
     def setHtml(self, html: str, base_url=None) -> None:
         self.html = html
         self.base_url = base_url
+
+    def stop(self) -> None:
+        self.stopped = True
+
+    def setUrl(self, url: object) -> None:
+        self.urls.append(url)
+
+    def deleteLater(self) -> None:  # type: ignore[override]
+        self.deleted = True
+        super().deleteLater()
 
 
 class _FakeWebChannel(QtCore.QObject):
@@ -203,6 +214,25 @@ def test_take_prewarmed_webengine_view_returns_cached_instance(monkeypatch) -> N
     assert webengine_utils._WEBENGINE_PREWARM_VIEW is None
 
 
+def test_release_prewarmed_webengine_view_tears_down_cached_instance(monkeypatch) -> None:
+    _ensure_app()
+    _install_fake_pyside6(monkeypatch)
+    _FakeWebEngineView.created = []
+    _reset_webengine_prewarm_state()
+    monkeypatch.setattr("f8pystudio.ui.support.webengine_utils.configure_default_webengine_profile", lambda: None)
+
+    assert webengine_utils.prewarm_webengine_view() is True
+    prewarmed_view = _FakeWebEngineView.created[0]
+
+    webengine_utils.release_prewarmed_webengine_view()
+
+    assert webengine_utils._WEBENGINE_PREWARM_VIEW is None
+    assert webengine_utils._WEBENGINE_VIEW_PREWARMED is False
+    assert prewarmed_view.stopped is True
+    assert prewarmed_view.page().web_channel is None
+    assert prewarmed_view.deleted is True
+
+
 def test_sidebar_reuses_prewarmed_webengine_view(monkeypatch) -> None:
     _ensure_app()
     _install_fake_pyside6(monkeypatch)
@@ -222,14 +252,15 @@ def test_sidebar_reuses_prewarmed_webengine_view(monkeypatch) -> None:
     assert widget._view.base_url is not None
 
 
-def test_sidebar_uses_toolbar_mixin_methods_directly() -> None:
-    assert AiAssistSidebarWidget._refresh_context_toolbar is AiAssistSidebarToolbarMixin._refresh_context_toolbar
-    assert AiAssistSidebarWidget._on_context_usage_updated is AiAssistSidebarToolbarMixin._on_context_usage_updated
-    assert AiAssistSidebarWidget._on_ctx_menu_requested is AiAssistSidebarToolbarMixin._on_ctx_menu_requested
+def test_sidebar_shutdown_releases_webengine_view(monkeypatch) -> None:
+    widget, _graph = _make_sidebar(monkeypatch)
+    view = widget._view
+    assert isinstance(view, _FakeWebEngineView)
+
+    widget.shutdown()
+
+    assert view.stopped is True
+    assert view.page().web_channel is None
+    assert view.deleted is True
 
 
-def test_sidebar_uses_graph_context_mixin_methods_directly() -> None:
-    assert AiAssistSidebarWidget._wire_graph_signals is AiAssistSidebarGraphContextMixin._wire_graph_signals
-    assert AiAssistSidebarWidget._schedule_selection_refresh is AiAssistSidebarGraphContextMixin._schedule_selection_refresh
-    assert AiAssistSidebarWidget._apply_graph_selection is AiAssistSidebarGraphContextMixin._apply_graph_selection
-    assert AiAssistSidebarWidget._pin_selected_context is AiAssistSidebarGraphContextMixin._pin_selected_context

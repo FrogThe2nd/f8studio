@@ -19,14 +19,15 @@ from f8pysdk.service_runtime_tools.inventory.discovery import (
 
 from f8pystudio.plugins.api import StudioPluginManifest
 from f8pystudio.plugins.loader import load_entrypoint_plugins
-from f8pystudio.bridge.nats_lifecycle import SINGLETON_GUARD_DIALOG_TITLE
+from f8pystudio.bridge.runtime_lifecycle import SINGLETON_GUARD_DIALOG_TITLE
 from f8pystudio.studio_specs.registry import (
     create_pystudio_registry,
     SERVICE_CLASS,
     shared_pystudio_registry,
 )
 from f8pystudio.nodegraph.node_type_ids import SERVICE_NODE_IDENTIFIER
-from f8pystudio.bridge.studio_bridge import STARTUP_GATE_TIMEOUT_S, PyStudioServiceBridge, PyStudioServiceBridgeConfig
+from f8pystudio.bridge.runtime_config import PyStudioServiceBridgeConfig
+from f8pystudio.bridge.studio_bridge import STARTUP_GATE_TIMEOUT_S, PyStudioServiceBridge
 from f8pystudio.ui.support.ui_resources import studio_logo_path
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,9 @@ LAUNCH_DISMISS_FILE_ENV = "F8STUDIO_LAUNCH_DISMISS_FILE"
 
 
 class PyStudioProgram:
+    def __init__(self, bridge_config: PyStudioServiceBridgeConfig | None = None) -> None:
+        self._bridge_config = bridge_config if bridge_config is not None else PyStudioServiceBridgeConfig()
+
     @staticmethod
     def _write_launcher_signal(*, env_name: str, content: str) -> None:
         signal_file_raw = (os.environ.get(env_name) or "").strip()
@@ -216,7 +220,11 @@ class PyStudioProgram:
 
         from f8pystudio.ui.support.qt_font_utils import normalize_application_font
         from f8pystudio.ui.support.studio_theme import apply_studio_theme, studio_dark_theme
-        from f8pystudio.ui.support.webengine_utils import prewarm_webengine_view
+        from f8pystudio.ui.support.webengine_utils import (
+            flush_qt_deferred_deletes,
+            prewarm_webengine_view,
+            release_prewarmed_webengine_view,
+        )
         from f8pystudio.ui.mainwin.main_window import F8StudioMainWin
 
         manifests = self._load_plugin_manifests()
@@ -248,7 +256,7 @@ class PyStudioProgram:
             app_icon = QtGui.QIcon(str(icon_path))
             if not app_icon.isNull():
                 app.setWindowIcon(app_icon)
-        bridge = PyStudioServiceBridge(PyStudioServiceBridgeConfig())
+        bridge = PyStudioServiceBridge(self._bridge_config)
         startup_blocked_message = bridge.wait_for_startup_preflight(timeout_s=STARTUP_GATE_TIMEOUT_S)
         if startup_blocked_message is not None:
             self._dismiss_launcher_for_dialog()
@@ -281,7 +289,19 @@ class PyStudioProgram:
             timing_lines=last_discovery_timing_lines(),
             error_lines=last_discovery_error_lines(),
         )
-        return int(app.exec_() or 0)
+        try:
+            return int(app.exec_() or 0)
+        finally:
+            try:
+                mainwin.shutdown_for_app_exit()
+            except Exception:
+                logger.exception("failed to shutdown main window after Qt loop exit")
+            try:
+                mainwin.deleteLater()
+            except (AttributeError, RuntimeError, TypeError):
+                logger.debug("failed to deleteLater main window after Qt loop exit", exc_info=True)
+            release_prewarmed_webengine_view()
+            flush_qt_deferred_deletes()
 
     def describe_json_text(self) -> str:
         return json.dumps(self.describe_json(), ensure_ascii=False)

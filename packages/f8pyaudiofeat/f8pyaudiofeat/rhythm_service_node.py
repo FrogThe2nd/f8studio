@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 
 from f8pysdk.codec import coerce_float, coerce_int
-from f8pysdk.nats_naming import ensure_token
+from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
 
 from .constants import CORE_SCHEMA_VERSION, RHYTHM_SCHEMA_VERSION

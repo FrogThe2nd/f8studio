@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstring>
 #include <utility>
+#include <vector>
 
 #include <SDL3/SDL.h>
 #include <nlohmann/json.hpp>
@@ -11,9 +12,9 @@
 
 #include "f8cppsdk/describe_schema.h"
 #include "f8cppsdk/f8_naming.h"
-#include "f8cppsdk/shm/audio.h"
-#include "f8cppsdk/state_kv.h"
+#include "f8cppsdk/latest_audio_chunk_transport.h"
 #include "f8cppsdk/time_utils.h"
+#include "f8cppsdk/zenoh_naming.h"
 #include "wasapi_loopback_capture.h"
 
 namespace f8::audiocap {
@@ -25,6 +26,7 @@ using f8::cppsdk::describe::schema_number;
 using f8::cppsdk::describe::schema_object;
 using f8::cppsdk::describe::schema_string;
 using f8::cppsdk::describe::state_field;
+using f8::cppsdk::describe::audio_chunk_port;
 
 namespace {
 
@@ -35,10 +37,6 @@ double clamp01(double v) { return v < 0.0 ? 0.0 : (v > 1.0 ? 1.0 : v); }
 AudioCapService::AudioCapService(Config cfg) : cfg_(std::move(cfg)) {}
 
 AudioCapService::~AudioCapService() { stop(); }
-
-std::string AudioCapService::default_audio_shm_name(const std::string& service_id) {
-  return f8::cppsdk::shm::audio_shm_name(service_id);
-}
 
 namespace {
 
@@ -127,8 +125,10 @@ bool AudioCapService::start() {
 
   f8::cppsdk::ServiceBus::Config bus_cfg;
   bus_cfg.service_id = cfg_.service_id;
-  bus_cfg.nats_url = cfg_.nats_url;
-  bus_cfg.kv_memory_storage = true;
+  const auto runtime_backend = f8::cppsdk::normalize_runtime_backend_config(cfg_.runtime_backend);
+  bus_cfg.apply_runtime_backend(runtime_backend);
+  bus_cfg.service_class = cfg_.service_class;
+  bus_cfg.service_name = "Audio Capture";
   bus_ = std::make_unique<f8::cppsdk::ServiceBus>(bus_cfg);
   bus_->add_lifecycle_node(this);
   bus_->add_stateful_node(this);
@@ -137,14 +137,21 @@ bool AudioCapService::start() {
   bus_->add_command_node(this, AudioCapService::describe());
   if (!bus_->start()) return false;
 
-  shm_ = std::make_unique<f8::cppsdk::AudioSharedMemorySink>();
-  const std::string shm_name = f8::cppsdk::shm::audio_shm_name(cfg_.service_id);
-  if (!shm_->initialize(shm_name, cfg_.audio_shm_bytes, cfg_.sample_rate, cfg_.channels,
-                        f8::cppsdk::AudioSharedMemorySink::SampleFormat::kF32LE, cfg_.frames_per_chunk,
-                        cfg_.chunk_count)) {
-    spdlog::error("failed to initialize audio shm sink name={} bytes={}", shm_name, cfg_.audio_shm_bytes);
+  zenoh_audio_seq_.store(0, std::memory_order_relaxed);
+  zenoh_audio_frame_index_.store(0, std::memory_order_relaxed);
+  const std::string key = f8::cppsdk::zenoh_data_key(cfg_.service_id, cfg_.service_id, "audio");
+  auto publisher = std::make_shared<f8::cppsdk::ZenohLatestAudioChunkPublisher>();
+  if (!publisher->open(runtime_backend, key)) {
+    zenoh_audio_key_.clear();
+    zenoh_audio_publisher_.reset();
+    spdlog::error("audiocap zenoh audio publisher unavailable serviceId={} key={}", cfg_.service_id, key);
+    bus_->stop();
+    bus_.reset();
     return false;
   }
+  zenoh_audio_key_ = key;
+  zenoh_audio_publisher_ = publisher;
+  spdlog::info("audiocap zenoh audio publisher enabled serviceId={} key={}", cfg_.service_id, key);
 
   chunk_buffer_.assign(static_cast<std::size_t>(cfg_.frames_per_chunk) * cfg_.channels, 0.0f);
   capture_chunk_accum_.assign(static_cast<std::size_t>(cfg_.frames_per_chunk) * cfg_.channels, 0.0f);
@@ -185,7 +192,8 @@ bool AudioCapService::start() {
       publish_dynamic_state();
       running_.store(true, std::memory_order_release);
       stop_requested_.store(false, std::memory_order_release);
-      spdlog::info("audiocap started serviceId={} natsUrl={}", cfg_.service_id, cfg_.nats_url);
+      spdlog::info("audiocap started serviceId={} backend={} audioBackend={}", cfg_.service_id,
+                   f8::cppsdk::bus_backend_to_string(runtime_backend.bus_backend), "zenoh");
       return true;
     }
 
@@ -219,7 +227,8 @@ bool AudioCapService::start() {
 
   running_.store(true, std::memory_order_release);
   stop_requested_.store(false, std::memory_order_release);
-  spdlog::info("audiocap started serviceId={} natsUrl={}", cfg_.service_id, cfg_.nats_url);
+  spdlog::info("audiocap started serviceId={} backend={} audioBackend={}", cfg_.service_id,
+               f8::cppsdk::bus_backend_to_string(runtime_backend.bus_backend), "zenoh");
   return true;
 }
 
@@ -238,7 +247,11 @@ void AudioCapService::stop() {
   opened_device_ = 0;
   opened_device_name_.clear();
 
-  shm_.reset();
+  if (zenoh_audio_publisher_) {
+    zenoh_audio_publisher_->close();
+  }
+  zenoh_audio_publisher_.reset();
+  zenoh_audio_key_.clear();
   if (bus_) {
     bus_->stop();
   }
@@ -261,7 +274,6 @@ void AudioCapService::tick() {
   }
 
   if (!active_.load(std::memory_order_acquire)) return;
-  if (!shm_) return;
 
   if (cfg_.mode == "capture") {
     return;
@@ -289,7 +301,7 @@ void AudioCapService::tick() {
     std::fill(chunk_buffer_.begin(), chunk_buffer_.end(), 0.0f);
   }
 
-  (void)shm_->write_interleaved_f32(chunk_buffer_.data(), cfg_.frames_per_chunk, now);
+  (void)write_audio_chunk_interleaved_f32(chunk_buffer_.data(), cfg_.frames_per_chunk, now);
 }
 
 void SDLCALL AudioCapService::on_audio_stream_put(void* userdata, SDL_AudioStream* stream, int additional_amount,
@@ -315,7 +327,6 @@ void AudioCapService::handle_audio_stream_put(SDL_AudioStream* stream, int addit
     }
     return;
   }
-  if (!shm_) return;
 
   const int frame_bytes = static_cast<int>(sizeof(float) * cfg_.channels);
   int avail = SDL_GetAudioStreamAvailable(stream);
@@ -344,7 +355,6 @@ void AudioCapService::handle_captured_interleaved_f32(const float* interleaved, 
   if (!interleaved || frames == 0) return;
   if (!running_.load(std::memory_order_acquire)) return;
   if (!active_.load(std::memory_order_acquire)) return;
-  if (!shm_) return;
 
   const float* src = interleaved;
   std::uint32_t frames_left = frames;
@@ -361,10 +371,40 @@ void AudioCapService::handle_captured_interleaved_f32(const float* interleaved, 
     frames_left -= take;
 
     if (capture_accum_frames_ == cfg_.frames_per_chunk) {
-      (void)shm_->write_interleaved_f32(capture_chunk_accum_.data(), cfg_.frames_per_chunk, ts_ms);
+      (void)write_audio_chunk_interleaved_f32(capture_chunk_accum_.data(), cfg_.frames_per_chunk, ts_ms);
       capture_accum_frames_ = 0;
     }
   }
+}
+
+bool AudioCapService::write_audio_chunk_interleaved_f32(const float* samples, std::uint32_t frames,
+                                                        std::int64_t ts_ms) {
+  if (samples == nullptr || frames == 0) {
+    return false;
+  }
+
+  bool published_zenoh = false;
+  auto publisher = zenoh_audio_publisher_;
+  if (publisher && publisher->valid()) {
+    const std::uint64_t seq = zenoh_audio_seq_.fetch_add(1, std::memory_order_relaxed) + 1;
+    const std::uint64_t frame_index =
+        zenoh_audio_frame_index_.fetch_add(frames, std::memory_order_relaxed) + static_cast<std::uint64_t>(frames);
+    const std::uint32_t bytes_per_frame = static_cast<std::uint32_t>(sizeof(float)) * static_cast<std::uint32_t>(cfg_.channels);
+    f8::cppsdk::AudioChunkView chunk;
+    chunk.sample_rate = cfg_.sample_rate;
+    chunk.channels = static_cast<std::uint32_t>(cfg_.channels);
+    chunk.format = f8::cppsdk::kAudioSampleFormatF32Le;
+    chunk.frames = frames;
+    chunk.bytes_per_frame = bytes_per_frame;
+    chunk.seq = seq;
+    chunk.frame_index = frame_index;
+    chunk.ts_ms = ts_ms;
+    chunk.payload = samples;
+    chunk.payload_bytes = static_cast<std::size_t>(frames) * static_cast<std::size_t>(bytes_per_frame);
+    published_zenoh = publisher->publish_chunk(chunk);
+  }
+
+  return published_zenoh;
 }
 
 void AudioCapService::set_active_local(bool active, const nlohmann::json& meta) {
@@ -430,26 +470,26 @@ void AudioCapService::publish_static_state() {
     if (it != published_state_.end() && it->second == v) return;
     published_state_[field] = v;
     if (bus_) {
-      f8::cppsdk::kv_set_node_state(bus_->kv(), cfg_.service_id, cfg_.service_id, field, v, "init", json::object());
+      (void)bus_->publish_state(cfg_.service_id, field, v, "init", json::object());
     }
   };
 
   set_if_changed("serviceClass", cfg_.service_class);
-  set_if_changed("audioShmName", shm_ ? shm_->shm_name() : "");
   set_if_changed("audioDevice", opened_device_name_);
   set_if_changed("audioSampleRate", cfg_.sample_rate);
   set_if_changed("audioChannels", cfg_.channels);
   set_if_changed("audioFormat", "f32le");
   set_if_changed("audioFramesPerChunk", cfg_.frames_per_chunk);
   set_if_changed("audioChunkCount", cfg_.chunk_count);
+  set_if_changed("audioChunkSchemaVersion", 1);
   set_if_changed("mode", cfg_.mode);
   set_if_changed("toneHz", cfg_.tone_hz);
   set_if_changed("gain", cfg_.gain);
 }
 
 void AudioCapService::publish_dynamic_state() {
-  // SHM write sequence is intentionally not published as node state. It is a
-  // high-frequency transport counter; consumers should read it from SHM.
+  // Transport write sequence is intentionally not published as node state. It is
+  // a high-frequency counter; consumers should read it from the active audio transport.
 }
 
 nlohmann::json AudioCapService::describe() {
@@ -460,23 +500,27 @@ nlohmann::json AudioCapService::describe() {
       {"label", "Audio Capture"},
       {"version", "0.0.1"},
       {"rendererClass", "default_svc"},
-      {"tags", json::array({"audio", "capture", "shm"})},
+      {"tags", json::array({"audio", "capture", "zenoh"})},
       {"stateFields",
        json::array({
-           state_field("audioShmName", schema_string(), "ro", "Audio SHM", "Name of the audio shared memory segment", true),
            state_field("audioDevice", schema_string(), "ro", "Audio Device", "Name of the audio capture device in use", false),
            state_field("audioSampleRate", schema_integer(), "ro", "Audio Sample Rate", "Sample rate of the audio capture device", false),
            state_field("audioChannels", schema_integer(), "ro", "Audio Channels", "Number of audio channels", false),
            state_field("audioFormat", schema_string(), "ro", "Audio Format", "Format of the audio data", false),
            state_field("audioFramesPerChunk", schema_integer(), "ro", "Audio Frames Per Chunk", "Number of audio frames per chunk", false),
            state_field("audioChunkCount", schema_integer(), "ro", "Audio Chunk Count", "Number of audio chunks", false),
+           state_field("audioChunkSchemaVersion", schema_integer(), "ro", "Audio Chunk Schema Version",
+                       "Zenoh audio chunk schema version.", false),
            state_field("mode", schema_string(), "rw", "Mode", "Current mode of the audio capture service", false),
            state_field("toneHz", schema_number(), "rw", "Tone Frequency", "Frequency of the generated tone", false),
            state_field("gain", schema_number(), "rw", "Gain", "Gain applied to the audio signal", false),
        })},
       {"commands", json::array()},
       {"dataInPorts", json::array()},
-      {"dataOutPorts", json::array()},
+      {"dataOutPorts",
+       json::array({
+           audio_chunk_port("audio", "Captured audio chunk stream."),
+       })},
   };
   spec["operators"] = json::array();
   return spec;

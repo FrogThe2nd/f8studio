@@ -31,7 +31,7 @@ No description.
 ### How to Run
 
 ```bash
-../linux/f8cvkit_video_stab_service
+../win/f8cvkit_video_stab_service.exe
 ```
 
 - Workdir: `./`
@@ -39,16 +39,16 @@ No description.
 
 ### Typical Inputs / Outputs
 
-- Data inputs: none
-- Data outputs: `motion`, `monitor`
+- Data inputs: `video`
+- Data outputs: `video`, `motion`, `monitor`
 - Commands: `resetStabilizer`
 
 ### Service State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `inputShmName` | `rw` | `true` | `true` | `string` | Input SHM name (e.g. shm.xxx.video). |
-| `outputShmName` | `ro` | `true` | `true` | `string` | Output SHM name generated from serviceId. |
+| `videoFormat` | `ro` | `true` | `false` | `string / enum[bgra32]` | Output video payload format. |
+| `videoFrameSchemaVersion` | `ro` | `true` | `false` | `integer / default=1` | Output video frame schema version. |
 | `motionModel` | `rw` | `true` | `false` | `string / enum[affine, homography] / default=affine` | Global motion model used by stabilizer. |
 | `stabilizationMode` | `rw` | `true` | `false` | `string / enum[trajectory, instant] / default=trajectory` | trajectory=smooth accumulated path; instant=smooth per-frame motion. |
 | `smoothAlpha` | `rw` | `true` | `false` | `number / default=0.15` | EMA alpha used for motion smoothing. |
@@ -61,14 +61,13 @@ No description.
 | `sceneCutFrameDiffThreshold` | `rw` | `true` | `false` | `number / default=18.0` | Scene cut threshold for mean(abs(gray-prevGray)). |
 | `sceneCutTrackRatioThreshold` | `rw` | `true` | `false` | `number / default=0.25` | Scene cut threshold for trackedPoints/max(prevPoints,1). |
 | `sceneCutCooldownFrames` | `rw` | `true` | `false` | `integer / default=5` | Suppress repeated scene cut triggers for N frames after a cut. |
-| `sceneChangeCount` | `ro` | `true` | `false` | `integer` | Monotonic counter incremented when a scene cut is detected. |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
 ### Key Fields That Matter
 
-- `inputShmName` (Input Video SHM, `rw`): Input SHM name (e.g. shm.xxx.video). Schema: `string`.
-- `outputShmName` (Output Video SHM, `ro`): Output SHM name generated from serviceId. Schema: `string`.
+- `videoFormat` (Video Format, `ro`): Output video payload format. Schema: `string / enum[bgra32]`.
+- `videoFrameSchemaVersion` (Video Frame Schema, `ro`): Output video frame schema version. Schema: `integer / default=1`.
 - `motionModel` (Motion Model, `rw`): Global motion model used by stabilizer. Schema: `string / enum[affine, homography] / default=affine`.
 - `stabilizationMode` (Stabilization Mode, `rw`): trajectory=smooth accumulated path; instant=smooth per-frame motion. Schema: `string / enum[trajectory, instant] / default=trajectory`.
 - `smoothAlpha` (Smooth Alpha, `rw`): EMA alpha used for motion smoothing. Schema: `number / default=0.15`.
@@ -86,12 +85,15 @@ Reset internal trajectory/smoothing state.
 
 ### Service Data Input Ports
 
-_None_
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `video` | `true` | `true` | `object{format, frameId, height, pitch, ...}` | Input video frame stream. |
 
 ### Service Data Output Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
+| `video` | `true` | `true` | `object{format, frameId, height, pitch, ...}` | Stabilized video frame stream. |
 | `motion` | `true` | `true` | `object{corrAngleDeg, corrScale, corrTx, corrTy, ...}` | Per-frame estimated and smoothed motion parameters. |
 | `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -38,6 +39,7 @@ from f8pysdk.specs import F8VariantRecord
 
 MISSING_SERVICE_NODE_TYPE = "svc.f8.missing.service"
 MISSING_OPERATOR_NODE_TYPE = "svc.f8.missing.operator"
+logger = logging.getLogger(__name__)
 
 
 class F8StudioGraph(
@@ -62,6 +64,8 @@ class F8StudioGraph(
     """Main F8PyStudio controller class."""
 
     node_placement_changed = QtCore.Signal(bool, str)
+    session_loaded = QtCore.Signal()
+    graph_inserted = QtCore.Signal()
     layers_changed = QtCore.Signal()
     active_layers_changed = QtCore.Signal(tuple)
 
@@ -261,6 +265,12 @@ class F8StudioGraph(
             controller.schedule_refresh()
         except Exception:
             logger.exception("Failed to schedule global hotkey refresh")
+
+    def _emit_graph_inserted(self) -> None:
+        self.graph_inserted.emit()
+
+    def _emit_session_loaded(self) -> None:
+        self.session_loaded.emit()
 
     def _current_global_hotkey_node_id_snapshot(self) -> frozenset[str]:
         node_ids: set[str] = set()

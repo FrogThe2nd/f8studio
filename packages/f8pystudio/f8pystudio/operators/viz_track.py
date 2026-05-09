@@ -19,8 +19,9 @@ from f8pysdk.specs import (
     integer_schema,
     number_schema,
     string_schema,
+    video_frame_port,
 )
-from f8pysdk.nats_naming import ensure_token
+from f8pysdk.f8_naming import ensure_token
 from f8pysdk.registry import Registry
 
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
@@ -76,7 +77,6 @@ def _viz_track_input_schema():
                     }
                 )
             ),
-            "shmName": string_schema(),
         }
     )
 
@@ -119,13 +119,11 @@ class VizTrackRuntimeNode(StudioVizRuntimeNodeBase):
         self._history_ms: int = 500
         self._history_frames: int = 10
         self._throttle_ms: int = 50
-        self._video_shm_name: str = ""
         self._flow_arrow_scale: float = 1.0
         self._flow_arrow_min_mag: float = 0.0
         self._flow_arrow_max_count: int = 2000
         self._show_dense_flow: bool = True
         self._show_sparse_flow: bool = True
-        self._flow_shm_name: str = ""
         self._dense_flow_mode: str = "hsv"
 
         self._tracks: dict[int, deque[_Sample]] = {}
@@ -175,9 +173,6 @@ class VizTrackRuntimeNode(StudioVizRuntimeNodeBase):
         elif f == "historyFrames":
             self._history_frames = await self._get_int_state("historyFrames", default=10, minimum=1, maximum=200)
             self._dirty = True
-        elif f == "videoShmName":
-            self._video_shm_name = await self._get_str_state("videoShmName", default="")
-            self._dirty = True
         elif f == "flowArrowScale":
             self._flow_arrow_scale = await self._get_float_state("flowArrowScale", default=1.0, minimum=0.1, maximum=20.0)
             self._dirty = True
@@ -192,9 +187,6 @@ class VizTrackRuntimeNode(StudioVizRuntimeNodeBase):
             self._dirty = True
         elif f == "showSparseFlow":
             self._show_sparse_flow = await self._get_bool_state("showSparseFlow", default=True)
-            self._dirty = True
-        elif f == "flowShmName":
-            self._flow_shm_name = await self._get_str_state("flowShmName", default="")
             self._dirty = True
         elif f == "denseFlowMode":
             dense_flow_mode = await self._get_str_state("denseFlowMode", default="hsv")
@@ -262,18 +254,6 @@ class VizTrackRuntimeNode(StudioVizRuntimeNodeBase):
             }
             self._dirty = True
             await self._schedule_refresh(now_ms=now)
-            return
-
-        if schema_version == "f8visionFlowShm/1":
-            shm_name = ""
-            try:
-                shm_name = str(payload.get("shmName") or "").strip()
-            except (AttributeError, TypeError, ValueError):
-                shm_name = ""
-            if shm_name:
-                self._flow_shm_name = shm_name
-                self._dirty = True
-                await self._schedule_refresh(now_ms=now)
             return
 
         tracks_any = payload.get("tracks")
@@ -377,13 +357,11 @@ class VizTrackRuntimeNode(StudioVizRuntimeNodeBase):
         self._throttle_ms = await self._get_int_state("throttleMs", default=50, minimum=0, maximum=60000)
         self._history_ms = await self._get_int_state("historyMs", default=500, minimum=0, maximum=60000)
         self._history_frames = await self._get_int_state("historyFrames", default=10, minimum=1, maximum=200)
-        self._video_shm_name = await self._get_str_state("videoShmName", default="")
         self._flow_arrow_scale = await self._get_float_state("flowArrowScale", default=1.0, minimum=0.1, maximum=20.0)
         self._flow_arrow_min_mag = await self._get_float_state("flowArrowMinMag", default=0.0, minimum=0.0, maximum=100.0)
         self._flow_arrow_max_count = await self._get_int_state("flowArrowMaxCount", default=2000, minimum=100, maximum=20000)
         self._show_dense_flow = await self._get_bool_state("showDenseFlow", default=True)
         self._show_sparse_flow = await self._get_bool_state("showSparseFlow", default=True)
-        self._flow_shm_name = await self._get_str_state("flowShmName", default="")
         dense_flow_mode = await self._get_str_state("denseFlowMode", default="hsv")
         dense_flow_mode = str(dense_flow_mode).strip().lower()
         self._dense_flow_mode = dense_flow_mode if dense_flow_mode in ("arrows", "hsv") else "hsv"
@@ -447,29 +425,25 @@ class VizTrackRuntimeNode(StudioVizRuntimeNodeBase):
                 hist.append(item)
             out_tracks.append({"id": int(tid), "history": hist})
 
-        emit_ui_command(
-            self.node_id,
-            "viz.track.set",
-            {
-                "width": int(self._width or 0),
-                "height": int(self._height or 0),
-                "historyMs": int(self._history_ms),
-                "historyFrames": int(self._history_frames),
-                "throttleMs": int(self._throttle_ms),
-                "tracks": out_tracks,
-                "flow": self._flow_payload if self._flow_payload is not None else None,
-                "flowArrowScale": float(self._flow_arrow_scale),
-                "flowArrowMinMag": float(self._flow_arrow_min_mag),
-                "flowArrowMaxCount": int(self._flow_arrow_max_count),
-                "showDenseFlow": bool(self._show_dense_flow),
-                "showSparseFlow": bool(self._show_sparse_flow),
-                "flowShmName": str(self._flow_shm_name or "").strip(),
-                "denseFlowMode": str(self._dense_flow_mode),
-                "nowMs": int(now_ms),
-                "videoShmName": str(self._video_shm_name or "").strip(),
-            },
-            ts_ms=int(now_ms),
-        )
+        payload: dict[str, Any] = {
+            "width": int(self._width or 0),
+            "height": int(self._height or 0),
+            "historyMs": int(self._history_ms),
+            "historyFrames": int(self._history_frames),
+            "throttleMs": int(self._throttle_ms),
+            "tracks": out_tracks,
+            "flow": self._flow_payload if self._flow_payload is not None else None,
+            "flowArrowScale": float(self._flow_arrow_scale),
+            "flowArrowMinMag": float(self._flow_arrow_min_mag),
+            "flowArrowMaxCount": int(self._flow_arrow_max_count),
+            "showDenseFlow": bool(self._show_dense_flow),
+            "showSparseFlow": bool(self._show_sparse_flow),
+            "flowStreamKey": str(self.input_zenoh_key("flow") or "").strip(),
+            "denseFlowMode": str(self._dense_flow_mode),
+            "nowMs": int(now_ms),
+            "videoStreamKey": str(self.input_zenoh_key("video") or "").strip(),
+        }
+        emit_ui_command(self.node_id, "viz.track.set", payload, ts_ms=int(now_ms))
 
         self._last_refresh_ms = int(now_ms)
         self._dirty = False
@@ -579,6 +553,16 @@ def register_operator(registry: Registry) -> Registry:
                     description="Tracking/detection payload (f8.detecttracker or f8visionDetections/1).",
                     valueSchema=_viz_track_input_schema(),
                 ),
+                video_frame_port(
+                    name="video",
+                    description="Optional background video frame stream.",
+                    required=False,
+                ),
+                video_frame_port(
+                    name="flow",
+                    description="Optional dense optical-flow frame stream.",
+                    required=False,
+                ),
             ],
             dataOutPorts=[],
             rendererClass=RENDERER_CLASS,
@@ -620,15 +604,6 @@ def register_operator(registry: Registry) -> Registry:
                     showOnNode=False,
                 ),
                 F8StateSpec(
-                    name="videoShmName",
-                    label="Video SHM Name",
-                    description="Optional BGRA Video SHM mapping name used as Track Viz background.",
-                    valueSchema=string_schema(default=""),
-                    access=F8StateAccess.rw,
-                    required=True,
-                    showOnNode=True,
-                ),
-                F8StateSpec(
                     name="flowArrowScale",
                     label="Flow Arrow Scale",
                     description="Scale factor applied to optical-flow arrow vectors.",
@@ -658,7 +633,7 @@ def register_operator(registry: Registry) -> Registry:
                 F8StateSpec(
                     name="showDenseFlow",
                     label="Show Dense Flow",
-                    description="Enable dense optical-flow rendering from flow SHM.",
+                    description="Enable dense optical-flow rendering from the selected flow transport.",
                     valueSchema=boolean_schema(default=True),
                     access=F8StateAccess.rw,
                     required=True,
@@ -672,15 +647,6 @@ def register_operator(registry: Registry) -> Registry:
                     access=F8StateAccess.rw,
                     required=True,
                     showOnNode=False,
-                ),
-                F8StateSpec(
-                    name="flowShmName",
-                    label="Flow SHM Name",
-                    description="Flow SHM mapping name (format flow2_f16).",
-                    valueSchema=string_schema(default=""),
-                    access=F8StateAccess.rw,
-                    required=True,
-                    showOnNode=True,
                 ),
                 F8StateSpec(
                     name="denseFlowMode",

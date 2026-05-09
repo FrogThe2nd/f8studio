@@ -10,7 +10,6 @@ from f8pysdk.command import command_input_state_field
 from f8pystudio.ui.support.command_invocation import command_state_payload
 from f8pystudio.nodegraph.items.inline_command_panel import (
     COMMAND_INLINE_BUTTON_STYLE,
-    _on_command_pressed,
     _restore_selected_node_ids,
     _snapshot_selected_node_ids,
     ensure_inline_command_rows,
@@ -206,6 +205,20 @@ def test_ensure_inline_command_rows_creates_header_only_command_rows() -> None:
     button = node_item._command_inline_buttons["Run"]
     assert "QToolButton:pressed" in button.styleSheet()
     assert button.styleSheet() == COMMAND_INLINE_BUTTON_STYLE
+    assert button.autoRepeat() is False
+
+
+def test_inline_command_button_invokes_on_click_not_press() -> None:
+    _ensure_app()
+    node_item = _FakeNodeItem(graph=_FakeGraph([_FakeNode("A")]))
+    ensure_inline_command_rows(node_item)
+
+    button = node_item._command_inline_buttons["Run"]
+    button.pressed.emit()
+    assert node_item._invoke_count == 0
+
+    button.clicked.emit()
+    assert node_item._invoke_count == 1
 
 
 def test_ensure_inline_command_rows_reuses_row_when_only_description_changes() -> None:

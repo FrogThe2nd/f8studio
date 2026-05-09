@@ -136,9 +136,7 @@ _None_
 
 #### Related Scenarios
 
-- [Scene 01: CVKit Template Tracking](../../scenarios/scene-01-cvkit_template_tracking.md)
 - [Scene 02: GameMod Skeleton](../../scenarios/scene-02-gamemod_skeleton.md)
-- [Scene 03: Audio Driven TCode](../../scenarios/scene-03-audio_driven.md)
 - [Scene 04: Functional TCode Generation](../../scenarios/scene-04-functional_tcode.md)
 
 <a id="operator-f8-exec-sequence"></a>
@@ -442,13 +440,13 @@ Exec-driven printer (pulls `value` and prints).
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `strip` | `wo` | `true` | `false` | `boolean / default=True` | If true, strip whitespace/newlines from the start/end of string values before printing. |
+| `strip` | `rw` | `true` | `false` | `boolean / default=True` | If true, strip whitespace/newlines from the start/end of string values before printing. |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
 ##### Key Fields That Matter
 
-- `strip` (Strip, `wo`): If true, strip whitespace/newlines from the start/end of string values before printing. Schema: `boolean / default=True`.
+- `strip` (Strip, `rw`): If true, strip whitespace/newlines from the start/end of string values before printing. Schema: `boolean / default=True`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 - `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
 
@@ -624,9 +622,7 @@ Examples
 
 #### Related Scenarios
 
-- [Scene 01: CVKit Template Tracking](../../scenarios/scene-01-cvkit_template_tracking.md)
 - [Scene 02: GameMod Skeleton](../../scenarios/scene-02-gamemod_skeleton.md)
-- [Scene 03: Audio Driven TCode](../../scenarios/scene-03-audio_driven.md)
 
 <a id="operator-f8-smooth-filter"></a>
 ### Smooth Filter (`f8.smooth_filter`)
@@ -699,8 +695,7 @@ Smooths scalar or vector inputs with EMA/DEMA/One Euro filtering.
 
 #### Related Scenarios
 
-- [Scene 01: CVKit Template Tracking](../../scenarios/scene-01-cvkit_template_tracking.md)
-- [Scene 03: Audio Driven TCode](../../scenarios/scene-03-audio_driven.md)
+- No bundled scenario references this node yet.
 
 <a id="operator-f8-range-map"></a>
 ### Range Map (`f8.range_map`)
@@ -770,9 +765,7 @@ Clip input to [inMin,inMax] then remap to [outMin,outMax] with a curve.
 
 #### Related Scenarios
 
-- [Scene 01: CVKit Template Tracking](../../scenarios/scene-01-cvkit_template_tracking.md)
 - [Scene 02: GameMod Skeleton](../../scenarios/scene-02-gamemod_skeleton.md)
-- [Scene 03: Audio Driven TCode](../../scenarios/scene-03-audio_driven.md)
 
 <a id="operator-f8-rate-limiter"></a>
 ### Rate Limiter (`f8.rate_limiter`)
@@ -842,7 +835,6 @@ Limits the rate of change (and optionally acceleration) of an input signal.
 
 #### Related Scenarios
 
-- [Scene 01: CVKit Template Tracking](../../scenarios/scene-01-cvkit_template_tracking.md)
 - [Scene 02: GameMod Skeleton](../../scenarios/scene-02-gamemod_skeleton.md)
 
 <a id="operator-f8-serial-out"></a>
@@ -884,7 +876,7 @@ Writes incoming values to a serial port (pyserial).
 | --- | --- | --- | --- | --- | --- |
 | `enabled` | `rw` | `true` | `true` | `boolean / default=True` | Enable/disable serial output. |
 | `port` | `rw` | `true` | `true` | `string / default=COM4` | Serial port name (e.g., COM3). |
-| `baudrate` | `wo` | `true` | `false` | `integer / default=115200` | Serial baud rate. |
+| `baudrate` | `rw` | `true` | `false` | `integer / default=115200` | Serial baud rate. |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
@@ -892,7 +884,7 @@ Writes incoming values to a serial port (pyserial).
 
 - `enabled` (Enabled, `rw`): Enable/disable serial output. Schema: `boolean / default=True`.
 - `port` (Port, `rw`): Serial port name (e.g., COM3). Schema: `string / default=COM4`.
-- `baudrate` (Baudrate, `wo`): Serial baud rate. Schema: `integer / default=115200`.
+- `baudrate` (Baudrate, `rw`): Serial baud rate. Schema: `integer / default=115200`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 - `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
 
@@ -912,9 +904,7 @@ Writes incoming values to a serial port (pyserial).
 
 #### Related Scenarios
 
-- [Scene 01: CVKit Template Tracking](../../scenarios/scene-01-cvkit_template_tracking.md)
 - [Scene 02: GameMod Skeleton](../../scenarios/scene-02-gamemod_skeleton.md)
-- [Scene 03: Audio Driven TCode](../../scenarios/scene-03-audio_driven.md)
 - [Scene 04: Functional TCode Generation](../../scenarios/scene-04-functional_tcode.md)
 
 <a id="operator-f8-udp-in"></a>
@@ -1206,9 +1196,7 @@ Generates TCode v0.3 command strings from normalized axis values.
 
 #### Related Scenarios
 
-- [Scene 01: CVKit Template Tracking](../../scenarios/scene-01-cvkit_template_tracking.md)
 - [Scene 02: GameMod Skeleton](../../scenarios/scene-02-gamemod_skeleton.md)
-- [Scene 03: Audio Driven TCode](../../scenarios/scene-03-audio_driven.md)
 - [Scene 04: Functional TCode Generation](../../scenarios/scene-04-functional_tcode.md)
 
 <a id="operator-f8-python-script"></a>
@@ -1250,7 +1238,7 @@ Execute Python code with onStart/onState/onMsg/onExec/onStop hooks.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `code` | `rw` | `true` | `false` | `string / default=# Hooks template (uncomment what you need):<br># - onStart(ctx)<br># - onState(ctx, field, value, ts_ms=None)<br># - onMsg(ctx, inputs)<br># - onExec(ctx, exec_in, inputs)<br># - onStop(ctx)<br>#<br># Notes:<br># - If you define no hooks, the node is a no-op.<br># - ctx.locals is preserved between calls (script-local memory)<br># - ctx.exec_in is set only for exec-triggered calls<br># - ctx.states.<field> reads cached rw/ro/wo state snapshot<br>#   - example: ctx.states.foo / ctx.states.pose.x<br># - await ctx.read_state(field)  # fresh runtime read<br># - ctx.states.get(field)  # cached snapshot<br># - ctx.set_state(field, value)<br>#   - await ctx.set_state_async(field, value)<br># - onStart return values are ignored; use ctx.emit()/ctx.set_state().<br># - inputs binding mode is configured by state `inputMode`:<br>#   - input_view (default): supports dot and mapping access<br>#   - raw_dict: plain dict only (faster for mapping-style high-frequency scripts)<br>#   - msgspec_struct: typed struct from dataIn schema (faster for dot-style high-frequency scripts)<br># - State TypeGuard helpers are available from f8_dynamic_states<br>#   - example: from f8_dynamic_states import is_state_inputMode<br>#   - then: if is_state_inputMode(value, field): ...<br># - Video SHM helpers:<br>#   - ctx.subscribe_video_shm(key, shm_name, decode='auto', use_event=False)<br>#   - pkt = ctx.get_video_shm(key)<br>#   - ctx.unsubscribe_video_shm(key)<br>#   - ctx.list_video_shm_subscriptions()<br>#<br># Return value protocol:<br># - onMsg: {'outputs': {...}} or any value (emits to 'out' if present)<br># - onExec: {'exec': ['exec', ...], 'outputs': {...}}<br><br>from typing import TYPE_CHECKING, Any<br>if TYPE_CHECKING:<br>    from f8_script_api import F8Inputs, F8PyEngineContext, F8States<br><br>def onStart(ctx: 'F8PyEngineContext') -> None:<br>    ctx.log('python_script started')<br><br># def onState(<br>#     ctx: 'F8PyEngineContext',<br>#     field: str,<br>#     value: Any,<br>#     ts_ms: int \| None = None,<br># ) -> None:<br>#     ctx.log(f'state {field}={value} ts_ms={ts_ms}')<br>#<br># def onMsg(ctx: 'F8PyEngineContext', inputs: 'F8Inputs') -> dict[str, Any]:<br>#     msg = inputs.msg<br>#     return {'outputs': {'out': msg}}<br>#<br># def onExec(ctx: 'F8PyEngineContext', exec_in: str, inputs: 'F8Inputs') -> dict[str, Any]:<br>#     if exec_in == 'exec2':<br>#         return {'exec': ['exec2'], 'outputs': {'out': inputs.msg}}<br>#     return {'exec': ['exec'], 'outputs': {'out': inputs.msg}}<br>#<br># def onStop(ctx: 'F8PyEngineContext') -> None:<br>#     ctx.log('python_script stopped')<br>` | Python source code optionally defining hooks: onStart/onState/onMsg/onExec/onStop. |
+| `code` | `rw` | `true` | `false` | `string / default=# Hooks template (uncomment what you need):<br># - onStart(ctx)<br># - onState(ctx, field, value, ts_ms=None)<br># - onMsg(ctx, inputs)<br># - onExec(ctx, exec_in, inputs)<br># - onStop(ctx)<br>#<br># Notes:<br># - If you define no hooks, the node is a no-op.<br># - ctx.locals is preserved between calls (script-local memory)<br># - ctx.exec_in is set only for exec-triggered calls<br># - ctx.states.<field> reads cached rw/ro/wo state snapshot<br>#   - example: ctx.states.foo / ctx.states.pose.x<br># - await ctx.read_state(field)  # fresh runtime read<br># - ctx.states.get(field)  # cached snapshot<br># - ctx.set_state(field, value)<br>#   - await ctx.set_state_async(field, value)<br># - onStart return values are ignored; use ctx.emit()/ctx.set_state().<br># - inputs binding mode is configured by state `inputMode`:<br>#   - input_view (default): supports dot and mapping access<br>#   - raw_dict: plain dict only (faster for mapping-style high-frequency scripts)<br>#   - msgspec_struct: typed struct from dataIn schema (faster for dot-style high-frequency scripts)<br># - State TypeGuard helpers are available from f8_dynamic_states<br>#   - example: from f8_dynamic_states import is_state_inputMode<br>#   - then: if is_state_inputMode(value, field): ...<br># - Video latest-frame helpers:<br>#   - ctx.subscribe_video_latest(key, stream_key='f8/svc/.../data/video', decode='auto')<br>#   - pkt = ctx.get_video_latest(key)<br>#   - ctx.unsubscribe_video_latest(key)<br>#   - ctx.list_video_latest_subscriptions()<br>#<br># Return value protocol:<br># - onMsg: {'outputs': {...}} or any value (emits to 'out' if present)<br># - onExec: {'exec': ['exec', ...], 'outputs': {...}}<br><br>from typing import TYPE_CHECKING, Any<br>if TYPE_CHECKING:<br>    from f8_script_api import F8Inputs, F8PyEngineContext, F8States<br><br>def onStart(ctx: 'F8PyEngineContext') -> None:<br>    ctx.log('python_script started')<br><br># def onState(<br>#     ctx: 'F8PyEngineContext',<br>#     field: str,<br>#     value: Any,<br>#     ts_ms: int \| None = None,<br># ) -> None:<br>#     ctx.log(f'state {field}={value} ts_ms={ts_ms}')<br>#<br># def onMsg(ctx: 'F8PyEngineContext', inputs: 'F8Inputs') -> dict[str, Any]:<br>#     msg = inputs.msg<br>#     return {'outputs': {'out': msg}}<br>#<br># def onExec(ctx: 'F8PyEngineContext', exec_in: str, inputs: 'F8Inputs') -> dict[str, Any]:<br>#     if exec_in == 'exec2':<br>#         return {'exec': ['exec2'], 'outputs': {'out': inputs.msg}}<br>#     return {'exec': ['exec'], 'outputs': {'out': inputs.msg}}<br>#<br># def onStop(ctx: 'F8PyEngineContext') -> None:<br>#     ctx.log('python_script stopped')<br>` | Python source code optionally defining hooks: onStart/onState/onMsg/onExec/onStop. |
 | `inputMode` | `rw` | `true` | `false` | `string / enum[input_view, raw_dict, msgspec_struct] / default=input_view` | Input binding mode: input_view \| raw_dict \| msgspec_struct. For high-frequency scripts, prefer raw_dict for mapping access or msgspec_struct for dot access. |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
@@ -1282,11 +1270,11 @@ Execute Python code with onStart/onState/onMsg/onExec/onStop hooks.
 # - State TypeGuard helpers are available from f8_dynamic_states
 #   - example: from f8_dynamic_states import is_state_inputMode
 #   - then: if is_state_inputMode(value, field): ...
-# - Video SHM helpers:
-#   - ctx.subscribe_video_shm(key, shm_name, decode='auto', use_event=False)
-#   - pkt = ctx.get_video_shm(key)
-#   - ctx.unsubscribe_video_shm(key)
-#   - ctx.list_video_shm_subscriptions()
+# - Video latest-frame helpers:
+#   - ctx.subscribe_video_latest(key, stream_key='f8/svc/.../data/video', decode='auto')
+#   - pkt = ctx.get_video_latest(key)
+#   - ctx.unsubscribe_video_latest(key)
+#   - ctx.list_video_latest_subscriptions()
 #
 # Return value protocol:
 # - onMsg: {'outputs': {...}} or any value (emits to 'out' if present)
@@ -1337,7 +1325,6 @@ def onStart(ctx: 'F8PyEngineContext') -> None:
 
 #### Related Scenarios
 
-- [Scene 01: CVKit Template Tracking](../../scenarios/scene-01-cvkit_template_tracking.md)
 - [Scene 02: GameMod Skeleton](../../scenarios/scene-02-gamemod_skeleton.md)
 
 <a id="operator-f8-data-expr"></a>
@@ -1397,7 +1384,7 @@ Examples
 | --- | --- | --- | --- | --- | --- |
 | `allowNumpy` | `rw` | `false` | `false` | `boolean / default=False` | Enable `np.*` and `numpy.*` inside the expression. |
 | `unpackDictOutputs` | `rw` | `false` | `false` | `boolean / default=False` | When enabled, dict results are unpacked into output ports with matching names. |
-| `code` | `rw` | `false` | `true` | `string / default=x` | Single Python expression. Reference `x` and any extra input port names directly. Supports literals, indexing, comprehensions, conditionals, `math.*`, and optional `np.*` / `numpy.*` when `Allow Numpy` is enabled. |
+| `code` | `rw` | `true` | `true` | `string / default=x` | Single Python expression. Reference `x` and any extra input port names directly. Supports literals, indexing, comprehensions, conditionals, `math.*`, and optional `np.*` / `numpy.*` when `Allow Numpy` is enabled. |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
@@ -2151,8 +2138,8 @@ Examples
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
 | `allowNumpy` | `rw` | `false` | `false` | `boolean / default=False` | Enable `np.*` and `numpy.*` inside the expression. |
-| `code` | `rw` | `false` | `true` | `string / default=0` | Single Python expression. Editable RW/WO state fields are available directly by name; non-identifier names remain available through `states[...]`. |
-| `out` | `ro` | `false` | `true` | `any` | Expression result published by the node. |
+| `code` | `rw` | `true` | `true` | `string / default=0` | Single Python expression. Editable RW/WO state fields are available directly by name; non-identifier names remain available through `states[...]`. |
+| `out` | `ro` | `true` | `true` | `any` | Expression result published by the node. |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
@@ -2513,7 +2500,7 @@ Examples
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `template` | `wo` | `true` | `true` | `string / default=0.5 + 0.5 * cos(t)` | Waveform expression template. `t` is cycle-domain, numeric state fields can be referenced by name, and helpers include `cond`, `sequence([...])`, `tempest(t, p, c)`, phase trig, and shaping functions. |
+| `template` | `rw` | `true` | `true` | `string / default=0.5 + 0.5 * cos(t)` | Waveform expression template. `t` is cycle-domain, numeric state fields can be referenced by name, and helpers include `cond`, `sequence([...])`, `tempest(t, p, c)`, phase trig, and shaping functions. |
 | `maxT` | `rw` | `true` | `true` | `number / default=10.0` | Cycle horizon for wrapping and preview sampling. Runtime output uses `t % maxT`; preview samples `[0, maxT)`. |
 | `minValue` | `rw` | `true` | `false` | `number / default=0.0` | Preview window lower bound (Y-axis). Auto zoom when minValue >= maxValue. |
 | `maxValue` | `rw` | `true` | `false` | `number / default=0.0` | Preview window upper bound (Y-axis). Auto zoom when minValue >= maxValue. |
@@ -2524,7 +2511,7 @@ Examples
 
 ##### Key Fields That Matter
 
-- `template` (Template, `wo`): Waveform expression template. `t` is cycle-domain, numeric state fields can be referenced by name, and helpers include `cond`, `sequence([...])`, `tempest(t, p, c)`, phase trig, and shaping functions. Schema: `string / default=0.5 + 0.5 * cos(t)`.
+- `template` (Template, `rw`): Waveform expression template. `t` is cycle-domain, numeric state fields can be referenced by name, and helpers include `cond`, `sequence([...])`, `tempest(t, p, c)`, phase trig, and shaping functions. Schema: `string / default=0.5 + 0.5 * cos(t)`.
 - `maxT` (Max T, `rw`): Cycle horizon for wrapping and preview sampling. Runtime output uses `t % maxT`; preview samples `[0, maxT)`. Schema: `number / default=10.0`.
 - `minValue` (Min Value, `rw`): Preview window lower bound (Y-axis). Auto zoom when minValue >= maxValue. Schema: `number / default=0.0`.
 - `maxValue` (Max Value, `rw`): Preview window upper bound (Y-axis). Auto zoom when minValue >= maxValue. Schema: `number / default=0.0`.
@@ -3197,7 +3184,5 @@ _None_
 
 ## Related Scenarios
 
-- [Scene 01: CVKit Template Tracking](../../scenarios/scene-01-cvkit_template_tracking.md)
 - [Scene 02: GameMod Skeleton](../../scenarios/scene-02-gamemod_skeleton.md)
-- [Scene 03: Audio Driven TCode](../../scenarios/scene-03-audio_driven.md)
 - [Scene 04: Functional TCode Generation](../../scenarios/scene-04-functional_tcode.md)

@@ -5,8 +5,9 @@ from types import SimpleNamespace
 import numpy as np
 from qtpy import QtGui, QtWidgets
 
+from f8pysdk.video_transport import LatestVideoFrame
 from f8pystudio.render_nodes.viz_video import (
-    _VideoShmPane,
+    _LatestVideoPane,
     _apply_colormap,
     _normalize_scalar_values,
     _to_bool,
@@ -106,7 +107,7 @@ def test_to_bool_accepts_string_forms() -> None:
 
 def test_video_tick_render_priority_flow_over_scalar_over_video() -> None:
     _ensure_app()
-    pane = _VideoShmPane()
+    pane = _LatestVideoPane()
     pane._timer.stop()
     pane.set_update_enabled(True)
 
@@ -139,14 +140,49 @@ def test_video_tick_render_priority_flow_over_scalar_over_video() -> None:
 
 def test_try_render_scalar_skips_non_scalar_format() -> None:
     _ensure_app()
-    pane = _VideoShmPane()
+    pane = _LatestVideoPane()
     pane._timer.stop()
     pane._scalar_display_mode = "colormap"
     pane._ensure_scalar_reader = lambda: True  # type: ignore[method-assign]
     pane._scalar_reader = SimpleNamespace(
-        read_latest_frame=lambda: (
-            SimpleNamespace(fmt=1, width=2, height=2, pitch=8),
-            memoryview(bytes(16)),
+        poll_latest=lambda: LatestVideoFrame(
+            width=2,
+            height=2,
+            pitch=8,
+            fmt=1,
+            frame_id=1,
+            ts_ms=0,
+            payload=memoryview(bytes(16)),
         )
     )
     assert pane._try_render_scalar() is None
+
+
+def test_video_pane_accepts_zenoh_video_source() -> None:
+    _ensure_app()
+    pane = _LatestVideoPane()
+    pane._timer.stop()
+    pane.set_config(
+        video_stream_key="f8/test/video/source",
+        throttle_ms=33,
+        flow_stream_key="",
+        flow_display_mode="off",
+        flow_mag_scale=20.0,
+        flow_stride=12,
+        scalar_stream_key="",
+        scalar_display_mode="off",
+        scalar_colormap="turbo",
+        scalar_range_mode="auto",
+        scalar_min=-1.0,
+        scalar_max=1.0,
+        scalar_auto_percentile_lo=2.0,
+        scalar_auto_percentile_hi=98.0,
+        scalar_invert=False,
+        scalar_nan_mode="transparent",
+        scale_mode="fit",
+    )
+    try:
+        assert pane._video_stream_key == "f8/test/video/source"
+        assert pane._timer.isActive()
+    finally:
+        pane.detach()

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from f8pysdk.nats_naming import ensure_token
+from f8pysdk.f8_naming import ensure_token
 
 
 @dataclass(frozen=True)

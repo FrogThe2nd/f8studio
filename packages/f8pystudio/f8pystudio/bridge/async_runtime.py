@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import inspect
 import logging
 import threading
 from typing import Any
@@ -63,7 +64,7 @@ class AsyncRuntimeThread:
         return not loop.is_closed()
 
     def submit(self, coro: Any) -> concurrent.futures.Future[Any]:
-        coro_obj = coro() if asyncio.iscoroutinefunction(coro) else coro
+        coro_obj = coro() if inspect.iscoroutinefunction(coro) else coro
         if not asyncio.iscoroutine(coro_obj):
             raise TypeError(f"submit(...) requires a coroutine; got {type(coro_obj).__name__}")
         if not self.is_accepting_submissions():

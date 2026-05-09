@@ -4,7 +4,7 @@ from __future__ import annotations
 Explicit internal-only service bus boundary.
 
 Import concrete owner modules directly:
-- `f8pysdk.service_bus.internal.micro`
+- `f8pysdk.service_bus.internal.control_endpoints`
 - `f8pysdk.service_bus.internal.command`
 - `f8pysdk.service_bus.internal.cache`
 - `f8pysdk.service_bus.internal.logging`

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from nats.js.api import StorageType  # type: ignore[import-not-found]
-
 from .bus import ServiceBus, ServiceBusConfig
 from .data import CrossPublishPolicy
 from .host import ServiceHost
@@ -16,7 +14,7 @@ class ServiceRuntimeConfig:
     Runtime facade for a service process.
 
     This bundles:
-    - `ServiceBus`: NATS+KV transport, routing, state cache
+    - `ServiceBus`: runtime transport, routing, state cache
     - `ServiceHost`: rungraph-driven node creation and registration
     - `RuntimeNodeRegistry`: node factory registry (optionally loaded from modules)
     """
@@ -38,24 +36,12 @@ class ServiceRuntimeConfig:
         return str(self.bus.service_class or "")
 
     @property
-    def nats_url(self) -> str:
-        return str(self.bus.nats_url)
+    def bus_backend(self) -> str:
+        return str(self.bus.bus_backend)
 
     @property
     def cross_publish_policy(self) -> CrossPublishPolicy:
         return self.bus.cross_publish_policy
-
-    @property
-    def kv_storage(self) -> StorageType:
-        return self.bus.kv_storage
-
-    @property
-    def delete_bucket_on_start(self) -> bool:
-        return bool(self.bus.delete_bucket_on_start)
-
-    @property
-    def delete_bucket_on_stop(self) -> bool:
-        return bool(self.bus.delete_bucket_on_stop)
 
 
 class ServiceRuntime:
@@ -86,7 +72,12 @@ class ServiceRuntime:
         await self.bus.start()
 
     async def stop(self) -> None:
-        await self.bus.stop()
-        self._closed = True
+        try:
+            await self.host.stop()
+        finally:
+            try:
+                await self.bus.stop()
+            finally:
+                self._closed = True
 
 __all__ = ["ServiceRuntime", "ServiceRuntimeConfig"]

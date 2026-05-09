@@ -48,7 +48,6 @@ def state_or_default(state_value: Any, initial_value: Any, *, default: Any) -> A
 
 @dataclass(frozen=True)
 class PoseServiceConfig:
-    shm_name: str = ""
     infer_every_n: int = DEFAULT_INFER_EVERY_N
     model_complexity: ModelComplexity = DEFAULT_MODEL_COMPLEXITY
     min_detection_confidence: float = DEFAULT_MIN_DETECTION_CONFIDENCE

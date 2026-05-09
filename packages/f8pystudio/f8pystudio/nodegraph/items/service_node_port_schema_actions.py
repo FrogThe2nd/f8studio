@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import json
 
+import msgspec
 from f8pysdk.codec import copy_model, dump_json
 from typing import Any
 
 from qtpy import QtCore, QtWidgets
 
-from f8pysdk.specs import schema_type
+from f8pysdk.specs import (
+    F8DataPortPayloadKind,
+    F8DataPortSpec,
+    data_port_payload_kind,
+    data_port_stream_delivery,
+    schema_type,
+)
 from f8pysdk.command import parse_command_port_name
 from f8pysdk.specs import can_edit_existing as _policy_can_edit_existing
 from f8pysdk.specs import can_edit_state_field_value_schema as _can_edit_state_field_value_schema
@@ -158,6 +165,42 @@ def schema_brief(value_schema: Any) -> str:
     return top
 
 
+def data_port_payload_summary(port: Any) -> str:
+    if not isinstance(port, F8DataPortSpec):
+        return "payload: unknown"
+    kind = data_port_payload_kind(port)
+    delivery = data_port_stream_delivery(port)
+    kind_text = kind.value
+    delivery_text = delivery.value
+    if kind == F8DataPortPayloadKind.json:
+        return f"payload: json, delivery: {delivery_text}"
+
+    formats_text = ""
+    payload = port.payload
+    if payload is not None and not isinstance(payload, msgspec.UnsetType):
+        formats = payload.formats
+        if formats is not None and not isinstance(formats, msgspec.UnsetType):
+            values = [str(item) for item in list(formats or []) if str(item or "").strip()]
+            if values:
+                formats_text = ", formats: " + ", ".join(values)
+    return f"payload: {kind_text} stream, delivery: {delivery_text}{formats_text}"
+
+
+def _copy_data_port_with_schema(port: Any, new_schema: Any) -> Any:
+    updates: dict[str, Any] = {"valueSchema": new_schema}
+    if not isinstance(port, F8DataPortSpec):
+        return copy_model(port, update=updates)
+    payload = port.payload
+    if payload is not None and not isinstance(payload, msgspec.UnsetType):
+        kind = data_port_payload_kind(port)
+        if kind == F8DataPortPayloadKind.json:
+            payload = copy_model(payload, update={"valueSchema": new_schema})
+        else:
+            payload = copy_model(payload, update={"metadataSchema": new_schema})
+        updates["payload"] = payload
+    return copy_model(port, update=updates)
+
+
 def find_data_port_spec(node_item: Any, *, is_in: bool, port_name: str) -> tuple[Any, int] | None:
     node = node_item._backend_node()
     if node is None:
@@ -179,7 +222,7 @@ def data_port_tooltip(node_item: Any, *, is_in: bool, port_name: str) -> str:
     port, _index = found
     schema_text = schema_brief(port.valueSchema)
     desc = str(port.description or "").strip()
-    lines = [f"{port_name} ({direction_text})", f"schema: {schema_text}"]
+    lines = [f"{port_name} ({direction_text})", data_port_payload_summary(port), f"schema: {schema_text}"]
     if desc:
         lines.append(desc)
     return "\n".join(lines)
@@ -296,11 +339,16 @@ def open_data_port_schema_dialog(node_item: Any, *, is_in: bool, port_name: str)
     spec = node.spec
     editable = _policy_can_edit_existing(spec, "dataInPorts" if bool(is_in) else "dataOutPorts")
     missing_locked = bool(node.is_missing_locked())
-    read_only = bool((not editable) or missing_locked)
+    kind = data_port_payload_kind(port)
+    read_only = bool((not editable) or missing_locked or kind != F8DataPortPayloadKind.json)
     schema_value = port.valueSchema
     if schema_value is None:
         schema_value = _schema_from_json_obj({"type": "any"})
-    title = f"Edit valueSchema ({port_name})"
+    title = (
+        f"View {kind.value} metadataSchema ({port_name})"
+        if kind != F8DataPortPayloadKind.json
+        else f"Edit valueSchema ({port_name})"
+    )
     dlg = SchemaBuilderDialog(node_item._viewer_safe(), title=title, schema=schema_value, read_only=read_only)
     if dlg.exec_() != QtWidgets.QDialog.Accepted:
         return
@@ -322,7 +370,7 @@ def replace_data_port_schema(node_item: Any, *, is_in: bool, port_name: str, new
     ports = list(spec.dataInPorts or []) if bool(is_in) else list(spec.dataOutPorts or [])
     if int(index) < 0 or int(index) >= len(ports):
         return False
-    updated = copy_model(ports[int(index)], update={"valueSchema": new_schema})
+    updated = _copy_data_port_with_schema(ports[int(index)], new_schema)
     ports[int(index)] = updated
     if bool(is_in):
         updated_spec = copy_model(spec, update={"dataInPorts": ports})
@@ -608,9 +656,11 @@ def on_port_right_click(node_item: Any, port: Any, screen_pos: QtCore.QPoint) ->
         if found_data is None:
             return
         _data_port, _index = found_data
+        payload_kind = data_port_payload_kind(_data_port)
         can_edit = bool(
             _policy_can_edit_existing(node.spec, "dataInPorts" if bool(is_in) else "dataOutPorts")
             and (not bool(node.is_missing_locked()))
+            and payload_kind == F8DataPortPayloadKind.json
         )
     elif kind == "state":
         found_field = find_state_field_spec(node_item, field_name=port_name)
@@ -628,7 +678,10 @@ def on_port_right_click(node_item: Any, port: Any, screen_pos: QtCore.QPoint) ->
     if can_edit:
         schema_action = menu.addAction("Edit valueSchema...")
     else:
-        schema_action = menu.addAction("View valueSchema...")
+        if kind == "data" and data_port_payload_kind(_data_port) != F8DataPortPayloadKind.json:
+            schema_action = menu.addAction("View metadataSchema...")
+        else:
+            schema_action = menu.addAction("View valueSchema...")
     copy_schema_action = menu.addAction("Copy valueSchema")
     paste_schema_action = menu.addAction("Paste valueSchema")
     paste_schema_action.setEnabled(can_edit)

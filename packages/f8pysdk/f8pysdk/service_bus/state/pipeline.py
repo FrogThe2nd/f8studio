@@ -9,13 +9,14 @@ from typing import Any, TYPE_CHECKING
 
 from ...generated import F8StateAccess
 from ...codec import parse_bool, unwrap_json_value
-from ...nats_naming import ensure_token, kv_key_node_state
+from ...f8_naming import ensure_token
 from ...state import StateWriteContext, StateWriteError, StateWriteOrigin, StateWriteSource
 from ..internal.logging import log_error_once
 from .helpers import build_intra_state_route_meta
 from .options import StatePublishOptions
 from ...time_utils import now_ms
 from ...codec import encode_obj
+from ...zenoh_naming import zenoh_state_key
 from ..internal.command import dispatch_command_input
 
 if TYPE_CHECKING:
@@ -35,6 +36,7 @@ class _StateUpdate:
     source: str
     actor: str
     meta: dict[str, Any]
+    seq: int
 
 
 def origin_allows_access(origin: StateWriteOrigin, access: F8StateAccess) -> bool:
@@ -81,6 +83,14 @@ def coerce_state_value(value: Any) -> Any:
     return value
 
 
+def _is_runtime_builtin_service_state(bus: "ServiceBus", *, node_id: str, field: str, ctx: StateWriteContext) -> bool:
+    if str(node_id) != str(bus.service_id):
+        return False
+    if str(field) not in ("active", "svcId"):
+        return False
+    return ctx.origin in (StateWriteOrigin.runtime, StateWriteOrigin.system)
+
+
 def _build_state_payload(update: _StateUpdate) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "value": update.value,
@@ -88,9 +98,10 @@ def _build_state_payload(update: _StateUpdate) -> dict[str, Any]:
         "tsMs": int(update.ts_ms),
         "source": update.source,
         "origin": update.origin.value,
+        "seq": int(update.seq),
     }
     for k, v in dict(update.meta or {}).items():
-        if k in ("value", "actor", "tsMs", "source", "origin"):
+        if k in ("value", "actor", "tsMs", "source", "origin", "seq"):
             continue
         payload[k] = v
     return payload
@@ -234,6 +245,9 @@ async def validate_state_update(
     field_s = str(field)
     node = bus._nodes.get(node_id_s)
 
+    if _is_runtime_builtin_service_state(bus, node_id=node_id_s, field=field_s, ctx=ctx):
+        return value
+
     access = bus.state_store.access_for(node_id=node_id_s, field=field_s)
     # If we have an applied graph, unknown fields are rejected.
     if bus._graph is not None and access is None:
@@ -320,6 +334,7 @@ async def publish_state(
         source=ctx.resolved_source,
         actor=bus.service_id,
         meta=payload_meta,
+        seq=bus._next_state_publish_seq(),
     )
     payload = _build_state_payload(update)
     update.value = await validate_state_update(
@@ -334,7 +349,7 @@ async def publish_state(
     update.value = coerce_state_value(update.value)
     payload = _build_state_payload(update)
 
-    key = kv_key_node_state(node_id=node_id, field=field)
+    key = zenoh_state_key(bus.service_id, node_id=node_id, field=field)
     is_hidden_command_state = bus.command_gateway.is_hidden_field(node_id=node_id, field=field)
     # Value-dedupe: avoid republishing identical values.
     #
@@ -357,7 +372,7 @@ async def publish_state(
             "state_debug[%s] publish_state node=%s field=%s ts=%s origin=%s source=%s"
             % (bus.service_id, node_id, field, str(payload.get("tsMs")), ctx.origin.value, update.source)
         )
-    await bus._transport.kv_put(key, encode_obj(payload))
+    await bus._transport.retained_put(key, encode_obj(payload))
     bus.state_store.cache_value(node_id=node_id, field=field, value=update.value, ts_ms=int(payload["tsMs"]))
     if deliver_local:
         # Local writes (actor == self.service_id) do not round-trip through the KV watcher.

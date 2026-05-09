@@ -13,7 +13,7 @@ for p in (PKG_STUDIO, PKG_SDK):
 
 from f8pysdk.bus import ServiceBus, ServiceBusConfig  # noqa: E402
 from f8pysdk.codec import encode_obj  # noqa: E402
-from f8pysdk.nats_naming import data_subject  # noqa: E402
+from f8pysdk.f8_naming import data_key  # noqa: E402
 from f8pysdk.specs import (  # noqa: E402
     F8DataPortSpec,
     F8Edge,
@@ -31,7 +31,7 @@ from f8pystudio.studio_specs.identifiers import SERVICE_CLASS  # noqa: E402
 class VizTextInputTests(unittest.IsolatedAsyncioTestCase):
     async def test_cross_service_data_is_buffered_for_pull_driven_text_inputs(self) -> None:
         cluster = InMemoryCluster()
-        transport = InMemoryTransport(cluster=cluster, kv_bucket="kv.studio")
+        transport = InMemoryTransport(cluster=cluster)
         bus = ServiceBus(
             ServiceBusConfig(
                 service_id="studio",
@@ -83,10 +83,10 @@ class VizTextInputTests(unittest.IsolatedAsyncioTestCase):
 
         await bus.set_rungraph(graph)
         sample = {"status": "tracking", "bbox": [11, 22, 33, 44], "tsMs": 123}
-        subject = data_subject("tracker", from_node_id="tracker", port_id="tracking")
+        key = data_key("tracker", from_node_id="tracker", port_id="tracking")
         payload = encode_obj({"value": sample, "tsMs": 123})
 
-        await transport.publish(subject, payload)
+        await transport.publish(key, payload)
         await asyncio.sleep(0)
 
         pulled = await bus.pull_data("viz_text_1", "inputData")

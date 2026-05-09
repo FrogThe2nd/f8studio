@@ -540,3 +540,17 @@ def test_subscription_sync_service_collapses_reentrant_manual_refreshes() -> Non
     assert _spy_count(started_spy) == 2
     assert list(started_spy.at(0)) == [1]
     assert list(started_spy.at(1)) == [0]
+
+
+def test_subscription_sync_service_worker_exits_after_idle() -> None:
+    _ensure_app()
+    service, _variant_client, _component_client = _make_service(
+        variant_pages=[[]],
+        component_pages=[[]],
+    )
+    finished_spy = QtTest.QSignalSpy(service.sync_finished)
+
+    service.start_initial_sync()
+
+    _wait_until(lambda: _spy_count(finished_spy) == 1 and not service.is_running())
+    _wait_until(lambda: service._worker_thread is None, timeout_ms=1000)  # type: ignore[attr-defined]

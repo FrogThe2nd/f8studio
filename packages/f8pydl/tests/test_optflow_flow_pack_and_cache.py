@@ -1,5 +1,7 @@
+import asyncio
 import os
 import sys
+import time
 import unittest
 from types import SimpleNamespace
 from typing import Any
@@ -18,14 +20,20 @@ from f8pydl.optflow_service_node import (  # noqa: E402
     PreparedFlowFrame,
     pack_flow2_f16_payload,
 )
+from f8pysdk.bus import ServiceBus, ServiceBusConfig  # noqa: E402
 from f8pysdk.state import StateRead  # noqa: E402
+from f8pysdk.zenoh_naming import zenoh_data_key  # noqa: E402
 
 
 class _BusStub:
-    def __init__(self, initial_state: dict[str, Any] | None = None) -> None:
+    def __init__(self, initial_state: dict[str, Any] | None = None, *, has_rungraph: bool = True) -> None:
         self.state: dict[str, Any] = dict(initial_state or {})
         self.errors: list[tuple[str, str, str]] = []
         self.clear_count = 0
+        self._has_rungraph = bool(has_rungraph)
+
+    def has_rungraph(self) -> bool:
+        return self._has_rungraph
 
     def report_error(
         self,
@@ -44,7 +52,8 @@ class _BusStub:
         self.clear_count += 1
 
     async def publish_state_runtime(self, node_id: str, field: str, value: Any, *, ts_ms: int | None = None) -> None:
-        del node_id, field, value, ts_ms
+        del ts_ms
+        self.state[field] = value
 
     async def get_state(self, node_id: str, field: str) -> StateRead:
         del node_id
@@ -105,6 +114,23 @@ class OptflowPackAndCacheTests(unittest.TestCase):
 
 
 class OptflowServiceNodeErrorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_publish_model_index_scans_local_optflow_models(self) -> None:
+        bus = _BusStub()
+        node = OnnxOptflowServiceNode(
+            node_id="optflowA",
+            node=SimpleNamespace(stateFields=[]),
+            initial_state=None,
+            service_class="f8.dl.optflow",
+            allowed_tasks={"optflow_neuflowv2"},
+        )
+        node._bus = bus
+
+        await node._publish_model_index()
+
+        available = bus.state["availableModels"]
+        self.assertEqual(available, ["neuflow_mixed", "neuflow_sintel", "neuflow_things"])
+        self.assertEqual(bus.state["modelId"], "neuflow_mixed")
+
     async def test_set_last_error_dedupes_repeated_message(self) -> None:
         bus = _BusStub()
         node = OnnxOptflowServiceNode(
@@ -116,81 +142,188 @@ class OptflowServiceNodeErrorTests(unittest.IsolatedAsyncioTestCase):
         )
         node._bus = bus
 
-        await node._set_last_error("missing inputShmName")
-        await node._set_last_error("missing inputShmName")
+        await node._set_last_error("missing video data input")
+        await node._set_last_error("missing video data input")
         await node._set_last_error("")
         await node._set_last_error("")
 
-        self.assertEqual(bus.errors, [("optflowA", "DL_OPTFLOW_RUNTIME", "missing inputShmName")])
+        self.assertEqual(bus.errors, [("optflowA", "DL_OPTFLOW_RUNTIME", "missing video data input")])
         self.assertEqual(bus.clear_count, 1)
 
-    async def test_input_shm_state_callback_uses_callback_value(self) -> None:
-        bus = _BusStub({"inputShmName": ""})
-        node = OnnxOptflowServiceNode(
-            node_id="optflowB",
-            node=SimpleNamespace(stateFields=[]),
-            initial_state=None,
-            service_class="f8.dl.optflow",
-            allowed_tasks={"optflow_neuflowv2"},
-        )
-        node._bus = bus
-        node._config_loaded = True
+    async def test_loop_retries_when_runtime_is_reset_after_ensure(self) -> None:
+        class _RuntimeResetNode(OnnxOptflowServiceNode):
+            async def _ensure_config_loaded(self) -> None:
+                return None
 
-        await node.on_state("inputShmName", "shm.visible.video")
+            def _resolve_input_stream_key(self) -> str:
+                return "f8/svc/source/nodes/camera/data/video"
 
-        self.assertEqual(node._input_shm_name, "shm.visible.video")
+            async def _ensure_runtime(self) -> bool:
+                self._runtime = None
+                return True
 
-    async def test_missing_input_shm_resyncs_from_state_store(self) -> None:
-        bus = _BusStub({"inputShmName": "shm.visible.video"})
-        node = OnnxOptflowServiceNode(
-            node_id="optflowC",
-            node=SimpleNamespace(stateFields=[]),
-            initial_state=None,
-            service_class="f8.dl.optflow",
-            allowed_tasks={"optflow_neuflowv2"},
-        )
-        node._bus = bus
-        node._config_loaded = True
+            def _ensure_video_source(self) -> Any:
+                raise AssertionError("video source should not be opened without runtime")
 
-        await node._sync_input_shm_name_from_state(force=True)
-
-        self.assertEqual(node._input_shm_name, "shm.visible.video")
-
-    async def test_missing_input_shm_waits_without_error(self) -> None:
-        bus = _BusStub({"inputShmName": ""})
-        node = OnnxOptflowServiceNode(
-            node_id="optflowD",
-            node=SimpleNamespace(stateFields=[]),
-            initial_state=None,
-            service_class="f8.dl.optflow",
-            allowed_tasks={"optflow_neuflowv2"},
-        )
-        node._bus = bus
-        node._config_loaded = True
-
-        resolved = await node._resolve_synced_input_shm_name()
-
-        self.assertEqual(resolved, "")
-        self.assertEqual(bus.errors, [])
-        self.assertEqual(bus.clear_count, 0)
-
-    async def test_valid_input_shm_clears_stale_missing_error(self) -> None:
         bus = _BusStub()
-        node = OnnxOptflowServiceNode(
-            node_id="optflowE",
+        node = _RuntimeResetNode(
+            node_id="optflowRace",
             node=SimpleNamespace(stateFields=[]),
             initial_state=None,
             service_class="f8.dl.optflow",
             allowed_tasks={"optflow_neuflowv2"},
         )
         node._bus = bus
-        node._config_loaded = True
 
-        await node._set_last_error("missing inputShmName")
-        await node._apply_input_shm_name("shm.visible.video")
+        task = asyncio.create_task(node._loop())
+        await asyncio.sleep(0.08)
+        if task.done():
+            task.result()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
 
-        self.assertEqual(node._last_error, "")
-        self.assertEqual(bus.clear_count, 1)
+        self.assertEqual(bus.errors, [])
+
+    async def test_missing_input_stream_key_ignores_startup_before_rungraph(self) -> None:
+        node = OnnxOptflowServiceNode(
+            node_id="optflowGrace",
+            node=SimpleNamespace(stateFields=[]),
+            initial_state=None,
+            service_class="f8.dl.optflow",
+            allowed_tasks={"optflow_neuflowv2"},
+        )
+        node._bus = _BusStub(has_rungraph=False)
+        node._missing_input_since_monotonic = time.monotonic() - 30.0
+
+        await node._handle_missing_input_stream_key()
+
+        self.assertEqual(node._bus.errors, [])
+        self.assertIsNone(node._missing_input_since_monotonic)
+
+    async def test_missing_input_stream_key_starts_grace_after_rungraph_arrives(self) -> None:
+        node = OnnxOptflowServiceNode(
+            node_id="optflowGraphGrace",
+            node=SimpleNamespace(stateFields=[]),
+            initial_state=None,
+            service_class="f8.dl.optflow",
+            allowed_tasks={"optflow_neuflowv2"},
+        )
+        node._bus = _BusStub(has_rungraph=True)
+
+        await node._handle_missing_input_stream_key()
+
+        self.assertEqual(node._bus.errors, [])
+        self.assertIsNotNone(node._missing_input_since_monotonic)
+
+    async def test_missing_input_stream_key_reports_after_grace_period(self) -> None:
+        node = OnnxOptflowServiceNode(
+            node_id="optflowMissing",
+            node=SimpleNamespace(stateFields=[]),
+            initial_state=None,
+            service_class="f8.dl.optflow",
+            allowed_tasks={"optflow_neuflowv2"},
+        )
+        bus = _BusStub()
+        node._bus = bus
+        node._missing_input_since_monotonic = time.monotonic() - 3.0
+
+        await node._handle_missing_input_stream_key()
+
+        self.assertEqual(bus.errors, [("optflowMissing", "DL_OPTFLOW_RUNTIME", "missing video data input")])
+
+    async def test_resolve_input_stream_key_reuses_cached_route_during_grace_period(self) -> None:
+        class _RouteFlapNode(OnnxOptflowServiceNode):
+            def __init__(self) -> None:
+                super().__init__(
+                    node_id="optflowRouteFlap",
+                    node=SimpleNamespace(stateFields=[]),
+                    initial_state=None,
+                    service_class="f8.dl.optflow",
+                    allowed_tasks={"optflow_neuflowv2"},
+                )
+                self.current_input_key = "f8/svc/source/nodes/camera/data/video"
+
+            def _current_input_stream_key(self) -> str:
+                return self.current_input_key
+
+        node = _RouteFlapNode()
+
+        self.assertEqual(node._resolve_input_stream_key(), "f8/svc/source/nodes/camera/data/video")
+        self.assertFalse(node._using_cached_input_stream_key)
+
+        node.current_input_key = ""
+        self.assertEqual(node._resolve_input_stream_key(), "f8/svc/source/nodes/camera/data/video")
+        self.assertTrue(node._using_cached_input_stream_key)
+
+    async def test_resolve_input_stream_key_reports_missing_after_cached_route_expires(self) -> None:
+        class _RouteMissingNode(OnnxOptflowServiceNode):
+            def _current_input_stream_key(self) -> str:
+                return ""
+
+        node = _RouteMissingNode(
+            node_id="optflowRouteExpired",
+            node=SimpleNamespace(stateFields=[]),
+            initial_state=None,
+            service_class="f8.dl.optflow",
+            allowed_tasks={"optflow_neuflowv2"},
+        )
+        node._last_input_stream_key = "f8/svc/source/nodes/camera/data/video"
+        node._missing_input_since_monotonic = time.monotonic() - 3.0
+
+        self.assertEqual(node._resolve_input_stream_key(), "")
+        self.assertFalse(node._using_cached_input_stream_key)
+
+    async def test_attach_uses_service_id_for_flow_zenoh_key(self) -> None:
+        bus = ServiceBus(ServiceBusConfig(service_id="dl_service", bus_backend="mem"))
+        node = OnnxOptflowServiceNode(
+            node_id="optflowF",
+            node=SimpleNamespace(stateFields=[]),
+            initial_state=None,
+            service_class="f8.dl.optflow",
+            allowed_tasks={"optflow_neuflowv2"},
+        )
+
+        node.attach(bus)
+        try:
+            self.assertEqual(
+                node._flow_key,
+                zenoh_data_key("dl_service", node_id="optflowF", port_id="flow"),
+            )
+        finally:
+            await node.close()
+
+    async def test_close_cancels_attach_init_task(self) -> None:
+        started = asyncio.Event()
+        finalized = asyncio.Event()
+
+        class _SlowInitNode(OnnxOptflowServiceNode):
+            async def _ensure_config_loaded(self) -> None:
+                started.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    finalized.set()
+
+            async def _loop(self) -> None:
+                await asyncio.Event().wait()
+
+        bus = ServiceBus(ServiceBusConfig(service_id="dl_service", bus_backend="mem"))
+        node = _SlowInitNode(
+            node_id="optflowF",
+            node=SimpleNamespace(stateFields=[]),
+            initial_state=None,
+            service_class="f8.dl.optflow",
+            allowed_tasks={"optflow_neuflowv2"},
+        )
+
+        node.attach(bus)
+        await started.wait()
+        await node.close()
+
+        self.assertIsNone(node._init_task)
+        self.assertIsNone(node._task)
+        self.assertTrue(finalized.is_set())
 
 
 if __name__ == "__main__":

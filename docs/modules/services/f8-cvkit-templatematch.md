@@ -31,7 +31,7 @@ No description.
 ### How to Run
 
 ```bash
-../linux/f8cvkit_template_match_service
+../win/f8cvkit_template_match_service.exe
 ```
 
 - Workdir: `./`
@@ -39,7 +39,7 @@ No description.
 
 ### Typical Inputs / Outputs
 
-- Data inputs: none
+- Data inputs: `video`
 - Data outputs: `detections`, `monitor`
 - Commands: `captureTemplateFrame`, `ping`
 
@@ -50,7 +50,9 @@ No description.
 | `templateImagePngB64` | `rw` | `true` | `false` | `string` | PNG bytes encoded as base64. Local-only payload; cleared when exporting publish JSON. |
 | `matchThreshold` | `rw` | `true` | `true` | `number / default=0.5` | 0..1 score threshold used to emit detections. |
 | `matchingIntervalMs` | `rw` | `true` | `false` | `integer / default=200` | Minimum milliseconds between template matching passes. |
-| `shmName` | `rw` | `true` | `true` | `string` | Optional SHM name override (e.g. shm.xxx.video). |
+| `matchColorMode` | `rw` | `true` | `false` | `string` | gray or bgr. gray is faster. |
+| `searchRoiPaddingPx` | `rw` | `true` | `false` | `integer / default=0` | If >0, search around the previous detection with this padding. |
+| `pyramidScale` | `rw` | `true` | `false` | `number / default=1.0` | Optional downscale factor for faster coarse template matching. |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
@@ -59,14 +61,16 @@ No description.
 - `templateImagePngB64` (Template PNG (Base64), `rw`): PNG bytes encoded as base64. Local-only payload; cleared when exporting publish JSON. Schema: `string`.
 - `matchThreshold` (Match Threshold, `rw`): 0..1 score threshold used to emit detections. Schema: `number / default=0.5`.
 - `matchingIntervalMs` (Matching Interval (ms), `rw`): Minimum milliseconds between template matching passes. Schema: `integer / default=200`.
-- `shmName` (Video SHM, `rw`): Optional SHM name override (e.g. shm.xxx.video). Schema: `string`.
+- `matchColorMode` (Match Color Mode, `rw`): gray or bgr. gray is faster. Schema: `string`.
+- `searchRoiPaddingPx` (Search ROI Padding, `rw`): If >0, search around the previous detection with this padding. Schema: `integer / default=0`.
+- `pyramidScale` (Pyramid Scale, `rw`): Optional downscale factor for faster coarse template matching. Schema: `number / default=1.0`.
 - `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 
 ### Service Commands
 
 ### `captureTemplateFrame`
-Capture current SHM frame as an encoded image (base64).
+Capture current video frame as an encoded image (base64).
 
 - Show on node: `true`
 
@@ -86,7 +90,9 @@ Health check.
 
 ### Service Data Input Ports
 
-_None_
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `video` | `true` | `true` | `object{format, frameId, height, pitch, ...}` | Input video frame stream. |
 
 ### Service Data Output Ports
 
@@ -101,4 +107,4 @@ _None_
 
 ## Related Scenarios
 
-- [Scene 01: CVKit Template Tracking](../../scenarios/scene-01-cvkit_template_tracking.md)
+- No bundled scenario references this node yet.

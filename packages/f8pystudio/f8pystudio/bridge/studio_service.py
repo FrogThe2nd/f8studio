@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import logging
 from typing import Any, Callable
 
-from f8pysdk.bus import ServiceBusConfig
+from f8pysdk.bus import BusBackend, ServiceBusConfig
 from f8pysdk.registry import Registry, RuntimeNodeRegistry, create_runtime_node_registry
 from f8pysdk.runtime import ServiceRuntime, ServiceRuntimeConfig
 
@@ -18,7 +18,11 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class PyStudioServiceConfig:
-    nats_url: str = "nats://127.0.0.1:4222"
+    bus_backend: BusBackend = "zenoh"
+    zenoh_config_path: str | None = None
+    zenoh_connect: tuple[str, ...] = ()
+    zenoh_listen: tuple[str, ...] = ()
+    zenoh_shm_pool_bytes: int = 256 * 1024 * 1024
     studio_service_id: str = STUDIO_SERVICE_ID
 
 
@@ -78,7 +82,11 @@ class PyStudioService:
             bus=ServiceBusConfig(
                 service_id=str(self._cfg.studio_service_id),
                 service_class=SERVICE_CLASS,
-                nats_url=str(self._cfg.nats_url),
+                bus_backend=self._cfg.bus_backend,
+                zenoh_config_path=self._cfg.zenoh_config_path,
+                zenoh_connect=self._cfg.zenoh_connect,
+                zenoh_listen=self._cfg.zenoh_listen,
+                zenoh_shm_pool_bytes=self._cfg.zenoh_shm_pool_bytes,
                 cross_publish_policy="routed",
                 # Studio hosts both callback-driven viz nodes and pull-driven previews
                 # like Text Viz, so cross-service inputs must stay buffered too.

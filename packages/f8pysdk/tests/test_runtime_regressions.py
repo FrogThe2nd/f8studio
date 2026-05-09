@@ -11,7 +11,6 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from f8pysdk.specs import F8RuntimeGraph, F8RuntimeNode, F8ServiceSpec  # noqa: E402
-from f8pysdk.nats_naming import data_subject  # noqa: E402
 from f8pysdk.nodes import ServiceNode  # noqa: E402
 from f8pysdk.registry import (  # noqa: E402
     create_runtime_node_registry,
@@ -23,16 +22,6 @@ from f8pysdk.bus import DefaultServiceBusComponentFactory, ServiceBus, ServiceBu
 from f8pysdk.host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.runtime import ServiceRuntime, ServiceRuntimeConfig  # noqa: E402
 from f8pysdk.testing import InMemoryCluster, InMemoryTransport, ServiceBusHarness, push_input  # noqa: E402
-
-
-class _RecordingTransport(InMemoryTransport):
-    def __init__(self, *, cluster: InMemoryCluster, kv_bucket: str) -> None:
-        super().__init__(cluster=cluster, kv_bucket=kv_bucket)
-        self.published_subjects: list[str] = []
-
-    async def publish(self, subject: str, payload: bytes) -> None:
-        self.published_subjects.append(str(subject))
-        await super().publish(subject, payload)
 
 
 class _DataReceiverNode:
@@ -76,6 +65,25 @@ class _NoopServiceHook:
 
     async def on_after_stop(self, bus: object) -> None:
         _ = bus
+
+
+class _ClosableServiceNode(ServiceNode):
+    def __init__(self, node_id: str, events: list[str]) -> None:
+        super().__init__(node_id=node_id)
+        self._events = events
+
+    async def close(self) -> None:
+        self._events.append(f"node.close:{self.node_id}")
+
+
+class _StuckCloseServiceNode(ServiceNode):
+    def __init__(self, node_id: str, events: list[str]) -> None:
+        super().__init__(node_id=node_id)
+        self._events = events
+
+    async def close(self) -> None:
+        self._events.append(f"node.close.start:{self.node_id}")
+        await asyncio.Event().wait()
 
 
 class _RecordingComponentFactory(DefaultServiceBusComponentFactory):
@@ -159,21 +167,9 @@ class RuntimeRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(bus.command_gateway, factory.created_command_gateway)
         self.assertIs(bus.monitor_collector, factory.created_monitor_collector)
 
-    async def test_cross_publish_policy_all_publishes_without_cross_routes(self) -> None:
-        cluster = InMemoryCluster()
-        transport = _RecordingTransport(cluster=cluster, kv_bucket="kv.svc")
-        bus = ServiceBus(ServiceBusConfig(service_id="svc", cross_publish_policy="all"), transport=transport)
-
-        await bus.emit_data("node1", "out", {"x": 1}, ts_ms=1)
-
-        self.assertEqual(
-            transport.published_subjects,
-            [data_subject("svc", from_node_id="node1", port_id="out")],
-        )
-
     async def test_callback_data_delivery_delivers_by_callback_and_pull(self) -> None:
         cluster = InMemoryCluster()
-        transport = InMemoryTransport(cluster=cluster, kv_bucket="kv.svc")
+        transport = InMemoryTransport(cluster=cluster)
         bus = ServiceBus(ServiceBusConfig(service_id="svc", data_delivery="callback"), transport=transport)
         node = _DataReceiverNode("node1")
         bus.register_node(node)
@@ -248,7 +244,7 @@ class RuntimeRegressionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_service_host_derives_service_class_from_bus_config(self) -> None:
         cluster = InMemoryCluster()
-        transport = InMemoryTransport(cluster=cluster, kv_bucket="kv.svc")
+        transport = InMemoryTransport(cluster=cluster)
         bus = ServiceBus(
             ServiceBusConfig(service_id="svc", service_class="svc.test"),
             transport=transport,
@@ -264,11 +260,11 @@ class RuntimeRegressionTests(unittest.IsolatedAsyncioTestCase):
     async def test_service_bus_is_not_restartable_after_stop(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        with patch("f8pysdk.service_bus.workflow.lifecycle._ensure_micro_endpoints_started") as ensure_micro:
+        with patch("f8pysdk.service_bus.workflow.lifecycle._ensure_control_endpoints_started") as ensure_control:
             async def _noop(_bus: object) -> None:
                 return None
 
-            ensure_micro.side_effect = _noop
+            ensure_control.side_effect = _noop
             await bus.start()
         await bus.stop()
 
@@ -291,6 +287,78 @@ class RuntimeRegressionTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError, "not restartable"):
             await runtime.start()
 
+    async def test_service_runtime_stop_closes_host_nodes_before_bus_stop(self) -> None:
+        events: list[str] = []
+        registry = create_runtime_node_registry()
+        registry.register_service_factory(
+            "svc.test",
+            lambda node_id, node, initial_state: _ClosableServiceNode(node_id=node_id, events=events),
+        )
+        runtime = ServiceRuntime(
+            ServiceRuntimeConfig(bus=ServiceBusConfig(service_id="svc", service_class="svc.test")),
+            registry=registry,
+        )
+        runtime.bus.start = AsyncMock()
+
+        async def _stop_bus() -> None:
+            events.append("bus.stop")
+
+        runtime.bus.stop = AsyncMock(side_effect=_stop_bus)
+
+        await runtime.start()
+        await runtime.stop()
+
+        self.assertEqual(events, ["node.close:svc", "bus.stop"])
+        self.assertIsNone(runtime.host._service_node)
+
+    async def test_service_host_stop_detaches_node_before_close(self) -> None:
+        events: list[str] = []
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svc")
+        registry = create_runtime_node_registry()
+        registry.register_service_factory(
+            "svc.test",
+            lambda node_id, node, initial_state: _ClosableServiceNode(node_id=node_id, events=events),
+        )
+        host = ServiceHost(
+            bus,
+            config=ServiceHostConfig(service_class="svc.test", node_close_timeout_s=0.05),
+            registry=registry,
+        )
+
+        await host.start()
+        self.assertIsNotNone(bus.get_node("svc"))
+
+        await host.stop()
+
+        self.assertEqual(events, ["node.close:svc"])
+        self.assertIsNone(bus.get_node("svc"))
+
+    async def test_service_runtime_stop_still_stops_bus_when_node_close_times_out(self) -> None:
+        events: list[str] = []
+        registry = create_runtime_node_registry()
+        registry.register_service_factory(
+            "svc.test",
+            lambda node_id, node, initial_state: _StuckCloseServiceNode(node_id=node_id, events=events),
+        )
+        runtime = ServiceRuntime(
+            ServiceRuntimeConfig(bus=ServiceBusConfig(service_id="svc", service_class="svc.test")),
+            registry=registry,
+        )
+        runtime.host._config = ServiceHostConfig(service_class="svc.test", node_close_timeout_s=0.05)
+        runtime.bus.start = AsyncMock()
+
+        async def _stop_bus() -> None:
+            events.append("bus.stop")
+
+        runtime.bus.stop = AsyncMock(side_effect=_stop_bus)
+
+        await runtime.start()
+        await runtime.stop()
+
+        self.assertEqual(events, ["node.close.start:svc", "bus.stop"])
+        self.assertIsNone(runtime.host._service_node)
+
     async def test_service_bus_stop_keeps_registered_hooks(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
@@ -299,11 +367,11 @@ class RuntimeRegressionTests(unittest.IsolatedAsyncioTestCase):
         bus.register_rungraph_hook(rungraph_hook)
         bus.register_service_hook(service_hook)
 
-        with patch("f8pysdk.service_bus.workflow.lifecycle._ensure_micro_endpoints_started") as ensure_micro:
+        with patch("f8pysdk.service_bus.workflow.lifecycle._ensure_control_endpoints_started") as ensure_control:
             async def _noop(_bus: object) -> None:
                 return None
 
-            ensure_micro.side_effect = _noop
+            ensure_control.side_effect = _noop
             await bus.start()
         await bus.stop()
 

@@ -1,7 +1,7 @@
 [project]
 name = "f8pyaudiofeat"
 version = "0.1.0"
-description = "Audio feature services for Feel8 audio shm streams."
+description = "Audio feature services for Feel8 Zenoh latest audio streams."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

@@ -6,7 +6,8 @@ import traceback
 from dataclasses import replace
 from typing import Any
 
-from f8pysdk.nats_naming import ensure_token
+from f8pysdk.bus import ServiceBus
+from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
 
 from .config import (
@@ -21,7 +22,6 @@ from .config import (
     coerce_int,
     coerce_model_complexity,
     coerce_skeleton_source,
-    coerce_str,
     state_or_default,
 )
 from .payloads import (
@@ -32,7 +32,7 @@ from .payloads import (
     should_run_inference,
 )
 from .runtime import PoseRuntimeConfig, create_pose_runtime, tasks_model_spec_for_complexity
-from .video_input import FrameContext, VideoShmInput, frame_rgb_from_context
+from .video_input import FrameContext, LatestVideoInput, frame_rgb_from_context
 
 log = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ class MediaPipePoseServiceNode(ServiceNode):
     def __init__(self, *, node_id: str, node: Any, initial_state: dict[str, Any] | None = None) -> None:
         super().__init__(
             node_id=ensure_token(node_id, label="node_id"),
-            data_in_ports=[],
+            data_in_ports=["video"],
             data_out_ports=["detections", "skeletons"],
             state_fields=[s.name for s in (node.stateFields or [])],
         )
@@ -54,8 +54,12 @@ class MediaPipePoseServiceNode(ServiceNode):
         self._config = PoseServiceConfig()
         self._apply_config(self._config)
 
-        self._video_input = VideoShmInput()
+        self._video_input = LatestVideoInput()
         self._pose_runtime: Any | None = None
+        self._zenoh_config_path: str | None = None
+        self._zenoh_connect: tuple[str, ...] = ()
+        self._zenoh_listen: tuple[str, ...] = ()
+        self._zenoh_shm_pool_bytes = 256 * 1024 * 1024
 
         self._last_error_signature = ""
         self._last_error_repeats = 0
@@ -64,6 +68,12 @@ class MediaPipePoseServiceNode(ServiceNode):
 
     def attach(self, bus: Any) -> None:
         super().attach(bus)
+        if isinstance(bus, ServiceBus):
+            cfg = bus.config
+            self._zenoh_config_path = cfg.zenoh_config_path
+            self._zenoh_connect = cfg.zenoh_connect
+            self._zenoh_listen = cfg.zenoh_listen
+            self._zenoh_shm_pool_bytes = cfg.zenoh_shm_pool_bytes
         loop = asyncio.get_running_loop()
         loop.create_task(self._ensure_config_loaded(), name=f"f8mppose:init:{self.node_id}")
         self._task = loop.create_task(self._loop(), name=f"f8mppose:loop:{self.node_id}")
@@ -86,12 +96,6 @@ class MediaPipePoseServiceNode(ServiceNode):
         del ts_ms
         name = str(field or "").strip()
         await self._ensure_config_loaded()
-
-        if name == "shmName":
-            self._shm_name = coerce_str(await self.get_state_value("shmName"), default=self._shm_name)
-            self._config = replace(self._config, shm_name=self._shm_name)
-            await self._maybe_reopen_shm()
-            return
 
         if name == "inferEveryN":
             self._infer_every_n = coerce_int(
@@ -162,14 +166,6 @@ class MediaPipePoseServiceNode(ServiceNode):
         if self._config_loaded:
             return
         self._config = PoseServiceConfig(
-            shm_name=coerce_str(
-                state_or_default(
-                    await self.get_state_value("shmName"),
-                    self._initial_state.get("shmName"),
-                    default="",
-                ),
-                default="",
-            ),
             infer_every_n=coerce_int(
                 state_or_default(
                     await self.get_state_value("inferEveryN"),
@@ -231,7 +227,6 @@ class MediaPipePoseServiceNode(ServiceNode):
         self._config_loaded = True
 
     def _apply_config(self, config: PoseServiceConfig) -> None:
-        self._shm_name = config.shm_name
         self._infer_every_n = config.infer_every_n
         self._model_complexity = config.model_complexity
         self._min_detection_confidence = config.min_detection_confidence
@@ -291,20 +286,20 @@ class MediaPipePoseServiceNode(ServiceNode):
         )
         self._pose_runtime = create_pose_runtime(config)
 
-    async def _maybe_reopen_shm(self) -> None:
-        want = self._resolve_shm_name()
-        if want == self._video_input.open_name:
+    async def _maybe_reopen_video_input(self) -> None:
+        stream_key = self._resolve_video_stream_key()
+        if self._video_input.is_open_for(stream_key=stream_key):
             return
         self._close_video_input()
 
-    def _resolve_shm_name(self) -> str:
-        return str(self._shm_name or "").strip()
+    def _resolve_video_stream_key(self) -> str:
+        return str(self.input_zenoh_key("video") or "").strip()
 
     def _close_video_input(self) -> None:
         try:
             self._video_input.close()
         except Exception as exc:
-            log.exception("video shm close failed", exc_info=exc)
+            log.exception("video input close failed", exc_info=exc)
 
     def _accept_frame_for_processing(self, frame_id: int) -> bool:
         if self._last_processed_frame_id is not None and frame_id == int(self._last_processed_frame_id):
@@ -359,13 +354,19 @@ class MediaPipePoseServiceNode(ServiceNode):
                 await self._ensure_config_loaded()
                 await self._ensure_pose_runtime()
 
-                shm_name = self._resolve_shm_name()
-                if not shm_name:
+                stream_key = self._resolve_video_stream_key()
+                if not stream_key:
                     await asyncio.sleep(0.05)
                     continue
 
-                if not self._video_input.is_open:
-                    self._video_input.open(shm_name)
+                if not self._video_input.is_open_for(stream_key=stream_key):
+                    self._video_input.open(
+                        stream_key=stream_key,
+                        config_path=self._zenoh_config_path,
+                        connect=self._zenoh_connect,
+                        listen=self._zenoh_listen,
+                        shm_pool_bytes=self._zenoh_shm_pool_bytes,
+                    )
 
                 frame = self._video_input.read_frame()
                 if frame is None:

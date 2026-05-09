@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <mutex>
@@ -15,8 +16,8 @@
 #include <opencv2/tracking.hpp>
 
 #include "f8cppsdk/capabilities.h"
+#include "f8cppsdk/latest_video_frame_transport.h"
 #include "f8cppsdk/service_bus.h"
-#include "f8cppsdk/video_shared_memory_sink.h"
 
 namespace f8::cvkit::tracking {
 
@@ -48,8 +49,7 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
   struct Config {
     std::string service_id;
     std::string service_class = "f8.cvkit.tracking";
-    std::string nats_url = "nats://127.0.0.1:4222";
-    std::string shm_name;
+    f8::cppsdk::RuntimeBackendConfig runtime_backend;
     std::string tracker_kind = "csrt";
     std::string model_dir = "models";
     bool auto_download_models = true;
@@ -85,12 +85,14 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
                                 const json& meta);
   void publish_error_if_changed(const json& value, const std::string& source, const json& meta);
   void emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms);
-  void set_shm_name(const std::string& shm_name, const json& meta);
   void set_init_select(const std::string& mode, const json& meta);
   void set_tracker_kind(const std::string& kind, const json& meta);
   void set_model_dir(const std::string& model_dir, const json& meta);
   void set_max_tracking_fps(double fps, const json& meta);
-  bool ensure_video_open();
+  bool ensure_zenoh_video_open();
+  bool copy_latest_video_frame(std::vector<std::byte>& out_payload, f8::cppsdk::LatestVideoFrame& out_frame,
+                               bool changed_only, std::uint64_t last_frame_id,
+                               std::chrono::milliseconds timeout);
   void apply_init_box_if_any();
   void process_frame_once();
   void set_tracking(bool tracking, const json& meta);
@@ -108,17 +110,18 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
   std::mutex state_mu_;
   std::unordered_map<std::string, json> published_state_;
 
-  // Video input (BGRA32 SHM).
-  std::string shm_name_override_;
-  f8::cppsdk::VideoSharedMemoryReader video_;
+  // Video input.
+  f8::cppsdk::ZenohLatestVideoFrameSubscriber zenoh_video_;
+  std::string zenoh_video_open_key_;
   std::vector<std::byte> frame_bgra_;
   cv::Mat frame_bgr_;
-  std::optional<f8::cppsdk::VideoSharedMemoryHeader> last_header_;
   std::uint64_t last_frame_id_ = 0;
-  std::uint32_t last_notify_seq_ = 0;
   std::int64_t last_processed_frame_ts_ms_ = 0;
   double next_tracking_due_ts_ms_ = 0.0;
   std::int64_t last_video_open_attempt_ms_ = 0;
+  std::int64_t init_video_wait_started_ms_ = 0;
+  std::int64_t init_video_wait_last_log_ms_ = 0;
+  std::uint32_t init_video_wait_misses_ = 0;
   TrackingInitSelectMode init_select_mode_ = TrackingInitSelectMode::ClosestCenter;
   std::string init_select_state_ = "closest_center";
   TrackerKind tracker_kind_ = TrackerKind::Csrt;
@@ -137,6 +140,7 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
 
   // Pending init candidates extracted from upstream payloads.
   std::vector<TrackingInitCandidate> pending_init_boxes_;
+  std::uint64_t pending_init_box_generation_ = 0;
 
   std::uint64_t monitor_observed_frames_ = 0;
   std::uint64_t monitor_processed_frames_ = 0;

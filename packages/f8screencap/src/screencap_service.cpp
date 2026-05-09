@@ -1,19 +1,22 @@
 #include "screencap_service.h"
 
 #include <algorithm>
+#include <cstddef>
+#include <cstring>
 #include <sstream>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 
 #include "f8cppsdk/describe_schema.h"
 #include "f8cppsdk/f8_naming.h"
-#include "f8cppsdk/shm/video.h"
-#include "f8cppsdk/state_kv.h"
+#include "f8cppsdk/latest_video_frame_transport.h"
 #include "f8cppsdk/time_utils.h"
-#include "f8cppsdk/video_shared_memory_sink.h"
+#include "f8cppsdk/zenoh_naming.h"
+#include "capture_frame_sink.h"
 
 #if defined(_WIN32)
 #include "win32_capture_sources.h"
@@ -35,12 +38,78 @@ using f8::cppsdk::describe::schema_object;
 using f8::cppsdk::describe::schema_string;
 using f8::cppsdk::describe::schema_string_enum;
 using f8::cppsdk::describe::state_field;
+using f8::cppsdk::describe::video_frame_port;
 
 namespace {
 
 bool is_mode_valid(const std::string& m) {
   return m == "display" || m == "window" || m == "region";
 }
+
+class ZenohCaptureFrameSink final : public CaptureFrameSink {
+ public:
+  explicit ZenohCaptureFrameSink(std::shared_ptr<f8::cppsdk::ZenohLatestVideoFramePublisher> publisher)
+      : publisher_(std::move(publisher)) {}
+
+  bool ensureConfiguration(unsigned width, unsigned height) override {
+    if (width == 0 || height == 0) {
+      return false;
+    }
+    width_ = width;
+    height_ = height;
+    pitch_ = width * 4u;
+    return true;
+  }
+
+  bool writeFrame(const void* data, unsigned stride_bytes) override {
+    if (!publisher_ || !publisher_->valid() || !data || width_ == 0 || height_ == 0 || pitch_ == 0) {
+      return false;
+    }
+    if (stride_bytes < pitch_) {
+      return false;
+    }
+
+    const std::byte* payload = static_cast<const std::byte*>(data);
+    std::size_t payload_bytes = static_cast<std::size_t>(pitch_) * static_cast<std::size_t>(height_);
+    if (stride_bytes != pitch_) {
+      scratch_.assign(payload_bytes, std::byte{0});
+      for (unsigned y = 0; y < height_; ++y) {
+        std::memcpy(scratch_.data() + static_cast<std::size_t>(y) * pitch_,
+                    payload + static_cast<std::size_t>(y) * stride_bytes, pitch_);
+      }
+      payload = scratch_.data();
+      payload_bytes = scratch_.size();
+    }
+
+    f8::cppsdk::VideoFrameView frame;
+    frame.width = width_;
+    frame.height = height_;
+    frame.pitch = pitch_;
+    frame.format = f8::cppsdk::kVideoFormatBgra32;
+    frame.frame_id = frame_id_ + 1;
+    frame.ts_ms = f8::cppsdk::now_ms();
+    frame.payload = payload;
+    frame.payload_bytes = payload_bytes;
+    if (!publisher_->publish_frame(frame)) {
+      return false;
+    }
+    frame_id_ = frame.frame_id;
+    return true;
+  }
+
+  unsigned outputWidth() const override { return width_; }
+  unsigned outputHeight() const override { return height_; }
+  unsigned outputPitch() const override { return pitch_; }
+  std::uint64_t frameId() const override { return frame_id_; }
+
+ private:
+  std::shared_ptr<f8::cppsdk::ZenohLatestVideoFramePublisher> publisher_;
+  unsigned width_ = 0;
+  unsigned height_ = 0;
+  unsigned pitch_ = 0;
+  std::uint64_t frame_id_ = 0;
+  std::vector<std::byte> scratch_;
+};
 
 json rect_schema() {
   return schema_object(
@@ -149,18 +218,27 @@ bool ScreenCapService::start() {
     return false;
   }
 
-  shm_ = std::make_shared<f8::cppsdk::VideoSharedMemorySink>();
-  const auto shm_name = f8::cppsdk::shm::video_shm_name(cfg_.service_id);
-  if (!shm_->initialize(shm_name, cfg_.video_shm_bytes, cfg_.video_shm_slots)) {
-    spdlog::error("failed to initialize video shm sink name={} bytes={} slots={}", shm_name, cfg_.video_shm_bytes,
-                  cfg_.video_shm_slots);
+  const auto runtime_backend = f8::cppsdk::normalize_runtime_backend_config(cfg_.runtime_backend);
+
+  const std::string key = f8::cppsdk::zenoh_data_key(cfg_.service_id, cfg_.service_id, "video");
+  auto publisher = std::make_shared<f8::cppsdk::ZenohLatestVideoFramePublisher>();
+  if (!publisher->open(runtime_backend, key)) {
+    zenoh_video_key_.clear();
+    zenoh_video_publisher_.reset();
+    frame_sink_.reset();
+    spdlog::error("screencap zenoh video publisher unavailable serviceId={} key={}", cfg_.service_id, key);
     return false;
   }
+  zenoh_video_key_ = key;
+  zenoh_video_publisher_ = publisher;
+  frame_sink_ = std::make_shared<ZenohCaptureFrameSink>(publisher);
+  spdlog::info("screencap zenoh video publisher enabled serviceId={} key={}", cfg_.service_id, key);
 
   f8::cppsdk::ServiceBus::Config bus_cfg;
   bus_cfg.service_id = cfg_.service_id;
-  bus_cfg.nats_url = cfg_.nats_url;
-  bus_cfg.kv_memory_storage = true;
+  bus_cfg.apply_runtime_backend(runtime_backend);
+  bus_cfg.service_class = cfg_.service_class;
+  bus_cfg.service_name = "Screen Capture";
   bus_ = std::make_unique<f8::cppsdk::ServiceBus>(bus_cfg);
   bus_->add_lifecycle_node(this);
   bus_->add_stateful_node(this);
@@ -170,14 +248,19 @@ bool ScreenCapService::start() {
 
   if (!bus_->start()) {
     bus_.reset();
-    shm_.reset();
+    if (zenoh_video_publisher_) {
+      zenoh_video_publisher_->close();
+    }
+    zenoh_video_publisher_.reset();
+    zenoh_video_key_.clear();
+    frame_sink_.reset();
     return false;
   }
 
 #if defined(_WIN32)
-  capture_ = std::make_unique<Win32WgcCapture>(cfg_.service_id, shm_);
+  capture_ = std::make_unique<Win32WgcCapture>(cfg_.service_id, frame_sink_);
 #else
-  capture_ = std::make_unique<LinuxX11Capture>(cfg_.service_id, shm_);
+  capture_ = std::make_unique<LinuxX11Capture>(cfg_.service_id, frame_sink_);
 #endif
   capture_->configure(cfg_.mode, cfg_.fps, cfg_.display_id, cfg_.window_id, cfg_.region_csv, cfg_.scale_csv);
   capture_->set_on_running([this](bool r) { capture_running_.store(r, std::memory_order_release); });
@@ -195,7 +278,8 @@ bool ScreenCapService::start() {
   publish_dynamic_state();
 
   running_.store(true, std::memory_order_release);
-  spdlog::info("screencap started serviceId={} natsUrl={}", cfg_.service_id, cfg_.nats_url);
+  spdlog::info("screencap started serviceId={} backend={} videoBackend={}", cfg_.service_id,
+               f8::cppsdk::bus_backend_to_string(runtime_backend.bus_backend), "zenoh");
   return true;
 }
 
@@ -210,10 +294,19 @@ void ScreenCapService::stop() {
   if (bus_) {
     try {
       bus_->stop();
-    } catch (...) {}
+    } catch (const std::exception& exc) {
+      spdlog::warn("screencap service bus stop failed serviceId={}: {}", cfg_.service_id, exc.what());
+    } catch (...) {
+      spdlog::warn("screencap service bus stop failed serviceId={}: unknown error", cfg_.service_id);
+    }
   }
   bus_.reset();
-  shm_.reset();
+  if (zenoh_video_publisher_) {
+    zenoh_video_publisher_->close();
+  }
+  zenoh_video_publisher_.reset();
+  zenoh_video_key_.clear();
+  frame_sink_.reset();
 }
 
 void ScreenCapService::tick() {
@@ -249,8 +342,7 @@ void ScreenCapService::tick() {
           std::lock_guard<std::mutex> lock(state_mu_);
           published_state_["window"] = value;
           if (bus_) {
-            f8::cppsdk::kv_set_node_state(bus_->kv(), cfg_.service_id, cfg_.service_id, "window", value, "picker",
-                                          meta);
+            (void)bus_->publish_state(cfg_.service_id, "window", value, "picker", meta);
           }
           continue;
         }
@@ -409,7 +501,7 @@ bool ScreenCapService::on_set_state(const std::string& node_id, const std::strin
     if (it == published_state_.end() || it->second != write_value) {
       published_state_[f] = write_value;
       if (bus_) {
-        f8::cppsdk::kv_set_node_state(bus_->kv(), cfg_.service_id, cfg_.service_id, f, write_value, "endpoint", meta);
+        (void)bus_->publish_state(cfg_.service_id, f, write_value, "endpoint", meta);
       }
     }
 
@@ -434,7 +526,7 @@ bool ScreenCapService::on_set_state(const std::string& node_id, const std::strin
       }
       published_state_["window"] = w;
       if (bus_) {
-        f8::cppsdk::kv_set_node_state(bus_->kv(), cfg_.service_id, cfg_.service_id, "window", w, "endpoint", meta);
+        (void)bus_->publish_state(cfg_.service_id, "window", w, "endpoint", meta);
       }
     }
 #else
@@ -458,7 +550,7 @@ bool ScreenCapService::on_set_state(const std::string& node_id, const std::strin
       }
       published_state_["window"] = w;
       if (bus_) {
-        f8::cppsdk::kv_set_node_state(bus_->kv(), cfg_.service_id, cfg_.service_id, "window", w, "endpoint", meta);
+        (void)bus_->publish_state(cfg_.service_id, "window", w, "endpoint", meta);
       }
     }
 #endif
@@ -695,12 +787,12 @@ void ScreenCapService::publish_static_state() {
       return;
     published_state_[field] = v;
     if (bus_)
-      f8::cppsdk::kv_set_node_state(bus_->kv(), cfg_.service_id, cfg_.service_id, field, v, "init", json::object());
+      (void)bus_->publish_state(cfg_.service_id, field, v, "init", json::object());
   };
 
   set_if_changed("serviceClass", cfg_.service_class);
-  set_if_changed("videoShmName", shm_ ? shm_->regionName() : "");
-  set_if_changed("videoShmEvent", shm_ ? shm_->frameEventName() : "");
+  set_if_changed("videoFormat", "bgra32");
+  set_if_changed("videoFrameSchemaVersion", 1);
 
   set_if_changed("mode", cfg_.mode);
   set_if_changed("fps", cfg_.fps);
@@ -772,7 +864,7 @@ void ScreenCapService::publish_dynamic_state() {
       return;
     published_state_[field] = v;
     if (bus_)
-      f8::cppsdk::kv_set_node_state(bus_->kv(), cfg_.service_id, cfg_.service_id, field, v, "tick", json::object());
+      (void)bus_->publish_state(cfg_.service_id, field, v, "tick", json::object());
   };
   auto publish_error_if_changed = [&](const std::string& message) {
     if (published_error_message_ == message) {
@@ -792,10 +884,10 @@ void ScreenCapService::publish_dynamic_state() {
   set_if_changed("captureRunning", capture_running_.load(std::memory_order_relaxed));
   publish_error_if_changed(last_error_);
 
-  if (shm_) {
-    set_if_changed("videoWidth", shm_->outputWidth());
-    set_if_changed("videoHeight", shm_->outputHeight());
-    set_if_changed("videoPitch", shm_->outputPitch());
+  if (frame_sink_) {
+    set_if_changed("videoWidth", frame_sink_->outputWidth());
+    set_if_changed("videoHeight", frame_sink_->outputHeight());
+    set_if_changed("videoPitch", frame_sink_->outputPitch());
   }
 }
 
@@ -810,10 +902,11 @@ json ScreenCapService::describe() {
   service["label"] = "Screen Capture";
   service["version"] = "0.0.1";
   service["rendererClass"] = "default_svc";
-  service["tags"] = json::array({"video", "capture", "shm"});
+  service["tags"] = json::array({"video", "capture", "zenoh"});
   service["stateFields"] = json::array({
-      state_field("videoShmName", schema_string(), "ro", "Video SHM", "Shared memory region name", true),
-      state_field("videoShmEvent", schema_string(), "ro", "Video Event", "Shared memory event name", false),
+      state_field("videoFormat", schema_string_enum({"bgra32", "bgr24", "flow2_f16", "scalar1_f32"}), "ro",
+                  "Video Format", "Frame payload format", false),
+      state_field("videoFrameSchemaVersion", schema_integer(), "ro", "Video Schema", "Frame schema version", false),
       state_field("mode", schema_string_enum({"display", "window", "region"}), "rw", "Mode", "display|window|region",
                   false),
       state_field("fps", schema_number(), "rw", "FPS", "Capture rate", true),
@@ -854,7 +947,9 @@ json ScreenCapService::describe() {
            {"showOnNode", true}},
   });
   service["dataInPorts"] = json::array();
-  service["dataOutPorts"] = json::array();
+  service["dataOutPorts"] = json::array({
+      video_frame_port("video", "Captured video frame stream."),
+  });
 
   json out;
   out["service"] = std::move(service);

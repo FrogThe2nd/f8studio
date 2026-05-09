@@ -3,18 +3,17 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <limits>
 #include <utility>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 #include <opencv2/imgproc.hpp>
 #include <spdlog/spdlog.h>
 
 #include "f8cppsdk/describe_schema.h"
-#include "f8cppsdk/shm/naming.h"
-#include "f8cppsdk/shm/sizing.h"
-#include "f8cppsdk/state_kv.h"
+#include "f8cppsdk/latest_video_frame_transport.h"
 #include "f8cppsdk/time_utils.h"
+#include "f8cppsdk/zenoh_naming.h"
 #include "../common/service_runtime_utils.h"
 
 namespace f8::cvkit::flow_metric {
@@ -22,9 +21,9 @@ namespace f8::cvkit::flow_metric {
 using json = nlohmann::json;
 using f8::cppsdk::describe::schema_integer;
 using f8::cppsdk::describe::schema_number;
-using f8::cppsdk::describe::schema_string;
 using f8::cppsdk::describe::schema_string_enum;
 using f8::cppsdk::describe::state_field;
+using f8::cppsdk::describe::video_frame_port;
 
 namespace {
 
@@ -71,8 +70,8 @@ bool FlowMetricService::start() {
 
   f8::cppsdk::ServiceBus::Config bus_cfg;
   bus_cfg.service_id = cfg_.service_id;
-  bus_cfg.nats_url = cfg_.nats_url;
-  bus_cfg.kv_memory_storage = true;
+  const auto runtime_backend = f8::cppsdk::normalize_runtime_backend_config(cfg_.runtime_backend);
+  bus_cfg.apply_runtime_backend(runtime_backend);
   bus_cfg.service_class = cfg_.service_class;
   bus_cfg.service_name = "CVKit Flow Metric";
   bus_ = std::make_unique<f8::cppsdk::ServiceBus>(bus_cfg);
@@ -85,21 +84,21 @@ bool FlowMetricService::start() {
     return false;
   }
 
-  input_flow_shm_name_.clear();
+  input_flow_stream_key_.clear();
   compute_every_n_frames_ = 1;
   metric_mode_ = MetricMode::Divergence;
   metric_mode_state_ = "divergence";
   metric_scale_ = 1.0;
-  scalar_shm_name_ = "shm." + cfg_.service_id + ".scalar";
-  scalar_shm_format_ = "scalar1_f32";
+  scalar_stream_key_ = f8::cppsdk::zenoh_data_key(cfg_.service_id, cfg_.service_id, "scalar");
+  scalar_format_ = "scalar1_f32";
 
-  flow_reader_.close();
+  input_zenoh_flow_.reset();
   flow_payload_.clear();
-  last_notify_seq_ = 0;
   last_frame_id_ = 0;
   last_flow_open_attempt_ms_ = 0;
   frame_counter_ = 0;
   scalar_payload_.clear();
+  scalar_output_frame_id_ = 0;
   flow_u_.release();
   flow_v_.release();
   du_dx_.release();
@@ -118,18 +117,31 @@ bool FlowMetricService::start() {
   monitor_total_process_ms_ = 0.0;
   monitor_fps_ = 0.0;
 
+  auto publisher = std::make_shared<f8::cppsdk::ZenohLatestVideoFramePublisher>();
+  if (publisher->open(runtime_backend, scalar_stream_key_)) {
+    scalar_zenoh_publisher_ = publisher;
+    spdlog::info("flow_metric zenoh scalar publisher enabled serviceId={} key={}", cfg_.service_id, scalar_stream_key_);
+  } else {
+    scalar_zenoh_publisher_.reset();
+    spdlog::error("flow_metric zenoh scalar publisher unavailable serviceId={} key={}", cfg_.service_id,
+                  scalar_stream_key_);
+    bus_->stop();
+    bus_.reset();
+    return false;
+  }
+
   publish_state_if_changed("serviceClass", cfg_.service_class, "init", json::object());
-  publish_state_if_changed("inputFlowShmName", "", "init", json::object());
   publish_state_if_changed("computeEveryNFrames", compute_every_n_frames_, "init", json::object());
   publish_state_if_changed("metricMode", metric_mode_state_, "init", json::object());
   publish_state_if_changed("metricScale", metric_scale_, "init", json::object());
-  publish_state_if_changed("scalarShmName", scalar_shm_name_, "init", json::object());
-  publish_state_if_changed("scalarShmFormat", scalar_shm_format_, "init", json::object());
+  publish_state_if_changed("scalarFormat", scalar_format_, "init", json::object());
+  publish_state_if_changed("scalarFrameSchemaVersion", 1, "init", json::object());
   publish_error_if_changed("", "init", json::object());
 
   running_.store(true, std::memory_order_release);
   stop_requested_.store(false, std::memory_order_release);
-  spdlog::info("cvkit_flow_metric started serviceId={} natsUrl={}", cfg_.service_id, cfg_.nats_url);
+  spdlog::info("cvkit_flow_metric started serviceId={} backend={}", cfg_.service_id,
+               f8::cppsdk::bus_backend_to_string(runtime_backend.bus_backend));
   return true;
 }
 
@@ -142,7 +154,14 @@ void FlowMetricService::stop() {
   bus_.reset();
 
   std::lock_guard<std::mutex> lock(io_mu_);
-  flow_reader_.close();
+  if (input_zenoh_flow_) {
+    input_zenoh_flow_->close();
+  }
+  input_zenoh_flow_.reset();
+  if (scalar_zenoh_publisher_) {
+    scalar_zenoh_publisher_->close();
+  }
+  scalar_zenoh_publisher_.reset();
 }
 
 void FlowMetricService::tick() {
@@ -211,33 +230,6 @@ void FlowMetricService::on_state(const std::string& node_id, const std::string& 
   (void)ts_ms;
   if (node_id != cfg_.service_id) return;
 
-  if (field == "inputFlowShmName" && value.is_string()) {
-    const std::string next = service_runtime::trim_copy(value.get<std::string>());
-    {
-      std::lock_guard<std::mutex> lock(io_mu_);
-      if (next == input_flow_shm_name_) {
-        publish_state_if_changed("inputFlowShmName", input_flow_shm_name_, "state", meta);
-        return;
-      }
-      input_flow_shm_name_ = next;
-      flow_reader_.close();
-      last_flow_open_attempt_ms_ = 0;
-      last_notify_seq_ = 0;
-      last_frame_id_ = 0;
-      frame_counter_ = 0;
-      flow_payload_.clear();
-      flow_u_.release();
-      flow_v_.release();
-      du_dx_.release();
-      du_dy_.release();
-      dv_dx_.release();
-      dv_dy_.release();
-      metric_output_.release();
-    }
-    publish_state_if_changed("inputFlowShmName", input_flow_shm_name_, "state", meta);
-    return;
-  }
-
   if (field == "computeEveryNFrames") {
     int v = 0;
     if (!service_runtime::parse_json_int(value, v)) {
@@ -298,12 +290,22 @@ void FlowMetricService::on_data(const std::string& node_id, const std::string& p
   (void)value;
   (void)ts_ms;
   (void)meta;
-  // SHM pull mode only.
+  // Pull-based latest-frame stream input.
 }
 
 bool FlowMetricService::ensure_flow_open() {
-  f8::cppsdk::VideoSharedMemoryHeader hdr{};
-  if (flow_reader_.readHeader(hdr)) {
+  std::string key;
+  if (bus_) {
+    const auto resolved = bus_->data_input_zenoh_key(cfg_.service_id, "flow");
+    if (resolved.has_value()) {
+      key = service_runtime::trim_copy(*resolved);
+    }
+  }
+  if (key.empty()) {
+    publish_error_if_changed("missing flow data input", "runtime", json::object());
+    return false;
+  }
+  if (input_zenoh_flow_ && input_zenoh_flow_->valid() && input_flow_stream_key_ == key) {
     return true;
   }
 
@@ -313,45 +315,28 @@ bool FlowMetricService::ensure_flow_open() {
   }
   last_flow_open_attempt_ms_ = now;
 
-  if (input_flow_shm_name_.empty()) {
-    publish_error_if_changed("missing inputFlowShmName", "runtime", json::object());
+  if (input_zenoh_flow_) {
+    input_zenoh_flow_->close();
+  }
+  input_zenoh_flow_.reset();
+  auto subscriber = std::make_unique<f8::cppsdk::ZenohLatestVideoFrameSubscriber>();
+  const auto runtime_backend = f8::cppsdk::normalize_runtime_backend_config(cfg_.runtime_backend);
+  if (!subscriber->open(runtime_backend, key)) {
+    publish_error_if_changed("zenoh flow subscribe failed: " + key, "runtime", json::object());
     return false;
   }
-
-  // Open in two phases:
-  // 1) map only header to discover real payload capacity
-  // 2) remap with exact required bytes (header + slot_count * payload_capacity)
-  const std::size_t header_bytes = sizeof(f8::cppsdk::VideoSharedMemoryHeader);
-  if (!flow_reader_.open(input_flow_shm_name_, header_bytes)) {
-    publish_error_if_changed("flow shm open failed: " + input_flow_shm_name_, "runtime", json::object());
-    return false;
-  }
-  f8::cppsdk::VideoSharedMemoryHeader discovered{};
-  if (!flow_reader_.readHeader(discovered) || discovered.slot_count == 0 || discovered.payload_capacity == 0) {
-    flow_reader_.close();
-    publish_error_if_changed("flow shm header invalid: " + input_flow_shm_name_, "runtime", json::object());
-    return false;
-  }
-  std::size_t payload_total = 0;
-  if (discovered.payload_capacity > (std::numeric_limits<std::size_t>::max)() / discovered.slot_count) {
-    flow_reader_.close();
-    publish_error_if_changed("flow shm size overflow: " + input_flow_shm_name_, "runtime", json::object());
-    return false;
-  }
-  payload_total = static_cast<std::size_t>(discovered.payload_capacity) * static_cast<std::size_t>(discovered.slot_count);
-  if (header_bytes > (std::numeric_limits<std::size_t>::max)() - payload_total) {
-    flow_reader_.close();
-    publish_error_if_changed("flow shm size overflow: " + input_flow_shm_name_, "runtime", json::object());
-    return false;
-  }
-  const std::size_t required_bytes = header_bytes + payload_total;
-  flow_reader_.close();
-  if (!flow_reader_.open(input_flow_shm_name_, required_bytes)) {
-    publish_error_if_changed("flow shm reopen failed: " + input_flow_shm_name_, "runtime", json::object());
-    return false;
-  }
-
-  last_notify_seq_ = 0;
+  input_flow_stream_key_ = key;
+  input_zenoh_flow_ = std::move(subscriber);
+  last_frame_id_ = 0;
+  frame_counter_ = 0;
+  flow_payload_.clear();
+  flow_u_.release();
+  flow_v_.release();
+  du_dx_.release();
+  du_dy_.release();
+  dv_dx_.release();
+  dv_dy_.release();
+  metric_output_.release();
   publish_error_if_changed("", "runtime", json::object());
   return true;
 }
@@ -364,38 +349,41 @@ void FlowMetricService::process_frame_once() {
     return;
   }
 
-  std::uint32_t observed_notify_seq = last_notify_seq_;
-  if (!flow_reader_.waitNewFrame(last_notify_seq_, 20, &observed_notify_seq)) {
+  if (!input_zenoh_flow_) {
     return;
   }
-  last_notify_seq_ = observed_notify_seq;
-
-  f8::cppsdk::VideoSharedMemoryHeader hdr{};
-  if (!flow_reader_.copyLatestPayload(flow_payload_, hdr)) {
+  auto latest = input_zenoh_flow_->wait_latest(std::chrono::milliseconds(20));
+  if (!latest.has_value()) {
     return;
   }
-  if (hdr.frame_id == 0 || hdr.frame_id == last_frame_id_) {
+  if (latest->frame_id == 0 || latest->frame_id == last_frame_id_) {
     return;
   }
+  const unsigned frame_width = latest->width;
+  const unsigned frame_height = latest->height;
+  const unsigned frame_pitch = latest->pitch;
+  const std::uint32_t frame_format = latest->format;
+  const std::uint64_t source_frame_id = latest->frame_id;
+  flow_payload_ = std::move(latest->payload);
 
   ++monitor_observed_frames_;
   ++frame_counter_;
-  last_frame_id_ = hdr.frame_id;
+  last_frame_id_ = source_frame_id;
 
-  if (hdr.format != f8::cppsdk::kVideoFormatFlow2F16 || hdr.width == 0 || hdr.height == 0 || hdr.pitch == 0) {
+  if (frame_format != f8::cppsdk::kVideoFormatFlow2F16 || frame_width == 0 || frame_height == 0 || frame_pitch == 0) {
     ++monitor_fail_frames_;
-    publish_error_if_changed("unsupported flow shm format", "runtime", json::object());
+    publish_error_if_changed("unsupported flow frame format", "runtime", json::object());
     return;
   }
-  const std::size_t row_bytes = static_cast<std::size_t>(hdr.pitch);
-  if (row_bytes < static_cast<std::size_t>(hdr.width) * 4u) {
+  const std::size_t row_bytes = static_cast<std::size_t>(frame_pitch);
+  if (row_bytes < static_cast<std::size_t>(frame_width) * 4u) {
     ++monitor_fail_frames_;
-    publish_error_if_changed("invalid flow shm pitch", "runtime", json::object());
+    publish_error_if_changed("invalid flow frame pitch", "runtime", json::object());
     return;
   }
-  if (flow_payload_.size() < row_bytes * static_cast<std::size_t>(hdr.height)) {
+  if (flow_payload_.size() < row_bytes * static_cast<std::size_t>(frame_height)) {
     ++monitor_fail_frames_;
-    publish_error_if_changed("flow shm frame too small", "runtime", json::object());
+    publish_error_if_changed("flow frame too small", "runtime", json::object());
     return;
   }
 
@@ -404,8 +392,8 @@ void FlowMetricService::process_frame_once() {
   }
 
   const std::int64_t process_start_ms = f8::cppsdk::now_ms();
-  const int width = static_cast<int>(hdr.width);
-  const int height = static_cast<int>(hdr.height);
+  const int width = static_cast<int>(frame_width);
+  const int height = static_cast<int>(frame_height);
   if (width <= 0 || height <= 0) {
     ++monitor_fail_frames_;
     publish_error_if_changed("invalid flow dimensions", "runtime", json::object());
@@ -464,49 +452,48 @@ void FlowMetricService::process_frame_once() {
     return;
   }
 
-  std::string shm_name = service_runtime::trim_copy(scalar_shm_name_);
-  if (shm_name.empty()) {
-    shm_name = "shm." + cfg_.service_id + ".scalar";
-    scalar_shm_name_ = shm_name;
-    publish_state_if_changed("scalarShmName", scalar_shm_name_, "runtime", json::object());
-  }
-  if (scalar_sink_.regionName() != shm_name) {
-    if (!scalar_sink_.initialize(shm_name, f8::cppsdk::shm::kDefaultVideoShmBytes, f8::cppsdk::shm::kDefaultVideoShmSlots)) {
-      ++monitor_fail_frames_;
-      publish_error_if_changed("scalar shm init failed: " + shm_name, "runtime", json::object());
-      return;
+  auto pack_scalar_payload = [this, width, height](std::size_t scalar_pitch) {
+    const std::size_t scalar_bytes = scalar_pitch * static_cast<std::size_t>(height);
+    scalar_payload_.assign(scalar_bytes, std::byte{0});
+    for (int y = 0; y < height; ++y) {
+      const float* src = metric_output_.ptr<float>(y);
+      std::byte* dst = scalar_payload_.data() + static_cast<std::size_t>(y) * scalar_pitch;
+      std::memcpy(dst, src, static_cast<std::size_t>(width) * sizeof(float));
     }
-  }
-  if (!scalar_sink_.ensureConfigurationForFormat(static_cast<unsigned>(width), static_cast<unsigned>(height),
-                                                 f8::cppsdk::kVideoFormatScalar1F32, 4)) {
+  };
+
+  if (!scalar_zenoh_publisher_ || !scalar_zenoh_publisher_->valid()) {
     ++monitor_fail_frames_;
-    publish_error_if_changed("scalar shm ensureConfiguration failed", "runtime", json::object());
+    publish_error_if_changed("scalar zenoh publisher unavailable: " + scalar_stream_key_, "runtime", json::object());
     return;
   }
+  const std::size_t scalar_pitch = static_cast<std::size_t>(width) * sizeof(float);
+  pack_scalar_payload(scalar_pitch);
 
-  const std::size_t scalar_pitch = static_cast<std::size_t>(scalar_sink_.outputPitch());
-  const std::size_t scalar_bytes = scalar_pitch * static_cast<std::size_t>(height);
-  scalar_payload_.assign(scalar_bytes, std::byte{0});
-  for (int y = 0; y < height; ++y) {
-    const float* src = metric_output_.ptr<float>(y);
-    std::byte* dst = scalar_payload_.data() + static_cast<std::size_t>(y) * scalar_pitch;
-    std::memcpy(dst, src, static_cast<std::size_t>(width) * sizeof(float));
-  }
-  if (!scalar_sink_.writeFrameWithFormat(scalar_payload_.data(), static_cast<unsigned>(scalar_pitch),
-                                         f8::cppsdk::kVideoFormatScalar1F32)) {
+  f8::cppsdk::VideoFrameView frame;
+  frame.width = static_cast<unsigned>(width);
+  frame.height = static_cast<unsigned>(height);
+  frame.pitch = static_cast<unsigned>(scalar_pitch);
+  frame.format = f8::cppsdk::kVideoFormatScalar1F32;
+  frame.frame_id = ++scalar_output_frame_id_;
+  frame.ts_ms = f8::cppsdk::now_ms();
+  frame.payload = scalar_payload_.data();
+  frame.payload_bytes = scalar_payload_.size();
+  if (!scalar_zenoh_publisher_->publish_frame(frame)) {
     ++monitor_fail_frames_;
-    publish_error_if_changed("scalar shm write failed", "runtime", json::object());
+    publish_error_if_changed("scalar zenoh publish failed: " + scalar_stream_key_, "runtime", json::object());
     return;
   }
 
   publish_state_if_changed("metricMode", metric_mode_state_, "runtime", json::object());
   publish_state_if_changed("metricScale", metric_scale_, "runtime", json::object());
-  publish_state_if_changed("scalarShmFormat", scalar_shm_format_, "runtime", json::object());
+  publish_state_if_changed("scalarFormat", scalar_format_, "runtime", json::object());
+  publish_state_if_changed("scalarFrameSchemaVersion", 1, "runtime", json::object());
   publish_error_if_changed("", "runtime", json::object());
 
   const std::int64_t end_ts_ms = f8::cppsdk::now_ms();
   const std::uint64_t points = static_cast<std::uint64_t>(std::max(0, width)) * static_cast<std::uint64_t>(std::max(0, height));
-  emit_monitor_snapshot(end_ts_ms, hdr.frame_id, static_cast<double>(end_ts_ms - process_start_ms), points);
+  emit_monitor_snapshot(end_ts_ms, source_frame_id, static_cast<double>(end_ts_ms - process_start_ms), points);
 }
 
 json FlowMetricService::describe() {
@@ -518,22 +505,24 @@ json FlowMetricService::describe() {
   service["rendererClass"] = "default_svc";
   service["tags"] = json::array({"cv", "optical_flow", "flow_metric", "scalar_field"});
   service["stateFields"] = json::array({
-      state_field("inputFlowShmName", schema_string(), "rw", "Input Flow SHM",
-                  "Input flow SHM name (format flow2_f16, e.g. shm.xxx.flow).", true),
       state_field("computeEveryNFrames", schema_integer(1, 1, 120), "rw", "Compute Every N Frames",
                   "Compute selected flow metric once per N new flow frames.", false),
       state_field("metricMode", schema_string_enum({"divergence", "magnitude", "curl", "strain"}, "divergence"), "rw",
                   "Metric Mode", "Flow metric mode: divergence | magnitude | curl | strain.", false),
       state_field("metricScale", schema_number(1.0, -1000.0, 1000.0), "rw", "Metric Scale",
                   "Scale factor applied to computed metric values before output.", false),
-      state_field("scalarShmName", schema_string(), "ro", "Scalar SHM Name", "Output SHM name for scalar metric field.",
-                  true),
-      state_field("scalarShmFormat", schema_string(), "ro", "Scalar SHM Format",
+      state_field("scalarFormat", schema_string_enum({"scalar1_f32"}), "ro", "Scalar Format",
                   "Output payload format. Fixed to scalar1_f32.", false),
+      state_field("scalarFrameSchemaVersion", schema_integer(1, 1, 1), "ro", "Scalar Frame Schema",
+                  "Output scalar frame schema version.", false),
   });
   service["commands"] = json::array();
-  service["dataInPorts"] = json::array();
-  service["dataOutPorts"] = json::array();
+  service["dataInPorts"] = json::array({
+      video_frame_port("flow", "Input dense optical-flow frame stream."),
+  });
+  service["dataOutPorts"] = json::array({
+      video_frame_port("scalar", "Scalar metric frame stream."),
+  });
 
   json out;
   out["service"] = std::move(service);

@@ -17,18 +17,19 @@ class MotionSelectorTemplateTests(unittest.IsolatedAsyncioTestCase):
     def _build_ctx(self, *, flow_packet: dict[str, object] | None) -> dict[str, object]:
         state: dict[str, object] = {"flow_packet": flow_packet, "subscribed": None}
 
-        async def _get_state(_field: str) -> object:
-            return "test.flow.shm"
+        async def _get_state(field: str) -> object:
+            if field == "flowStreamKey":
+                return "f8/test/flow"
+            return ""
 
-        def _subscribe_video_shm(key: str, shm_name: str, *, decode: str = "auto", use_event: bool = False) -> None:
+        def _subscribe_video_latest(key: str, *, stream_key: str, decode: str = "auto") -> None:
             state["subscribed"] = {
                 "key": key,
-                "shm_name": shm_name,
+                "stream_key": stream_key,
                 "decode": decode,
-                "use_event": use_event,
             }
 
-        def _get_video_shm(_key: str) -> dict[str, object] | None:
+        def _get_video_latest(_key: str) -> dict[str, object] | None:
             packet = state.get("flow_packet")
             return packet if isinstance(packet, dict) else None
 
@@ -36,8 +37,8 @@ class MotionSelectorTemplateTests(unittest.IsolatedAsyncioTestCase):
             "locals": {},
             "log": lambda _msg: None,
             "get_state": _get_state,
-            "subscribe_video_shm": _subscribe_video_shm,
-            "get_video_shm": _get_video_shm,
+            "subscribe_video_latest": _subscribe_video_latest,
+            "get_video_latest": _get_video_latest,
         }
 
     async def test_selects_highest_motion_bbox(self) -> None:

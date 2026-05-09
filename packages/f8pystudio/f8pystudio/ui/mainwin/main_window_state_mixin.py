@@ -65,6 +65,7 @@ class MainWindowStateMixin:
             fingerprint: str,
         ) -> tuple[int, str]: ...
         def _declared_graph_services(self) -> dict[str, str]: ...
+        def _schedule_studio_runtime_sync(self) -> None: ...
 
     def _layout_settings(self) -> QtCore.QSettings:
         return QtCore.QSettings()
@@ -234,6 +235,32 @@ class MainWindowStateMixin:
         finally:
             settings.endGroup()
 
+    def _read_saved_kill_managed_services_on_exit_enabled(self) -> bool:
+        settings = self._layout_settings()
+        settings.beginGroup(self._AUTOMATION_SETTINGS_GROUP)
+        try:
+            raw = settings.value(self._KILL_MANAGED_SERVICES_ON_EXIT_SETTINGS_KEY, True)
+        finally:
+            settings.endGroup()
+        return coerce_bool(raw, default=True)
+
+    def _write_saved_kill_managed_services_on_exit_enabled(self, *, enabled: bool) -> None:
+        settings = self._layout_settings()
+        settings.beginGroup(self._AUTOMATION_SETTINGS_GROUP)
+        try:
+            settings.setValue(self._KILL_MANAGED_SERVICES_ON_EXIT_SETTINGS_KEY, bool(enabled))
+            settings.sync()
+        finally:
+            settings.endGroup()
+
+    def _apply_kill_managed_services_on_exit_enabled(self, *, enabled: bool, persist: bool) -> None:
+        self._kill_managed_services_on_exit_enabled = bool(enabled)
+        self._bridge.set_kill_managed_services_on_exit(self._kill_managed_services_on_exit_enabled)
+        if persist:
+            self._write_saved_kill_managed_services_on_exit_enabled(
+                enabled=self._kill_managed_services_on_exit_enabled
+            )
+
     def _read_saved_performance_overlay_enabled(self) -> bool:
         settings = self._layout_settings()
         settings.beginGroup(self._VIEW_SETTINGS_GROUP)
@@ -319,6 +346,11 @@ class MainWindowStateMixin:
     def _schedule_deferred_auto_deploy_fingerprint_refresh(self) -> None:
         self._deferred_auto_deploy_fingerprint_timer.start()
 
+    def _schedule_studio_runtime_sync(self) -> None:
+        if self._closing:
+            return
+        self._studio_runtime_sync_timer.start()
+
     def _on_auto_save_toggled(self, checked: bool) -> None:
         self._auto_save_enabled = bool(checked)
         self._write_saved_auto_save_enabled(enabled=self._auto_save_enabled)
@@ -331,6 +363,9 @@ class MainWindowStateMixin:
             self._auto_deploy_timer.start()
         self._write_saved_auto_deploy_enabled(enabled=self._auto_deploy_enabled)
 
+    def _on_kill_managed_services_on_exit_toggled(self, checked: bool) -> None:
+        self._apply_kill_managed_services_on_exit_enabled(enabled=bool(checked), persist=True)
+
     def _on_performance_overlay_toggled(self, checked: bool) -> None:
         self._apply_performance_overlay_enabled(enabled=bool(checked), persist=True)
 
@@ -342,9 +377,20 @@ class MainWindowStateMixin:
         self._exit_autosaved = False
         if bool(self.studio_graph._loading_session):  # type: ignore[attr-defined]
             return
-        self._studio_runtime_sync_timer.start()
+        self._schedule_studio_runtime_sync()
         if self._auto_deploy_enabled:
             self._auto_deploy_timer.start()
+
+    @QtCore.Slot()
+    def _on_graph_inserted(self) -> None:
+        self._exit_autosaved = False
+        self._schedule_studio_runtime_sync()
+        if self._auto_deploy_enabled:
+            self._auto_deploy_timer.start()
+
+    @QtCore.Slot()
+    def _on_graph_session_loaded(self) -> None:
+        self._schedule_studio_runtime_sync()
 
     @QtCore.Slot()
     def _on_deferred_auto_deploy_fingerprint_timeout(self) -> None:

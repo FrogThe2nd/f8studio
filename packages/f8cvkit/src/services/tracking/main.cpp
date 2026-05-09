@@ -12,6 +12,7 @@
 #include <spdlog/spdlog.h>
 
 #include "f8cppsdk/describe_builtins.h"
+#include "f8cppsdk/runtime_cxxopts.h"
 #include "tracking_service.h"
 
 namespace {
@@ -26,8 +27,6 @@ int main(int argc, char** argv) {
   cxxopts::Options options("f8cvkit_tracking_service", "CVKit tracking service (OpenCV contrib tracking)");
   options.add_options()("describe", "Print service spec JSON and exit")(
       "service-id", "Service instance id (required unless --describe)", cxxopts::value<std::string>()->default_value(""))(
-      "nats-url", "NATS server URL", cxxopts::value<std::string>()->default_value("nats://127.0.0.1:4222"))(
-      "shm-name", "Override SHM name (e.g. shm.xxx.video)", cxxopts::value<std::string>()->default_value(""))(
       "tracker-kind", "Tracker backend (csrt|kcf|mil|nano|vit)",
       cxxopts::value<std::string>()->default_value("csrt"))(
       "model-dir", "Directory for tracker model files used by nano/vit",
@@ -39,6 +38,7 @@ int main(int argc, char** argv) {
       "stop-cooldown-ms", "Cooldown after stopTracking (ignore initBox for N ms)",
       cxxopts::value<int>()->default_value("1000"))(
       "help", "Show help");
+  f8::cppsdk::add_runtime_backend_options(options);
 
   auto result = options.parse(argc, argv);
   if (result.count("help")) {
@@ -71,10 +71,16 @@ int main(int argc, char** argv) {
     return 2;
   }
 
+  f8::cppsdk::RuntimeBackendConfig runtime_backend;
+  std::string runtime_error;
+  if (!f8::cppsdk::read_runtime_backend_options(result, runtime_backend, runtime_error)) {
+    std::cerr << runtime_error << "\n";
+    return 2;
+  }
+
   f8::cvkit::tracking::TrackingService::Config cfg;
   cfg.service_id = service_id;
-  cfg.nats_url = result["nats-url"].as<std::string>();
-  cfg.shm_name = result["shm-name"].as<std::string>();
+  cfg.runtime_backend = runtime_backend;
   cfg.tracker_kind = result["tracker-kind"].as<std::string>();
   cfg.model_dir = result["model-dir"].as<std::string>();
   cfg.auto_download_models = result["auto-download-models"].as<bool>();

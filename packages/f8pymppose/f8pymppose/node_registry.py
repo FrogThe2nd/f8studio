@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 from f8pysdk.specs import (
-    array_schema,
     F8DataPortSpec,
     F8ServiceSchemaVersion,
     F8ServiceSpec,
     F8StateAccess,
     F8StateSpec,
+    array_schema,
+    any_schema,
     complex_object_schema,
     integer_schema,
     number_schema,
     string_schema,
-    any_schema,
+    video_frame_port,
 )
 from f8pysdk.registry import Registry, RuntimeNodeRegistry, create_runtime_node_registry, shared_runtime_node_registry
 
@@ -97,15 +98,6 @@ def _skeleton_payload_schema():
 def _state_fields() -> list[F8StateSpec]:
     return [
         F8StateSpec(
-            name="shmName",
-            label="Video SHM",
-            description="Video SHM mapping name (e.g. shm.implayer.video).",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.rw,
-            required=True,
-            showOnNode=True,
-        ),
-        F8StateSpec(
             name="inferEveryN",
             label="Infer Every N Frames",
             description="Run pose inference every N frames (>=1).",
@@ -176,6 +168,13 @@ def register_specs(registry: Registry) -> Registry:
             tags=["mediapipe", "vision", "human", "pose"],
             rendererClass="default_svc",
             stateFields=_state_fields(),
+            dataInPorts=[
+                video_frame_port(
+                    name="video",
+                    description="Input video frame stream.",
+                    required=True,
+                ),
+            ],
             dataOutPorts=[
                 F8DataPortSpec(
                     name="detections",

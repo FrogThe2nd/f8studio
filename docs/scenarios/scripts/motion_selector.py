@@ -1,10 +1,10 @@
-# Motion-first selector for f8.python_script (Video SHM flow edition)
+# Motion-first selector for f8.python_script (Zenoh latest-frame flow edition)
 #
 # Inputs:
 #   - detections: f8visionDetections/1
 #
 # State:
-#   - flowShm: dense flow SHM name (format flow2_f16)
+#   - flowStreamKey: dense flow Zenoh latest-frame stream key (format flow2_f16)
 #
 # Output:
 #   - selected: f8visionDetections/1 (single best detection)
@@ -148,25 +148,25 @@ def _select(detections_payload, flow_packet):
     return _build_single_detection_payload(detections_payload, best_det, best_score)
 
 
-def _update_flow_subscription(ctx, flow_shm_name):
-    if not isinstance(flow_shm_name, str):
+def _update_flow_subscription(ctx, flow_stream_key):
+    if not isinstance(flow_stream_key, str):
         return
-    name = flow_shm_name.strip()
-    if not name:
+    key = flow_stream_key.strip()
+    if not key:
         return
-    ctx["locals"]["flowShm"] = name
-    ctx["subscribe_video_shm"]("flow", name, decode="auto", use_event=False)
+    ctx["locals"]["flowStreamKey"] = key
+    ctx["subscribe_video_latest"]("flow", stream_key=key, decode="auto")
 
 
 async def onStart(ctx):
     ctx["locals"]["latest_detections"] = None
     ctx["locals"]["last_emit_ts_ms"] = 0
-    flow_shm = await ctx["get_state"]("flowShm")
-    _update_flow_subscription(ctx, flow_shm)
+    flow_stream_key = await ctx["get_state"]("flowStreamKey")
+    _update_flow_subscription(ctx, flow_stream_key)
 
 
 def onState(ctx, field, value, tsMs=None):
-    if str(field or "") == "flowShm":
+    if str(field or "") == "flowStreamKey":
         _update_flow_subscription(ctx, value)
 
 
@@ -176,7 +176,7 @@ def _handle(ctx, inputs):
         ctx["locals"]["latest_detections"] = detections_payload
 
     latest_detections = ctx["locals"].get("latest_detections")
-    flow_packet = ctx["get_video_shm"]("flow")
+    flow_packet = ctx["get_video_latest"]("flow")
     selected = _select(latest_detections, flow_packet)
     if selected is None:
         return None

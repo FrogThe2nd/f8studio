@@ -1,26 +1,28 @@
-# f8studio (greenfield skeleton)
+# f8studio
 
-Fresh workspace for the API-first, NATS-only architecture. Current focus is contracts, profiles, flows, and prototype scaffolding; no legacy code carried over.
+Runtime workspace for Feel8 Studio. The current runtime is Zenoh-first:
+- control plane, service discovery, pub/sub, and service-owned state use Zenoh by default
+- video/audio data defaults to Zenoh latest-frame/latest-chunk transports
+- legacy SHM remains available only through explicit `legacy_shm` transport fields or old compatibility helpers
 
 ## Layout
-- `api/specs` — OpenAPI contracts (used for codegen) with NATS bindings via `x-nats-*`.
+- `api/specs` — service/operator contracts and generated protocol models.
 - `api/bindings` — shared envelope/error models and binding notes.
 - `profiles` — platform/feature profile schemas and examples.
 - `docs/flows` — sequence/state docs for connection, config, playback, degrade/recover.
-- `packages/daemon` — C++ daemon (libmpv + state manager + NATS microservices).
-- `packages/web` — TS client (web-only + enhanced via daemon), flow editor hooks.
-- `packages/shared` — shared models/types; codegen outputs wrappers.
-- `tests/contract` — spec-driven contract tests (NATS in-memory).
-- `tests/integration` — end-to-end scenarios (web↔daemon).
-- `scripts` — codegen, lint, local NATS bootstrap helpers.
+- `packages/f8pysdk` — Python runtime SDK, Zenoh/mem transports, ServiceApp helpers.
+- `packages/f8cppsdk` — C++ runtime SDK, Zenoh transport and latest video/audio transports.
+- `packages/f8pystudio` — Studio UI and bridge.
+- `services` — service manifests, static `describe.json`, and deployed C++ runtime binaries.
+- `scripts` — codegen, describe regeneration, benchmarks, and migration tooling.
 
-## Next steps
-- Hook `api/master.yaml` and `schemas/protocol.yml` into codegen/validation flow.
-- Add scripts to generate TS/C++ stubs from OpenAPI and wrap NATS req/rep.
-- Wire a minimal prototype: Web ping/echo + config apply via NATS in-memory broker.
+## Runtime Backend
+- Default: `--bus-backend zenoh`
+- Local tests may use `--bus-backend mem` where supported.
+- Zenoh options are available through `--zenoh-config`, `--zenoh-connect`, `--zenoh-listen`, and `--zenoh-shm-pool-bytes`.
 
 ## SHM tools
-- Audio waveform viewer: `pixi run -e default python scripts/audioshm_viewer.py --service-id audiocap --use-event`
+- Legacy audio waveform viewer: `pixi run -e default python scripts/audioshm_viewer.py --service-id audiocap --use-event`
 
 ## Studio exe (Windows)
 - Build: `pixi run -e default studio_exe`

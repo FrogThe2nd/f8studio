@@ -31,7 +31,7 @@ No description.
 ### How to Run
 
 ```bash
-../linux/f8cvkit_tracking_service
+../win/f8cvkit_tracking_service.exe
 ```
 
 - Workdir: `./`
@@ -39,7 +39,7 @@ No description.
 
 ### Typical Inputs / Outputs
 
-- Data inputs: `initBox`
+- Data inputs: `video`, `initBox`
 - Data outputs: `tracking`, `monitor`
 - Commands: `stopTracking`
 
@@ -47,13 +47,12 @@ No description.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `shmName` | `rw` | `true` | `true` | `string` | Optional SHM name override (e.g. shm.xxx.video). |
 | `initSelect` | `rw` | `true` | `true` | `string / enum[first_box, closest_center, largest_area, highest_score] / default=closest_center` | Init bbox selection strategy: first_box \| closest_center \| largest_area \| highest_score. |
-| `trackerKind` | `rw` | `true` | `true` | `string / enum[csrt, kcf, mil, nano, vit] / default=csrt` | Tracker backend: csrt \| kcf \| mil \| nano \| vit. |
-| `modelDir` | `rw` | `true` | `true` | `string / default=models` | Directory containing downloaded tracker model files for nano \| vit. |
-| `autoDownloadModels` | `rw` | `true` | `true` | `boolean / default=True` | Auto-download missing tracker model files when a model-based tracker is selected. |
+| `trackerKind` | `rw` | `true` | `true` | `string / enum[csrt, kcf, mil, nano, vit] / default=csrt` | OpenCV tracker backend: csrt \| kcf \| mil \| nano \| vit. |
+| `modelDir` | `rw` | `true` | `false` | `string / default=models` | Directory containing downloaded tracker model files for nano \| vit. |
+| `autoDownloadModels` | `rw` | `true` | `false` | `boolean / default=True` | Auto-download missing tracker model files when a model-based tracker is selected. |
+| `maxTrackingFps` | `rw` | `true` | `false` | `number / default=30.0` | Maximum tracker update rate. Set to 0 to process every incoming video frame. |
 | `stopTrackingCooldownMs` | `rw` | `true` | `true` | `integer / default=1000` | After stopTracking, ignore initBox for this many ms. Set to 0 to disable. |
-| `stopTrackingCooldownUntilTsMs` | `ro` | `true` | `true` | `integer` | When > 0, initBox is ignored until this timestamp (ms). |
 | `isTracking` | `ro` | `true` | `true` | `boolean` | True when tracker is running. |
 | `isNotTracking` | `ro` | `true` | `true` | `boolean` | Negation of isTracking. |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
@@ -61,14 +60,14 @@ No description.
 
 ### Key Fields That Matter
 
-- `shmName` (Video SHM, `rw`): Optional SHM name override (e.g. shm.xxx.video). Schema: `string`.
 - `initSelect` (Init Select, `rw`): Init bbox selection strategy: first_box | closest_center | largest_area | highest_score. Schema: `string / enum[first_box, closest_center, largest_area, highest_score] / default=closest_center`.
-- `trackerKind` (Tracker Kind, `rw`): Tracker backend: csrt | kcf | mil | nano | vit. Schema: `string / enum[csrt, kcf, mil, nano, vit] / default=csrt`.
+- `trackerKind` (Tracker Kind, `rw`): OpenCV tracker backend: csrt | kcf | mil | nano | vit. Schema: `string / enum[csrt, kcf, mil, nano, vit] / default=csrt`.
 - `modelDir` (Model Dir, `rw`): Directory containing downloaded tracker model files for nano | vit. Schema: `string / default=models`.
 - `autoDownloadModels` (Auto Download Models, `rw`): Auto-download missing tracker model files when a model-based tracker is selected. Schema: `boolean / default=True`.
+- `maxTrackingFps` (Max Tracking FPS, `rw`): Maximum tracker update rate. Set to 0 to process every incoming video frame. Schema: `number / default=30.0`.
 - `stopTrackingCooldownMs` (Stop Cooldown (ms), `rw`): After stopTracking, ignore initBox for this many ms. Set to 0 to disable. Schema: `integer / default=1000`.
-- `stopTrackingCooldownUntilTsMs` (Stop Cooldown Until (tsMs), `ro`): When > 0, initBox is ignored until this timestamp (ms). Schema: `integer`.
 - `isTracking` (Is Tracking, `ro`): True when tracker is running. Schema: `boolean`.
+- `isNotTracking` (Is Not Tracking, `ro`): Negation of isTracking. Schema: `boolean`.
 
 ### Service Commands
 
@@ -82,13 +81,14 @@ Stop current tracking and return to waiting for initBox.
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
+| `video` | `true` | `true` | `object{format, frameId, height, pitch, ...}` | Input video frame stream. |
 | `initBox` | `true` | `true` | `object{bbox, bottom, conf, confidence, ...}` | Init payload (single bbox or nested detection tree). Recursively extracts bbox candidates and uses the one selected by initSelect. |
 
 ### Service Data Output Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `tracking` | `true` | `true` | `object{frameId, height, status, tracks, ...}` | Tracking output stream with `tracks[]` entries containing `id`, `bbox`, and `kind`. |
+| `tracking` | `true` | `true` | `object{frameId, height, status, tracker, ...}` | Tracking output stream. |
 | `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators
@@ -97,4 +97,4 @@ _None_
 
 ## Related Scenarios
 
-- [Scene 01: CVKit Template Tracking](../../scenarios/scene-01-cvkit_template_tracking.md)
+- No bundled scenario references this node yet.

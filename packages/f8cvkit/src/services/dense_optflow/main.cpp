@@ -12,6 +12,7 @@
 #include <spdlog/spdlog.h>
 
 #include "f8cppsdk/describe_builtins.h"
+#include "f8cppsdk/runtime_cxxopts.h"
 #include "dense_optflow_service.h"
 
 namespace {
@@ -26,8 +27,8 @@ int main(int argc, char** argv) {
   cxxopts::Options options("f8cvkit_dense_optflow_service", "CVKit dense optical flow service (OpenCV Farneback)");
   options.add_options()("describe", "Print service spec JSON and exit")(
       "service-id", "Service instance id (required unless --describe)", cxxopts::value<std::string>()->default_value(""))(
-      "nats-url", "NATS server URL", cxxopts::value<std::string>()->default_value("nats://127.0.0.1:4222"))(
       "help", "Show help");
+  f8::cppsdk::add_runtime_backend_options(options);
 
   auto result = options.parse(argc, argv);
   if (result.count("help")) {
@@ -60,9 +61,16 @@ int main(int argc, char** argv) {
     return 2;
   }
 
+  f8::cppsdk::RuntimeBackendConfig runtime_backend;
+  std::string runtime_error;
+  if (!f8::cppsdk::read_runtime_backend_options(result, runtime_backend, runtime_error)) {
+    std::cerr << runtime_error << "\n";
+    return 2;
+  }
+
   f8::cvkit::dense_optflow::DenseOptflowService::Config cfg;
   cfg.service_id = service_id;
-  cfg.nats_url = result["nats-url"].as<std::string>();
+  cfg.runtime_backend = runtime_backend;
 
   f8::cvkit::dense_optflow::DenseOptflowService svc(cfg);
   if (!svc.start()) {

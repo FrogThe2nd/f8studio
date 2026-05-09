@@ -5,8 +5,6 @@
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 
-#include "f8cppsdk/data_bus.h"
-#include "f8cppsdk/state_kv.h"
 #include "f8cppsdk/time_utils.h"
 
 namespace f8::sdk_demo {
@@ -22,8 +20,10 @@ bool DemoService::start() {
 
   f8::cppsdk::ServiceBus::Config bus_cfg;
   bus_cfg.service_id = cfg_.service_id;
-  bus_cfg.nats_url = cfg_.nats_url;
-  bus_cfg.kv_memory_storage = true;
+  const auto runtime_backend = f8::cppsdk::normalize_runtime_backend_config(cfg_.runtime_backend);
+  bus_cfg.apply_runtime_backend(runtime_backend);
+  bus_cfg.service_class = cfg_.service_class;
+  bus_cfg.service_name = "SDK Demo";
   bus_ = std::make_unique<f8::cppsdk::ServiceBus>(bus_cfg);
   bus_->add_lifecycle_node(this);
   bus_->add_stateful_node(this);
@@ -45,7 +45,8 @@ bool DemoService::start() {
 
   running_.store(true, std::memory_order_release);
   stop_requested_.store(false, std::memory_order_release);
-  spdlog::info("sdk_demo started serviceId={} natsUrl={}", cfg_.service_id, cfg_.nats_url);
+  spdlog::info("sdk_demo started serviceId={} backend={}", cfg_.service_id,
+               f8::cppsdk::bus_backend_to_string(runtime_backend.bus_backend));
   return true;
 }
 
@@ -76,8 +77,7 @@ void DemoService::tick() {
     last_heartbeat_ms_ = now;
     ++heartbeat_seq_;
     if (bus_) {
-      (void)f8::cppsdk::publish_data(bus_->nats(), cfg_.service_id, cfg_.service_id, "heartbeat",
-                                    json{{"seq", heartbeat_seq_}, {"ts", now}}, now);
+      (void)bus_->emit_data(cfg_.service_id, "heartbeat", json{{"seq", heartbeat_seq_}, {"ts", now}}, now);
     }
   }
 }
@@ -89,7 +89,7 @@ void DemoService::publish_state_if_changed(const std::string& field, const json&
   if (it != published_state_.end() && it->second == value) return;
   published_state_[field] = value;
   if (bus_) {
-    (void)f8::cppsdk::kv_set_node_state(bus_->kv(), cfg_.service_id, cfg_.service_id, field, value, source, meta);
+    (void)bus_->publish_state(cfg_.service_id, field, value, source, meta);
   }
 }
 

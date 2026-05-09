@@ -5,6 +5,9 @@ Feel8 MediaPipe Pose runtime service.
 Service class:
 - `f8.mp.pose`
 
+Input:
+- Zenoh latest-frame video via the typed `video` data input port.
+
 Output schema:
 - `f8visionDetections/1` on `detections`
 - UDP-skeleton-compatible JSON list on `skeletons` (for `f8.skeleton3d`)

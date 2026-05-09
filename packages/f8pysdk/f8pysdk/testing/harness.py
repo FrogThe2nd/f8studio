@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..bus import ServiceBus, ServiceBusConfig
-from ..nats_naming import kv_bucket_for_service
 from .in_memory_transport import InMemoryCluster, InMemoryTransport
 
 
@@ -16,6 +15,6 @@ class ServiceBusHarness:
     cluster: InMemoryCluster = field(default_factory=InMemoryCluster)
 
     def create_bus(self, service_id: str) -> ServiceBus:
-        cfg = ServiceBusConfig(service_id=str(service_id), nats_url="mem://")
-        transport = InMemoryTransport(cluster=self.cluster, kv_bucket=kv_bucket_for_service(cfg.service_id))
+        cfg = ServiceBusConfig(service_id=str(service_id), bus_backend="mem")
+        transport = InMemoryTransport(cluster=self.cluster)
         return ServiceBus(cfg, transport=transport)

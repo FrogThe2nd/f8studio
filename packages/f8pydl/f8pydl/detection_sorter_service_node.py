@@ -5,37 +5,42 @@ import logging
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 import numpy as np
 
 from f8pysdk.codec import coerce_int, coerce_str
-from f8pysdk.nats_naming import ensure_token
+from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
-from f8pysdk.shm.video import (
+from f8pysdk.video_transport import (
     VIDEO_FORMAT_FLOW2_F16,
     VIDEO_FORMAT_SCALAR1_F32,
-    VIDEO_SHM_MAGIC,
-    VIDEO_SHM_VERSION,
-    VideoShmHeader,
-    VideoShmReader,
 )
+
+from .video_frame_source import LatestVideoFrameSource, VideoFrameSourceConfig
 
 SortDirection = Literal["asc", "desc"]
 ScoreAggregation = Literal["mean", "max", "sum", "median"]
-ScoreShmUnavailableReason = Literal["not_ready", "invalid"]
+ScoreSourceUnavailableReason = Literal["not_ready", "invalid"]
 
 logger = logging.getLogger(__name__)
 
 _CLS_WEIGHTS_REGEX_PREFIX = "re:"
 
 
-class ScoreShmUnavailableError(RuntimeError):
-    """Raised when score SHM is missing/unreadable/unsupported for sorting."""
+class ScoreSourceUnavailableError(RuntimeError):
+    """Raised when the selected score-map source is missing, unreadable, or unsupported."""
 
-    def __init__(self, message: str, *, reason: ScoreShmUnavailableReason) -> None:
+    def __init__(self, message: str, *, reason: ScoreSourceUnavailableReason) -> None:
         super().__init__(message)
         self.reason = reason
+
+
+class ScoreFrameHeader(Protocol):
+    width: int
+    height: int
+    pitch: int
+    fmt: int
 
 
 def _coerce_sort_direction(value: Any, *, default: SortDirection = "desc") -> SortDirection:
@@ -135,16 +140,16 @@ def _combined_cls_weight(
     return float(weight)
 
 
-def decode_score_map_from_frame(*, header: VideoShmHeader, payload: memoryview) -> np.ndarray:
+def decode_score_map_from_frame(*, header: ScoreFrameHeader, payload: memoryview) -> np.ndarray:
     width = int(header.width)
     height = int(header.height)
     pitch = int(header.pitch)
     if width <= 0 or height <= 0 or pitch <= 0:
-        raise ValueError("invalid score shm dimensions")
+        raise ValueError("invalid score frame dimensions")
 
     frame_bytes = int(pitch) * int(height)
     if len(payload) < frame_bytes:
-        raise ValueError("score shm frame too small")
+        raise ValueError("score frame payload too small")
 
     if int(header.fmt) == VIDEO_FORMAT_SCALAR1_F32:
         if pitch < width * 4 or (pitch % 4) != 0:
@@ -163,7 +168,7 @@ def decode_score_map_from_frame(*, header: VideoShmHeader, payload: memoryview) 
         magnitude = np.sqrt((flow[:, :, 0] * flow[:, :, 0]) + (flow[:, :, 1] * flow[:, :, 1]))
         return np.ascontiguousarray(magnitude, dtype=np.float32)
 
-    raise ValueError(f"unsupported score shm format: {int(header.fmt)}")
+    raise ValueError(f"unsupported score frame format: {int(header.fmt)}")
 
 
 def rescale_bbox_to_score_map(
@@ -311,22 +316,29 @@ class DetectionSorterServiceNode(ServiceNode):
     def __init__(self, *, node_id: str, node: Any, initial_state: dict[str, Any] | None = None) -> None:
         super().__init__(
             node_id=ensure_token(node_id, label="node_id"),
-            data_in_ports=["detections"],
+            data_in_ports=["detections", "score"],
             data_out_ports=["detections"],
             state_fields=[state.name for state in list(node.stateFields or [])],
         )
         self._initial_state = dict(initial_state or {})
         self._active = True
         self._config_loaded = False
-        self._score_shm_name = ""
         self._sort_direction: SortDirection = "desc"
         self._score_aggregation: ScoreAggregation = "mean"
         self._cls_weights_exact: dict[str, float] = {}
         self._cls_weights_regex: list[tuple[re.Pattern[str], float]] = []
         self._last_error = ""
         self._latest_detections: dict[str, Any] | None = None
-        self._score_reader: VideoShmReader | None = None
-        self._score_reader_name = ""
+        self._score_source_config = VideoFrameSourceConfig.from_bus(None)
+        self._score_source: LatestVideoFrameSource | None = None
+
+    def attach(self, bus: Any) -> None:
+        super().attach(bus)
+        self._score_source_config = VideoFrameSourceConfig.from_bus(bus)
+        self._score_source = LatestVideoFrameSource(config=self._score_source_config)
+
+    async def close(self) -> None:
+        self._close_score_reader()
 
     async def on_lifecycle(self, active: bool, meta: dict[str, Any]) -> None:
         del meta
@@ -344,7 +356,6 @@ class DetectionSorterServiceNode(ServiceNode):
     async def _ensure_config_loaded(self) -> None:
         if self._config_loaded:
             return
-        self._score_shm_name = coerce_str(self._read_initial_or_cached_state("scoreShmName", ""))
         self._sort_direction = _coerce_sort_direction(self._read_initial_or_cached_state("sortDirection", "desc"))
         self._score_aggregation = _coerce_score_aggregation(self._read_initial_or_cached_state("scoreAggregation", "mean"))
         cls_weights_text = coerce_str(self._read_initial_or_cached_state("clsWeights", "{}"), default="{}")
@@ -364,8 +375,6 @@ class DetectionSorterServiceNode(ServiceNode):
             if aggregation not in ("mean", "max", "sum", "median"):
                 raise ValueError("invalid scoreAggregation (expected mean, max, sum, or median)")
             return aggregation
-        if name == "scoreShmName":
-            return coerce_str(value)
         if name == "clsWeights":
             text = coerce_str(value, default="{}")
             _ = _parse_cls_weights_json(text)
@@ -376,10 +385,6 @@ class DetectionSorterServiceNode(ServiceNode):
         del ts_ms
         await self._ensure_config_loaded()
         name = str(field or "").strip()
-        if name == "scoreShmName":
-            self._score_shm_name = coerce_str(value, default=self._score_shm_name)
-            self._close_score_reader()
-            return
         if name == "sortDirection":
             self._sort_direction = _coerce_sort_direction(value, default=self._sort_direction)
             return
@@ -405,11 +410,11 @@ class DetectionSorterServiceNode(ServiceNode):
         self._latest_detections = incoming_payload
         try:
             output_payload = self._sort_latest_detections()
-        except ScoreShmUnavailableError as exc:
+        except ScoreSourceUnavailableError as exc:
             if exc.reason == "not_ready":
                 await self._set_last_error("")
             else:
-                await self._set_last_error(self._format_shm_unavailable_error(exc))
+                await self._set_last_error(self._format_score_source_unavailable_error(exc))
             await self.emit("detections", incoming_payload, ts_ms=_payload_int(incoming_payload, "tsMs"))
             return
         except Exception as exc:
@@ -425,28 +430,48 @@ class DetectionSorterServiceNode(ServiceNode):
         await self.emit("detections", output_payload, ts_ms=_payload_int(output_payload, "tsMs"))
 
     def _close_score_reader(self) -> None:
-        if self._score_reader is not None:
-            self._score_reader.close()
-            self._score_reader = None
-        self._score_reader_name = ""
+        source = self._score_source
+        self._score_source = None
+        if source is not None:
+            source.close()
 
-    def _ensure_score_reader(self) -> VideoShmReader:
-        score_shm_name = str(self._score_shm_name).strip()
-        if not score_shm_name:
-            raise ScoreShmUnavailableError("scoreShmName is empty", reason="not_ready")
-        if self._score_reader is not None and self._score_reader_name == score_shm_name:
-            return self._score_reader
-        self._close_score_reader()
-        reader = VideoShmReader(score_shm_name)
+    def _reset_score_source(self) -> None:
+        source = self._score_source
+        if source is not None:
+            source.reset()
+
+    def _ensure_score_source(self) -> LatestVideoFrameSource:
+        source = self._score_source
+        if source is not None:
+            return source
+        source = LatestVideoFrameSource(config=self._score_source_config)
+        self._score_source = source
+        return source
+
+    def _read_latest_score_frame(self) -> tuple[ScoreFrameHeader, memoryview]:
+        score_key = str(self.input_zenoh_key("score") or "").strip()
+        if not score_key:
+            raise ScoreSourceUnavailableError("score data input is missing", reason="not_ready")
+        source = self._ensure_score_source()
         try:
-            reader.open(use_event=False)
+            frame = source.read_latest(stream_key=score_key, timeout_ms=0, dedupe=False)
         except FileNotFoundError as exc:
-            raise ScoreShmUnavailableError(f"open pending: {type(exc).__name__}: {exc}", reason="not_ready") from exc
-        except OSError as exc:
-            raise ScoreShmUnavailableError(f"open failed: {type(exc).__name__}: {exc}", reason="invalid") from exc
-        self._score_reader = reader
-        self._score_reader_name = score_shm_name
-        return reader
+            raise ScoreSourceUnavailableError(f"open pending: {type(exc).__name__}: {exc}", reason="not_ready") from exc
+        except ValueError as exc:
+            message = str(exc).strip()
+            reason: ScoreSourceUnavailableReason = "invalid" if "invalid" in message.lower() else "not_ready"
+            raise ScoreSourceUnavailableError(
+                f"score source unavailable: {type(exc).__name__}: {exc}",
+                reason=reason,
+            ) from exc
+        except (RuntimeError, OSError) as exc:
+            raise ScoreSourceUnavailableError(
+                f"score source unavailable: {type(exc).__name__}: {exc}",
+                reason="not_ready",
+            ) from exc
+        if frame is None:
+            raise ScoreSourceUnavailableError("score source has no readable frame", reason="not_ready")
+        return frame, frame.payload
 
     def _sort_latest_detections(self) -> dict[str, Any] | None:
         if self._latest_detections is None:
@@ -454,20 +479,12 @@ class DetectionSorterServiceNode(ServiceNode):
         detections_value = self._latest_detections.get("detections")
         if not isinstance(detections_value, list) or not detections_value:
             return None
-        reader = self._ensure_score_reader()
-        header, payload = reader.read_latest_frame()
-        if header is None or payload is None:
-            current_header = reader.read_header()
-            if current_header is not None and (
-                int(current_header.magic) != VIDEO_SHM_MAGIC or int(current_header.version) != VIDEO_SHM_VERSION
-            ):
-                raise ScoreShmUnavailableError("score shm header is invalid", reason="invalid")
-            raise ScoreShmUnavailableError("score shm has no readable frame", reason="not_ready")
+        header, payload = self._read_latest_score_frame()
         try:
             try:
                 score_map = decode_score_map_from_frame(header=header, payload=payload)
             except ValueError as exc:
-                raise ScoreShmUnavailableError(str(exc), reason="invalid") from exc
+                raise ScoreSourceUnavailableError(str(exc), reason="invalid") from exc
             return sort_detection_payload(
                 self._latest_detections,
                 score_map=score_map,
@@ -485,13 +502,13 @@ class DetectionSorterServiceNode(ServiceNode):
         self._cls_weights_regex = regex
 
     @staticmethod
-    def _format_shm_unavailable_error(exc: ScoreShmUnavailableError) -> str:
+    def _format_score_source_unavailable_error(exc: ScoreSourceUnavailableError) -> str:
         details = str(exc).strip()
         if not details:
-            return "score SHM unavailable"
+            return "score source unavailable"
         if len(details) > 200:
             details = details[:200] + "..."
-        return f"score SHM unavailable: {details}"
+        return f"score source unavailable: {details}"
 
     async def _set_last_error(self, message: str) -> None:
         normalized = str(message or "")

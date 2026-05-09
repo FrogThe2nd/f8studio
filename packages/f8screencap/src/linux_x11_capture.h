@@ -8,11 +8,9 @@
 #include <string>
 #include <vector>
 
-namespace f8::cppsdk {
-class VideoSharedMemorySink;
-}
-
 namespace f8::screencap {
+
+class CaptureFrameSink;
 
 class LinuxX11Capture final {
  public:
@@ -29,7 +27,7 @@ class LinuxX11Capture final {
     std::string scale_csv;        // w,h (optional; 0,0 disables)
   };
 
-  LinuxX11Capture(std::string service_id, std::shared_ptr<f8::cppsdk::VideoSharedMemorySink> sink);
+  LinuxX11Capture(std::string service_id, std::shared_ptr<CaptureFrameSink> sink);
   ~LinuxX11Capture();
 
   void configure(std::string mode, double fps, int display_id, std::string window_id, std::string region_csv,
@@ -55,7 +53,7 @@ class LinuxX11Capture final {
                                       std::uint32_t green_mask, std::uint32_t blue_mask, int byte_order);
 
   std::string service_id_;
-  std::shared_ptr<f8::cppsdk::VideoSharedMemorySink> sink_;
+  std::shared_ptr<CaptureFrameSink> sink_;
 
   std::atomic<bool> active_{true};
   std::atomic<bool> want_restart_{false};

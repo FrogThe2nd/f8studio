@@ -14,6 +14,8 @@ from ...ui.support.studio_theme import ai_context_button_qss, ai_status_label_qs
 from ...ui.support.webengine_utils import (
     configure_default_webengine_profile,
     configure_webengine_local_content_access,
+    flush_qt_deferred_deletes,
+    release_webengine_view,
     set_webengine_html,
     take_prewarmed_webengine_view,
 )
@@ -49,6 +51,7 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
         self._current_selection_label = ""
         self._current_selected_snapshot_preview: GraphContextSnapshot | None = None
         self._pinned_graph_context_snapshot: GraphContextSnapshot | None = None
+        self._shutdown_started = False
         theme_palette = studio_dark_theme().palette
         
         # 1. Setup AI components
@@ -195,6 +198,38 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
         self._selection_timer.timeout.connect(self._apply_graph_selection)
         self._wire_graph_signals()
         self._refresh_context_toolbar()
+
+    def shutdown(self) -> None:
+        if self._shutdown_started:
+            return
+        self._shutdown_started = True
+        self._reposition_timer.stop()
+        self._selection_timer.stop()
+        self._unwire_graph_signals()
+        try:
+            self._ai_bridge.abort_all_requests()
+        except (AttributeError, RuntimeError, TypeError):
+            logger.debug("failed to abort AI requests during sidebar shutdown", exc_info=True)
+        view = self._view
+        release_webengine_view(view, context="ai-assist-sidebar")
+        flush_qt_deferred_deletes()
+
+    def _unwire_graph_signals(self) -> None:
+        graph = self._studio_graph
+        if graph is None:
+            return
+        for signal, slot in (
+            (graph.node_selected, self._on_graph_selection_signal),
+            (graph.node_selection_changed, self._on_graph_selection_changed),
+            (graph.nodes_deleted, self._on_graph_nodes_deleted),
+            (graph.property_changed, self._on_graph_property_changed),
+            (graph.port_connected, self._on_graph_ports_changed),
+            (graph.port_disconnected, self._on_graph_ports_changed),
+        ):
+            try:
+                signal.disconnect(slot)  # type: ignore[attr-defined]
+            except (TypeError, RuntimeError):
+                pass
 
     def _on_ai_settings_toggle(self, checked: bool) -> None:
         self._ai_quick_panel.setVisible(checked)

@@ -25,11 +25,11 @@ from f8pysdk.specs import (  # noqa: E402
 )
 from f8pysdk.command import command_input_state_field, command_output_state_field, hidden_command_state_specs  # noqa: E402
 from f8pysdk.command import CommandExecutionErrorKind, CommandOutputPolicy  # noqa: E402
-from f8pysdk.nats_naming import kv_key_node_state  # noqa: E402
+from f8pysdk.zenoh_naming import zenoh_state_key  # noqa: E402
 from f8pysdk.nodes import RuntimeNode  # noqa: E402
 from f8pysdk.specs import string_schema  # noqa: E402
 from f8pysdk.bus import ServiceBus, ServiceBusConfig  # noqa: E402
-from f8pysdk.service_bus.internal.micro import ServiceBusMicroEndpoints  # noqa: E402
+from f8pysdk.service_bus.internal.micro import ServiceBusControlHandlers  # noqa: E402
 from f8pysdk.service_bus.state.options import StatePublishOptions  # noqa: E402
 from f8pysdk.service_bus.state.pipeline import publish_state, validate_state_update  # noqa: E402
 from f8pysdk.state import StateWriteContext, StateWriteError, StateWriteOrigin  # noqa: E402
@@ -209,12 +209,12 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_publish_state_sets_origin(self) -> None:
         cluster = InMemoryCluster()
-        transport = InMemoryTransport(cluster=cluster, kv_bucket="kv.svc")
+        transport = InMemoryTransport(cluster=cluster)
         bus = ServiceBus(ServiceBusConfig(service_id="svc"), transport=transport)
         bus.state_store.access_by_node_field[("svc", "status")] = F8StateAccess.ro
         await bus.publish_state_runtime("svc", "status", 7, ts_ms=42)
-        key = kv_key_node_state(node_id="svc", field="status")
-        raw = await transport.kv_get(key)
+        key = zenoh_state_key("svc", node_id="svc", field="status")
+        raw = await transport.retained_get(key)
         payload = decode_obj(raw) if raw else {}
         self.assertEqual(payload.get("source"), "runtime")
         self.assertEqual(payload.get("origin"), "runtime")
@@ -277,7 +277,7 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_no_state_fanout_meta_is_preserved_as_plain_meta(self) -> None:
         cluster = InMemoryCluster()
-        transport = InMemoryTransport(cluster=cluster, kv_bucket="kv.svc")
+        transport = InMemoryTransport(cluster=cluster)
         bus = ServiceBus(ServiceBusConfig(service_id="svc"), transport=transport)
         bus.register_node(_RecordingNode("svc"))
         bus.state_store.access_by_node_field[("svc", "status")] = F8StateAccess.rw
@@ -292,23 +292,23 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
             meta={"tag": "x", "_noStateFanout": True},
         )
 
-        key = kv_key_node_state(node_id="svc", field="status")
-        raw = await transport.kv_get(key)
+        key = zenoh_state_key("svc", node_id="svc", field="status")
+        raw = await transport.retained_get(key)
         payload = decode_obj(raw) if raw else {}
         self.assertEqual(payload.get("tag"), "x")
         self.assertTrue(bool(payload.get("_noStateFanout")))
 
     async def test_publish_state_persists_even_if_local_callback_fails(self) -> None:
         cluster = InMemoryCluster()
-        transport = InMemoryTransport(cluster=cluster, kv_bucket="kv.svc")
+        transport = InMemoryTransport(cluster=cluster)
         bus = ServiceBus(ServiceBusConfig(service_id="svc"), transport=transport)
         bus.state_store.access_by_node_field[("svc", "status")] = F8StateAccess.rw
         bus.register_node(_OnStateFailNode("svc"))
 
         await bus.publish_state_runtime("svc", "status", 7, ts_ms=42)
 
-        key = kv_key_node_state(node_id="svc", field="status")
-        raw = await transport.kv_get(key)
+        key = zenoh_state_key("svc", node_id="svc", field="status")
+        raw = await transport.retained_get(key)
         payload = decode_obj(raw) if raw else {}
         self.assertEqual(payload.get("value"), 7)
 
@@ -776,7 +776,7 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
         )
         await bus.set_rungraph(graph)
 
-        endpoint = ServiceBusMicroEndpoints(bus)
+        endpoint = ServiceBusControlHandlers(bus)
         req = _FakeReq(
             F8CommandInvokeRequest(
                 reqId="r1",
@@ -906,7 +906,7 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
         hidden_output = await bus.get_state("svc", command_output_state_field("run"))
         self.assertFalse(hidden_output.found)
 
-        endpoint = ServiceBusMicroEndpoints(bus)
+        endpoint = ServiceBusControlHandlers(bus)
         req = _FakeReq(F8CommandInvokeRequest(reqId="r1", call="run", args={"a": 7}, meta={"source": "ui"}))
         await endpoint._cmd(req)
 
@@ -940,7 +940,7 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
         hidden_output = await bus.get_state("svc", command_output_state_field("run"))
         self.assertFalse(hidden_output.found)
 
-        endpoint = ServiceBusMicroEndpoints(bus)
+        endpoint = ServiceBusControlHandlers(bus)
         req = _FakeReq(F8CommandInvokeRequest(reqId="r1", call="run", args={"a": 7}, meta={"source": "ui"}))
         await endpoint._cmd(req)
 
@@ -971,7 +971,7 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
         )
         await bus.set_rungraph(graph)
 
-        endpoint = ServiceBusMicroEndpoints(bus)
+        endpoint = ServiceBusControlHandlers(bus)
         with patch(
             "f8pysdk.service_bus.internal.command.CommandGateway.write_output",
             new=AsyncMock(side_effect=RuntimeError("writeback failed")),
@@ -1013,7 +1013,7 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
 
         await bus.publish_state_external("svc", command_input_state_field("run"), 7, ts_ms=10)
 
-        endpoint = ServiceBusMicroEndpoints(bus)
+        endpoint = ServiceBusControlHandlers(bus)
         req = _FakeReq(
             {
                 "reqId": "r1",
@@ -1056,7 +1056,7 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
 
         await bus.publish_state_external("svc", command_input_state_field("run"), [7, 8], ts_ms=10)
 
-        endpoint = ServiceBusMicroEndpoints(bus)
+        endpoint = ServiceBusControlHandlers(bus)
         req = _FakeReq(
             {
                 "reqId": "r1",
@@ -1126,7 +1126,7 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
         await bus.set_rungraph(graph)
 
         req = _FakeReq({"reqId": "r1", "call": "dynamic", "args": [7], "meta": {"source": "ui"}})
-        endpoint = ServiceBusMicroEndpoints(bus)
+        endpoint = ServiceBusControlHandlers(bus)
         await endpoint._cmd(req)
         reply = decode_as(req.response or b"", F8CommandInvokeReply)
 

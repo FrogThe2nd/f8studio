@@ -8,8 +8,8 @@ Manual usage guidance is merged from `docs/modules/manual/*.md` and `docs/module
 
 | Service | Label | Operators | State Fields | Link |
 | --- | --- | --- | --- | --- |
-| `f8.audiocap` | Audio Capture | `0` | `13` | [Audio Capture](services/f8-audiocap.md) |
-| `f8.audiofeat.core` | Audio Feature Core | `0` | `7` | [Audio Feature Core](services/f8-audiofeat-core.md) |
+| `f8.audiocap` | Audio Capture | `0` | `12` | [Audio Capture](services/f8-audiocap.md) |
+| `f8.audiofeat.core` | Audio Feature Core | `0` | `6` | [Audio Feature Core](services/f8-audiofeat-core.md) |
 | `f8.audiofeat.rhythm` | Audio Feature Rhythm | `0` | `5` | [Audio Feature Rhythm](services/f8-audiofeat-rhythm.md) |
 | `f8.implayer` | IM Player | `0` | `23` | [IM Player](services/f8-implayer.md) |
 | `f8.proclauncher` | Proc Launcher | `0` | `5` | [Proc Launcher](services/f8-proclauncher.md) |
@@ -22,25 +22,25 @@ Manual usage guidance is merged from `docs/modules/manual/*.md` and `docs/module
 
 | Service | Label | Operators | State Fields | Link |
 | --- | --- | --- | --- | --- |
-| `f8.cvkit.denseoptflow` | CVKit Dense Optical Flow | `0` | `7` | [CVKit Dense Optical Flow](services/f8-cvkit-denseoptflow.md) |
-| `f8.cvkit.flowmetric` | CVKit Flow Metric | `0` | `8` | [CVKit Flow Metric](services/f8-cvkit-flowmetric.md) |
-| `f8.cvkit.templatematch` | CVKit Template Match | `0` | `6` | [CVKit Template Match](services/f8-cvkit-templatematch.md) |
-| `f8.cvkit.tracking` | CVKit Tracking | `0` | `11` | [CVKit Tracking](services/f8-cvkit-tracking.md) |
-| `f8.cvkit.videostab` | CVKit Video Stabilizer | `0` | `17` | [CVKit Video Stabilizer](services/f8-cvkit-videostab.md) |
+| `f8.cvkit.denseoptflow` | CVKit Dense Optical Flow | `0` | `8` | [CVKit Dense Optical Flow](services/f8-cvkit-denseoptflow.md) |
+| `f8.cvkit.flowmetric` | CVKit Flow Metric | `0` | `7` | [CVKit Flow Metric](services/f8-cvkit-flowmetric.md) |
+| `f8.cvkit.templatematch` | CVKit Template Match | `0` | `8` | [CVKit Template Match](services/f8-cvkit-templatematch.md) |
+| `f8.cvkit.tracking` | CVKit Tracking | `0` | `10` | [CVKit Tracking](services/f8-cvkit-tracking.md) |
+| `f8.cvkit.videostab` | CVKit Video Stabilizer | `0` | `16` | [CVKit Video Stabilizer](services/f8-cvkit-videostab.md) |
 
 ## Deep Learning
 
 | Service | Label | Operators | State Fields | Link |
 | --- | --- | --- | --- | --- |
-| `f8.dl.classifier` | DL Classifier | `0` | `13` | [DL Classifier](services/f8-dl-classifier.md) |
-| `f8.dl.detector` | DL Detector | `0` | `17` | [DL Detector](services/f8-dl-detector.md) |
-| `f8.dl.detsorter` | DL Detection Sorter | `0` | `6` | [DL Detection Sorter](services/f8-dl-detsorter.md) |
-| `f8.dl.humandetector` | DL Human Detector | `0` | `17` | [DL Human Detector](services/f8-dl-humandetector.md) |
-| `f8.dl.optflow` | DL Optical Flow | `0` | `14` | [DL Optical Flow](services/f8-dl-optflow.md) |
-| `f8.dl.tcnwave` | DL TCN Wave | `0` | `15` | [DL TCN Wave](services/f8-dl-tcnwave.md) |
+| `f8.dl.classifier` | DL Classifier | `0` | `12` | [DL Classifier](services/f8-dl-classifier.md) |
+| `f8.dl.detector` | DL Detector | `0` | `16` | [DL Detector](services/f8-dl-detector.md) |
+| `f8.dl.detsorter` | DL Detection Sorter | `0` | `5` | [DL Detection Sorter](services/f8-dl-detsorter.md) |
+| `f8.dl.humandetector` | DL Human Detector | `0` | `16` | [DL Human Detector](services/f8-dl-humandetector.md) |
+| `f8.dl.optflow` | DL Optical Flow | `0` | `12` | [DL Optical Flow](services/f8-dl-optflow.md) |
+| `f8.dl.tcnwave` | DL TCN Wave | `0` | `14` | [DL TCN Wave](services/f8-dl-tcnwave.md) |
 
 ## MediaPipe
 
 | Service | Label | Operators | State Fields | Link |
 | --- | --- | --- | --- | --- |
-| `f8.mp.pose` | MediaPipe Pose | `0` | `9` | [MediaPipe Pose](services/f8-mp-pose.md) |
+| `f8.mp.pose` | MediaPipe Pose | `0` | `8` | [MediaPipe Pose](services/f8-mp-pose.md) |

@@ -39,7 +39,7 @@ pixi run -e onnx f8pydl_humandetector
 
 ### Typical Inputs / Outputs
 
-- Data inputs: none
+- Data inputs: `video`
 - Data outputs: `detections`, `monitor`
 - Commands: none
 
@@ -47,7 +47,6 @@ pixi run -e onnx f8pydl_humandetector
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `shmName` | `rw` | `true` | `true` | `string / default=` | Video SHM mapping name (e.g. shm.implayer.video). |
 | `weightsDir` | `rw` | `true` | `true` | `string / default=services/f8/dl/weights` | Directory containing *.yaml + *.onnx model files. Reset to the default relative path when exporting publish JSON. |
 | `modelId` | `rw` | `true` | `true` | `string / default=` | Model id selected from weightsDir (ignored if modelYamlPath is set). |
 | `modelYamlPath` | `rw` | `true` | `false` | `string / default=` | Optional explicit model yaml path (overrides modelId). Cleared when exporting publish JSON. |
@@ -56,10 +55,10 @@ pixi run -e onnx f8pydl_humandetector
 | `inferEveryN` | `rw` | `true` | `true` | `integer / default=1` | Run model inference every N frames (>=1). |
 | `confThreshold` | `rw` | `true` | `false` | `number / default=-1.0` | Override confidence threshold (negative uses model yaml). |
 | `iouThreshold` | `rw` | `true` | `false` | `number / default=-1.0` | Override IoU threshold for NMS (negative uses model yaml). |
-| `enabledClasses` | `rw` | `true` | `false` | `array[string]` | Optional class whitelist for output. Empty means all classes. |
+| `enabledClasses` | `rw` | `true` | `false` | `array[string] / default=[]` | Optional class whitelist for output. Empty means all classes. |
 | `perClassK` | `rw` | `true` | `true` | `integer / default=0` | Per-class top-K by score (<=0 means unlimited). |
-| `modelClasses` | `ro` | `true` | `false` | `array[string]` | Current loaded model class labels. |
-| `availableModels` | `ro` | `true` | `false` | `array[string]` | List of model ids discovered from weightsDir. |
+| `modelClasses` | `ro` | `true` | `false` | `array[string] / default=[]` | Current loaded model class labels. |
+| `availableModels` | `ro` | `true` | `false` | `array[string] / default=[]` | List of model ids discovered from weightsDir. |
 | `loadedModel` | `ro` | `true` | `false` | `string / default=` | Current loaded model id/task. |
 | `ortActiveProviders` | `ro` | `true` | `false` | `string / default=` | JSON list of active ONNX Runtime providers for this session. |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
@@ -67,7 +66,6 @@ pixi run -e onnx f8pydl_humandetector
 
 ### Key Fields That Matter
 
-- `shmName` (Video SHM, `rw`): Video SHM mapping name (e.g. shm.implayer.video). Schema: `string / default=`.
 - `weightsDir` (Weights Dir, `rw`): Directory containing *.yaml + *.onnx model files. Reset to the default relative path when exporting publish JSON. Schema: `string / default=services/f8/dl/weights`.
 - `modelId` (Model Id, `rw`): Model id selected from weightsDir (ignored if modelYamlPath is set). Schema: `string / default=`.
 - `modelYamlPath` (Model YAML Path, `rw`): Optional explicit model yaml path (overrides modelId). Cleared when exporting publish JSON. Schema: `string / default=`.
@@ -75,6 +73,7 @@ pixi run -e onnx f8pydl_humandetector
 - `autoDownloadWeights` (Auto Download Weights, `rw`): When model file is missing, download from onnxUrl in model yaml. Schema: `boolean / default=True`.
 - `inferEveryN` (Infer Every N Frames, `rw`): Run model inference every N frames (>=1). Schema: `integer / default=1`.
 - `confThreshold` (Conf Threshold Override, `rw`): Override confidence threshold (negative uses model yaml). Schema: `number / default=-1.0`.
+- `iouThreshold` (IoU Threshold Override, `rw`): Override IoU threshold for NMS (negative uses model yaml). Schema: `number / default=-1.0`.
 
 ### Service Commands
 
@@ -82,7 +81,9 @@ _None_
 
 ### Service Data Input Ports
 
-_None_
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `video` | `true` | `true` | `object{format, frameId, height, pitch, ...}` | Input video frame stream. |
 
 ### Service Data Output Ports
 

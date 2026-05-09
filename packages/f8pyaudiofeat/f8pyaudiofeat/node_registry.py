@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from f8pysdk.specs import (
-    array_schema,
     F8DataPortSpec,
     F8ServiceSchemaVersion,
     F8ServiceSpec,
     F8StateAccess,
     F8StateSpec,
+    array_schema,
+    audio_chunk_port,
     complex_object_schema,
     integer_schema,
     number_schema,
@@ -53,15 +54,6 @@ def _rhythm_features_schema():
 
 def _core_state_fields() -> list[F8StateSpec]:
     return [
-        F8StateSpec(
-            name="audioShmName",
-            label="Audio SHM",
-            description="Audio SHM mapping name (e.g. shm.audiocap.audio).",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.rw,
-            required=True,
-            showOnNode=True,
-        ),
         F8StateSpec(
             name="channelMode",
             label="Channel Mode",
@@ -141,10 +133,17 @@ def _register_core(registry: Registry) -> None:
             paletteCategory="svc",
             version="0.0.1",
             label="Audio Feature Core",
-            description="Audio SHM core feature extraction service (rms, onset, centroid).",
+            description="Zenoh latest-audio core feature extraction service (rms, onset, centroid).",
             tags=["audio", "feature", "rms", "onset", "centroid"],
             rendererClass="default_svc",
             stateFields=_core_state_fields(),
+            dataInPorts=[
+                audio_chunk_port(
+                    name="audio",
+                    description="Input audio chunk stream from f8.audiocap.",
+                    required=True,
+                )
+            ],
             dataOutPorts=[
                 F8DataPortSpec(
                     name="coreFeatures",

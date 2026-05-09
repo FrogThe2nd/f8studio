@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -13,6 +14,7 @@
 #include <mutex>
 #include <thread>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -20,20 +22,18 @@
 #include "f8cppsdk/capabilities.h"
 #include "f8cppsdk/main_thread_queue.h"
 #include "f8cppsdk/rungraph_routes.h"
-#include "f8cppsdk/kv_store.h"
-#include "f8cppsdk/nats_client.h"
+#include "f8cppsdk/runtime_backend.h"
+#include "f8cppsdk/runtime_transport.h"
 #include "f8cppsdk/service_control_plane.h"
-#include "f8cppsdk/service_control_plane_server.h"
 
 namespace f8::cppsdk {
 
 // Minimal, protocol-compatible service bus for C++ services.
 //
-// Goals (phase 1):
-// - Own NATS+KV connections and lifecycle state (`active`).
-// - Expose built-in micro endpoints via `ServiceControlPlaneServer`.
-// - Provide a terminate/quit latch to let services exit gracefully.
-// - Keep wire protocol compatible with f8pysdk (KV keys, endpoint subjects, payload schema).
+// Zenoh is the default runtime path:
+// - control endpoints use Zenoh command streams with correlated replies
+// - service-owned state is exposed through retained latest-value state streams
+// - pub/sub data edges map to the shared f8/svc/... Zenoh keyspace
 class ServiceBus final : public ServiceControlHandler {
  public:
   using json = nlohmann::json;
@@ -52,8 +52,11 @@ class ServiceBus final : public ServiceControlHandler {
 
   struct Config {
     std::string service_id;
-    std::string nats_url = "nats://127.0.0.1:4222";
-    bool kv_memory_storage = true;
+    BusBackend bus_backend = BusBackend::kZenoh;
+    std::string zenoh_config_path;
+    std::vector<std::string> zenoh_connect;
+    std::vector<std::string> zenoh_listen;
+    std::uint64_t zenoh_shm_pool_bytes = kDefaultZenohShmPoolBytes;
     std::string service_name;
     std::string service_class;
     bool publish_all_data = true;
@@ -62,6 +65,27 @@ class ServiceBus final : public ServiceControlHandler {
     std::int64_t monitor_interval_ms = 1000;
     std::int64_t monitor_window_ms = 30000;
     bool monitor_gpu_enabled = true;
+    std::string runtime_instance_id;
+
+    void apply_runtime_backend(const RuntimeBackendConfig& runtime_backend) {
+      bus_backend = runtime_backend.bus_backend;
+      zenoh_config_path = runtime_backend.zenoh_config_path;
+      zenoh_connect = runtime_backend.zenoh_connect;
+      zenoh_listen = runtime_backend.zenoh_listen;
+      zenoh_shm_pool_bytes = runtime_backend.zenoh_shm_pool_bytes;
+    }
+
+    RuntimeBackendConfig runtime_backend_config() const {
+      RuntimeBackendConfig runtime_backend;
+      runtime_backend.bus_backend = bus_backend;
+      runtime_backend.announce_service_liveliness = true;
+      runtime_backend.runtime_instance_id = runtime_instance_id;
+      runtime_backend.zenoh_config_path = zenoh_config_path;
+      runtime_backend.zenoh_connect = zenoh_connect;
+      runtime_backend.zenoh_listen = zenoh_listen;
+      runtime_backend.zenoh_shm_pool_bytes = zenoh_shm_pool_bytes;
+      return normalize_runtime_backend_config(std::move(runtime_backend));
+    }
   };
 
   explicit ServiceBus(Config cfg);
@@ -84,6 +108,7 @@ class ServiceBus final : public ServiceControlHandler {
 
   bool active() const { return active_.load(std::memory_order_acquire); }
   bool terminate_requested() const { return terminate_.load(std::memory_order_acquire); }
+  const std::string& runtime_instance_id() const { return runtime_instance_id_; }
 
   void report_error(const std::string& node_id, const std::string& code, const std::string& message,
                     const std::string& severity = "error", const std::string& fingerprint = "",
@@ -92,12 +117,6 @@ class ServiceBus final : public ServiceControlHandler {
 
   // Block until terminate/quit is requested.
   void wait_terminate();
-
-  // Expose underlying transports for high-performance services.
-  NatsClient& nats() { return nats_; }
-  const NatsClient& nats() const { return nats_; }
-  KvStore& kv() { return kv_; }
-  const KvStore& kv() const { return kv_; }
 
   // Pump tasks that must run on the service main/tick thread.
   std::size_t drain_main_thread(std::size_t max_tasks = 0);
@@ -113,9 +132,15 @@ class ServiceBus final : public ServiceControlHandler {
   // Pull buffered inbound data for (node,port). Returns nullopt if empty/stale.
   std::optional<json> pull_data(const std::string& node_id, const std::string& port_id);
 
+  // Resolve the Zenoh stream key feeding a local typed stream input port.
+  std::optional<std::string> data_input_zenoh_key(const std::string& node_id, const std::string& port_id) const;
+
   // ---- state ----------------------------------------------------------
   // Read state from local cache/KV (wire-compatible with f8pysdk get_state).
   StateRead get_state(const std::string& node_id, const std::string& field);
+  bool publish_state(const std::string& node_id, const std::string& field, const json& value,
+                     const std::string& source = "runtime", const json& meta = json::object(),
+                     std::int64_t ts_ms = 0, const std::string& origin = "runtime");
 
  // ---- ServiceControlHandler (endpoints) ------------------------------
   bool is_active() const override;
@@ -130,7 +155,30 @@ class ServiceBus final : public ServiceControlHandler {
                   std::string& error_message) override;
 
  private:
-  void load_active_from_kv();
+  bool start_zenoh_backend();
+  bool start_runtime_control_endpoints();
+  void stop_runtime_control_endpoints();
+  RuntimeBytes handle_runtime_control_request(const std::string& endpoint, const RuntimeMessage& msg);
+  bool submit_rungraph(const json& graph_obj, const json& meta, const std::string& req_id,
+                       std::string& error_code, std::string& error_message);
+  void start_rungraph_apply_worker();
+  void stop_rungraph_apply_worker();
+  void rungraph_apply_worker_loop();
+  void run_rungraph_apply_worker(json graph_obj, json meta, std::string req_id, std::string source);
+  void publish_rungraph_deploy_status(const json& graph_obj, const std::string& req_id, const std::string& phase,
+                                      const std::string& source, const std::string& error_message = "");
+  bool runtime_publish_data(const std::string& from_node_id, const std::string& port_id, const json& value,
+                            std::int64_t ts_ms = 0);
+  bool runtime_retained_put(const std::string& key, const RuntimeBytes& bytes);
+  std::optional<RuntimeBytes> runtime_retained_get(const std::string& key);
+  bool runtime_set_ready(bool ready, const std::string& reason = "", std::int64_t ts_ms = 0);
+  bool runtime_set_node_state(const std::string& node_id, const std::string& field, const json& value,
+                              const std::string& source = "runtime",
+                              const json& extra_meta = json::object(), std::int64_t ts_ms = 0,
+                              const std::string& origin = "runtime");
+  void handle_data_payload(const std::string& key, const RuntimeBytes& bytes);
+  void handle_peer_state_payload(const std::string& peer, const std::string& key, const RuntimeBytes& bytes);
+  void load_active_from_retained();
   void apply_data_routes_from_rungraph(const json& graph_obj);
   void apply_rungraph_local(const json& graph_obj, std::string& error_code, std::string& error_message);
   void publish_state_local(const std::string& node_id, const std::string& field, const json& value, std::int64_t ts_ms,
@@ -160,6 +208,7 @@ class ServiceBus final : public ServiceControlHandler {
   std::size_t monitor_queue_depth() const;
 
   Config cfg_;
+  std::string runtime_instance_id_;
   std::atomic<bool> active_{true};
   std::atomic<bool> ready_{false};
   std::atomic<bool> terminate_{false};
@@ -168,11 +217,24 @@ class ServiceBus final : public ServiceControlHandler {
   mutable std::mutex term_mu_;
   std::condition_variable term_cv_;
 
-  NatsClient nats_;
-  KvStore kv_;
-  std::unique_ptr<ServiceControlPlaneServer> ctrl_;
+  std::unique_ptr<RuntimeTransport> runtime_transport_;
+  std::vector<std::unique_ptr<RuntimeSubscription>> runtime_control_endpoints_;
 
   MainThreadQueue main_thread_;
+
+  struct _RungraphApplyRequest {
+    json graph_obj = json::object();
+    json meta = json::object();
+    std::string req_id;
+    std::string source;
+  };
+
+  std::thread rungraph_apply_thread_;
+  mutable std::mutex rungraph_apply_mu_;
+  std::condition_variable rungraph_apply_cv_;
+  std::deque<_RungraphApplyRequest> rungraph_apply_queue_;
+  bool rungraph_apply_stop_requested_ = false;
+  bool rungraph_apply_running_ = false;
 
   mutable std::mutex lifecycle_mu_;
   std::vector<LifecycleNode*> lifecycle_nodes_;
@@ -253,8 +315,9 @@ class ServiceBus final : public ServiceControlHandler {
   };
 
   mutable std::mutex data_mu_;
-  std::unordered_map<std::string, NatsSubscription> data_subs_;
+  std::unordered_map<std::string, std::unique_ptr<RuntimeSubscription>> runtime_data_subs_;
   std::unordered_map<_NodePortKey, std::shared_ptr<_InputBuffer>, _NodePortKeyHash> data_inputs_;
+  std::unordered_map<_NodePortKey, std::string, _NodePortKeyHash> data_input_stream_keys_;
 
   struct _RouteRuntime {
     std::string to_node_id;
@@ -268,7 +331,7 @@ class ServiceBus final : public ServiceControlHandler {
   };
 
   struct _DataRoutingSnapshot {
-    std::unordered_map<std::string, std::vector<_RouteRuntime>> by_subject;
+    std::unordered_map<std::string, std::vector<_RouteRuntime>> by_key;
   };
 
   std::shared_ptr<const _DataRoutingSnapshot> data_routes_snapshot_;
@@ -283,7 +346,7 @@ class ServiceBus final : public ServiceControlHandler {
   std::unordered_map<_NodeFieldKey, _CommandDispatchState, _NodeFieldKeyHash> command_dispatch_;
   std::unordered_map<_RemoteStateKey, std::vector<_NodeFieldKey>, _RemoteStateKeyHash> cross_state_in_;
   std::unordered_set<_NodeFieldKey, _NodeFieldKeyHash> cross_state_targets_;
-  std::unordered_map<std::string, std::unique_ptr<KvStore>> peer_kv_by_service_id_;
+  std::unordered_map<std::string, std::unique_ptr<RuntimeSubscription>> peer_state_subs_by_service_id_;
   bool has_rungraph_ = false;
 
   std::thread monitor_thread_;

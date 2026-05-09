@@ -25,7 +25,7 @@ from f8pysdk.specs import (
     string_schema,
 )
 from f8pysdk.codec import coerce_flag, parse_int, parse_number, unwrap_json_value
-from f8pysdk.nats_naming import ensure_token
+from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import OperatorNode
 from f8pysdk.registry import Registry
 

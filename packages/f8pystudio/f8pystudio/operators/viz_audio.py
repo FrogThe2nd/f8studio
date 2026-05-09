@@ -10,14 +10,13 @@ from f8pysdk.specs import (
     F8RuntimeNode,
     F8StateAccess,
     F8StateSpec,
+    audio_chunk_port,
     boolean_schema,
     integer_schema,
-    string_schema,
 )
-from f8pysdk.nats_naming import ensure_token
+from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import OperatorNode
 from f8pysdk.registry import Registry
-from f8pysdk.shm import audio_shm_name
 
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
 from f8pystudio.contracts.ui_commands import emit_ui_command
@@ -28,17 +27,12 @@ OPERATOR_CLASS = "f8.viz.audio"
 RENDERER_CLASS = "viz_audio"
 
 
-def _default_audio_shm_name(service_id: str) -> str:
-    s = str(service_id or "").strip()
-    return audio_shm_name(s) if s else ""
-
-
 class VizAudioRuntimeNode(OperatorNode):
     """
-    Studio-only visualization node: view an Audio SHM (ring buffer) waveform.
+    Studio-only visualization node: view Zenoh latest-audio waveforms.
 
-    This runtime node only pushes config to the UI layer; the Qt widget reads
-    shared memory directly.
+    This runtime node only pushes config to the UI layer; the Qt widget owns
+    the selected latest-audio reader.
     """
 
     SPEC = F8OperatorSpec(
@@ -48,9 +42,15 @@ class VizAudioRuntimeNode(OperatorNode):
         operatorClass=OPERATOR_CLASS,
         version="0.0.1",
         label="Audio Viz",
-        description="Display waveform from an AudioSHM region.",
-        tags=["ui", "shm", "audio", "viewer", "waveform"],
-        dataInPorts=[],
+        description="Display waveform from Zenoh latest-audio streams.",
+        tags=["ui", "zenoh", "audio", "viewer", "waveform"],
+        dataInPorts=[
+            audio_chunk_port(
+                name="audio",
+                description="Input audio chunk stream.",
+                required=True,
+            ),
+        ],
         dataOutPorts=[],
         rendererClass=RENDERER_CLASS,
         stateFields=[
@@ -62,24 +62,6 @@ class VizAudioRuntimeNode(OperatorNode):
                 access=F8StateAccess.rw,
                 required=True,
                 showOnNode=False,
-            ),
-            F8StateSpec(
-                name="serviceId",
-                label="Service Id",
-                description="If set and shmName is empty, uses shm.<serviceId>.audio",
-                valueSchema=string_schema(default=""),
-                access=F8StateAccess.rw,
-                required=True,
-                showOnNode=False,
-            ),
-            F8StateSpec(
-                name="shmName",
-                label="SHM Name",
-                description="Audio SHM mapping name (e.g. shm.audiocap.audio). Overrides serviceId.",
-                valueSchema=string_schema(default=""),
-                access=F8StateAccess.rw,
-                required=True,
-                showOnNode=True,
             ),
             F8StateSpec(
                 name="throttleMs",
@@ -114,14 +96,12 @@ class VizAudioRuntimeNode(OperatorNode):
     def __init__(self, *, node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any] | None = None) -> None:
         super().__init__(
             node_id=ensure_token(node_id, label="node_id"),
-            data_in_ports=[],
+            data_in_ports=["audio"],
             data_out_ports=[],
             state_fields=[s.name for s in (node.stateFields or [])],
         )
         self._initial_state = dict(initial_state or {})
         self._config_loaded = False
-        self._service_id = ""
-        self._shm_name = ""
         self._throttle_ms = 20
         self._history_ms = 250
         self._channel = 0
@@ -131,7 +111,7 @@ class VizAudioRuntimeNode(OperatorNode):
         super().attach(bus)
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(self._ensure_config_loaded(), name=f"pystudio:audioshm:init:{self.node_id}")
+            loop.create_task(self._ensure_config_loaded(), name=f"pystudio:audio:init:{self.node_id}")
         except RuntimeError:
             pass
 
@@ -147,15 +127,12 @@ class VizAudioRuntimeNode(OperatorNode):
         emit_ui_command(self.node_id, "viz.audio.detach", {}, ts_ms=int(time.time() * 1000))
 
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
+        del value
         f = str(field or "").strip()
-        if f not in ("serviceId", "shmName", "throttleMs", "historyMs", "channel"):
+        if f not in ("throttleMs", "historyMs", "channel"):
             return
         await self._ensure_config_loaded()
-        if f == "serviceId":
-            self._service_id = str(await self._get_str_state("serviceId", default=self._service_id)).strip()
-        elif f == "shmName":
-            self._shm_name = str(await self._get_str_state("shmName", default=self._shm_name)).strip()
-        elif f == "throttleMs":
+        if f == "throttleMs":
             self._throttle_ms = await self._get_int_state("throttleMs", default=self._throttle_ms, minimum=0, maximum=60000)
         elif f == "historyMs":
             self._history_ms = await self._get_int_state("historyMs", default=self._history_ms, minimum=20, maximum=60000)
@@ -166,8 +143,6 @@ class VizAudioRuntimeNode(OperatorNode):
     async def _ensure_config_loaded(self) -> None:
         if self._config_loaded:
             return
-        self._service_id = str(await self._get_str_state("serviceId", default=str(self._initial_state.get("serviceId", "")))).strip()
-        self._shm_name = str(await self._get_str_state("shmName", default=str(self._initial_state.get("shmName", "")))).strip()
         self._throttle_ms = await self._get_int_state("throttleMs", default=20, minimum=0, maximum=60000)
         self._history_ms = await self._get_int_state("historyMs", default=250, minimum=20, maximum=60000)
         self._channel = await self._get_int_state("channel", default=0, minimum=0, maximum=16)
@@ -181,22 +156,19 @@ class VizAudioRuntimeNode(OperatorNode):
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
-        self._pending_task = loop.create_task(self._push_config_async(now_ms), name=f"pystudio:audioshm:cfg:{self.node_id}")
+        self._pending_task = loop.create_task(self._push_config_async(now_ms), name=f"pystudio:audio:cfg:{self.node_id}")
 
     async def _push_config_async(self, now_ms: int) -> None:
-        shm_name = str(self._shm_name or "").strip()
-        if not shm_name:
-            shm_name = _default_audio_shm_name(self._service_id)
+        payload: dict[str, object] = {
+            "audioStreamKey": str(self.input_zenoh_key("audio") or "").strip(),
+            "throttleMs": int(self._throttle_ms),
+            "historyMs": int(self._history_ms),
+            "channel": int(self._channel),
+        }
         emit_ui_command(
             self.node_id,
             "viz.audio.set",
-            {
-                "shmName": shm_name,
-                "serviceId": str(self._service_id or "").strip(),
-                "throttleMs": int(self._throttle_ms),
-                "historyMs": int(self._history_ms),
-                "channel": int(self._channel),
-            },
+            payload,
             ts_ms=int(now_ms),
         )
 
@@ -204,34 +176,19 @@ class VizAudioRuntimeNode(OperatorNode):
         v: Any = None
         try:
             v = await self.get_state_value(name)
-        except Exception:
+        except (RuntimeError, TypeError, ValueError):
             v = None
         if v is None:
             v = self._initial_state.get(name)
         try:
             out = int(v) if v is not None else int(default)
-        except Exception:
+        except (TypeError, ValueError):
             out = int(default)
         if out < minimum:
             out = minimum
         if out > maximum:
             out = maximum
         return out
-
-    async def _get_str_state(self, name: str, *, default: str) -> str:
-        v: Any = None
-        try:
-            v = await self.get_state_value(name)
-        except Exception:
-            v = None
-        if v is None:
-            v = self._initial_state.get(name)
-        try:
-            s = str(v) if v is not None else str(default)
-        except Exception:
-            s = str(default)
-        return s
-
 
 def register_operator(registry: Registry) -> Registry:
     registry.register_operator(VizAudioRuntimeNode.SPEC, VizAudioRuntimeNode, overwrite=True)

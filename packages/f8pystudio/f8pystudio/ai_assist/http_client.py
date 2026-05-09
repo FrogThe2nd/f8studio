@@ -393,6 +393,14 @@ class AiHttpClient(QtCore.QObject):
             reply.abort()
             # on_done / on_result will be called via finished signal with OperationCanceledError
 
+    def abort_all_requests(self) -> None:
+        for rid, reply in list(self._requests.items()):
+            try:
+                logger.debug("AI HTTP: aborting request id=%s during shutdown", rid)
+                reply.abort()
+            except RuntimeError:
+                logger.debug("AI HTTP: abort failed id=%s during shutdown", rid, exc_info=True)
+
     def chat_completion(
         self,
         cfg: ProviderConfig,

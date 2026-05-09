@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from .generated import F8Edge, F8EdgeKindEnum, F8RuntimeGraph, F8RuntimeNode, F8StateAccess
+import msgspec
+
+from ._specs.schema import data_port_payload_kind
+from .generated import F8DataPortSpec, F8Edge, F8EdgeKindEnum, F8RuntimeGraph, F8RuntimeNode, F8StateAccess
 
 
 def _state_key(*, service_id: str, node_id: str, field: str) -> tuple[str, str, str]:
@@ -12,6 +15,71 @@ def _state_key(*, service_id: str, node_id: str, field: str) -> tuple[str, str, 
 def _fmt_key(k: tuple[str, str, str]) -> str:
     sid, nid, fld = k
     return f"{sid}.{nid}.{fld}"
+
+
+def _optional_text(value: object) -> str:
+    if value is None or isinstance(value, msgspec.UnsetType):
+        return ""
+    return str(value or "").strip()
+
+
+def _data_port_by_name(ports: object, port_name: str) -> F8DataPortSpec | None:
+    target = str(port_name or "").strip()
+    if not target or isinstance(ports, msgspec.UnsetType):
+        return None
+    for port in list(ports or []):
+        if not isinstance(port, F8DataPortSpec):
+            continue
+        if str(port.name or "").strip() == target:
+            return port
+    return None
+
+
+def _runtime_node_for_endpoint(
+    nodes_by_key: dict[tuple[str, str], F8RuntimeNode],
+    *,
+    service_id: str,
+    operator_id: str,
+) -> F8RuntimeNode | None:
+    node_id = str(operator_id or "").strip() or str(service_id or "").strip()
+    if not service_id or not node_id:
+        return None
+    return nodes_by_key.get((service_id, node_id))
+
+
+def _validate_data_edge_payload_kind(
+    *,
+    edge: F8Edge,
+    nodes_by_key: dict[tuple[str, str], F8RuntimeNode],
+) -> None:
+    from_sid = _optional_text(edge.fromServiceId)
+    to_sid = _optional_text(edge.toServiceId)
+    from_op = _optional_text(edge.fromOperatorId)
+    to_op = _optional_text(edge.toOperatorId)
+    from_port_name = _optional_text(edge.fromPort)
+    to_port_name = _optional_text(edge.toPort)
+    if not (from_sid and to_sid and from_port_name and to_port_name):
+        return
+
+    from_node = _runtime_node_for_endpoint(nodes_by_key, service_id=from_sid, operator_id=from_op)
+    to_node = _runtime_node_for_endpoint(nodes_by_key, service_id=to_sid, operator_id=to_op)
+    if from_node is None or to_node is None:
+        return
+
+    from_port = _data_port_by_name(from_node.dataOutPorts, from_port_name)
+    to_port = _data_port_by_name(to_node.dataInPorts, to_port_name)
+    if from_port is None or to_port is None:
+        return
+
+    from_kind = data_port_payload_kind(from_port)
+    to_kind = data_port_payload_kind(to_port)
+    if from_kind == to_kind:
+        return
+    raise ValueError(
+        "data edge payload kind mismatch: "
+        f"{from_sid}.{from_op or '$service'}.{from_port_name}({from_kind.value}) -> "
+        f"{to_sid}.{to_op or '$service'}.{to_port_name}({to_kind.value})"
+    )
 
 
 def validate_exec_edges_or_raise(
@@ -99,15 +167,23 @@ def validate_data_edges_or_raise(
     - data output ports are unrestricted (fan-out allowed)
     """
     inbound_map: dict[tuple[str, str, str], tuple[str, str, str]] = {}
+    nodes_by_key: dict[tuple[str, str], F8RuntimeNode] = {}
+    for n in list(graph.nodes or []):
+        service_id = _optional_text(n.serviceId)
+        node_id = _optional_text(n.nodeId)
+        if service_id and node_id:
+            nodes_by_key[(service_id, node_id)] = n
+
     for e in list(graph.edges or []):
         if e.kind != F8EdgeKindEnum.data:
             continue
-        from_sid = str(e.fromServiceId or "").strip()
-        to_sid = str(e.toServiceId or "").strip()
-        from_op = str(e.fromOperatorId or "").strip()
-        to_op = str(e.toOperatorId or "").strip()
-        from_port = str(e.fromPort or "").strip()
-        to_port = str(e.toPort or "").strip()
+        _validate_data_edge_payload_kind(edge=e, nodes_by_key=nodes_by_key)
+        from_sid = _optional_text(e.fromServiceId)
+        to_sid = _optional_text(e.toServiceId)
+        from_op = _optional_text(e.fromOperatorId)
+        to_op = _optional_text(e.toOperatorId)
+        from_port = _optional_text(e.fromPort)
+        to_port = _optional_text(e.toPort)
         if not (from_sid and to_sid and from_port and to_port):
             continue
 

@@ -7,7 +7,7 @@ from f8pysdk.specs import (
     F8OperatorSpec,
     F8RuntimeNode,
 )
-from f8pysdk.nats_naming import ensure_token
+from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import OperatorNode
 from f8pysdk.registry import Registry
 

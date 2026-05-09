@@ -67,16 +67,32 @@ def _apply_pixi_cpp_env(env: dict[str, str]) -> None:
     if not pixi_cpp_env.is_dir():
         return
 
-    _prepend_path_list(env, "CMAKE_PREFIX_PATH", [pixi_cpp_env])
-    _prepend_path_list(env, "CMAKE_LIBRARY_PATH", [pixi_cpp_env / "lib"])
-    _prepend_path_list(env, "CMAKE_INCLUDE_PATH", [pixi_cpp_env / "include"])
+    pixi_prefixes = [pixi_cpp_env]
+    pixi_library_dirs = [pixi_cpp_env / "lib"]
+    pixi_include_dirs = [pixi_cpp_env / "include"]
+    pixi_pkg_config_dirs = [
+        pixi_cpp_env / "lib" / "pkgconfig",
+        pixi_cpp_env / "share" / "pkgconfig",
+    ]
+    pixi_bin_dirs = [pixi_cpp_env / "bin"]
+
+    pixi_windows_prefix = pixi_cpp_env / "Library"
+    if pixi_windows_prefix.is_dir():
+        pixi_prefixes.insert(0, pixi_windows_prefix)
+        pixi_library_dirs.insert(0, pixi_windows_prefix / "lib")
+        pixi_include_dirs.insert(0, pixi_windows_prefix / "include")
+        pixi_pkg_config_dirs.insert(0, pixi_windows_prefix / "share" / "pkgconfig")
+        pixi_pkg_config_dirs.insert(0, pixi_windows_prefix / "lib" / "pkgconfig")
+        pixi_bin_dirs.insert(0, pixi_windows_prefix / "bin")
+
+    _prepend_path_list(env, "PATH", pixi_bin_dirs)
+    _prepend_path_list(env, "CMAKE_PREFIX_PATH", pixi_prefixes)
+    _prepend_path_list(env, "CMAKE_LIBRARY_PATH", pixi_library_dirs)
+    _prepend_path_list(env, "CMAKE_INCLUDE_PATH", pixi_include_dirs)
     _prepend_path_list(
         env,
         "PKG_CONFIG_PATH",
-        [
-            pixi_cpp_env / "lib" / "pkgconfig",
-            pixi_cpp_env / "share" / "pkgconfig",
-        ],
+        pixi_pkg_config_dirs,
     )
 
 
@@ -228,6 +244,25 @@ def _build() -> None:
     )
 
 
+def _build_target(target: str) -> None:
+    target_s = str(target or "").strip()
+    if not target_s:
+        raise ValueError("target must be non-empty")
+    conan_presets = _select_conan_release_presets()
+    _run(
+        [
+            _cpp_tool("cmake"),
+            "--build",
+            "--preset",
+            conan_presets.build_preset_name,
+            "--target",
+            target_s,
+            "--parallel",
+        ],
+        use_pixi_cpp_paths=True,
+    )
+
+
 def _lock_refresh() -> None:
     _run([_cpp_tool("conan"), "profile", "detect", "--force"], use_host_pkg_config=True)
     if LOCKFILE_PATH.is_file():
@@ -252,9 +287,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="C++ CI entrypoint for Conan + CMake.")
     parser.add_argument(
         "command",
-        choices=("bootstrap", "configure", "build", "lock-refresh"),
+        choices=("bootstrap", "configure", "build", "build-target", "lock-refresh"),
         help="Action to run.",
     )
+    parser.add_argument("target", nargs="?", help="CMake target for the build-target command.")
     return parser
 
 
@@ -266,6 +302,10 @@ def main() -> int:
         _configure()
     elif args.command == "build":
         _build()
+    elif args.command == "build-target":
+        if not args.target:
+            raise SystemExit("Missing target for build-target")
+        _build_target(str(args.target))
     elif args.command == "lock-refresh":
         _lock_refresh()
     return 0

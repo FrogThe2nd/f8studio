@@ -6,7 +6,7 @@ No description.
 - Service class: `f8.screencap`
 - Version: `0.0.1`
 - Source directory: `f8/screencap`
-- Tags: `video`, `capture`, `shm`
+- Tags: `video`, `capture`, `zenoh`
 
 ## When to Use
 
@@ -31,7 +31,7 @@ No description.
 ### How to Run
 
 ```bash
-linux/f8screencap_service
+win/f8screencap_service.exe
 ```
 
 - Workdir: `./`
@@ -40,15 +40,15 @@ linux/f8screencap_service
 ### Typical Inputs / Outputs
 
 - Data inputs: none
-- Data outputs: `monitor`
+- Data outputs: `video`, `monitor`
 - Commands: `listDisplays`, `pickDisplay`, `pickWindow`, `pickRegion`
 
 ### Service State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `videoShmName` | `ro` | `true` | `true` | `string` | Shared memory region name |
-| `videoShmEvent` | `ro` | `true` | `false` | `string` | Shared memory event name |
+| `videoFormat` | `ro` | `true` | `false` | `string / enum[bgra32, bgr24, flow2_f16, scalar1_f32]` | Frame payload format |
+| `videoFrameSchemaVersion` | `ro` | `true` | `false` | `integer` | Frame schema version |
 | `mode` | `rw` | `true` | `false` | `string / enum[display, window, region]` | display\|window\|region |
 | `fps` | `rw` | `true` | `true` | `number` | Capture rate |
 | `displayId` | `ro` | `true` | `false` | `integer` | 0..N-1 (see listDisplays) |
@@ -65,8 +65,8 @@ linux/f8screencap_service
 
 ### Key Fields That Matter
 
-- `videoShmName` (Video SHM, `ro`): Shared memory region name Schema: `string`.
-- `videoShmEvent` (Video Event, `ro`): Shared memory event name Schema: `string`.
+- `videoFormat` (Video Format, `ro`): Frame payload format Schema: `string / enum[bgra32, bgr24, flow2_f16, scalar1_f32]`.
+- `videoFrameSchemaVersion` (Video Schema, `ro`): Frame schema version Schema: `integer`.
 - `mode` (Mode, `rw`): display|window|region Schema: `string / enum[display, window, region]`.
 - `fps` (FPS, `rw`): Capture rate Schema: `number`.
 - `displayId` (Display ID, `ro`): 0..N-1 (see listDisplays) Schema: `integer`.
@@ -108,6 +108,7 @@ _None_
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
+| `video` | `true` | `true` | `object{format, frameId, height, pitch, ...}` | Captured video frame stream. |
 | `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators

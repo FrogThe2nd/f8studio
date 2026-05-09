@@ -9,15 +9,15 @@ from typing import Any
 
 import numpy as np
 
-from f8pysdk.codec import coerce_int, coerce_str
-from f8pysdk.nats_naming import ensure_token
-from f8pysdk.nodes import ServiceNode
-from f8pysdk.shm.audio import (
-    AUDIO_SHM_MAGIC,
-    AUDIO_SHM_VERSION,
+from f8pysdk.audio_transport import (
+    LatestAudioChunkTransport,
     SAMPLE_FORMAT_F32LE,
-    AudioShmReader,
+    ZenohLatestAudioChunkTransport,
 )
+from f8pysdk.bus import ServiceBus
+from f8pysdk.codec import coerce_int
+from f8pysdk.f8_naming import ensure_token
+from f8pysdk.nodes import ServiceNode
 
 from .constants import CORE_SCHEMA_VERSION
 from .feature_math import compute_core_features, librosa_available
@@ -37,7 +37,7 @@ class AudioCoreFeatureServiceNode(ServiceNode):
     def __init__(self, *, node_id: str, node: Any, initial_state: dict[str, Any] | None) -> None:
         super().__init__(
             node_id=ensure_token(node_id, label="node_id"),
-            data_in_ports=[],
+            data_in_ports=["audio"],
             data_out_ports=["coreFeatures"],
             state_fields=[str(s.name) for s in list(node.stateFields or [])],
         )
@@ -45,7 +45,6 @@ class AudioCoreFeatureServiceNode(ServiceNode):
         self._active = True
         self._task: asyncio.Task[object] | None = None
 
-        self._audio_shm_name = coerce_str(self._initial_state.get("audioShmName"), default="")
         self._channel_mode = self._coerce_channel_mode(self._initial_state.get("channelMode"))
         self._window_ms = coerce_int(self._initial_state.get("windowMs"), default=CoreDefaults.window_ms, minimum=64)
         self._hop_ms = coerce_int(self._initial_state.get("hopMs"), default=CoreDefaults.hop_ms, minimum=8)
@@ -53,8 +52,8 @@ class AudioCoreFeatureServiceNode(ServiceNode):
             self._initial_state.get("emitEveryHops"), default=CoreDefaults.emit_every_hops, minimum=1
         )
 
-        self._reader: AudioShmReader | None = None
-        self._opened_shm_name = ""
+        self._reader: LatestAudioChunkTransport | None = None
+        self._opened_audio_key = ""
         self._last_seq = 0
         self._emit_seq = 0
         self._hop_counter = 0
@@ -64,9 +63,19 @@ class AudioCoreFeatureServiceNode(ServiceNode):
         self._last_error = ""
         self._last_error_signature = ""
         self._last_error_log_ms = 0
+        self._zenoh_config_path: str | None = None
+        self._zenoh_connect: tuple[str, ...] = ()
+        self._zenoh_listen: tuple[str, ...] = ()
+        self._zenoh_shm_pool_bytes = 256 * 1024 * 1024
 
     def attach(self, bus: Any) -> None:
         super().attach(bus)
+        if isinstance(bus, ServiceBus):
+            cfg = bus.config
+            self._zenoh_config_path = cfg.zenoh_config_path
+            self._zenoh_connect = cfg.zenoh_connect
+            self._zenoh_listen = cfg.zenoh_listen
+            self._zenoh_shm_pool_bytes = cfg.zenoh_shm_pool_bytes
         loop = asyncio.get_running_loop()
         self._task = loop.create_task(self._loop(), name=f"audiofeat:core:{self.node_id}")
 
@@ -84,10 +93,6 @@ class AudioCoreFeatureServiceNode(ServiceNode):
 
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
         del ts_ms
-        if field == "audioShmName":
-            self._audio_shm_name = coerce_str(value, default="")
-            self._close_reader()
-            return
         if field == "channelMode":
             self._channel_mode = self._coerce_channel_mode(value)
             return
@@ -133,7 +138,7 @@ class AudioCoreFeatureServiceNode(ServiceNode):
         if exc is None:
             logger.error("[%s] %s", self.node_id, msg)
             return
-        logger.exception("[%s] %s", self.node_id, msg, exc_info=exc)
+        logger.error("[%s] %s", self.node_id, msg, exc_info=(type(exc), exc, exc.__traceback__))
 
     async def _clear_last_error(self) -> None:
         if not self._last_error:
@@ -146,18 +151,24 @@ class AudioCoreFeatureServiceNode(ServiceNode):
         if self._reader is not None:
             self._reader.close()
             self._reader = None
-        self._opened_shm_name = ""
+        self._opened_audio_key = ""
         self._last_seq = 0
         self._sample_ring = np.asarray([], dtype=np.float32)
 
     def _ensure_reader(self) -> None:
-        if self._reader is not None and self._opened_shm_name == self._audio_shm_name:
+        audio_key = str(self.input_zenoh_key("audio") or "").strip()
+        if self._reader is not None and self._opened_audio_key == audio_key:
             return
         self._close_reader()
-        reader = AudioShmReader(self._audio_shm_name)
-        reader.open(use_event=False)
+        reader = ZenohLatestAudioChunkTransport.open_subscriber(
+            audio_key,
+            config_path=self._zenoh_config_path,
+            connect=self._zenoh_connect,
+            listen=self._zenoh_listen,
+            shm_pool_bytes=self._zenoh_shm_pool_bytes,
+        )
         self._reader = reader
-        self._opened_shm_name = self._audio_shm_name
+        self._opened_audio_key = audio_key
 
     def _chunk_to_mono(self, payload: memoryview, *, frames: int, channels: int) -> np.ndarray:
         samples = np.frombuffer(payload, dtype=np.float32)
@@ -188,19 +199,22 @@ class AudioCoreFeatureServiceNode(ServiceNode):
             await asyncio.sleep(0.02)
             return
 
-        if not self._audio_shm_name:
-            await self._set_last_error("missing audioShmName", signature="missing_shm")
+        audio_key = str(self.input_zenoh_key("audio") or "").strip()
+        if not audio_key:
+            await self._set_last_error("missing audio data input", signature="missing_audio_input")
             await asyncio.sleep(0.05)
             return
 
         try:
             self._ensure_reader()
         except FileNotFoundError as exc:
-            await self._set_last_error("audio shm not found", signature="shm_not_found", exc=exc)
+            await self._set_last_error(
+                "audio input open failed", signature="input_open:FileNotFoundError", exc=exc
+            )
             await asyncio.sleep(0.05)
             return
-        except RuntimeError as exc:
-            await self._set_last_error("audio shm open failed", signature="shm_open_runtime", exc=exc)
+        except (OSError, RuntimeError, ValueError) as exc:
+            await self._set_last_error("audio input open failed", signature=f"input_open:{type(exc).__name__}", exc=exc)
             await asyncio.sleep(0.05)
             return
 
@@ -209,42 +223,31 @@ class AudioCoreFeatureServiceNode(ServiceNode):
             await asyncio.sleep(0.05)
             return
 
-        hdr = reader.read_header()
-        if hdr is None:
-            await self._set_last_error("audio shm header unavailable", signature="bad_header")
-            await asyncio.sleep(0.02)
-            return
-
-        if hdr.magic != AUDIO_SHM_MAGIC or hdr.version != AUDIO_SHM_VERSION:
-            await self._set_last_error("audio shm header mismatch", signature="bad_magic")
-            await asyncio.sleep(0.05)
-            return
-
-        if int(hdr.fmt) != int(SAMPLE_FORMAT_F32LE):
-            await self._set_last_error("audio shm format must be f32le", signature="bad_format")
-            await asyncio.sleep(0.05)
-            return
-
-        seq = int(hdr.write_seq)
-        if seq <= 0 or seq == int(self._last_seq):
+        chunk = reader.poll_latest()
+        if chunk is None:
             await asyncio.sleep(0.01)
             return
 
-        hdr2, chunk_hdr, payload = reader.read_chunk_f32(seq)
-        if hdr2 is None or chunk_hdr is None or payload is None:
+        if int(chunk.fmt) != int(SAMPLE_FORMAT_F32LE):
+            chunk.release()
+            await self._set_last_error("audio format must be f32le", signature="bad_format")
+            await asyncio.sleep(0.05)
+            return
+        seq = int(chunk.seq)
+        frames = int(chunk.frames)
+        channels = int(chunk.channels)
+        if seq <= 0 or seq == int(self._last_seq) or frames <= 0 or channels <= 0:
+            chunk.release()
             await asyncio.sleep(0.005)
             return
 
-        frames = int(chunk_hdr.frames)
-        channels = int(hdr2.channels)
-        if frames <= 0 or channels <= 0:
-            await asyncio.sleep(0.005)
-            return
-
-        mono = self._chunk_to_mono(payload, frames=frames, channels=channels)
+        try:
+            mono = self._chunk_to_mono(chunk.payload, frames=frames, channels=channels)
+        finally:
+            chunk.release()
         self._sample_ring = np.concatenate((self._sample_ring, mono))
 
-        sample_rate = int(hdr2.sample_rate)
+        sample_rate = int(chunk.sample_rate)
         window_length = max(32, int(round(sample_rate * float(self._window_ms) / 1000.0)))
         hop_length = max(8, int(round(sample_rate * float(self._hop_ms) / 1000.0)))
 
@@ -277,7 +280,7 @@ class AudioCoreFeatureServiceNode(ServiceNode):
         self._emit_seq += 1
         payload_out = {
             "schemaVersion": CORE_SCHEMA_VERSION,
-            "tsMs": int(chunk_hdr.ts_ms),
+            "tsMs": int(chunk.ts_ms),
             "seq": int(self._emit_seq),
             "sampleRate": int(sample_rate),
             "hopLength": int(hop_length),
@@ -287,5 +290,5 @@ class AudioCoreFeatureServiceNode(ServiceNode):
             "onsetStrength": float(onset_strength),
             "onsetEnvelope": [float(v) for v in self._onset_history],
         }
-        await self.emit("coreFeatures", payload_out, ts_ms=int(chunk_hdr.ts_ms))
+        await self.emit("coreFeatures", payload_out, ts_ms=int(chunk.ts_ms))
         await asyncio.sleep(0.001)

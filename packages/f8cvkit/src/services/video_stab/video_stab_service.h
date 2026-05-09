@@ -13,8 +13,8 @@
 #include <opencv2/core.hpp>
 
 #include "f8cppsdk/capabilities.h"
+#include "f8cppsdk/latest_video_frame_transport.h"
 #include "f8cppsdk/service_bus.h"
-#include "f8cppsdk/video_shared_memory_sink.h"
 
 namespace f8::cvkit::video_stab {
 
@@ -43,7 +43,7 @@ class VideoStabService final : public f8::cppsdk::LifecycleNode,
   struct Config {
     std::string service_id;
     std::string service_class = "f8.cvkit.videostab";
-    std::string nats_url = "nats://127.0.0.1:4222";
+    f8::cppsdk::RuntimeBackendConfig runtime_backend;
   };
 
   explicit VideoStabService(Config cfg);
@@ -78,7 +78,6 @@ class VideoStabService final : public f8::cppsdk::LifecycleNode,
   bool ensure_output_open();
   void process_frame_once();
   void reset_stabilizer_internal(const json& meta, const std::string& reason);
-  void set_input_shm_name(const std::string& shm_name, const json& meta);
   void set_motion_model(const std::string& model, const json& meta);
   void set_stabilization_mode(const std::string& mode, const json& meta);
 
@@ -96,19 +95,18 @@ class VideoStabService final : public f8::cppsdk::LifecycleNode,
 
   std::mutex io_mu_;
 
-  // Input video SHM (BGRA32).
-  std::string input_shm_name_;
-  f8::cppsdk::VideoSharedMemoryReader input_video_;
+  // Input video (BGRA32).
+  std::string input_stream_key_;
+  std::unique_ptr<f8::cppsdk::ZenohLatestVideoFrameSubscriber> input_zenoh_video_;
   std::vector<std::byte> input_frame_bgra_;
-  std::uint32_t input_last_notify_seq_ = 0;
   std::uint64_t input_last_frame_id_ = 0;
   std::int64_t input_last_open_attempt_ms_ = 0;
 
-  // Output video SHM (BGRA32).
-  std::string output_shm_name_;
-  std::unique_ptr<f8::cppsdk::VideoSharedMemorySink> output_video_;
+  // Output video (BGRA32).
+  std::string output_stream_key_;
+  std::shared_ptr<f8::cppsdk::ZenohLatestVideoFramePublisher> output_zenoh_video_;
+  std::uint64_t output_frame_id_ = 0;
   bool output_initialized_ = false;
-  std::int64_t output_last_open_attempt_ms_ = 0;
 
   // Stabilizer tuning.
   MotionModel motion_model_ = MotionModel::Affine;

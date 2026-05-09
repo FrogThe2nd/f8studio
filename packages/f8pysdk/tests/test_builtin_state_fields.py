@@ -16,8 +16,8 @@ from f8pysdk._specs.builtin_fields import (  # noqa: E402
     service_state_fields_with_builtins,
 )
 from f8pysdk.specs import F8DataPortSpec, F8StateAccess, F8StateFieldEditPolicy, F8StateSpec  # noqa: E402
-from f8pysdk.nats_naming import kv_key_node_state  # noqa: E402
 from f8pysdk.codec import decode_obj  # noqa: E402
+from f8pysdk.zenoh_naming import zenoh_state_key  # noqa: E402
 from f8pysdk.specs import (  # noqa: E402
     boolean_schema,
     can_delete_state_field,
@@ -260,12 +260,12 @@ class LifecycleBootstrapTests(unittest.IsolatedAsyncioTestCase):
     async def test_start_seeds_active_state(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        with patch("f8pysdk.service_bus.workflow.lifecycle._ensure_micro_endpoints_started") as ensure_micro:
+        with patch("f8pysdk.service_bus.workflow.lifecycle._ensure_control_endpoints_started") as ensure_control:
 
             async def _noop(_bus: object) -> None:
                 return None
 
-            ensure_micro.side_effect = _noop
+            ensure_control.side_effect = _noop
             await bus.start()
         state = await bus.get_state("svcA", "active")
         await bus.stop()
@@ -275,15 +275,15 @@ class LifecycleBootstrapTests(unittest.IsolatedAsyncioTestCase):
     async def test_seeded_active_state_origin_runtime(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        with patch("f8pysdk.service_bus.workflow.lifecycle._ensure_micro_endpoints_started") as ensure_micro:
+        with patch("f8pysdk.service_bus.workflow.lifecycle._ensure_control_endpoints_started") as ensure_control:
 
             async def _noop(_bus: object) -> None:
                 return None
 
-            ensure_micro.side_effect = _noop
+            ensure_control.side_effect = _noop
             await bus.start()
-        key = kv_key_node_state(node_id="svcA", field="active")
-        raw = await bus._transport.kv_get(key)
+        key = zenoh_state_key("svcA", node_id="svcA", field="active")
+        raw = await bus._transport.retained_get(key)
         await bus.stop()
         self.assertIsNotNone(raw)
         payload = decode_obj(raw) if raw is not None else {}

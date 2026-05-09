@@ -126,6 +126,77 @@ def take_prewarmed_webengine_view(*, parent: QtWidgets.QWidget | None = None) ->
     return view
 
 
+def release_webengine_view(view: object, *, context: str) -> None:
+    """
+    Tear down a QWebEngineView before process shutdown.
+
+    QtWebEngine owns native Chromium resources that can survive normal QWidget
+    close/hide. Releasing the page/channel and scheduling DeferredDelete keeps
+    the Studio shutdown path explicit instead of relying on Python/Qt finalizers.
+    """
+
+    page = None
+    try:
+        page = view.page()
+    except (AttributeError, RuntimeError, TypeError):
+        page = None
+
+    if page is not None:
+        try:
+            page.setWebChannel(None)
+        except (AttributeError, RuntimeError, TypeError):
+            logger.debug("failed to clear WebEngine channel context=%s", str(context or "").strip(), exc_info=True)
+
+    try:
+        view.stop()
+    except (AttributeError, RuntimeError, TypeError):
+        pass
+
+    try:
+        view.setUrl(QtCore.QUrl("about:blank"))
+    except (AttributeError, RuntimeError, TypeError):
+        logger.debug("failed to reset WebEngine url context=%s", str(context or "").strip(), exc_info=True)
+
+    try:
+        view.hide()
+    except (AttributeError, RuntimeError, TypeError):
+        pass
+
+    try:
+        view.setParent(None)
+    except (AttributeError, RuntimeError, TypeError):
+        pass
+
+    try:
+        view.deleteLater()
+    except (AttributeError, RuntimeError, TypeError):
+        logger.debug("failed to deleteLater WebEngine view context=%s", str(context or "").strip(), exc_info=True)
+
+
+def release_prewarmed_webengine_view() -> None:
+    global _WEBENGINE_PREWARM_VIEW, _WEBENGINE_VIEW_PREWARMED
+    view = _WEBENGINE_PREWARM_VIEW
+    _WEBENGINE_PREWARM_VIEW = None
+    _WEBENGINE_VIEW_PREWARMED = False
+    if view is None:
+        return
+    release_webengine_view(view, context="prewarm")
+
+
+def flush_qt_deferred_deletes() -> None:
+    app = QtCore.QCoreApplication.instance()
+    if app is None:
+        return
+    try:
+        QtCore.QCoreApplication.sendPostedEvents(None, int(QtCore.QEvent.Type.DeferredDelete))
+    except RuntimeError:
+        logger.debug("failed to flush Qt deferred deletes", exc_info=True)
+    try:
+        app.processEvents()
+    except RuntimeError:
+        logger.debug("failed to process Qt events during shutdown", exc_info=True)
+
+
 def set_webengine_view_background(view: object, color: str) -> None:
     page = None
     try:

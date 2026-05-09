@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from f8pysdk.capabilities import ComputableNode
 from f8pysdk.codec import coerce_flag, coerce_int
-from f8pysdk.nats_naming import ensure_token
+from f8pysdk.f8_naming import ensure_token
 from f8pysdk.specs import F8AutoSampleRequest, F8RuntimeGraph
 from f8pysdk.service_bus.data.emit import DataEmitOptions
 from f8pysdk.service_bus.data.flow import emit_data as emit_data_with_options

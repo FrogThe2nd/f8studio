@@ -6,14 +6,20 @@ import numpy as np
 from NodeGraphQt.nodes.base_node import NodeBaseWidget
 from qtpy import QtCore, QtGui, QtWidgets
 
-from f8pysdk.shm import VIDEO_FORMAT_FLOW2_F16, VIDEO_FORMAT_SCALAR1_F32, VideoShmReader
+from f8pysdk.video_transport import (
+    LatestVideoFrameTransport,
+    VIDEO_FORMAT_BGRA32,
+    VIDEO_FORMAT_FLOW2_F16,
+    VIDEO_FORMAT_SCALAR1_F32,
+    ZenohLatestVideoFrameTransport,
+)
 
 from ..nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from ..nodegraph.viz_operator_nodeitem import F8StudioVizOperatorNodeItem
 from f8pystudio.contracts.ui_commands import UiCommand
 
 _STATE_UI_UPDATE = "uiUpdate"
-_WIDGET_NAME = "__videoshm"
+_WIDGET_NAME = "__video_latest"
 
 
 def _hsv_to_rgb_u8(h: np.ndarray, s: np.ndarray, v: np.ndarray) -> np.ndarray:
@@ -145,7 +151,7 @@ def _to_bool(value: object, *, default: bool) -> bool:
     return bool(default)
 
 
-class _VideoShmPane(QtWidgets.QWidget):
+class _LatestVideoPane(QtWidgets.QWidget):
     def __init__(self) -> None:
         super().__init__()
         layout = QtWidgets.QVBoxLayout(self)
@@ -188,12 +194,12 @@ class _VideoShmPane(QtWidgets.QWidget):
         self._timer.timeout.connect(self._tick)  # type: ignore[attr-defined]
         self._timer.setInterval(33)
 
-        self._video_reader: VideoShmReader | None = None
-        self._flow_reader: VideoShmReader | None = None
-        self._scalar_reader: VideoShmReader | None = None
-        self._video_shm_name = ""
-        self._flow_shm_name = ""
-        self._scalar_shm_name = ""
+        self._video_reader: LatestVideoFrameTransport | None = None
+        self._flow_reader: LatestVideoFrameTransport | None = None
+        self._scalar_reader: LatestVideoFrameTransport | None = None
+        self._video_stream_key = ""
+        self._flow_stream_key = ""
+        self._scalar_stream_key = ""
         self._flow_display_mode = "off"
         self._flow_mag_scale = 20.0
         self._flow_stride = 12
@@ -228,13 +234,13 @@ class _VideoShmPane(QtWidgets.QWidget):
     def set_config(
         self,
         *,
-        shm_name: str,
+        video_stream_key: str,
         throttle_ms: int,
-        flow_shm_name: str,
+        flow_stream_key: str,
         flow_display_mode: str,
         flow_mag_scale: float,
         flow_stride: int,
-        scalar_shm_name: str,
+        scalar_stream_key: str,
         scalar_display_mode: str,
         scalar_colormap: str,
         scalar_range_mode: str,
@@ -246,9 +252,9 @@ class _VideoShmPane(QtWidgets.QWidget):
         scalar_nan_mode: str,
         scale_mode: str,
     ) -> None:
-        next_video = str(shm_name or "").strip()
-        next_flow = str(flow_shm_name or "").strip()
-        next_scalar = str(scalar_shm_name or "").strip()
+        next_video_stream_key = str(video_stream_key or "").strip()
+        next_flow_stream_key = str(flow_stream_key or "").strip()
+        next_scalar_stream_key = str(scalar_stream_key or "").strip()
         next_mode = str(flow_display_mode or "off").strip().lower()
         if next_mode not in ("off", "hsv", "arrows"):
             next_mode = "off"
@@ -265,14 +271,14 @@ class _VideoShmPane(QtWidgets.QWidget):
         if next_scalar_nan_mode not in ("transparent", "zero", "min", "max"):
             next_scalar_nan_mode = "transparent"
 
-        if next_video != self._video_shm_name:
-            self._video_shm_name = next_video
+        if next_video_stream_key != self._video_stream_key:
+            self._video_stream_key = next_video_stream_key
             self._reset_video_reader()
-        if next_flow != self._flow_shm_name:
-            self._flow_shm_name = next_flow
+        if next_flow_stream_key != self._flow_stream_key:
+            self._flow_stream_key = next_flow_stream_key
             self._reset_flow_reader()
-        if next_scalar != self._scalar_shm_name:
-            self._scalar_shm_name = next_scalar
+        if next_scalar_stream_key != self._scalar_stream_key:
+            self._scalar_stream_key = next_scalar_stream_key
             self._reset_scalar_reader()
         self._flow_display_mode = next_mode
         self._flow_mag_scale = max(0.1, float(flow_mag_scale))
@@ -328,7 +334,10 @@ class _VideoShmPane(QtWidgets.QWidget):
         self._scalar_reader = None
 
     def _sync_timer_with_update_state(self) -> None:
-        has_source = bool(self._video_shm_name) or bool(self._flow_shm_name) or bool(self._scalar_shm_name)
+        has_video_source = bool(self._video_stream_key)
+        has_flow_source = bool(self._flow_stream_key)
+        has_scalar_source = bool(self._scalar_stream_key)
+        has_source = has_video_source or has_flow_source or has_scalar_source
         if self.update_enabled() and has_source:
             if not self._timer.isActive():
                 self._timer.start()
@@ -339,42 +348,36 @@ class _VideoShmPane(QtWidgets.QWidget):
     def _ensure_video_reader(self) -> bool:
         if self._video_reader is not None:
             return True
-        if not self._video_shm_name:
+        if not self._video_stream_key:
             return False
         try:
-            r = VideoShmReader(self._video_shm_name)
-            r.open(use_event=False)
-            self._video_reader = r
+            self._video_reader = ZenohLatestVideoFrameTransport.open_subscriber(self._video_stream_key)
             return True
-        except Exception:
+        except (OSError, RuntimeError, ValueError):
             self._video_reader = None
             return False
 
     def _ensure_flow_reader(self) -> bool:
         if self._flow_reader is not None:
             return True
-        if not self._flow_shm_name:
+        if not self._flow_stream_key:
             return False
         try:
-            r = VideoShmReader(self._flow_shm_name)
-            r.open(use_event=False)
-            self._flow_reader = r
+            self._flow_reader = ZenohLatestVideoFrameTransport.open_subscriber(self._flow_stream_key)
             return True
-        except Exception:
+        except (OSError, RuntimeError, ValueError):
             self._flow_reader = None
             return False
 
     def _ensure_scalar_reader(self) -> bool:
         if self._scalar_reader is not None:
             return True
-        if not self._scalar_shm_name:
+        if not self._scalar_stream_key:
             return False
         try:
-            r = VideoShmReader(self._scalar_shm_name)
-            r.open(use_event=False)
-            self._scalar_reader = r
+            self._scalar_reader = ZenohLatestVideoFrameTransport.open_subscriber(self._scalar_stream_key)
             return True
-        except Exception:
+        except (OSError, RuntimeError, ValueError):
             self._scalar_reader = None
             return False
 
@@ -382,26 +385,31 @@ class _VideoShmPane(QtWidgets.QWidget):
         if not self._ensure_video_reader() or self._video_reader is None:
             return
         try:
-            header, payload = self._video_reader.read_latest_bgra()
-        except Exception:
+            frame = self._video_reader.poll_latest()
+        except (BufferError, OSError, RuntimeError, ValueError):
             return
-        if header is None or payload is None:
+        if frame is None:
             return
-        frame_id = int(header.frame_id)
-        if frame_id == self._last_video_frame_id:
-            return
-        w = int(header.width)
-        h = int(header.height)
-        pitch = int(header.pitch)
-        if w <= 0 or h <= 0 or pitch <= 0:
-            return
-        frame_bytes = bytes(payload)
         try:
-            img = QtGui.QImage(frame_bytes, w, h, pitch, QtGui.QImage.Format_ARGB32)
-            self._latest_video = img.copy()
-            self._last_video_frame_id = frame_id
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            return
+            if int(frame.fmt) != VIDEO_FORMAT_BGRA32:
+                return
+            frame_id = int(frame.frame_id)
+            if frame_id == self._last_video_frame_id:
+                return
+            w = int(frame.width)
+            h = int(frame.height)
+            pitch = int(frame.pitch)
+            if w <= 0 or h <= 0 or pitch <= 0:
+                return
+            frame_bytes = frame.payload_bytes()
+            try:
+                img = QtGui.QImage(frame_bytes, w, h, pitch, QtGui.QImage.Format_ARGB32)
+                self._latest_video = img.copy()
+                self._last_video_frame_id = frame_id
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                return
+        finally:
+            frame.release()
 
     def _render_hsv_flow(self, payload: memoryview, width: int, height: int, pitch: int) -> QtGui.QImage | None:
         row_bytes = width * 4
@@ -508,26 +516,29 @@ class _VideoShmPane(QtWidgets.QWidget):
         if not self._ensure_flow_reader() or self._flow_reader is None:
             return None
         try:
-            header, payload = self._flow_reader.read_latest_frame()
-        except Exception:
+            frame = self._flow_reader.poll_latest()
+        except (BufferError, OSError, RuntimeError, ValueError):
             return None
-        if header is None or payload is None:
+        if frame is None:
             return None
-        if int(header.fmt) != VIDEO_FORMAT_FLOW2_F16:
-            return None
-        frame_id = int(header.frame_id)
-        if frame_id == self._last_flow_frame_id:
-            return None
-        self._last_flow_frame_id = frame_id
+        try:
+            if int(frame.fmt) != VIDEO_FORMAT_FLOW2_F16:
+                return None
+            frame_id = int(frame.frame_id)
+            if frame_id == self._last_flow_frame_id:
+                return None
+            self._last_flow_frame_id = frame_id
 
-        width = int(header.width)
-        height = int(header.height)
-        pitch = int(header.pitch)
-        if width <= 0 or height <= 0 or pitch <= 0:
-            return None
-        if self._flow_display_mode == "hsv":
-            return self._render_hsv_flow(payload, width, height, pitch)
-        return self._render_arrows_flow(payload, width, height, pitch)
+            width = int(frame.width)
+            height = int(frame.height)
+            pitch = int(frame.pitch)
+            if width <= 0 or height <= 0 or pitch <= 0:
+                return None
+            if self._flow_display_mode == "hsv":
+                return self._render_hsv_flow(frame.payload, width, height, pitch)
+            return self._render_arrows_flow(frame.payload, width, height, pitch)
+        finally:
+            frame.release()
 
     def _try_render_scalar(self) -> QtGui.QImage | None:
         if self._scalar_display_mode == "off":
@@ -535,20 +546,23 @@ class _VideoShmPane(QtWidgets.QWidget):
         if not self._ensure_scalar_reader() or self._scalar_reader is None:
             return None
         try:
-            header, payload = self._scalar_reader.read_latest_frame()
-        except Exception:
+            frame = self._scalar_reader.poll_latest()
+        except (BufferError, OSError, RuntimeError, ValueError):
             return None
-        if header is None or payload is None:
+        if frame is None:
             return None
-        if int(header.fmt) != VIDEO_FORMAT_SCALAR1_F32:
-            return None
+        try:
+            if int(frame.fmt) != VIDEO_FORMAT_SCALAR1_F32:
+                return None
 
-        width = int(header.width)
-        height = int(header.height)
-        pitch = int(header.pitch)
-        if width <= 0 or height <= 0 or pitch <= 0:
-            return None
-        return self._render_scalar_colormap(payload, width, height, pitch)
+            width = int(frame.width)
+            height = int(frame.height)
+            pitch = int(frame.pitch)
+            if width <= 0 or height <= 0 or pitch <= 0:
+                return None
+            return self._render_scalar_colormap(frame.payload, width, height, pitch)
+        finally:
+            frame.release()
 
     def _present(self, image: QtGui.QImage) -> None:
         pix = QtGui.QPixmap.fromImage(image)
@@ -578,7 +592,7 @@ class _VideoShmPane(QtWidgets.QWidget):
             self._present(self._latest_video)
 
 
-class _VideoShmWidget(NodeBaseWidget):
+class _LatestVideoWidget(NodeBaseWidget):
     def __init__(
         self,
         parent=None,
@@ -588,7 +602,7 @@ class _VideoShmWidget(NodeBaseWidget):
         on_update_toggled: Callable[[bool], None] | None = None,
     ) -> None:
         super().__init__(parent=parent, name=name, label=label)
-        self._pane = _VideoShmPane()
+        self._pane = _LatestVideoPane()
         self.set_custom_widget(self._pane)
         self._block = False
         self._on_update_toggled_cb = on_update_toggled
@@ -624,13 +638,13 @@ class _VideoShmWidget(NodeBaseWidget):
     def set_config(
         self,
         *,
-        shm_name: str,
+        video_stream_key: str,
         throttle_ms: int,
-        flow_shm_name: str,
+        flow_stream_key: str,
         flow_display_mode: str,
         flow_mag_scale: float,
         flow_stride: int,
-        scalar_shm_name: str,
+        scalar_stream_key: str,
         scalar_display_mode: str,
         scalar_colormap: str,
         scalar_range_mode: str,
@@ -643,13 +657,13 @@ class _VideoShmWidget(NodeBaseWidget):
         scale_mode: str,
     ) -> None:
         self._pane.set_config(
-            shm_name=shm_name,
+            video_stream_key=video_stream_key,
             throttle_ms=throttle_ms,
-            flow_shm_name=flow_shm_name,
+            flow_stream_key=flow_stream_key,
             flow_display_mode=flow_display_mode,
             flow_mag_scale=flow_mag_scale,
             flow_stride=flow_stride,
-            scalar_shm_name=scalar_shm_name,
+            scalar_stream_key=scalar_stream_key,
             scalar_display_mode=scalar_display_mode,
             scalar_colormap=scalar_colormap,
             scalar_range_mode=scalar_range_mode,
@@ -670,7 +684,7 @@ class VizVideoRenderNode(F8StudioOperatorBaseNode):
     def __init__(self):
         super().__init__(qgraphics_item=F8StudioVizOperatorNodeItem)
         self.add_ephemeral_widget(
-            _VideoShmWidget(
+            _LatestVideoWidget(
                 self.view,
                 name=_WIDGET_NAME,
                 label="",
@@ -696,12 +710,12 @@ class VizVideoRenderNode(F8StudioOperatorBaseNode):
             state_name=_STATE_UI_UPDATE,
             default=default,
             widget_name=_WIDGET_NAME,
-            widget_type=_VideoShmWidget,
-            apply_value=_VideoShmWidget.set_update_enabled,
+            widget_type=_LatestVideoWidget,
+            apply_value=_LatestVideoWidget.set_update_enabled,
         )
 
-    def _widget(self) -> _VideoShmWidget | None:
-        return self.widget_by_name(_WIDGET_NAME, _VideoShmWidget)
+    def _widget(self) -> _LatestVideoWidget | None:
+        return self.widget_by_name(_WIDGET_NAME, _LatestVideoWidget)
 
     def apply_ui_command(self, cmd: UiCommand) -> None:
         c = str(cmd.command or "")
@@ -715,13 +729,13 @@ class VizVideoRenderNode(F8StudioOperatorBaseNode):
             return
         try:
             payload = dict(cmd.payload or {})
-            shm_name = str(payload.get("shmName") or "").strip()
+            video_stream_key = str(payload.get("videoStreamKey") or "").strip()
             throttle_ms = int(payload.get("throttleMs") or 33)
-            flow_shm_name = str(payload.get("flowShmName") or "").strip()
+            flow_stream_key = str(payload.get("flowStreamKey") or "").strip()
             flow_display_mode = str(payload.get("flowDisplayMode") or "off").strip().lower()
             flow_mag_scale = float(payload.get("flowMagScale") or 20.0)
             flow_stride = int(payload.get("flowStride") or 12)
-            scalar_shm_name = str(payload.get("scalarShmName") or "").strip()
+            scalar_stream_key = str(payload.get("scalarStreamKey") or "").strip()
             scalar_display_mode = str(payload.get("scalarDisplayMode") or "off").strip().lower()
             scalar_colormap = str(payload.get("scalarColormap") or "turbo").strip().lower()
             scalar_range_mode = str(payload.get("scalarRangeMode") or "auto").strip().lower()
@@ -738,13 +752,13 @@ class VizVideoRenderNode(F8StudioOperatorBaseNode):
         if widget is None:
             return
         widget.set_config(
-            shm_name=shm_name,
+            video_stream_key=video_stream_key,
             throttle_ms=throttle_ms,
-            flow_shm_name=flow_shm_name,
+            flow_stream_key=flow_stream_key,
             flow_display_mode=flow_display_mode,
             flow_mag_scale=flow_mag_scale,
             flow_stride=flow_stride,
-            scalar_shm_name=scalar_shm_name,
+            scalar_stream_key=scalar_stream_key,
             scalar_display_mode=scalar_display_mode,
             scalar_colormap=scalar_colormap,
             scalar_range_mode=scalar_range_mode,

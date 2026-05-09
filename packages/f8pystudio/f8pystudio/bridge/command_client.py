@@ -1,14 +1,18 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import msgspec
+from f8pysdk.bus import BusBackend
 from f8pysdk.specs import F8CommandInvokeReply
-from f8pysdk.nats_naming import cmd_channel_subject, ensure_token, new_id
+from f8pysdk.f8_naming import cmd_channel_key, ensure_token, new_id
+from f8pysdk.runtime_transport import RuntimeTransport
+from f8pysdk.zenoh_transport import ZenohTransport, ZenohTransportConfig
 
 from .json_codec import coerce_json_value
-from .nats_request import request_typed
+from .runtime_request import RuntimeRequester, RuntimeTransportRequester, request_typed
 
 
 class CommandGateway(Protocol):
@@ -33,63 +37,119 @@ class CommandResponse:
     payload: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class RuntimeCommandGatewayConfig:
+    bus_backend: BusBackend = "zenoh"
+    client_service_id: str = "studio"
+    zenoh_config_path: str | None = None
+    zenoh_connect: tuple[str, ...] = ()
+    zenoh_listen: tuple[str, ...] = ()
+    zenoh_shm_pool_bytes: int = 256 * 1024 * 1024
+
+
+def _build_runtime_transport(config: RuntimeCommandGatewayConfig) -> RuntimeTransport:
+    if config.bus_backend == "mem":
+        from f8pysdk.testing import InMemoryCluster, InMemoryTransport
+
+        return InMemoryTransport(cluster=InMemoryCluster())
+    if config.bus_backend != "zenoh":
+        raise ValueError("Runtime command gateway supports only bus_backend='zenoh' or 'mem'.")
+    return ZenohTransport(
+        ZenohTransportConfig(
+            service_id=str(config.client_service_id),
+            config_path=config.zenoh_config_path,
+            connect=config.zenoh_connect,
+            listen=config.zenoh_listen,
+            shm_pool_bytes=config.zenoh_shm_pool_bytes,
+        )
+    )
+
+
 @dataclass
-class NatsCommandGateway:
-    nats_url: str
-    _nc: Any | None = None
+class RuntimeCommandGateway:
+    config: RuntimeCommandGatewayConfig
+    _transport: RuntimeTransport | None = None
+    _requester: RuntimeTransportRequester | None = None
+    _connect_lock: asyncio.Lock | None = field(default=None, init=False, repr=False)
+    _connect_lock_loop: asyncio.AbstractEventLoop | None = field(default=None, init=False, repr=False)
 
-    async def ensure_connected(self) -> Any:
-        if self._nc is not None:
-            return self._nc
-        import nats
+    def _connect_lock_for_loop(self) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        lock = self._connect_lock
+        if lock is None or self._connect_lock_loop is not loop:
+            lock = asyncio.Lock()
+            self._connect_lock = lock
+            self._connect_lock_loop = loop
+        return lock
 
-        self._nc = await nats.connect(servers=[str(self.nats_url)], connect_timeout=2)
-        return self._nc
+    def _build_transport(self) -> RuntimeTransport:
+        return _build_runtime_transport(self.config)
+
+    async def ensure_connected(self) -> RuntimeTransportRequester:
+        requester = self._requester
+        if requester is not None:
+            return requester
+        async with self._connect_lock_for_loop():
+            requester = self._requester
+            if requester is not None:
+                return requester
+            transport = self._build_transport()
+            await transport.connect()
+            self._transport = transport
+            requester = RuntimeTransportRequester(transport=transport)
+            self._requester = requester
+            return requester
 
     async def close(self) -> None:
-        if self._nc is None:
-            return
-        await self._nc.close()
-        self._nc = None
+        transport = self._transport
+        self._transport = None
+        self._requester = None
+        self._connect_lock = None
+        self._connect_lock_loop = None
+        if transport is not None:
+            await transport.close()
 
     async def request_command(self, req: CommandRequest) -> CommandResponse:
-        sid = ensure_token(str(req.service_id), label="service_id")
-        call_name = str(req.call or "").strip()
-        if not call_name:
-            raise ValueError("call is empty")
+        return await _request_command_with_requester(await self.ensure_connected(), req)
 
-        nc = await self.ensure_connected()
-        payload = {
-            "reqId": new_id(),
-            "call": call_name,
-            "args": coerce_json_value(req.args),
-            "meta": {"actor": str(req.actor), "source": str(req.source)},
-        }
-        response_payload = await request_typed(
-            nc,
-            subject=cmd_channel_subject(sid),
-            payload=payload,
-            timeout_s=float(req.timeout_s),
-            response_type=F8CommandInvokeReply,
-        )
-        result = response_payload.result
-        result_obj = result if isinstance(result, dict) else {"value": result}
-        err = response_payload.error
-        if err is None or isinstance(err, msgspec.UnsetType):
-            err_message = ""
-        else:
-            err_message = str(err.message or "").strip()
-        ok = bool(response_payload.ok)
-        if ok:
-            err_message = ""
-        payload_obj: dict[str, Any] = {
-            "reqId": str(response_payload.reqId or ""),
-            "ok": ok,
-            "result": result,
-            "error": (
-                None
-                if err is None or isinstance(err, msgspec.UnsetType)
-                else {"code": err.code.value, "message": err.message, "details": err.details}
-            ),
-        }
-        return CommandResponse(ok=ok, result=result_obj, error_message=err_message, payload=payload_obj)
+
+async def _request_command_with_requester(requester: RuntimeRequester, req: CommandRequest) -> CommandResponse:
+    sid = ensure_token(str(req.service_id), label="service_id")
+    call_name = str(req.call or "").strip()
+    if not call_name:
+        raise ValueError("call is empty")
+
+    payload = {
+        "reqId": new_id(),
+        "call": call_name,
+        "args": coerce_json_value(req.args),
+        "meta": {"actor": str(req.actor), "source": str(req.source)},
+    }
+    response_payload = await request_typed(
+        requester,
+        key=cmd_channel_key(sid),
+        payload=payload,
+        timeout_s=float(req.timeout_s),
+        response_type=F8CommandInvokeReply,
+    )
+    result = response_payload.result
+    result_obj = result if isinstance(result, dict) else {"value": result}
+    err = response_payload.error
+    if err is None or isinstance(err, msgspec.UnsetType):
+        err_message = ""
+    else:
+        err_message = str(err.message or "").strip()
+    ok = bool(response_payload.ok)
+    if ok:
+        err_message = ""
+    payload_obj: dict[str, Any] = {
+        "reqId": str(response_payload.reqId or ""),
+        "ok": ok,
+        "result": result,
+        "error": (
+            None
+            if err is None or isinstance(err, msgspec.UnsetType)
+            else {"code": err.code.value, "message": err.message, "details": err.details}
+        ),
+    }
+    return CommandResponse(ok=ok, result=result_obj, error_message=err_message, payload=payload_obj)

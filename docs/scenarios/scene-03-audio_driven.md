@@ -1,9 +1,5 @@
 # Scene 03: Audio Driven TCode
 
-## Script
-
-[Download JSON](scripts/scene-03-audio_driven.json)
-
 ## Goal
 
 Capture live audio, extract audio features, and transform signal energy into smooth real-time `TCode` output.
@@ -15,7 +11,7 @@ Capture live audio, extract audio features, and transform signal energy into smo
 ## Steps
 
 1. Import the script and start `Audio Capture`, `Audio Feature Core`, `Audio Feature Rhythm`, and `PyEngine`.
-2. Verify `Audio Capture.audioShmName` is connected to both `Audio Viz.shmName` and `Audio Feature Core.audioShmName`.
+2. Verify `Audio Capture.audio` is connected to both `Audio Viz.audio` and `Audio Feature Core.audio`.
 3. Use `Python Expr Service` to extract the drive value from `coreFeatures` (current expression: `msg['rms']`).
 4. Check output stability through `Envelope`, `Smooth Filter`, and `Range Map`.
 5. Verify timing link `Tick.tickMs -> TCode.intervalMs` (both are `100` in this script).

@@ -7,7 +7,7 @@ from typing import Any
 from ...state import StateWriteSource
 
 
-_STATE_PAYLOAD_RESERVED_KEYS = frozenset(("value", "actor", "tsMs", "source", "origin"))
+_STATE_PAYLOAD_RESERVED_KEYS = frozenset(("value", "actor", "ts", "tsMs", "ts_ms", "source", "origin"))
 
 
 def _resolved_source_text(source: StateWriteSource | str | None, *, default: str) -> str:
@@ -97,6 +97,10 @@ def coerce_inbound_ts_ms(ts_raw: Any, *, default: int) -> int:
 def extract_ts_field(payload: dict[str, Any]) -> Any:
     if "tsMs" in payload:
         return payload.get("tsMs")
+    if "ts" in payload:
+        return payload.get("ts")
+    if "ts_ms" in payload:
+        return payload.get("ts_ms")
     return None
 
 

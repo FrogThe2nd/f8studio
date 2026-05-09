@@ -46,6 +46,7 @@ class MainWindowActionBundle:
     manage_components_action: QtGui.QAction
     auto_save_action: QtGui.QAction
     auto_deploy_action: QtGui.QAction
+    kill_managed_services_on_exit_action: QtGui.QAction
     performance_overlay_action: QtGui.QAction
     auto_proxy_action: QtGui.QAction
     export_published_session_action: QtGui.QAction
@@ -125,6 +126,7 @@ class MainWindowUiMixin:
         _default_dock_layout_state: QtCore.QByteArray
         _auto_save_enabled: bool
         _auto_deploy_enabled: bool
+        _kill_managed_services_on_exit_enabled: bool
         _auto_proxy_enabled: bool
         _performance_overlay_enabled: bool
         _open_project_action: QtGui.QAction
@@ -139,6 +141,7 @@ class MainWindowUiMixin:
         _deploy_action: QtGui.QAction
         _stop_all_services_action: QtGui.QAction
         _auto_deploy_action: QtGui.QAction
+        _kill_managed_services_on_exit_action: QtGui.QAction
         _manage_components_action: QtGui.QAction
         _variant_catalog_action: QtGui.QAction
         _global_hotkeys_action: QtGui.QAction
@@ -177,6 +180,7 @@ class MainWindowUiMixin:
         def _on_manage_components_action(self) -> None: ...
         def _on_auto_save_toggled(self, checked: bool) -> None: ...
         def _on_auto_deploy_toggled(self, checked: bool) -> None: ...
+        def _on_kill_managed_services_on_exit_toggled(self, checked: bool) -> None: ...
         def _on_performance_overlay_toggled(self, checked: bool) -> None: ...
         def _on_auto_proxy_toggled(self, checked: bool) -> None: ...
         def _on_export_published_session_action(self) -> None: ...
@@ -449,6 +453,7 @@ class MainWindowUiMixin:
                 self._deploy_action,
                 self._stop_all_services_action,
                 self._auto_deploy_action,
+                self._kill_managed_services_on_exit_action,
             ],
         )
 
@@ -585,6 +590,13 @@ class MainWindowUiMixin:
                 checkable=True,
                 checked=self._auto_deploy_enabled,
             ),
+            kill_managed_services_on_exit_action=self._create_action(
+                "Stop managed services on shutdown",
+                handler=self._on_kill_managed_services_on_exit_toggled,
+                tool_tip="Stop managed service processes during PyStudio shutdown",
+                checkable=True,
+                checked=self._kill_managed_services_on_exit_enabled,
+            ),
             performance_overlay_action=self._create_action(
                 "Performance Overlay",
                 handler=self._on_performance_overlay_toggled,
@@ -649,6 +661,7 @@ class MainWindowUiMixin:
         self._manage_components_action = action_bundle.manage_components_action
         self._auto_save_action = action_bundle.auto_save_action
         self._auto_deploy_action = action_bundle.auto_deploy_action
+        self._kill_managed_services_on_exit_action = action_bundle.kill_managed_services_on_exit_action
         self._performance_overlay_action = action_bundle.performance_overlay_action
         self._auto_proxy_action = action_bundle.auto_proxy_action
         self._export_published_session_action = action_bundle.export_published_session_action

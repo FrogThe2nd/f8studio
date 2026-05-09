@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,10 +20,12 @@ from f8pysdk.specs import (
     F8TerminateReply,
     F8TerminateRequest,
 )
-from f8pysdk.nats_naming import ensure_token, new_id, svc_endpoint_subject
-from f8pysdk.codec import decode_as, encode_obj
+from f8pysdk.f8_naming import ensure_token, new_id, svc_endpoint_key
+from f8pysdk.codec import decode_as, decode_obj, encode_obj
 
-from .nats_request import NatsRequester
+from .runtime_request import RuntimeRequester
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -56,43 +59,95 @@ def _error_code(error: F8CommandError | None | msgspec.UnsetType) -> str:
     return str(error.code.value)
 
 
-async def request_service_status(
-    requester: NatsRequester,
-    *,
-    service_id: str,
-    timeout_s: float = 0.4,
-) -> dict[str, Any] | None:
-    sid = ensure_token(str(service_id), label="service_id")
-    payload = encode_obj(
-        F8StatusRequest(
-            reqId=new_id(),
-            args=F8EmptyArgs(),
-            meta={"actor": "studio", "cmd": "status"},
-        )
-    )
-    try:
-        message = await requester.request(svc_endpoint_subject(sid, "status"), payload, timeout=float(timeout_s))
-    except Exception:
-        return None
-    raw = message_data_bytes(message)
-    if not raw:
-        return None
-    try:
-        response = decode_as(raw, F8StatusReply)
-    except ValueError:
-        return None
-    if not response.ok:
-        return None
-    result = response.result
-    if result is None or isinstance(result, msgspec.UnsetType):
-        return None
-    output: dict[str, Any] = {"alive": True}
-    output["active"] = bool(result.active)
+def _status_identity_from_mapping(result: dict[str, Any]) -> dict[str, Any]:
+    service_id = str(result.get("serviceId") or "").strip()
+    service_class = str(result.get("serviceClass") or "").strip()
+    runtime_instance_id = str(result.get("runtimeInstanceId") or "").strip()
+    output: dict[str, Any] = {
+        "alive": True,
+        "identityValid": bool(service_class and runtime_instance_id),
+    }
+    if service_id:
+        output["serviceId"] = service_id
+    if service_class:
+        output["serviceClass"] = service_class
+    if runtime_instance_id:
+        output["runtimeInstanceId"] = runtime_instance_id
+    if "active" in result:
+        output["active"] = bool(result.get("active"))
     return output
 
 
+async def request_service_status(
+    requester: RuntimeRequester,
+    *,
+    service_id: str,
+    timeout_s: float = 0.4,
+    attempts: int = 1,
+    retry_sleep_s: float = 0.0,
+) -> dict[str, Any] | None:
+    sid = ensure_token(str(service_id), label="service_id")
+    attempt_count = max(int(attempts), 1)
+    for attempt_index in range(attempt_count):
+        payload = encode_obj(
+            F8StatusRequest(
+                reqId=new_id(),
+                args=F8EmptyArgs(),
+                meta={"actor": "studio", "cmd": "status"},
+            )
+        )
+        try:
+            message = await requester.request(svc_endpoint_key(sid, "status"), payload, timeout=float(timeout_s))
+        except Exception as exc:
+            logger.debug(
+                "service status request failed service_id=%s attempt=%s/%s",
+                service_id,
+                attempt_index + 1,
+                attempt_count,
+                exc_info=exc,
+            )
+            if attempt_index + 1 < attempt_count:
+                await asyncio.sleep(float(retry_sleep_s))
+                continue
+            return None
+        raw = message_data_bytes(message)
+        if not raw:
+            return None
+        try:
+            response = decode_as(raw, F8StatusReply)
+        except ValueError as exc:
+            logger.debug("strict service status decode failed service_id=%s", service_id, exc_info=exc)
+            try:
+                fallback = decode_obj(raw)
+            except ValueError:
+                return None
+            if not isinstance(fallback, dict):
+                return None
+            if not bool(fallback.get("ok")):
+                return None
+            result = fallback.get("result")
+            if not isinstance(result, dict):
+                return None
+            return _status_identity_from_mapping(result)
+        if not response.ok:
+            return None
+        result = response.result
+        if result is None or isinstance(result, msgspec.UnsetType):
+            return None
+        output: dict[str, Any] = {
+            "alive": True,
+            "identityValid": True,
+            "serviceId": str(result.serviceId),
+            "serviceClass": str(result.serviceClass),
+            "runtimeInstanceId": str(result.runtimeInstanceId),
+        }
+        output["active"] = bool(result.active)
+        return output
+    return None
+
+
 async def request_set_service_active(
-    requester: NatsRequester,
+    requester: RuntimeRequester,
     *,
     service_id: str,
     active: bool,
@@ -112,20 +167,21 @@ async def request_set_service_active(
         )
     for _ in range(max(int(attempts), 1)):
         try:
-            message = await requester.request(svc_endpoint_subject(sid, cmd), payload, timeout=float(timeout_s))
+            message = await requester.request(svc_endpoint_key(sid, cmd), payload, timeout=float(timeout_s))
             data = message_data_bytes(message)
             if data:
                 response = decode_as(data, F8ActiveReply)
                 if response.ok:
                     return True
-        except Exception:
+        except Exception as exc:
+            logger.debug("set service active request failed service_id=%s active=%s", service_id, active, exc_info=exc)
             await asyncio.sleep(float(retry_sleep_s))
             continue
     return False
 
 
 async def request_service_terminate(
-    requester: NatsRequester,
+    requester: RuntimeRequester,
     *,
     service_id: str,
     attempts: int,
@@ -133,7 +189,7 @@ async def request_service_terminate(
     retry_sleep_s: float,
 ) -> bool:
     sid = ensure_token(str(service_id), label="service_id")
-    subject = svc_endpoint_subject(sid, "terminate")
+    key = svc_endpoint_key(sid, "terminate")
     payload = encode_obj(
         F8TerminateRequest(
             reqId=new_id(),
@@ -143,7 +199,7 @@ async def request_service_terminate(
     )
     for _ in range(max(int(attempts), 1)):
         try:
-            message = await requester.request(subject, payload, timeout=float(timeout_s))
+            message = await requester.request(key, payload, timeout=float(timeout_s))
             raw = message_data_bytes(message)
             if not raw:
                 continue
@@ -151,14 +207,15 @@ async def request_service_terminate(
             if response.ok:
                 return True
             return False
-        except Exception:
+        except Exception as exc:
+            logger.debug("service terminate request failed service_id=%s", service_id, exc_info=exc)
             await asyncio.sleep(float(retry_sleep_s))
             continue
     return False
 
 
 async def request_set_remote_state(
-    requester: NatsRequester,
+    requester: RuntimeRequester,
     *,
     service_id: str,
     node_id: str,
@@ -185,10 +242,10 @@ async def request_set_remote_state(
             meta={"actor": "studio", "source": "ui"},
         )
     )
-    subject = svc_endpoint_subject(sid, "set_state")
+    key = svc_endpoint_key(sid, "set_state")
     for _ in range(max(int(attempts), 1)):
         try:
-            message = await requester.request(subject, payload, timeout=float(timeout_s))
+            message = await requester.request(key, payload, timeout=float(timeout_s))
             raw = message_data_bytes(message)
             if not raw:
                 continue
@@ -208,7 +265,14 @@ async def request_set_remote_state(
                     reject_code=_error_code(error),
                     reject_message=_error_message(error),
                 )
-        except Exception:
+        except Exception as exc:
+            logger.debug(
+                "set remote state request failed service_id=%s node_id=%s field=%s",
+                service_id,
+                node_id,
+                field,
+                exc_info=exc,
+            )
             await asyncio.sleep(float(retry_sleep_s))
             continue
     return SetStateRequestResult(

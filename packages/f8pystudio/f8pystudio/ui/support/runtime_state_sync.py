@@ -42,7 +42,9 @@ class RuntimeStateSyncController:
                 node.set_property(field, value, push_undo=False)
             except Exception:
                 return
-            self._sync_property_widget(node=node, field=field, value=value)
+            editor = self._property_editor_for_node(node=node)
+            self._refresh_inline_option_pools_if_needed(node=node, field=field)
+            self._sync_property_widget(editor=editor, field=field, value=value)
         finally:
             self._applying_runtime_state = False
 
@@ -88,10 +90,22 @@ class RuntimeStateSyncController:
 
         self._bridge.set_remote_state(service_id, node_id, str(name), value)
 
-    def _sync_property_widget(self, *, node: Any, field: str, value: Any) -> None:
+    def _property_editor_for_node(self, *, node: Any) -> Any | None:
         try:
             node_id = str(node.id or "")
-            editor = self._property_editor.property_editor_for_node_id(node_id)
+            return self._property_editor.property_editor_for_node_id(node_id)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _sync_property_widget(*, editor: Any | None, field: str, value: Any) -> None:
+        try:
+            if editor is not None:
+                try:
+                    if editor.has_option_pool_dependents(field):
+                        editor.refresh_option_pool(field)
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    pass
             widget = editor.get_widget(field) if editor is not None else None
             if widget is None:
                 return
@@ -106,5 +120,14 @@ class RuntimeStateSyncController:
                     widget.blockSignals(False)
                 except (AttributeError, RuntimeError, TypeError):
                     pass
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return
+
+    @staticmethod
+    def _refresh_inline_option_pools_if_needed(*, node: Any, field: str) -> None:
+        try:
+            node_item = node.view
+            if node_item._has_state_inline_option_pool_dependents(str(field)):
+                node_item._refresh_state_inline_option_pools(str(field))
         except (AttributeError, RuntimeError, TypeError, ValueError):
             return

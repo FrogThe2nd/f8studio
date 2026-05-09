@@ -116,6 +116,8 @@ class _GraphInsertHost(Protocol):
 
     def _notification_parent(self) -> QtWidgets.QWidget | None: ...
 
+    def _emit_graph_inserted(self) -> None: ...
+
 
 class GraphInsertFlowMixin:
     _loading_session: bool | None = None
@@ -336,6 +338,7 @@ class GraphInsertFlowMixin:
                     continue
             self._refresh_viewer_after_insert()
             host.schedule_global_hotkey_refresh()
+            host._emit_graph_inserted()
         finally:
             host.end_undo()
 

@@ -1,9 +1,9 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <mutex>
-#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -12,8 +12,8 @@
 #include <opencv2/core.hpp>
 
 #include "f8cppsdk/capabilities.h"
+#include "f8cppsdk/latest_video_frame_transport.h"
 #include "f8cppsdk/service_bus.h"
-#include "f8cppsdk/video_shared_memory_sink.h"
 
 namespace f8::cvkit::template_match {
 
@@ -25,7 +25,7 @@ class TemplateMatchService final : public f8::cppsdk::LifecycleNode,
   struct Config {
     std::string service_id;
     std::string service_class = "f8.cvkit.templatematch";
-    std::string nats_url = "nats://127.0.0.1:4222";
+    f8::cppsdk::RuntimeBackendConfig runtime_backend;
   };
 
   explicit TemplateMatchService(Config cfg);
@@ -57,7 +57,10 @@ class TemplateMatchService final : public f8::cppsdk::LifecycleNode,
   void publish_error_if_changed(const json& value, const std::string& source, const json& meta);
   void emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms);
   void set_template_png_b64(const std::string& b64, const json& meta);
-  bool ensure_video_open();
+  bool ensure_zenoh_video_open();
+  bool copy_latest_video_frame(std::vector<std::byte>& out_payload, f8::cppsdk::LatestVideoFrame& out_frame,
+                               bool changed_only, std::uint64_t last_frame_id,
+                               std::chrono::milliseconds timeout);
   void detect_once();
 
   Config cfg_;
@@ -86,18 +89,16 @@ class TemplateMatchService final : public f8::cppsdk::LifecycleNode,
   bool has_last_detection_ = false;
   cv::Rect last_detection_bbox_;
 
-  // Video input (BGRA32 SHM).
-  std::string shm_name_override_;
-  f8::cppsdk::VideoSharedMemoryReader video_;
+  // Video input.
+  f8::cppsdk::ZenohLatestVideoFrameSubscriber zenoh_video_;
+  std::string zenoh_video_open_key_;
   std::vector<std::byte> frame_bgra_;
   cv::Mat frame_gray_;
   cv::Mat roi_gray_;
   cv::Mat roi_small_;
   cv::Mat templ_small_;
   cv::Mat match_result_;
-  std::optional<f8::cppsdk::VideoSharedMemoryHeader> last_header_;
   std::uint64_t last_frame_id_ = 0;
-  std::uint32_t last_notify_seq_ = 0;
   std::int64_t last_video_open_attempt_ms_ = 0;
 
   std::uint64_t monitor_observed_frames_ = 0;
