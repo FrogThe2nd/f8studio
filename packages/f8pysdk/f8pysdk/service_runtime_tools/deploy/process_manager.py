@@ -22,6 +22,16 @@ from ..inventory.entry import load_service_entry
 
 logger = logging.getLogger(__name__)
 
+_DEBUGGER_ENV_PREFIXES = (
+    "DEBUGPY_",
+    "PYDEVD_",
+    "PYCHARM_",
+)
+
+_DEBUGGER_ENV_NAMES = {
+    "PYTHONBREAKPOINT",
+}
+
 
 @dataclass(frozen=True)
 class ServiceProcessConfig:
@@ -79,6 +89,18 @@ def _read_proc_cmdline(path: Path) -> tuple[str, ...]:
     except (FileNotFoundError, NotADirectoryError, PermissionError, OSError):
         return ()
     return tuple(part.decode("utf-8", errors="replace") for part in raw.split(b"\0") if part)
+
+
+def _without_debugger_subprocess_env(env: dict[str, str]) -> dict[str, str]:
+    cleaned = dict(env)
+    for name in list(cleaned.keys()):
+        upper_name = str(name).upper()
+        if upper_name in _DEBUGGER_ENV_NAMES:
+            cleaned.pop(name, None)
+            continue
+        if any(upper_name.startswith(prefix) for prefix in _DEBUGGER_ENV_PREFIXES):
+            cleaned.pop(name, None)
+    return cleaned
 
 
 def find_service_processes_by_service_id(service_id: str, *, current_pid: int | None = None) -> list[ServiceProcessMatch]:
@@ -408,14 +430,14 @@ class ServiceProcessManager:
                 raise FileNotFoundError(f"Missing service supervisor wrapper: {supervisor_path}")
             cmd = [
                 os.environ.get("PYTHON", "") or sys.executable,
-                str(supervisor_path),
+                supervisor_path.as_posix(),
                 "--parent-pid",
                 str(os.getpid()),
                 "--",
                 *child_cmd,
             ]
 
-        env = os.environ.copy()
+        env = _without_debugger_subprocess_env(os.environ.copy())
         launch_env = launch.env
         if isinstance(launch_env, dict):
             try:
@@ -476,6 +498,6 @@ class ServiceProcessManager:
                 pid_txt = "?"
             on_output(
                 service_id,
-                f"[proc] started pid={pid_txt} supervision={supervision_mode} cmd={' '.join(cmd)}\n",
+                f"[proc] started pid={pid_txt} serviceClass={service_class} supervision={supervision_mode}\n",
             )
         self._start_reader(service_id=service_id, proc=proc, on_output=on_output)

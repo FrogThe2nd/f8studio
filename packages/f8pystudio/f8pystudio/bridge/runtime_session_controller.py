@@ -64,6 +64,8 @@ class PendingMonitorUpdate:
 
 class RuntimeSessionControllerMixin:
     _cfg: Any = None
+    _runtime_transport_lock: asyncio.Lock | None = None
+    _runtime_transport_lock_loop: asyncio.AbstractEventLoop | None = None
 
     def _runtime_bus_backend(self) -> BusBackend:
         cfg = self._cfg
@@ -640,6 +642,8 @@ class RuntimeSessionControllerMixin:
                 await runtime_transport.close()
             except Exception as exc:
                 self._report_exception("close runtime transport failed", exc)
+        self._runtime_transport_lock = None
+        self._runtime_transport_lock_loop = None
 
         token = self._zenoh_singleton_token
         self._zenoh_singleton_token = None
@@ -660,14 +664,27 @@ class RuntimeSessionControllerMixin:
             except Exception as exc:
                 self._report_exception("close zenoh singleton session failed", exc)
 
+    def _runtime_transport_lock_for_loop(self) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        lock = self._runtime_transport_lock
+        if lock is None or self._runtime_transport_lock_loop is not loop:
+            lock = asyncio.Lock()
+            self._runtime_transport_lock = lock
+            self._runtime_transport_lock_loop = loop
+        return lock
+
     async def _ensure_runtime_transport(self) -> Any:
         transport = self._runtime_transport
         if transport is not None:
             return transport
-        transport = self._build_runtime_transport()
-        await transport.connect()
-        self._runtime_transport = transport
-        return transport
+        async with self._runtime_transport_lock_for_loop():
+            transport = self._runtime_transport
+            if transport is not None:
+                return transport
+            transport = self._build_runtime_transport()
+            await transport.connect()
+            self._runtime_transport = transport
+            return transport
 
     async def _ensure_requester(self) -> Any | None:
         transport = await self._ensure_runtime_transport()

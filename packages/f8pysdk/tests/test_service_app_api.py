@@ -159,7 +159,7 @@ def test_service_app_run_async_converts_sigterm_to_graceful_terminate() -> None:
         app.build_runtime = lambda **kwargs: fake_runtime  # type: ignore[method-assign]
         task = asyncio.create_task(app.run_async(service_id="svc-a"))
         await asyncio.sleep(0)
-        os.kill(os.getpid(), signal.SIGTERM)
+        signal.raise_signal(signal.SIGTERM)
         await asyncio.wait_for(task, timeout=1.0)
 
     asyncio.run(_run())

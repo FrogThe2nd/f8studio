@@ -370,7 +370,7 @@ class ZenohTransport::Impl final {
                 }
                 state->cv.notify_all();
               },
-              [state]() {
+              [state, kNoReplyError]() {
                 {
                   std::lock_guard<std::mutex> state_lock(state->mu);
                   if (!state->done) {

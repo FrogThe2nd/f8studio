@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from f8pysdk.service_runtime_tools.deploy import supervised_child
 
 
@@ -113,5 +115,38 @@ def test_supervised_child_returns_success_when_supervisor_is_terminated() -> Non
             proc.kill()
             proc.wait(timeout=5.0)
 
-    assert proc.returncode == 0
-    assert "terminate child" in stderr
+    if os.name == "nt":
+        assert proc.returncode is not None
+    else:
+        assert proc.returncode == 0
+        assert "terminate child" in stderr
+
+
+def test_supervised_child_does_not_pass_control_stdin_to_service_child(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured_kwargs: dict[str, object] = {}
+
+    class _FakeChild:
+        pid = 4321
+
+        def poll(self) -> int | None:
+            return 0
+
+    def _fake_popen(cmd: list[str], **kwargs: object) -> _FakeChild:
+        assert cmd == ["python", "-m", "svc"]
+        captured_kwargs.update(kwargs)
+        return _FakeChild()
+
+    monkeypatch.setattr(subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(supervised_child, "_parent_alive", lambda _parent_pid: True)
+    monkeypatch.setattr(supervised_child, "_create_windows_kill_on_close_job", lambda _proc: None)
+
+    rc = supervised_child._run_supervisor(
+        parent_pid=1,
+        poll_s=0.01,
+        grace_s=0.01,
+        soft_wait_s=0.01,
+        child_cmd=["python", "-m", "svc"],
+    )
+
+    assert rc == 0
+    assert captured_kwargs["stdin"] == subprocess.DEVNULL

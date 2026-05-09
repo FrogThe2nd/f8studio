@@ -67,16 +67,32 @@ def _apply_pixi_cpp_env(env: dict[str, str]) -> None:
     if not pixi_cpp_env.is_dir():
         return
 
-    _prepend_path_list(env, "CMAKE_PREFIX_PATH", [pixi_cpp_env])
-    _prepend_path_list(env, "CMAKE_LIBRARY_PATH", [pixi_cpp_env / "lib"])
-    _prepend_path_list(env, "CMAKE_INCLUDE_PATH", [pixi_cpp_env / "include"])
+    pixi_prefixes = [pixi_cpp_env]
+    pixi_library_dirs = [pixi_cpp_env / "lib"]
+    pixi_include_dirs = [pixi_cpp_env / "include"]
+    pixi_pkg_config_dirs = [
+        pixi_cpp_env / "lib" / "pkgconfig",
+        pixi_cpp_env / "share" / "pkgconfig",
+    ]
+    pixi_bin_dirs = [pixi_cpp_env / "bin"]
+
+    pixi_windows_prefix = pixi_cpp_env / "Library"
+    if pixi_windows_prefix.is_dir():
+        pixi_prefixes.insert(0, pixi_windows_prefix)
+        pixi_library_dirs.insert(0, pixi_windows_prefix / "lib")
+        pixi_include_dirs.insert(0, pixi_windows_prefix / "include")
+        pixi_pkg_config_dirs.insert(0, pixi_windows_prefix / "share" / "pkgconfig")
+        pixi_pkg_config_dirs.insert(0, pixi_windows_prefix / "lib" / "pkgconfig")
+        pixi_bin_dirs.insert(0, pixi_windows_prefix / "bin")
+
+    _prepend_path_list(env, "PATH", pixi_bin_dirs)
+    _prepend_path_list(env, "CMAKE_PREFIX_PATH", pixi_prefixes)
+    _prepend_path_list(env, "CMAKE_LIBRARY_PATH", pixi_library_dirs)
+    _prepend_path_list(env, "CMAKE_INCLUDE_PATH", pixi_include_dirs)
     _prepend_path_list(
         env,
         "PKG_CONFIG_PATH",
-        [
-            pixi_cpp_env / "lib" / "pkgconfig",
-            pixi_cpp_env / "share" / "pkgconfig",
-        ],
+        pixi_pkg_config_dirs,
     )
 
 

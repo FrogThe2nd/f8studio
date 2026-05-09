@@ -43,6 +43,8 @@ class _LayoutHarness(QtWidgets.QMainWindow):
     _WINDOW_LAYOUT_STATE_VERSION = F8StudioMainWin._WINDOW_LAYOUT_STATE_VERSION
     _LOG_LEVEL_SETTINGS_GROUP = F8StudioMainWin._LOG_LEVEL_SETTINGS_GROUP
     _LOG_LEVEL_SETTINGS_KEY = F8StudioMainWin._LOG_LEVEL_SETTINGS_KEY
+    _AUTOMATION_SETTINGS_GROUP = F8StudioMainWin._AUTOMATION_SETTINGS_GROUP
+    _KILL_MANAGED_SERVICES_ON_EXIT_SETTINGS_KEY = F8StudioMainWin._KILL_MANAGED_SERVICES_ON_EXIT_SETTINGS_KEY
     _LOG_LEVEL_CHOICES = F8StudioMainWin._LOG_LEVEL_CHOICES
     _VIEW_SETTINGS_GROUP = F8StudioMainWin._VIEW_SETTINGS_GROUP
     _AUTO_PROXY_ENABLED_SETTINGS_KEY = F8StudioMainWin._AUTO_PROXY_ENABLED_SETTINGS_KEY
@@ -74,6 +76,14 @@ class _LayoutHarness(QtWidgets.QMainWindow):
     _write_saved_auto_proxy_enabled = F8StudioMainWin._write_saved_auto_proxy_enabled
     _apply_auto_proxy_enabled = F8StudioMainWin._apply_auto_proxy_enabled
     _on_auto_proxy_toggled = F8StudioMainWin._on_auto_proxy_toggled
+    _read_saved_kill_managed_services_on_exit_enabled = (
+        F8StudioMainWin._read_saved_kill_managed_services_on_exit_enabled
+    )
+    _write_saved_kill_managed_services_on_exit_enabled = (
+        F8StudioMainWin._write_saved_kill_managed_services_on_exit_enabled
+    )
+    _apply_kill_managed_services_on_exit_enabled = F8StudioMainWin._apply_kill_managed_services_on_exit_enabled
+    _on_kill_managed_services_on_exit_toggled = F8StudioMainWin._on_kill_managed_services_on_exit_toggled
     _read_saved_performance_overlay_enabled = F8StudioMainWin._read_saved_performance_overlay_enabled
     _write_saved_performance_overlay_enabled = F8StudioMainWin._write_saved_performance_overlay_enabled
     _apply_performance_overlay_enabled = F8StudioMainWin._apply_performance_overlay_enabled
@@ -156,6 +166,8 @@ class _LayoutHarness(QtWidgets.QMainWindow):
         ]
         self._log_level_actions = {}
         self._default_dock_layout_state = QtCore.QByteArray()
+        self._bridge = SimpleNamespace(set_kill_managed_services_on_exit=lambda _enabled: None)
+        self._kill_managed_services_on_exit_enabled = self._read_saved_kill_managed_services_on_exit_enabled()
         self._auto_proxy_enabled = self._read_saved_auto_proxy_enabled()
         self._performance_overlay_enabled = self._read_saved_performance_overlay_enabled()
         self._node_library_widget = None
@@ -187,6 +199,12 @@ class _LayoutHarness(QtWidgets.QMainWindow):
             handler=lambda _checked: None,
             checkable=True,
             checked=False,
+        )
+        self._kill_managed_services_on_exit_action = self._create_action(
+            "Stop managed services on shutdown",
+            handler=self._on_kill_managed_services_on_exit_toggled,
+            checkable=True,
+            checked=self._kill_managed_services_on_exit_enabled,
         )
         self._manage_components_action = self._create_action("Manage Components", handler=lambda: None)
         self._variant_catalog_action = self._create_action("Variant Catalog", handler=lambda: None)

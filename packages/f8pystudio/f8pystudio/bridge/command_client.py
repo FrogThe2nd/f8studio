@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import msgspec
@@ -69,21 +70,42 @@ class RuntimeCommandGateway:
     config: RuntimeCommandGatewayConfig
     _transport: RuntimeTransport | None = None
     _requester: RuntimeTransportRequester | None = None
+    _connect_lock: asyncio.Lock | None = field(default=None, init=False, repr=False)
+    _connect_lock_loop: asyncio.AbstractEventLoop | None = field(default=None, init=False, repr=False)
+
+    def _connect_lock_for_loop(self) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        lock = self._connect_lock
+        if lock is None or self._connect_lock_loop is not loop:
+            lock = asyncio.Lock()
+            self._connect_lock = lock
+            self._connect_lock_loop = loop
+        return lock
+
+    def _build_transport(self) -> RuntimeTransport:
+        return _build_runtime_transport(self.config)
 
     async def ensure_connected(self) -> RuntimeTransportRequester:
         requester = self._requester
         if requester is not None:
             return requester
-        transport = _build_runtime_transport(self.config)
-        await transport.connect()
-        self._transport = transport
-        self._requester = RuntimeTransportRequester(transport=transport)
-        return self._requester
+        async with self._connect_lock_for_loop():
+            requester = self._requester
+            if requester is not None:
+                return requester
+            transport = self._build_transport()
+            await transport.connect()
+            self._transport = transport
+            requester = RuntimeTransportRequester(transport=transport)
+            self._requester = requester
+            return requester
 
     async def close(self) -> None:
         transport = self._transport
         self._transport = None
         self._requester = None
+        self._connect_lock = None
+        self._connect_lock_loop = None
         if transport is not None:
             await transport.close()
 

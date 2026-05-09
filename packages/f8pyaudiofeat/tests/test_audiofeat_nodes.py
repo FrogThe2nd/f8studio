@@ -62,6 +62,10 @@ class _FakeBus:
         del node_id
         return self.state_values.get(str(field), default)
 
+    def data_input_zenoh_key(self, node_id: str, port: str) -> str | None:
+        del node_id, port
+        return None
+
     def report_error(
         self,
         node_id: str,

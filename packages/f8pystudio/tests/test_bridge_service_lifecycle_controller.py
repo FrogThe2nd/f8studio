@@ -157,8 +157,15 @@ def _compiled_for_service(service_id: str, service_class: str) -> Any:
 
 
 def test_request_service_status_dedupes_inflight(monkeypatch) -> None:
-    async def _fake_request_service_status(_nc: object, *, service_id: str, timeout_s: float) -> dict[str, Any]:
-        _ = timeout_s
+    async def _fake_request_service_status(
+        _nc: object,
+        *,
+        service_id: str,
+        timeout_s: float,
+        attempts: int = 1,
+        retry_sleep_s: float = 0.0,
+    ) -> dict[str, Any]:
+        _ = (timeout_s, attempts, retry_sleep_s)
         return {
             "active": service_id == "svc_alpha",
             "identityValid": True,
@@ -183,8 +190,15 @@ def test_request_service_status_dedupes_inflight(monkeypatch) -> None:
 
 
 def test_start_service_skips_when_already_running(monkeypatch) -> None:
-    async def _fake_request_service_status(_nc: object, *, service_id: str, timeout_s: float) -> dict[str, Any]:
-        _ = timeout_s
+    async def _fake_request_service_status(
+        _nc: object,
+        *,
+        service_id: str,
+        timeout_s: float,
+        attempts: int = 1,
+        retry_sleep_s: float = 0.0,
+    ) -> dict[str, Any]:
+        _ = (timeout_s, attempts, retry_sleep_s)
         return {
             "active": True,
             "identityValid": True,
@@ -299,8 +313,15 @@ def test_ensure_service_available_blocks_untracked_local_process_collision_in_de
 
 
 def test_ensure_service_available_reuses_single_live_same_class(monkeypatch) -> None:
-    async def _fake_request_service_status(_nc: object, *, service_id: str, timeout_s: float) -> dict[str, Any]:
-        _ = timeout_s
+    async def _fake_request_service_status(
+        _nc: object,
+        *,
+        service_id: str,
+        timeout_s: float,
+        attempts: int = 1,
+        retry_sleep_s: float = 0.0,
+    ) -> dict[str, Any]:
+        _ = (timeout_s, attempts, retry_sleep_s)
         return {
             "alive": True,
             "identityValid": True,
@@ -323,8 +344,15 @@ def test_ensure_service_available_reuses_single_live_same_class(monkeypatch) -> 
 
 
 def test_ensure_service_available_blocks_service_class_mismatch(monkeypatch) -> None:
-    async def _fake_request_service_status(_nc: object, *, service_id: str, timeout_s: float) -> dict[str, Any]:
-        _ = (service_id, timeout_s)
+    async def _fake_request_service_status(
+        _nc: object,
+        *,
+        service_id: str,
+        timeout_s: float,
+        attempts: int = 1,
+        retry_sleep_s: float = 0.0,
+    ) -> dict[str, Any]:
+        _ = (service_id, timeout_s, attempts, retry_sleep_s)
         return {
             "alive": True,
             "identityValid": True,
@@ -385,8 +413,15 @@ def test_ensure_service_available_blocks_unknown_liveliness_state() -> None:
 
 
 def test_ensure_service_available_blocks_single_live_instance_when_status_unreachable(monkeypatch) -> None:
-    async def _fake_request_service_status(_nc: object, *, service_id: str, timeout_s: float) -> dict[str, Any] | None:
-        _ = (service_id, timeout_s)
+    async def _fake_request_service_status(
+        _nc: object,
+        *,
+        service_id: str,
+        timeout_s: float,
+        attempts: int = 1,
+        retry_sleep_s: float = 0.0,
+    ) -> dict[str, Any] | None:
+        _ = (service_id, timeout_s, attempts, retry_sleep_s)
         return None
 
     monkeypatch.setattr(lifecycle_module, "request_service_status", _fake_request_service_status)
@@ -401,8 +436,15 @@ def test_ensure_service_available_blocks_single_live_instance_when_status_unreac
 
 
 def test_ensure_service_available_replaces_untracked_local_live_process_when_status_unreachable(monkeypatch) -> None:
-    async def _fake_request_service_status(_nc: object, *, service_id: str, timeout_s: float) -> dict[str, Any] | None:
-        _ = (service_id, timeout_s)
+    async def _fake_request_service_status(
+        _nc: object,
+        *,
+        service_id: str,
+        timeout_s: float,
+        attempts: int = 1,
+        retry_sleep_s: float = 0.0,
+    ) -> dict[str, Any] | None:
+        _ = (service_id, timeout_s, attempts, retry_sleep_s)
         return None
 
     monkeypatch.setattr(lifecycle_module, "request_service_status", _fake_request_service_status)
@@ -419,8 +461,15 @@ def test_ensure_service_available_replaces_untracked_local_live_process_when_sta
 
 
 def test_ensure_service_available_blocks_local_running_when_status_unreachable(monkeypatch) -> None:
-    async def _fake_request_service_status(_nc: object, *, service_id: str, timeout_s: float) -> dict[str, Any] | None:
-        _ = (service_id, timeout_s)
+    async def _fake_request_service_status(
+        _nc: object,
+        *,
+        service_id: str,
+        timeout_s: float,
+        attempts: int = 1,
+        retry_sleep_s: float = 0.0,
+    ) -> dict[str, Any] | None:
+        _ = (service_id, timeout_s, attempts, retry_sleep_s)
         return None
 
     monkeypatch.setattr(lifecycle_module, "request_service_status", _fake_request_service_status)
@@ -437,8 +486,15 @@ def test_ensure_service_available_blocks_local_running_when_status_unreachable(m
 
 
 def test_ensure_service_available_blocks_old_status_protocol(monkeypatch) -> None:
-    async def _fake_request_service_status(_nc: object, *, service_id: str, timeout_s: float) -> dict[str, Any]:
-        _ = (service_id, timeout_s)
+    async def _fake_request_service_status(
+        _nc: object,
+        *,
+        service_id: str,
+        timeout_s: float,
+        attempts: int = 1,
+        retry_sleep_s: float = 0.0,
+    ) -> dict[str, Any]:
+        _ = (service_id, timeout_s, attempts, retry_sleep_s)
         return {"alive": True, "identityValid": False}
 
     monkeypatch.setattr(lifecycle_module, "request_service_status", _fake_request_service_status)
@@ -453,8 +509,15 @@ def test_ensure_service_available_blocks_old_status_protocol(monkeypatch) -> Non
 
 
 def test_ensure_service_available_replaces_untracked_local_live_process_with_old_status_protocol(monkeypatch) -> None:
-    async def _fake_request_service_status(_nc: object, *, service_id: str, timeout_s: float) -> dict[str, Any]:
-        _ = (service_id, timeout_s)
+    async def _fake_request_service_status(
+        _nc: object,
+        *,
+        service_id: str,
+        timeout_s: float,
+        attempts: int = 1,
+        retry_sleep_s: float = 0.0,
+    ) -> dict[str, Any]:
+        _ = (service_id, timeout_s, attempts, retry_sleep_s)
         return {"alive": True, "identityValid": False}
 
     monkeypatch.setattr(lifecycle_module, "request_service_status", _fake_request_service_status)
@@ -471,8 +534,15 @@ def test_ensure_service_available_replaces_untracked_local_live_process_with_old
 
 
 def test_ensure_service_available_replaces_untracked_local_live_process_on_class_mismatch(monkeypatch) -> None:
-    async def _fake_request_service_status(_nc: object, *, service_id: str, timeout_s: float) -> dict[str, Any]:
-        _ = (timeout_s,)
+    async def _fake_request_service_status(
+        _nc: object,
+        *,
+        service_id: str,
+        timeout_s: float,
+        attempts: int = 1,
+        retry_sleep_s: float = 0.0,
+    ) -> dict[str, Any]:
+        _ = (service_id, timeout_s, attempts, retry_sleep_s)
         return {
             "alive": True,
             "identityValid": True,
@@ -496,8 +566,15 @@ def test_ensure_service_available_replaces_untracked_local_live_process_on_class
 
 
 def test_ensure_service_available_blocks_identity_with_empty_runtime_instance(monkeypatch) -> None:
-    async def _fake_request_service_status(_nc: object, *, service_id: str, timeout_s: float) -> dict[str, Any]:
-        _ = (service_id, timeout_s)
+    async def _fake_request_service_status(
+        _nc: object,
+        *,
+        service_id: str,
+        timeout_s: float,
+        attempts: int = 1,
+        retry_sleep_s: float = 0.0,
+    ) -> dict[str, Any]:
+        _ = (service_id, timeout_s, attempts, retry_sleep_s)
         return {
             "alive": True,
             "identityValid": True,

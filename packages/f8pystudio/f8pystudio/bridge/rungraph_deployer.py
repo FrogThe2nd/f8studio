@@ -16,7 +16,6 @@ from f8pysdk.zenoh_transport import ZenohTransport, ZenohTransportConfig
 from f8pysdk.service_runtime_tools.deploy.readiness import (
     RungraphDeployStatusTimeout,
     wait_rungraph_deploy_status,
-    wait_service_ready,
 )
 from f8pysdk.codec import decode_as, encode_obj
 
@@ -27,7 +26,6 @@ class RungraphGateway(Protocol):
 
 @dataclass(frozen=True)
 class RungraphDeployConfig:
-    ready_timeout_s: float = 6.0
     endpoint_ready_timeout_s: float = 4.0
     endpoint_probe_timeout_s: float = 0.5
     request_timeout_s: float = 2.0
@@ -58,6 +56,8 @@ class RungraphDeployResult:
 class RuntimeRungraphGateway:
     config: RungraphDeployConfig
     _transport: RuntimeTransport | None = field(default=None, init=False)
+    _connect_lock: asyncio.Lock | None = field(default=None, init=False, repr=False)
+    _connect_lock_loop: asyncio.AbstractEventLoop | None = field(default=None, init=False, repr=False)
 
     @staticmethod
     def _normalize_graph_for_request(graph: F8RuntimeGraph, *, source: str = "") -> F8RuntimeGraph:
@@ -142,18 +142,33 @@ class RuntimeRungraphGateway:
             )
         )
 
+    def _connect_lock_for_loop(self) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        lock = self._connect_lock
+        if lock is None or self._connect_lock_loop is not loop:
+            lock = asyncio.Lock()
+            self._connect_lock = lock
+            self._connect_lock_loop = loop
+        return lock
+
     async def ensure_connected(self) -> RuntimeTransport:
         transport = self._transport
         if transport is not None:
             return transport
-        transport = self._build_transport()
-        await transport.connect()
-        self._transport = transport
-        return transport
+        async with self._connect_lock_for_loop():
+            transport = self._transport
+            if transport is not None:
+                return transport
+            transport = self._build_transport()
+            await transport.connect()
+            self._transport = transport
+            return transport
 
     async def close(self) -> None:
         transport = self._transport
         self._transport = None
+        self._connect_lock = None
+        self._connect_lock_loop = None
         if transport is not None:
             await transport.close()
 
@@ -187,32 +202,35 @@ class RuntimeRungraphGateway:
             if remaining <= 0:
                 suffix = f": {last_error}" if last_error else ""
                 raise TimeoutError(
-                    f"service control endpoint not ready within {float(self.config.endpoint_ready_timeout_s):g}s{suffix}"
+                    f"service control endpoint not ready within {float(self.config.endpoint_ready_timeout_s):g}s{suffix} "
+                    f"({self._runtime_transport_diagnostics()})"
                 )
             await asyncio.sleep(min(0.1, max(0.01, remaining)))
+
+    def _runtime_transport_diagnostics(self) -> str:
+        config_path = str(self.config.zenoh_config_path or "").strip() or "<default>"
+        connect = ",".join(self.config.zenoh_connect) or "<auto>"
+        listen = ",".join(self.config.zenoh_listen) or "<auto>"
+        return (
+            f"bus={self.config.bus_backend} clientServiceId={self.config.client_service_id} "
+            f"zenohConfig={config_path} zenohConnect={connect} zenohListen={listen} "
+            f"zenohShmPoolBytes={int(self.config.zenoh_shm_pool_bytes)}"
+        )
 
     async def deploy_runtime_graph(self, req: RungraphDeployRequest) -> RungraphDeployResult:
         service_id = str(req.service_id)
         transport = await self.ensure_connected()
-        try:
-            await wait_service_ready(
-                transport,
-                timeout_s=float(self.config.ready_timeout_s),
-                service_id=service_id,
-            )
-        except asyncio.TimeoutError:
-            return RungraphDeployResult(
-                service_id=service_id,
-                success=False,
-                error_message=f"service not ready within {float(self.config.ready_timeout_s):g}s",
-            )
         try:
             await self._wait_control_endpoint_ready(
                 transport,
                 service_id=service_id,
             )
         except TimeoutError as exc:
-            return RungraphDeployResult(service_id=service_id, success=False, error_message=str(exc))
+            return RungraphDeployResult(
+                service_id=service_id,
+                success=False,
+                error_message=str(exc),
+            )
         req_id = new_id()
         deploy_source = f"{str(req.source or 'studio')}:{req_id}"
         graph_for_request = self._normalize_graph_for_request(req.graph, source=deploy_source)

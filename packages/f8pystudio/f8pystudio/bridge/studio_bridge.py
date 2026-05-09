@@ -125,6 +125,8 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
         self._monitor_ui_pending_by_service: dict[str, PendingMonitorUpdate] = {}
         self._monitor_ui_flush_task: asyncio.Task[object] | None = None
         self._runtime_transport: RuntimeTransport | None = None
+        self._runtime_transport_lock: asyncio.Lock | None = None
+        self._runtime_transport_lock_loop: asyncio.AbstractEventLoop | None = None
         self._zenoh_singleton_session: Any = None
         self._zenoh_singleton_token: Any = None
         self._zenoh_service_liveliness_session: Any = None
@@ -198,14 +200,14 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
         )
 
     def kill_managed_services_on_exit(self) -> bool:
-        return str(self._cfg.supervision_mode or "studio_owned").strip().lower() != "detached"
+        return bool(self._cfg.kill_managed_services_on_exit)
 
     def set_kill_managed_services_on_exit(self, enabled: bool) -> None:
         from dataclasses import replace
 
         self._cfg = replace(
             self._cfg,
-            supervision_mode="studio_owned" if bool(enabled) else "detached",
+            kill_managed_services_on_exit=bool(enabled),
         )
 
     def _emit_log_line(self, line: str) -> None:

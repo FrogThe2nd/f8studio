@@ -128,6 +128,38 @@ def test_process_manager_zenoh_env_installs_zenoh_values(
     assert env["F8_ZENOH_SHM_POOL_BYTES"] == "123456"
 
 
+def test_process_manager_does_not_inherit_debugger_subprocess_injection_env(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    entry_path = _write_service_entry(tmp_path)
+    captured: dict[str, Any] = {}
+
+    def fake_popen(cmd: list[str], **kwargs: Any) -> _FakeProcess:
+        captured["cmd"] = cmd
+        captured["env"] = kwargs["env"]
+        return _FakeProcess()
+
+    monkeypatch.setenv("DEBUGPY_LAUNCHER_PORT", "12345")
+    monkeypatch.setenv("DEBUGPY_LOG_DIR", "H:/tmp/debugpy")
+    monkeypatch.setenv("PYDEVD_USE_FRAME_EVAL", "NO")
+    monkeypatch.setenv("PYDEVD_LOAD_NATIVE_LIB", "1")
+    monkeypatch.setenv("PYCHARM_HOSTED", "1")
+    monkeypatch.setenv("PYTHONBREAKPOINT", "debugpy.breakpoint")
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+
+    manager = ServiceProcessManager(_Catalog(entry_path))
+    manager.start(ServiceProcessConfig(service_class="f8.test", service_id="svc_debug_env"))
+
+    env = captured["env"]
+    assert "DEBUGPY_LAUNCHER_PORT" not in env
+    assert "DEBUGPY_LOG_DIR" not in env
+    assert "PYDEVD_USE_FRAME_EVAL" not in env
+    assert "PYDEVD_LOAD_NATIVE_LIB" not in env
+    assert "PYCHARM_HOSTED" not in env
+    assert "PYTHONBREAKPOINT" not in env
+
+
 def test_process_manager_detached_starts_service_command_directly(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

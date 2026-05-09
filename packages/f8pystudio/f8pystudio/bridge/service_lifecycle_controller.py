@@ -42,6 +42,23 @@ class ServiceLifecycleControllerMixin:
             return "detached"
         return "studio_owned"
 
+    def _runtime_deploy_diagnostics(self) -> str:
+        config_path = self._runtime_zenoh_config_path() or "<default>"
+        connect = ",".join(self._runtime_zenoh_connect()) or "<auto>"
+        listen = ",".join(self._runtime_zenoh_listen()) or "<auto>"
+        return (
+            f"bus={self._runtime_bus_backend()} supervision={self._runtime_supervision_mode()} "
+            f"zenohConfig={config_path} zenohConnect={connect} zenohListen={listen} "
+            f"zenohShmPoolBytes={self._runtime_zenoh_shm_pool_bytes()}"
+        )
+
+    def _format_runtime_instances(self, instances: set[str] | None) -> str:
+        if instances is None:
+            return "<unknown>"
+        if not instances:
+            return "<none>"
+        return ",".join(sorted(instances))
+
     async def _ensure_requester(self) -> Any | None:
         return None
 
@@ -169,7 +186,14 @@ class ServiceLifecycleControllerMixin:
             return None
         return v[0]
 
-    async def _request_service_status_async(self, service_id: str) -> dict[str, Any] | None:
+    async def _request_service_status_async(
+        self,
+        service_id: str,
+        *,
+        timeout_s: float = 0.4,
+        attempts: int = 1,
+        retry_sleep_s: float = 0.0,
+    ) -> dict[str, Any] | None:
         sid = ""
         try:
             sid = ensure_token(str(service_id), label="service_id")
@@ -178,7 +202,13 @@ class ServiceLifecycleControllerMixin:
         requester = await self._ensure_requester()
         if requester is None:
             return None
-        return await request_service_status(requester, service_id=sid, timeout_s=0.4)
+        return await request_service_status(
+            requester,
+            service_id=sid,
+            timeout_s=float(timeout_s),
+            attempts=int(attempts),
+            retry_sleep_s=float(retry_sleep_s),
+        )
 
     def _cache_status_identity(self, service_id: str, status: dict[str, Any]) -> None:
         sid = str(service_id or "").strip()
@@ -210,7 +240,9 @@ class ServiceLifecycleControllerMixin:
 
     def _block_unknown_runtime_instances(self, service_id: str) -> bool:
         sid = str(service_id or "").strip()
-        self._emit_log_line(f"deploy blocked serviceId={sid}: service liveliness query failed")
+        self._emit_log_line(
+            f"deploy blocked serviceId={sid}: service liveliness query failed ({self._runtime_deploy_diagnostics()})"
+        )
         return True
 
     def _block_duplicate_runtime_instances(self, service_id: str, instances: set[str] | None) -> bool:
@@ -407,9 +439,13 @@ class ServiceLifecycleControllerMixin:
                     f"running={local_class} desired={desired_class}"
                 )
                 return False
-            status = await self._request_service_status_async(sid)
+            status = await self._request_service_status_async(sid, timeout_s=0.75, attempts=6, retry_sleep_s=0.25)
             if not isinstance(status, dict):
-                self._emit_log_line(f"deploy blocked serviceId={sid}: local service status unreachable")
+                self._emit_log_line(
+                    f"deploy blocked serviceId={sid}: local service status unreachable "
+                    f"localRunning=True liveInstances={self._format_runtime_instances(instances)} "
+                    f"({self._runtime_deploy_diagnostics()})"
+                )
                 self._cache_service_alive(sid, True)
                 return False
             if not self._identity_status_valid(status):
@@ -438,11 +474,15 @@ class ServiceLifecycleControllerMixin:
             return False
 
         if len(instances) == 1:
-            status = await self._request_service_status_async(sid)
+            status = await self._request_service_status_async(sid, timeout_s=0.75, attempts=6, retry_sleep_s=0.25)
             if status is None:
                 if self._try_cleanup_untracked_local_processes(sid):
                     return self._start_service_process_local(service_id=sid, service_class=desired_class)
-                self._emit_log_line(f"deploy blocked serviceId={sid}: live service status unreachable")
+                self._emit_log_line(
+                    f"deploy blocked serviceId={sid}: live service status unreachable "
+                    f"localRunning=False liveInstances={self._format_runtime_instances(instances)} "
+                    f"({self._runtime_deploy_diagnostics()})"
+                )
                 self._cache_service_alive(sid, True)
                 return False
             if not self._identity_status_valid(status):

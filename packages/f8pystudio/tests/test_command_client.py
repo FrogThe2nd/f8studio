@@ -49,3 +49,74 @@ def test_runtime_command_gateway_serializes_list_args_without_wrapping() -> None
     assert payload.get("args") == [1, 2]
     assert response.ok is True
     assert response.result == {"ok": 1}
+
+
+class _SlowConnectTransport:
+    def __init__(self) -> None:
+        self.connect_calls = 0
+        self.close_calls = 0
+
+    async def connect(self) -> None:
+        self.connect_calls += 1
+        await asyncio.sleep(0.01)
+
+    async def close(self) -> None:
+        self.close_calls += 1
+
+    async def publish(self, key: str, payload: bytes) -> None:
+        _ = (key, payload)
+
+    async def subscribe(self, key_expr: str, *, queue: str | None = None, cb: object | None = None) -> object:
+        _ = (key_expr, queue, cb)
+        return object()
+
+    async def request(
+        self,
+        key: str,
+        payload: bytes,
+        *,
+        timeout: float = 1.0,
+        raise_on_error: bool = False,
+    ) -> bytes | None:
+        _ = (key, payload, timeout, raise_on_error)
+        return None
+
+    async def serve(self, key: str, handler: object) -> object:
+        _ = (key, handler)
+        return object()
+
+    async def retained_put(self, key: str, value: bytes) -> None:
+        _ = (key, value)
+
+    async def retained_get(self, key: str) -> bytes | None:
+        _ = key
+        return None
+
+    async def retained_watch(self, key_expr: str, *, cb: object, with_initial: bool = True) -> object:
+        _ = (key_expr, cb, with_initial)
+        return object()
+
+
+class _ConnectCountingCommandGateway(RuntimeCommandGateway):
+    def __init__(self) -> None:
+        super().__init__(RuntimeCommandGatewayConfig())
+        self.created_transports: list[_SlowConnectTransport] = []
+
+    def _build_transport(self) -> _SlowConnectTransport:
+        transport = _SlowConnectTransport()
+        self.created_transports.append(transport)
+        return transport
+
+
+def test_runtime_command_gateway_serializes_concurrent_connects() -> None:
+    async def _run() -> None:
+        gateway = _ConnectCountingCommandGateway()
+
+        first, second = await asyncio.gather(gateway.ensure_connected(), gateway.ensure_connected())
+
+        assert first is second
+        assert len(gateway.created_transports) == 1
+        assert gateway.created_transports[0].connect_calls == 1
+        await gateway.close()
+
+    asyncio.run(_run())

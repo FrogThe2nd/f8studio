@@ -234,6 +234,28 @@ def test_gateway_waits_for_rungraph_applied_status_after_ack() -> None:
     asyncio.run(_run())
 
 
+def test_gateway_accepts_control_endpoint_when_ready_retained_status_is_missing() -> None:
+    async def _run() -> None:
+        transport = _GatewayTransportStub()
+        graph = F8RuntimeGraph(
+            graphId="g1",
+            revision="r1",
+            nodes=[F8RuntimeNode(nodeId="svc1", serviceId="svc1", serviceClass="svc.a", operatorClass=None)],
+            edges=[],
+        )
+        gateway = RuntimeRungraphGateway(RungraphDeployConfig(apply_timeout_s=1.0))
+        gateway._transport = transport
+
+        result = await gateway.deploy_runtime_graph(_DeployRequest(service_id="svc1", graph=graph, source="test"))
+
+        assert result.success is True
+        assert result.error_message == ""
+        assert len(transport.request_payloads) == 1
+        assert transport.status_probe_count == 1
+
+    asyncio.run(_run())
+
+
 def test_gateway_uses_rungraph_status_when_ack_times_out() -> None:
     async def _run() -> None:
         transport = _GatewayTransportStub(request_timeout=True)

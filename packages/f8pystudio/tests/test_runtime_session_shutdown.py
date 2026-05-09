@@ -35,7 +35,7 @@ class _FakeProcessGateway:
         return True
 
 
-def test_bridge_stop_does_not_wait_forever_for_blocking_zenoh_session_close() -> None:
+def test_bridge_stop_skips_blocking_zenoh_singleton_native_close() -> None:
     entered = threading.Event()
     release = threading.Event()
     bridge = PyStudioServiceBridge(PyStudioServiceBridgeConfig())
@@ -49,13 +49,14 @@ def test_bridge_stop_does_not_wait_forever_for_blocking_zenoh_session_close() ->
         release.set()
     elapsed_s = time.perf_counter() - started
 
-    assert entered.wait(timeout=0.5)
+    assert not entered.is_set()
     assert elapsed_s < 2.0
     assert bridge._async_started is False
+    assert bridge._zenoh_singleton_session is None
 
 
 def test_bridge_stop_preserves_detached_processes() -> None:
-    bridge = PyStudioServiceBridge(PyStudioServiceBridgeConfig(supervision_mode="detached"))
+    bridge = PyStudioServiceBridge(PyStudioServiceBridgeConfig(kill_managed_services_on_exit=False))
     bridge._ensure_async_runtime_started()
     fake_gateway = _FakeProcessGateway()
     bridge._process_gateway = fake_gateway
@@ -63,3 +64,4 @@ def test_bridge_stop_preserves_detached_processes() -> None:
     bridge.stop()
 
     assert fake_gateway.stop_calls == []
+    assert bridge._cfg.supervision_mode == "studio_owned"

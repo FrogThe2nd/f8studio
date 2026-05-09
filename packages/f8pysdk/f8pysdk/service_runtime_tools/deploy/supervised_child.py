@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
+from ctypes import wintypes
 import os
 import signal
 import subprocess
@@ -16,20 +18,128 @@ class _SupervisorStopState:
     requested: bool = False
 
 
+if os.name == "nt":
+    _KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _KERNEL32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    _KERNEL32.AssignProcessToJobObject.restype = wintypes.BOOL
+    _KERNEL32.CloseHandle.argtypes = [wintypes.HANDLE]
+    _KERNEL32.CloseHandle.restype = wintypes.BOOL
+    _KERNEL32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+    _KERNEL32.CreateJobObjectW.restype = wintypes.HANDLE
+    _KERNEL32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    _KERNEL32.OpenProcess.restype = wintypes.HANDLE
+    _KERNEL32.SetInformationJobObject.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+    ]
+    _KERNEL32.SetInformationJobObject.restype = wintypes.BOOL
+else:
+    _KERNEL32 = None
+
+
+def _windows_error_message() -> str:
+    code = ctypes.get_last_error()
+    return f"WinError {int(code)}"
+
+
+def _close_windows_handle(handle: object) -> None:
+    if os.name != "nt" or _KERNEL32 is None:
+        return
+    try:
+        _KERNEL32.CloseHandle(handle)
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        print(f"[supervisor] CloseHandle failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+
+
+if os.name == "nt":
+    class _IoCounters(ctypes.Structure):
+        _fields_ = [
+            ("ReadOperationCount", ctypes.c_uint64),
+            ("WriteOperationCount", ctypes.c_uint64),
+            ("OtherOperationCount", ctypes.c_uint64),
+            ("ReadTransferCount", ctypes.c_uint64),
+            ("WriteTransferCount", ctypes.c_uint64),
+            ("OtherTransferCount", ctypes.c_uint64),
+        ]
+
+
+    class _JobObjectBasicLimitInformation(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_int64),
+            ("PerJobUserTimeLimit", ctypes.c_int64),
+            ("LimitFlags", ctypes.c_uint32),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", ctypes.c_uint32),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", ctypes.c_uint32),
+            ("SchedulingClass", ctypes.c_uint32),
+        ]
+
+
+    class _JobObjectExtendedLimitInformation(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", _JobObjectBasicLimitInformation),
+            ("IoInfo", _IoCounters),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+
+def _create_windows_kill_on_close_job(proc: subprocess.Popen[object]) -> object | None:
+    if os.name != "nt" or _KERNEL32 is None:
+        return None
+    job = _KERNEL32.CreateJobObjectW(None, None)
+    if not job:
+        print(f"[supervisor] CreateJobObjectW failed: {_windows_error_message()}", file=sys.stderr)
+        return None
+    info = _JobObjectExtendedLimitInformation()
+    info.BasicLimitInformation.LimitFlags = 0x00002000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    ok = _KERNEL32.SetInformationJobObject(
+        job,
+        9,  # JobObjectExtendedLimitInformation
+        ctypes.byref(info),
+        ctypes.sizeof(info),
+    )
+    if not ok:
+        print(f"[supervisor] SetInformationJobObject failed: {_windows_error_message()}", file=sys.stderr)
+        _close_windows_handle(job)
+        return None
+    process = _KERNEL32.OpenProcess(
+        0x0001 | 0x0100,  # PROCESS_TERMINATE | PROCESS_SET_QUOTA
+        False,
+        int(proc.pid),
+    )
+    if not process:
+        print(f"[supervisor] OpenProcess for child job failed pid={proc.pid}: {_windows_error_message()}", file=sys.stderr)
+        _close_windows_handle(job)
+        return None
+    try:
+        ok = _KERNEL32.AssignProcessToJobObject(job, process)
+    finally:
+        _close_windows_handle(process)
+    if not ok:
+        print(f"[supervisor] AssignProcessToJobObject failed pid={proc.pid}: {_windows_error_message()}", file=sys.stderr)
+        _close_windows_handle(job)
+        return None
+    return job
+
+
 def _parent_alive(parent_pid: int) -> bool:
     if parent_pid <= 0:
         return False
     if os.name == "nt":
-        try:
-            import ctypes
-
-            handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, int(parent_pid))
-            if not handle:
-                return False
-            ctypes.windll.kernel32.CloseHandle(handle)
-            return True
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        if _KERNEL32 is None:
             return False
+        handle = _KERNEL32.OpenProcess(0x1000, False, int(parent_pid))
+        if not handle:
+            return False
+        _close_windows_handle(handle)
+        return True
     try:
         os.kill(int(parent_pid), 0)
     except ProcessLookupError:
@@ -181,7 +291,7 @@ def _run_supervisor(
 ) -> int:
     if not child_cmd:
         raise ValueError("child command is empty")
-    popen_kwargs: dict[str, object] = {}
+    popen_kwargs: dict[str, object] = {"stdin": subprocess.DEVNULL}
     if os.name != "nt":
         popen_kwargs["start_new_session"] = True
     else:
@@ -190,31 +300,50 @@ def _run_supervisor(
         except AttributeError:
             pass
     proc = subprocess.Popen(list(child_cmd), **popen_kwargs)
+    job = _create_windows_kill_on_close_job(proc)
     print(f"[supervisor] child started pid={proc.pid} parentPid={int(parent_pid)}", flush=True)
-    stop_state = _SupervisorStopState()
-    _install_signal_handlers(
-        proc,
-        grace_s=float(grace_s),
-        soft_wait_s=float(soft_wait_s),
-        stop_state=stop_state,
-    )
-    _start_stdin_control_thread(
-        proc,
-        grace_s=float(grace_s),
-        soft_wait_s=float(soft_wait_s),
-        stop_state=stop_state,
-    )
-    while True:
-        rc = proc.poll()
-        if rc is not None:
-            if stop_state.requested:
+    try:
+        stop_state = _SupervisorStopState()
+        _install_signal_handlers(
+            proc,
+            grace_s=float(grace_s),
+            soft_wait_s=float(soft_wait_s),
+            stop_state=stop_state,
+        )
+        _start_stdin_control_thread(
+            proc,
+            grace_s=float(grace_s),
+            soft_wait_s=float(soft_wait_s),
+            stop_state=stop_state,
+        )
+        while True:
+            rc = proc.poll()
+            if rc is not None:
+                if stop_state.requested:
+                    return 0
+                if int(rc) != 0:
+                    rc_int = int(rc)
+                    if rc_int < 0:
+                        rc_hex = f"-0x{abs(rc_int):X}"
+                    else:
+                        rc_hex = f"0x{rc_int:X}"
+                    hint = ""
+                    if rc_int == 0xC0000135:
+                        hint = " hint=Windows loader failed to find a required DLL"
+                    print(
+                        f"[supervisor] child exited rc={rc_int} ({rc_hex}){hint} pid={proc.pid} cmd={' '.join(child_cmd)}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                return int(rc)
+            if not _parent_alive(int(parent_pid)):
+                print(f"[supervisor] parent pid={int(parent_pid)} disappeared; stopping child pid={proc.pid}", file=sys.stderr)
+                _terminate_process_tree(proc, grace_s=float(grace_s))
                 return 0
-            return int(rc)
-        if not _parent_alive(int(parent_pid)):
-            print(f"[supervisor] parent pid={int(parent_pid)} disappeared; stopping child pid={proc.pid}", file=sys.stderr)
-            _terminate_process_tree(proc, grace_s=float(grace_s))
-            return 0
-        time.sleep(max(0.05, float(poll_s)))
+            time.sleep(max(0.05, float(poll_s)))
+    finally:
+        if job is not None:
+            _close_windows_handle(job)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

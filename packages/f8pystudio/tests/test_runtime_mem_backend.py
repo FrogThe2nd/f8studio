@@ -60,6 +60,77 @@ def test_runtime_rungraph_gateway_reuses_mem_transport_until_close() -> None:
     asyncio.run(_run())
 
 
+class _SlowConnectTransport:
+    def __init__(self) -> None:
+        self.connect_calls = 0
+        self.close_calls = 0
+
+    async def connect(self) -> None:
+        self.connect_calls += 1
+        await asyncio.sleep(0.01)
+
+    async def close(self) -> None:
+        self.close_calls += 1
+
+    async def publish(self, key: str, payload: bytes) -> None:
+        _ = (key, payload)
+
+    async def subscribe(self, key_expr: str, *, queue: str | None = None, cb: object | None = None) -> object:
+        _ = (key_expr, queue, cb)
+        return object()
+
+    async def request(
+        self,
+        key: str,
+        payload: bytes,
+        *,
+        timeout: float = 1.0,
+        raise_on_error: bool = False,
+    ) -> bytes | None:
+        _ = (key, payload, timeout, raise_on_error)
+        return None
+
+    async def serve(self, key: str, handler: object) -> object:
+        _ = (key, handler)
+        return object()
+
+    async def retained_put(self, key: str, value: bytes) -> None:
+        _ = (key, value)
+
+    async def retained_get(self, key: str) -> bytes | None:
+        _ = key
+        return None
+
+    async def retained_watch(self, key_expr: str, *, cb: object, with_initial: bool = True) -> object:
+        _ = (key_expr, cb, with_initial)
+        return object()
+
+
+class _ConnectCountingRungraphGateway(RuntimeRungraphGateway):
+    def __init__(self) -> None:
+        super().__init__(RungraphDeployConfig(bus_backend="mem", client_service_id="studio"))
+        self.created_transports: list[_SlowConnectTransport] = []
+
+    def _build_transport(self) -> _SlowConnectTransport:
+        transport = _SlowConnectTransport()
+        self.created_transports.append(transport)
+        return transport
+
+
+def test_runtime_rungraph_gateway_serializes_concurrent_connects() -> None:
+    async def _run() -> None:
+        gateway = _ConnectCountingRungraphGateway()
+
+        first, second = await asyncio.gather(gateway.ensure_connected(), gateway.ensure_connected())
+
+        assert first is second
+        assert len(gateway.created_transports) == 1
+        assert gateway.created_transports[0].connect_calls == 1
+        await gateway.close()
+
+    asyncio.run(_run())
+
+
 def test_remote_state_watcher_mem_uses_in_memory_transport() -> None:
     watcher = RemoteStateWatcher(
         studio_service_id="studio",

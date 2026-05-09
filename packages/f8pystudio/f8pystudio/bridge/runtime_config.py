@@ -12,6 +12,7 @@ from f8pystudio.studio_specs.registry import STUDIO_SERVICE_ID
 class PyStudioServiceBridgeConfig:
     bus_backend: BusBackend = "zenoh"
     supervision_mode: Literal["studio_owned", "detached"] = "studio_owned"
+    kill_managed_services_on_exit: bool = True
     zenoh_config_path: str | None = None
     zenoh_connect: tuple[str, ...] = ()
     zenoh_listen: tuple[str, ...] = ()

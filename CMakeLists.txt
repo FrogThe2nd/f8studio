@@ -6,6 +6,11 @@ if(EXISTS "${F8_PIXI_CPP_ENV_DIR}")
     list(PREPEND CMAKE_PREFIX_PATH "${F8_PIXI_CPP_ENV_DIR}")
     list(PREPEND CMAKE_LIBRARY_PATH "${F8_PIXI_CPP_ENV_DIR}/lib")
     list(PREPEND CMAKE_INCLUDE_PATH "${F8_PIXI_CPP_ENV_DIR}/include")
+    if(CMAKE_HOST_WIN32 AND EXISTS "${F8_PIXI_CPP_ENV_DIR}/Library")
+        list(PREPEND CMAKE_PREFIX_PATH "${F8_PIXI_CPP_ENV_DIR}/Library")
+        list(PREPEND CMAKE_LIBRARY_PATH "${F8_PIXI_CPP_ENV_DIR}/Library/lib")
+        list(PREPEND CMAKE_INCLUDE_PATH "${F8_PIXI_CPP_ENV_DIR}/Library/include")
+    endif()
     if(EXISTS "${F8_PIXI_CPP_ENV_DIR}/bin/pkg-config" AND NOT PKG_CONFIG_EXECUTABLE)
         set(PKG_CONFIG_EXECUTABLE "${F8_PIXI_CPP_ENV_DIR}/bin/pkg-config" CACHE FILEPATH "pkg-config executable")
     endif()
@@ -14,7 +19,17 @@ if(EXISTS "${F8_PIXI_CPP_ENV_DIR}")
     else()
         set(_f8_pkg_config_separator ":")
     endif()
-    set(_f8_pixi_pkg_config_path "${F8_PIXI_CPP_ENV_DIR}/lib/pkgconfig${_f8_pkg_config_separator}${F8_PIXI_CPP_ENV_DIR}/share/pkgconfig")
+    set(_f8_pixi_pkg_config_paths
+        "${F8_PIXI_CPP_ENV_DIR}/lib/pkgconfig"
+        "${F8_PIXI_CPP_ENV_DIR}/share/pkgconfig"
+    )
+    if(CMAKE_HOST_WIN32 AND EXISTS "${F8_PIXI_CPP_ENV_DIR}/Library")
+        list(PREPEND _f8_pixi_pkg_config_paths
+            "${F8_PIXI_CPP_ENV_DIR}/Library/lib/pkgconfig"
+            "${F8_PIXI_CPP_ENV_DIR}/Library/share/pkgconfig"
+        )
+    endif()
+    list(JOIN _f8_pixi_pkg_config_paths "${_f8_pkg_config_separator}" _f8_pixi_pkg_config_path)
     if(DEFINED ENV{PKG_CONFIG_PATH} AND NOT "$ENV{PKG_CONFIG_PATH}" STREQUAL "")
         set(ENV{PKG_CONFIG_PATH} "${_f8_pixi_pkg_config_path}${_f8_pkg_config_separator}$ENV{PKG_CONFIG_PATH}")
     else()

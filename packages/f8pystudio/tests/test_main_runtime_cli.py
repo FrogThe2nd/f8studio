@@ -56,6 +56,8 @@ def test_main_defaults_to_zenoh_and_installs_zenoh_env(monkeypatch: pytest.Monke
     cfg = _FakeProgram.last_config
     assert cfg is not None
     assert cfg.bus_backend == "zenoh"
+    assert cfg.supervision_mode == "studio_owned"
+    assert cfg.kill_managed_services_on_exit is True
     assert cfg.zenoh_config_path is None
     assert cfg.zenoh_connect == ()
     assert cfg.zenoh_listen == ()
@@ -87,6 +89,8 @@ def test_main_parses_zenoh_cli_and_repeated_endpoints(monkeypatch: pytest.Monkey
     cfg = _FakeProgram.last_config
     assert cfg is not None
     assert cfg.bus_backend == "zenoh"
+    assert cfg.supervision_mode == "studio_owned"
+    assert cfg.kill_managed_services_on_exit is True
     assert cfg.zenoh_config_path == "/tmp/zenoh.json5"
     assert cfg.zenoh_connect == ("tcp/127.0.0.1:7447", "tcp/127.0.0.1:7448", "tcp/127.0.0.1:7449")
     assert cfg.zenoh_listen == ("tcp/0.0.0.0:0",)
@@ -123,6 +127,7 @@ def test_main_mem_backend_clears_transport_specific_env(monkeypatch: pytest.Monk
     cfg = _FakeProgram.last_config
     assert cfg is not None
     assert cfg.bus_backend == "mem"
+    assert cfg.supervision_mode == "studio_owned"
     assert os.environ["F8_BUS_BACKEND"] == "mem"
     assert "F8_ZENOH_CONFIG" not in os.environ
     assert "F8_ZENOH_CONNECT" not in os.environ
@@ -144,6 +149,21 @@ def test_main_describe_uses_configured_program_without_running(monkeypatch: pyte
     cfg = _FakeProgram.last_config
     assert cfg is not None
     assert cfg.bus_backend == "zenoh"
+
+
+def test_main_no_kill_managed_services_on_exit_does_not_detach_new_children(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_runtime_env(monkeypatch)
+    _install_fake_program(monkeypatch)
+
+    exit_code = studio_main.main(["--no-kill-managed-services-on-exit"])
+
+    assert exit_code == 17
+    cfg = _FakeProgram.last_config
+    assert cfg is not None
+    assert cfg.supervision_mode == "studio_owned"
+    assert cfg.kill_managed_services_on_exit is False
 
 
 def test_main_force_process_exit_uses_os_exit_after_running(monkeypatch: pytest.MonkeyPatch) -> None:

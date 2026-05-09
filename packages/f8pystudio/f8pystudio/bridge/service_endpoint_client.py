@@ -83,53 +83,67 @@ async def request_service_status(
     *,
     service_id: str,
     timeout_s: float = 0.4,
+    attempts: int = 1,
+    retry_sleep_s: float = 0.0,
 ) -> dict[str, Any] | None:
     sid = ensure_token(str(service_id), label="service_id")
-    payload = encode_obj(
-        F8StatusRequest(
-            reqId=new_id(),
-            args=F8EmptyArgs(),
-            meta={"actor": "studio", "cmd": "status"},
+    attempt_count = max(int(attempts), 1)
+    for attempt_index in range(attempt_count):
+        payload = encode_obj(
+            F8StatusRequest(
+                reqId=new_id(),
+                args=F8EmptyArgs(),
+                meta={"actor": "studio", "cmd": "status"},
+            )
         )
-    )
-    try:
-        message = await requester.request(svc_endpoint_key(sid, "status"), payload, timeout=float(timeout_s))
-    except Exception as exc:
-        logger.debug("service status request failed service_id=%s", service_id, exc_info=exc)
-        return None
-    raw = message_data_bytes(message)
-    if not raw:
-        return None
-    try:
-        response = decode_as(raw, F8StatusReply)
-    except ValueError as exc:
-        logger.debug("strict service status decode failed service_id=%s", service_id, exc_info=exc)
         try:
-            fallback = decode_obj(raw)
-        except ValueError:
+            message = await requester.request(svc_endpoint_key(sid, "status"), payload, timeout=float(timeout_s))
+        except Exception as exc:
+            logger.debug(
+                "service status request failed service_id=%s attempt=%s/%s",
+                service_id,
+                attempt_index + 1,
+                attempt_count,
+                exc_info=exc,
+            )
+            if attempt_index + 1 < attempt_count:
+                await asyncio.sleep(float(retry_sleep_s))
+                continue
             return None
-        if not isinstance(fallback, dict):
+        raw = message_data_bytes(message)
+        if not raw:
             return None
-        if not bool(fallback.get("ok")):
+        try:
+            response = decode_as(raw, F8StatusReply)
+        except ValueError as exc:
+            logger.debug("strict service status decode failed service_id=%s", service_id, exc_info=exc)
+            try:
+                fallback = decode_obj(raw)
+            except ValueError:
+                return None
+            if not isinstance(fallback, dict):
+                return None
+            if not bool(fallback.get("ok")):
+                return None
+            result = fallback.get("result")
+            if not isinstance(result, dict):
+                return None
+            return _status_identity_from_mapping(result)
+        if not response.ok:
             return None
-        result = fallback.get("result")
-        if not isinstance(result, dict):
+        result = response.result
+        if result is None or isinstance(result, msgspec.UnsetType):
             return None
-        return _status_identity_from_mapping(result)
-    if not response.ok:
-        return None
-    result = response.result
-    if result is None or isinstance(result, msgspec.UnsetType):
-        return None
-    output: dict[str, Any] = {
-        "alive": True,
-        "identityValid": True,
-        "serviceId": str(result.serviceId),
-        "serviceClass": str(result.serviceClass),
-        "runtimeInstanceId": str(result.runtimeInstanceId),
-    }
-    output["active"] = bool(result.active)
-    return output
+        output: dict[str, Any] = {
+            "alive": True,
+            "identityValid": True,
+            "serviceId": str(result.serviceId),
+            "serviceClass": str(result.serviceClass),
+            "runtimeInstanceId": str(result.runtimeInstanceId),
+        }
+        output["active"] = bool(result.active)
+        return output
+    return None
 
 
 async def request_set_service_active(

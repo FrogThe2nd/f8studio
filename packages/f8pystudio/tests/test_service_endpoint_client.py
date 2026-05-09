@@ -116,6 +116,43 @@ def test_request_service_status_fallback_preserves_identity() -> None:
     assert requester.calls[0][0] == svc_endpoint_key("svc_demo", "status")
 
 
+def test_request_service_status_retries_after_exception() -> None:
+    requester = _FakeRequester(
+        [
+            TimeoutError("transient"),
+            encode_obj(
+                {
+                    "reqId": "r2",
+                    "ok": True,
+                    "result": {
+                        "serviceId": "svc_demo",
+                        "serviceClass": "f8.tests.demo",
+                        "runtimeInstanceId": "inst_demo",
+                        "active": True,
+                    },
+                    "error": None,
+                }
+            ),
+        ]
+    )
+
+    result = asyncio.run(
+        request_service_status(
+            requester,
+            service_id="svc_demo",
+            timeout_s=0.4,
+            attempts=2,
+            retry_sleep_s=0.0,
+        )
+    )
+
+    assert result is not None
+    assert result["identityValid"] is True
+    assert result["active"] is True
+    assert len(requester.calls) == 2
+    assert requester.calls[0][0] == svc_endpoint_key("svc_demo", "status")
+
+
 def test_request_set_service_active_retries_after_exception() -> None:
     requester = _FakeRequester(
         [

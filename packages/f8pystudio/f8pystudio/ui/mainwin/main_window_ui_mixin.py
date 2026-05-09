@@ -591,9 +591,9 @@ class MainWindowUiMixin:
                 checked=self._auto_deploy_enabled,
             ),
             kill_managed_services_on_exit_action=self._create_action(
-                "Kill managed services when Studio exits",
+                "Stop managed services on shutdown",
                 handler=self._on_kill_managed_services_on_exit_toggled,
-                tool_tip="Terminate managed service processes when PyStudio exits",
+                tool_tip="Stop managed service processes during PyStudio shutdown",
                 checkable=True,
                 checked=self._kill_managed_services_on_exit_enabled,
             ),
