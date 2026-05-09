@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import threading
+import time
+
 from qtpy import QtCore, QtWidgets
 
 from f8pystudio.bridge.process_action_scheduler import ServiceProcessActionScheduler
@@ -42,11 +45,18 @@ def test_schedule_stop_grace_expired_stops_process_and_emits_down_state() -> Non
 
     scheduler.schedule_stop(service_id="svc.a", grace_s=0.0)
 
+    deadline_s = time.monotonic() + 2.0
+    while not emitted_states and time.monotonic() < deadline_s:
+        QtWidgets.QApplication.processEvents()
+        QtCore.QThread.msleep(20)
+    QtWidgets.QApplication.processEvents()
+
     assert stop_calls == ["svc.a"]
     assert emitted_states == [("svc.a", False)]
     assert start_calls == []
     assert log_lines == []
     assert report_lines == []
+    scheduler.close()
     QtCore.QCoreApplication.sendPostedEvents(None, int(QtCore.QEvent.Type.DeferredDelete))
     QtWidgets.QApplication.processEvents()
     assert owner.findChildren(QtCore.QTimer) == []
@@ -75,6 +85,7 @@ def test_schedule_restart_when_already_stopped_relaunches_immediately() -> None:
     assert stop_calls == []
     assert emitted_states == [("svc.b", False)]
     assert start_calls == [("svc.b", "f8.tests.b")]
+    scheduler.close()
     QtCore.QCoreApplication.sendPostedEvents(None, int(QtCore.QEvent.Type.DeferredDelete))
     QtWidgets.QApplication.processEvents()
     assert owner.findChildren(QtCore.QTimer) == []
@@ -99,8 +110,64 @@ def test_schedule_stop_keeps_polling_when_stop_reports_success_but_service_still
 
     scheduler.schedule_stop(service_id="svc.stuck", grace_s=0.0)
 
+    deadline_s = time.monotonic() + 2.0
+    while not log_lines and time.monotonic() < deadline_s:
+        QtWidgets.QApplication.processEvents()
+        QtCore.QThread.msleep(20)
+    QtWidgets.QApplication.processEvents()
+
     assert stop_calls == ["svc.stuck"]
     assert emitted_states == []
     assert log_lines == ["stop_service incomplete (process still running): serviceId=svc.stuck"]
     assert "svc.stuck" in scheduler._actions
-    scheduler.cancel_all()
+    scheduler.close()
+
+
+def test_schedule_stop_runs_fallback_without_blocking_qt_thread() -> None:
+    _ensure_app()
+    owner = QtCore.QObject()
+    running_by_service = {"svc.slow": True}
+    stop_started = threading.Event()
+    release_stop = threading.Event()
+    stop_calls: list[str] = []
+    emitted_states: list[tuple[str, bool]] = []
+
+    def _is_running(service_id: str) -> bool:
+        return bool(running_by_service.get(service_id, False))
+
+    def _stop_once(service_id: str) -> bool:
+        stop_calls.append(str(service_id))
+        stop_started.set()
+        if not release_stop.wait(timeout=2.0):
+            raise TimeoutError("release_stop was not set")
+        running_by_service[str(service_id)] = False
+        return True
+
+    scheduler = ServiceProcessActionScheduler(
+        owner=owner,
+        is_service_running=_is_running,
+        stop_process_once=_stop_once,
+        emit_service_process_state=lambda sid, running: emitted_states.append((str(sid), bool(running))),
+        start_service=lambda sid, service_class: None,
+        emit_log=lambda line: None,
+        report_exception=lambda context, exc: None,
+    )
+
+    started_s = time.monotonic()
+    scheduler.schedule_stop(service_id="svc.slow", grace_s=0.0)
+    elapsed_s = time.monotonic() - started_s
+
+    assert elapsed_s < 0.2
+    assert stop_started.wait(timeout=1.0)
+    assert running_by_service["svc.slow"] is True
+    assert emitted_states == []
+
+    release_stop.set()
+    deadline_s = time.monotonic() + 2.0
+    while not emitted_states and time.monotonic() < deadline_s:
+        QtWidgets.QApplication.processEvents()
+        QtCore.QThread.msleep(20)
+
+    assert stop_calls == ["svc.slow"]
+    assert emitted_states == [("svc.slow", False)]
+    scheduler.close()

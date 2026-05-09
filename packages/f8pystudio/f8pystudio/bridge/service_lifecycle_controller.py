@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from qtpy import QtCore
@@ -18,6 +19,17 @@ from f8pystudio.nodegraph.runtime_compiler import CompiledRuntimeGraphs
 
 SERVICE_STOP_GRACE_S = 0.8
 SERVICE_RESTART_GRACE_S = 2.2
+
+
+@dataclass(frozen=True)
+class StopProcessOnceResult:
+    service_id: str
+    stopped: bool
+    tracked_before_stop: bool
+    process_stop_ok: bool
+    terminate_external_success: bool
+    matched_pids: tuple[int, ...]
+    terminated_pids: tuple[int, ...]
 
 
 class ServiceLifecycleControllerMixin:
@@ -65,10 +77,18 @@ class ServiceLifecycleControllerMixin:
     async def _ensure_requester(self) -> Any | None:
         return None
 
-    def _stop_process_once_local(self, service_id: str) -> bool:
+    def _stop_process_once_worker(self, service_id: str) -> StopProcessOnceResult:
         sid = str(service_id or "").strip()
         if not sid:
-            return False
+            return StopProcessOnceResult(
+                service_id="",
+                stopped=False,
+                tracked_before_stop=False,
+                process_stop_ok=False,
+                terminate_external_success=False,
+                matched_pids=(),
+                terminated_pids=(),
+            )
         tracked_before_stop = False
         try:
             tracked_before_stop = sid in set(str(item) for item in self._process_gateway.service_ids())
@@ -81,11 +101,25 @@ class ServiceLifecycleControllerMixin:
         except Exception as exc:
             self._emit_log_line(f"stop_service failed: {exc}")
         if tracked_before_stop and process_stop_ok:
-            self._cache_stopped_service(sid)
-            return True
+            return StopProcessOnceResult(
+                service_id=sid,
+                stopped=True,
+                tracked_before_stop=tracked_before_stop,
+                process_stop_ok=process_stop_ok,
+                terminate_external_success=False,
+                matched_pids=(),
+                terminated_pids=(),
+            )
         if not self.is_service_running(sid):
-            self._cache_stopped_service(sid)
-            return True
+            return StopProcessOnceResult(
+                service_id=sid,
+                stopped=True,
+                tracked_before_stop=tracked_before_stop,
+                process_stop_ok=process_stop_ok,
+                terminate_external_success=False,
+                matched_pids=(),
+                terminated_pids=(),
+            )
         try:
             result = self._process_gateway.terminate_external_processes(sid)
         except AttributeError:
@@ -94,18 +128,53 @@ class ServiceLifecycleControllerMixin:
             self._report_exception(f"terminate untracked service processes failed serviceId={sid}", exc)
             result = None
         if result is not None and bool(result.success):
-            if result.terminated_pids:
-                terminated_text = ",".join(str(pid) for pid in result.terminated_pids)
-                self._emit_log_line(f"cleaned untracked local service processes serviceId={sid} pids={terminated_text}")
             matched_pids = tuple(result.matched_pids or ())
             terminated_pids = tuple(result.terminated_pids or ())
             if matched_pids or terminated_pids:
-                self._cache_stopped_service(sid)
-                return True
+                return StopProcessOnceResult(
+                    service_id=sid,
+                    stopped=True,
+                    tracked_before_stop=tracked_before_stop,
+                    process_stop_ok=process_stop_ok,
+                    terminate_external_success=True,
+                    matched_pids=tuple(int(pid) for pid in matched_pids),
+                    terminated_pids=tuple(int(pid) for pid in terminated_pids),
+                )
             if not self.is_service_running(sid):
-                self._cache_stopped_service(sid)
-                return True
-        return bool(process_stop_ok and not self.is_service_running(sid))
+                return StopProcessOnceResult(
+                    service_id=sid,
+                    stopped=True,
+                    tracked_before_stop=tracked_before_stop,
+                    process_stop_ok=process_stop_ok,
+                    terminate_external_success=True,
+                    matched_pids=(),
+                    terminated_pids=(),
+                )
+        stopped = bool(process_stop_ok and not self.is_service_running(sid))
+        return StopProcessOnceResult(
+            service_id=sid,
+            stopped=stopped,
+            tracked_before_stop=tracked_before_stop,
+            process_stop_ok=process_stop_ok,
+            terminate_external_success=False,
+            matched_pids=(),
+            terminated_pids=(),
+        )
+
+    def _handle_stop_process_once_result(self, service_id: str, result: StopProcessOnceResult) -> None:
+        sid = str(service_id or result.service_id or "").strip()
+        if not sid:
+            return
+        if result.terminate_external_success and result.terminated_pids:
+            terminated_text = ",".join(str(pid) for pid in result.terminated_pids)
+            self._emit_log_line(f"cleaned untracked local service processes serviceId={sid} pids={terminated_text}")
+        if result.stopped:
+            self._cache_stopped_service(sid)
+
+    def _stop_process_once_local(self, service_id: str) -> bool:
+        result = self._stop_process_once_worker(service_id)
+        self._handle_stop_process_once_result(str(service_id), result)
+        return bool(result.stopped)
 
     def set_managed_active(self, active: bool) -> None:
         """

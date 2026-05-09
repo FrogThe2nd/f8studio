@@ -140,11 +140,12 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
         self._process_actions = ServiceProcessActionScheduler(
             owner=self,
             is_service_running=self.is_service_running,
-            stop_process_once=self._stop_process_once_local,
+            stop_process_once=self._stop_process_once_worker,
             emit_service_process_state=self._emit_service_process_state_safe,
             start_service=lambda sid, svc_class: self.start_service(sid, service_class=svc_class),
             emit_log=self._emit_log_line,
             report_exception=self._report_exception,
+            handle_stop_result=self._handle_stop_process_once_result,
         )
 
         try:
@@ -408,7 +409,7 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
 
     def stop(self) -> None:
         self._shutting_down = True
-        self._process_actions.cancel_all()
+        self._process_actions.close()
         self._startup_continue_requested.set()
         if self._async_started:
             try:

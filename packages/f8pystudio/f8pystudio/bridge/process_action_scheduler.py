@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import concurrent.futures
 import time
 from dataclasses import dataclass
-from typing import Callable, Literal
+from typing import Callable, Generic, Literal, TypeVar
 
 from qtpy import QtCore
+
+_StopResultT = TypeVar("_StopResultT")
+StopProcessResultHandler = Callable[[str, _StopResultT], None]
 
 
 @dataclass(frozen=True)
@@ -14,7 +18,7 @@ class _PendingProcessAction:
     service_class: str | None
 
 
-class ServiceProcessActionScheduler:
+class ServiceProcessActionScheduler(Generic[_StopResultT]):
     """
     Manage deferred stop/restart actions with graceful-exit polling.
 
@@ -29,27 +33,38 @@ class ServiceProcessActionScheduler:
         *,
         owner: QtCore.QObject,
         is_service_running: Callable[[str], bool],
-        stop_process_once: Callable[[str], bool],
+        stop_process_once: Callable[[str], _StopResultT],
         emit_service_process_state: Callable[[str, bool], None],
         start_service: Callable[[str, str | None], None],
         emit_log: Callable[[str], None],
         report_exception: Callable[[str, BaseException], None],
+        handle_stop_result: StopProcessResultHandler[_StopResultT] | None = None,
     ) -> None:
         self._owner = owner
         self._is_service_running = is_service_running
         self._stop_process_once = stop_process_once
+        self._handle_stop_result = handle_stop_result
         self._emit_service_process_state = emit_service_process_state
         self._start_service = start_service
         self._emit_log = emit_log
         self._report_exception = report_exception
         self._actions: dict[str, _PendingProcessAction] = {}
         self._timers: dict[str, QtCore.QTimer] = {}
+        self._stop_futures: dict[str, concurrent.futures.Future[_StopResultT]] = {}
+        self._executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=4,
+            thread_name_prefix="f8-service-stop",
+        )
 
     def schedule_stop(self, *, service_id: str, grace_s: float) -> None:
         sid = str(service_id or "").strip()
         if not sid:
             return
-        self._actions[sid] = _PendingProcessAction(action="stop", deadline_s=time.monotonic() + float(grace_s), service_class=None)
+        self._actions[sid] = _PendingProcessAction(
+            action="stop",
+            deadline_s=time.monotonic() + float(grace_s),
+            service_class=None,
+        )
         timer = self._ensure_timer(sid)
         if not timer.isActive():
             timer.start()
@@ -75,6 +90,9 @@ class ServiceProcessActionScheduler:
         if not sid:
             return
         self._actions.pop(sid, None)
+        future = self._stop_futures.pop(sid, None)
+        if future is not None:
+            future.cancel()
         timer = self._timers.pop(sid, None)
         if timer is not None:
             try:
@@ -102,6 +120,10 @@ class ServiceProcessActionScheduler:
             self.cancel(service_id=service_id)
         for service_id in list(self._timers.keys()):
             self.cancel(service_id=service_id)
+
+    def close(self) -> None:
+        self.cancel_all()
+        self._executor.shutdown(wait=False, cancel_futures=True)
 
     def _ensure_timer(self, service_id: str) -> QtCore.QTimer:
         sid = str(service_id)
@@ -136,6 +158,23 @@ class ServiceProcessActionScheduler:
             self.cancel(service_id=sid)
             return
 
+        future = self._stop_futures.get(sid)
+        if future is not None:
+            if not future.done():
+                return
+            self._stop_futures.pop(sid, None)
+            try:
+                result = future.result()
+            except concurrent.futures.CancelledError:
+                return
+            except Exception as exc:
+                self._report_exception(f"stop proc-action worker failed serviceId={sid}", exc)
+            else:
+                if self._handle_stop_result is not None:
+                    self._handle_stop_result(sid, result)
+            self._handle_stop_after_worker(service_id=sid, action=action)
+            return
+
         if not self._is_service_running(sid):
             self.cancel(service_id=sid)
             self._emit_service_process_state(sid, False)
@@ -146,7 +185,15 @@ class ServiceProcessActionScheduler:
         if action.deadline_s and time.monotonic() < action.deadline_s:
             return
 
-        stop_ok = self._stop_process_once(sid)
+        try:
+            self._stop_futures[sid] = self._executor.submit(self._stop_process_once, sid)
+        except RuntimeError as exc:
+            self._report_exception(f"submit stop proc-action worker failed serviceId={sid}", exc)
+            return
+        return
+
+    def _handle_stop_after_worker(self, *, service_id: str, action: _PendingProcessAction) -> None:
+        sid = str(service_id)
         still_running = bool(self._is_service_running(sid))
         if still_running:
             self._emit_log(f"stop_service incomplete (process still running): serviceId={sid}")
