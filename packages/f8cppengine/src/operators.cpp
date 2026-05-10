@@ -95,6 +95,13 @@ json editable_script_policy() {
               {"execOutPorts", editable_collection_policy()}};
 }
 
+json object_value_or_null(const json& object, const std::string& key) {
+  if (!object.is_object()) return json(nullptr);
+  const auto it = object.find(key);
+  if (it == object.end()) return json(nullptr);
+  return *it;
+}
+
 std::vector<std::string> data_port_names(const std::optional<std::vector<f8::cppsdk::generated::F8DataPortSpec>>& ports,
                                          std::vector<std::string> fallback) {
   std::vector<std::string> out;
@@ -509,7 +516,7 @@ class DataExprNode final : public OperatorNode, public ComputableNode {
     }
     last_ctx_id_ = ctx_id;
     dirty_ = false;
-    return last_outputs_.value(port, nullptr);
+    return object_value_or_null(last_outputs_, port);
   }
 
  private:
@@ -672,7 +679,7 @@ class PhaseNode final : public OperatorNode, public ComputableNode {
     turns_ += hz * delta_s;
     cache_ = json{{"phase", std::fmod(std::fmod(turns_, 1.0) + 1.0, 1.0)}, {"phaseTurns", turns_}};
     last_ctx_id_ = ctx_id;
-    return cache_.value(port, nullptr);
+    return object_value_or_null(cache_, port);
   }
 
  private:
@@ -1464,7 +1471,7 @@ class SwitchMixerNode final : public OperatorNode, public ComputableNode {
     if (last_ctx_id_.has_value() && last_ctx_id_.value() == ctx_id && cache_.contains(port)) return cache_[port];
     step(ctx_id);
     last_ctx_id_ = ctx_id;
-    return cache_.value(port, nullptr);
+    return object_value_or_null(cache_, port);
   }
 
  private:
