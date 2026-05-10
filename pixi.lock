@@ -2315,8 +2315,8 @@ packages:
   requires_python: '>=3.10'
 - pypi: ./packages/f8pystudio
   name: f8pystudio
-  version: 0.3.0
-  sha256: 312fc6910dc4a2c2ee081f0c4d4c896852793299fe0afc2e1a702bc2c0c8ce33
+  version: 0.4.0
+  sha256: 74b872485eaee5a28f910b561d461d276c8462c2a4dcb6c58279011bcf3fc96a
   requires_dist:
   - qtpy>=2.4.3
   - pyside6>=6.10.1
