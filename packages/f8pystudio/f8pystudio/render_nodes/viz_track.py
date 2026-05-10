@@ -26,6 +26,7 @@ import pyqtgraph as pg  # type: ignore[import-not-found]
 
 _STATE_UI_UPDATE = "uiUpdate"
 _WIDGET_NAME = "__trackviz"
+_TRACKVIZ_RENDER_VIDEO_BACKGROUND = False
 
 
 @dataclass(frozen=True)
@@ -451,10 +452,12 @@ class _TrackVizPane(QtWidgets.QWidget):
             self._pending = payload
             return
 
-        try:
-            video_stream_key = str(payload.get("videoStreamKey") or "").strip()
-        except (AttributeError, TypeError, ValueError):
-            video_stream_key = ""
+        video_stream_key = ""
+        if _TRACKVIZ_RENDER_VIDEO_BACKGROUND:
+            try:
+                video_stream_key = str(payload.get("videoStreamKey") or "").strip()
+            except (AttributeError, TypeError, ValueError):
+                video_stream_key = ""
         try:
             flow_stream_key = str(payload.get("flowStreamKey") or "").strip()
         except (AttributeError, TypeError, ValueError):
@@ -487,6 +490,7 @@ class _TrackVizPane(QtWidgets.QWidget):
         except (AttributeError, TypeError, ValueError):
             self._scene_size = None
         self._scene_payload = dict(payload)
+        self._scene_payload["videoStreamKey"] = ""
         if not self._show_sparse_flow:
             self._scene_payload["flow"] = None
         self._scene_payload["flowDense"] = None
@@ -684,7 +688,7 @@ class _TrackVizPane(QtWidgets.QWidget):
     def _tick_video(self) -> None:
         if not self.update_enabled():
             return
-        if self._ensure_video_reader() and self._video_reader is not None:
+        if _TRACKVIZ_RENDER_VIDEO_BACKGROUND and self._ensure_video_reader() and self._video_reader is not None:
             frame = self._video_reader.poll_latest()
             if frame is not None:
                 try:
