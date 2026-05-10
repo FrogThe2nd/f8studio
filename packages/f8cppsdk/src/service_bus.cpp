@@ -2313,6 +2313,30 @@ std::optional<json> ServiceBus::pull_data(const std::string& node_id, const std:
   return *mut.last_seen_value;
 }
 
+void ServiceBus::push_data_input_for_local_test(const std::string& node_id, const std::string& port_id,
+                                                const json& value, std::int64_t ts_ms) {
+  const std::string nid = ensure_token(node_id, "node_id");
+  const std::string pid = ensure_token(port_id, "port_id");
+  const auto value_ptr = std::make_shared<const json>(value);
+  std::shared_ptr<_InputBuffer> buf_ptr;
+  {
+    std::lock_guard<std::mutex> lock(data_mu_);
+    auto it = data_inputs_.find({nid, pid});
+    if (it == data_inputs_.end()) {
+      it = data_inputs_.emplace(_NodePortKey{nid, pid}, std::make_shared<_InputBuffer>()).first;
+    }
+    buf_ptr = it->second;
+  }
+  if (!buf_ptr) return;
+  std::lock_guard<std::mutex> lock(buf_ptr->mu);
+  buf_ptr->last_seen_value = value_ptr;
+  buf_ptr->last_seen_ts_ms = ts_ms > 0 ? ts_ms : now_ms();
+  if (buf_ptr->strategy == EdgeStrategy::kLatest) {
+    buf_ptr->queue.clear();
+  }
+  buf_ptr->queue.emplace_back(value_ptr, buf_ptr->last_seen_ts_ms);
+}
+
 std::optional<std::string> ServiceBus::data_input_zenoh_key(const std::string& node_id,
                                                             const std::string& port_id) const {
   const std::string nid = ensure_token(node_id, "node_id");
@@ -2371,6 +2395,23 @@ bool ServiceBus::publish_state(const std::string& node_id, const std::string& fi
   } catch (...) {
     spdlog::warn("publish_state failed serviceId={} nodeId={} field={}: unknown error", cfg_.service_id, node_id,
                  field);
+    return false;
+  }
+}
+
+bool ServiceBus::publish_state_from_external(const std::string& node_id, const std::string& field, const json& value,
+                                             const json& meta, std::int64_t ts_ms) {
+  try {
+    publish_state_local(node_id, field, value, ts_ms > 0 ? ts_ms : now_ms(), "endpoint", meta, "external", true,
+                        true);
+    return true;
+  } catch (const std::exception& exc) {
+    spdlog::warn("publish_state_from_external failed serviceId={} nodeId={} field={}: {}", cfg_.service_id, node_id,
+                 field, exc.what());
+    return false;
+  } catch (...) {
+    spdlog::warn("publish_state_from_external failed serviceId={} nodeId={} field={}: unknown error", cfg_.service_id,
+                 node_id, field);
     return false;
   }
 }

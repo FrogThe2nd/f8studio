@@ -107,6 +107,7 @@ class ServiceBus final : public ServiceControlHandler {
   void stop();
 
   bool active() const { return active_.load(std::memory_order_acquire); }
+  const Config& config() const { return cfg_; }
   bool terminate_requested() const { return terminate_.load(std::memory_order_acquire); }
   const std::string& runtime_instance_id() const { return runtime_instance_id_; }
 
@@ -143,6 +144,10 @@ class ServiceBus final : public ServiceControlHandler {
   bool publish_state(const std::string& node_id, const std::string& field, const json& value,
                      const std::string& source = "runtime", const json& meta = json::object(),
                      std::int64_t ts_ms = 0, const std::string& origin = "runtime");
+  bool publish_state_from_external(const std::string& node_id, const std::string& field, const json& value,
+                                   const json& meta = json::object(), std::int64_t ts_ms = 0);
+  void push_data_input_for_local_test(const std::string& node_id, const std::string& port_id, const json& value,
+                                      std::int64_t ts_ms = 0);
 
  // ---- ServiceControlHandler (endpoints) ------------------------------
   bool is_active() const override;

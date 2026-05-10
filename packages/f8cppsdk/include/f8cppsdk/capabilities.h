@@ -1,7 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -62,6 +65,41 @@ class RungraphHandlerNode {
   virtual ~RungraphHandlerNode() = default;
   virtual bool on_set_rungraph(const nlohmann::json& graph_obj, const nlohmann::json& meta, std::string& error_code,
                                std::string& error_message) = 0;
+};
+
+class ComputableNode {
+ public:
+  virtual ~ComputableNode() = default;
+  virtual nlohmann::json compute_output(const std::string& port, std::int64_t ctx_id) = 0;
+};
+
+class ExecutableNode {
+ public:
+  virtual ~ExecutableNode() = default;
+  virtual std::vector<std::string> on_exec(std::int64_t exec_id, const std::string& in_port) = 0;
+};
+
+class EntrypointContext {
+ public:
+  using EmitExecFn = std::function<void(const std::string&, std::int64_t)>;
+
+  EntrypointContext(std::string node_id, EmitExecFn emit_exec) : node_id_(std::move(node_id)), emit_exec_(std::move(emit_exec)) {}
+
+  const std::string& node_id() const { return node_id_; }
+  void emit_exec(const std::string& out_port, std::int64_t exec_id) const {
+    if (emit_exec_) emit_exec_(out_port, exec_id);
+  }
+
+ private:
+  std::string node_id_;
+  EmitExecFn emit_exec_;
+};
+
+class EntrypointNode {
+ public:
+  virtual ~EntrypointNode() = default;
+  virtual void start_entrypoint(const EntrypointContext& ctx) = 0;
+  virtual void stop_entrypoint() = 0;
 };
 
 }  // namespace f8::cppsdk

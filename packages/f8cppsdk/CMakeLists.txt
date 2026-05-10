@@ -1,6 +1,10 @@
 add_library(f8cppsdk
   src/describe_schema.cpp
+  src/exec_flow_executor.cpp
   src/service_bus.cpp
+  src/service_host.cpp
+  src/runtime_node.cpp
+  src/runtime_node_registry.cpp
   src/runtime_backend.cpp
   src/zenoh_naming.cpp
   src/zenoh_transport.cpp
