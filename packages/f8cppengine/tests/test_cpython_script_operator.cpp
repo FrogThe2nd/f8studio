@@ -1,0 +1,201 @@
+#include <cstdint>
+#include <iostream>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+#include <nlohmann/json.hpp>
+
+#include "f8cppengine/operators.h"
+#include "f8cppsdk/exec_flow_executor.h"
+#include "f8cppsdk/runtime_node_registry.h"
+#include "f8cppsdk/service_bus.h"
+#include "f8cppsdk/service_host.h"
+
+using json = nlohmann::json;
+
+namespace {
+
+constexpr const char* kServiceId = "svc";
+constexpr const char* kServiceClass = "f8.cppengine";
+
+class ConstantNode final : public f8::cppsdk::OperatorNode, public f8::cppsdk::ComputableNode {
+ public:
+  ConstantNode(std::string node_id, json value)
+      : OperatorNode(std::move(node_id), {}, {"out"}, {}, {}, {}), value_(std::move(value)) {}
+
+  json compute_output(const std::string& port, std::int64_t ctx_id) override {
+    last_ctx_id = ctx_id;
+    if (port != "out") return nullptr;
+    return value_;
+  }
+
+  std::int64_t last_ctx_id = 0;
+
+ private:
+  json value_;
+};
+
+class PullingSinkNode final : public f8::cppsdk::OperatorNode {
+ public:
+  explicit PullingSinkNode(std::string node_id)
+      : OperatorNode(std::move(node_id), {"in"}, {}, {}, {"exec"}, {}) {}
+
+  std::vector<std::string> on_exec(std::int64_t exec_id, const std::string& in_port) override {
+    (void)in_port;
+    last_exec_id = exec_id;
+    last_value = pull("in", exec_id).value_or(nullptr);
+    return {};
+  }
+
+  std::int64_t last_exec_id = 0;
+  json last_value = nullptr;
+};
+
+json port_spec(const std::string& name) {
+  return json{{"name", name}, {"valueSchema", json{{"type", "any"}}}};
+}
+
+json runtime_node(const std::string& node_id, const std::string& operator_class, json data_in_ports,
+                  json data_out_ports, json exec_in_ports, json exec_out_ports, json state_fields = json::array(),
+                  json state_values = json::object()) {
+  return json{{"nodeId", node_id},
+              {"serviceId", kServiceId},
+              {"serviceClass", kServiceClass},
+              {"operatorClass", operator_class},
+              {"dataInPorts", std::move(data_in_ports)},
+              {"dataOutPorts", std::move(data_out_ports)},
+              {"execInPorts", std::move(exec_in_ports)},
+              {"execOutPorts", std::move(exec_out_ports)},
+              {"stateFields", std::move(state_fields)},
+              {"stateValues", std::move(state_values)}};
+}
+
+json data_edge(const std::string& edge_id, const std::string& from_node, const std::string& from_port,
+               const std::string& to_node, const std::string& to_port) {
+  return json{{"edgeId", edge_id},
+              {"kind", "data"},
+              {"fromServiceId", kServiceId},
+              {"fromOperatorId", from_node},
+              {"fromPort", from_port},
+              {"toServiceId", kServiceId},
+              {"toOperatorId", to_node},
+              {"toPort", to_port}};
+}
+
+json exec_edge(const std::string& edge_id, const std::string& from_node, const std::string& from_port,
+               const std::string& to_node, const std::string& to_port) {
+  return json{{"edgeId", edge_id},
+              {"kind", "exec"},
+              {"fromServiceId", kServiceId},
+              {"fromOperatorId", from_node},
+              {"fromPort", from_port},
+              {"toServiceId", kServiceId},
+              {"toOperatorId", to_node},
+              {"toPort", to_port}};
+}
+
+}  // namespace
+
+void expect(bool condition, const std::string& message) {
+  if (!condition) throw std::runtime_error(message);
+}
+
+void run_cpython_script_operator_smoke() {
+  f8::cppsdk::ServiceBus::Config cfg;
+  cfg.service_id = kServiceId;
+  cfg.service_class = kServiceClass;
+  cfg.bus_backend = f8::cppsdk::BusBackend::kMem;
+  f8::cppsdk::ServiceBus bus(cfg);
+
+  f8::cppsdk::RuntimeNodeRegistry registry;
+  f8::cppengine::register_cppengine_specs(registry);
+  registry.register_operator_spec(json{{"specKind", "operator"},
+                                       {"serviceClass", kServiceClass},
+                                       {"operatorClass", "f8.test_constant"},
+                                       {"label", "Test Constant"}},
+                                  true);
+  registry.register_operator_factory(
+      kServiceClass, "f8.test_constant",
+      [](const std::string& node_id, const f8::cppsdk::generated::F8RuntimeNode& node, const json& initial_state) {
+        (void)node;
+        const auto value_it = initial_state.find("value");
+        const json value = value_it == initial_state.end() ? json(nullptr) : *value_it;
+        return std::make_unique<ConstantNode>(node_id, value);
+      },
+      true);
+  registry.register_operator_spec(json{{"specKind", "operator"},
+                                       {"serviceClass", kServiceClass},
+                                       {"operatorClass", "f8.test_sink"},
+                                       {"label", "Test Sink"}},
+                                  true);
+  registry.register_operator_factory(
+      kServiceClass, "f8.test_sink",
+      [](const std::string& node_id, const f8::cppsdk::generated::F8RuntimeNode& node, const json& initial_state) {
+        (void)node;
+        (void)initial_state;
+        return std::make_unique<PullingSinkNode>(node_id);
+      },
+      true);
+
+  f8::cppsdk::ServiceHost host(bus, registry, kServiceClass);
+  f8::cppsdk::ExecFlowExecutor executor(bus);
+  host.start();
+
+  const std::string code =
+      "def onExec(ctx, exec_in, inputs):\n"
+      "    value = inputs.get('msg')\n"
+      "    return {'outputs': {'out': {'seen': value, 'node': ctx.node_id}}, 'exec': ['exec']}\n";
+  json graph{{"graphId", "g"},
+             {"revision", "r"},
+             {"nodes",
+              json::array({runtime_node("source", "f8.test_constant", json::array(), json::array({port_spec("out")}),
+                                        json::array(), json::array(),
+                                        json::array({json{{"name", "value"},
+                                                          {"access", "rw"},
+                                                          {"valueSchema", json{{"type", "any"}}}}}),
+                                        json{{"value", 41}}),
+                           runtime_node("script", "f8.cpython_script", json::array({port_spec("msg")}),
+                                        json::array({port_spec("out")}), json::array({"exec"}), json::array({"exec"}),
+                                        json::array({json{{"name", "code"},
+                                                          {"access", "rw"},
+                                                          {"valueSchema", json{{"type", "string"}}}}}),
+                                        json{{"code", code}}),
+                           runtime_node("sink", "f8.test_sink", json::array({port_spec("in")}), json::array(),
+                                        json::array({"exec"}), json::array())})},
+             {"edges", json::array({data_edge("d1", "source", "out", "script", "msg"),
+                                     data_edge("d2", "script", "out", "sink", "in"),
+                                     exec_edge("e1", "script", "exec", "sink", "exec")})}};
+
+  std::string error_code;
+  std::string error_message;
+  expect(host.apply_rungraph(graph, error_code, error_message),
+         "apply_rungraph failed: " + error_code + ": " + error_message);
+  executor.clear_nodes();
+  for (f8::cppsdk::OperatorNode* node : host.operator_nodes()) {
+    executor.register_node(node);
+  }
+  executor.apply_rungraph(graph);
+  executor.trigger_exec("script", "exec", 77);
+
+  auto* sink = dynamic_cast<PullingSinkNode*>(host.get_node("sink"));
+  expect(sink != nullptr, "sink node was not created");
+  expect(sink->last_exec_id == 77, "sink did not receive expected exec id");
+  expect(sink->last_value == (json{{"seen", 41}, {"node", "script"}}),
+         "sink received unexpected script output: " + sink->last_value.dump());
+
+  auto* source = dynamic_cast<ConstantNode*>(host.get_node("source"));
+  expect(source != nullptr, "source node was not created");
+  expect(source->last_ctx_id == 77, "source was not pulled with the exec context id");
+}
+
+int main() {
+  try {
+    run_cpython_script_operator_smoke();
+  } catch (const std::exception& exc) {
+    std::cerr << exc.what() << "\n";
+    return 1;
+  }
+  return 0;
+}
