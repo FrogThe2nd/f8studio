@@ -52,7 +52,8 @@ class DenseOptflowService final : public f8::cppsdk::LifecycleNode,
   void publish_state_if_changed(const std::string& field, const json& value, const std::string& source,
                                 const json& meta);
   void publish_error_if_changed(const json& value, const std::string& source, const json& meta);
-  void emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms, std::uint64_t vectors_per_frame);
+  void emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms, double latency_ms,
+                             std::uint64_t vectors_per_frame);
 
   bool ensure_video_open();
   void process_frame_once();
@@ -103,6 +104,8 @@ class DenseOptflowService final : public f8::cppsdk::LifecycleNode,
   std::int64_t monitor_window_start_ms_ = 0;
   double monitor_last_process_ms_ = 0.0;
   double monitor_total_process_ms_ = 0.0;
+  double monitor_last_latency_ms_ = 0.0;
+  double monitor_total_latency_ms_ = 0.0;
   double monitor_fps_ = 0.0;
 };
 

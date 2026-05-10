@@ -224,6 +224,8 @@ bool TemplateMatchService::start() {
   monitor_window_start_ms_ = 0;
   monitor_last_process_ms_ = 0.0;
   monitor_total_process_ms_ = 0.0;
+  monitor_last_latency_ms_ = 0.0;
+  monitor_total_latency_ms_ = 0.0;
   monitor_fps_ = 0.0;
 
   running_.store(true, std::memory_order_release);
@@ -625,11 +627,13 @@ void TemplateMatchService::detect_once() {
     last_match_ts_ms_ = now_ms;
     (void)bus_->emit_data(cfg_.service_id, "detections", out);
     const std::int64_t end_ts_ms = f8::cppsdk::now_ms();
-    emit_monitor_snapshot(end_ts_ms, frame_meta.frame_id, static_cast<double>(end_ts_ms - now_ms));
+    emit_monitor_snapshot(end_ts_ms, frame_meta.frame_id, static_cast<double>(end_ts_ms - now_ms),
+                          service_runtime::latency_ms_from_timestamps(end_ts_ms, frame_meta.ts_ms));
   }
 }
 
-void TemplateMatchService::emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms) {
+void TemplateMatchService::emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms,
+                                                 double latency_ms) {
   if (!bus_)
     return;
   (void)frame_id;
@@ -640,6 +644,8 @@ void TemplateMatchService::emit_monitor_snapshot(std::int64_t ts_ms, std::uint64
   ++monitor_window_processed_frames_;
   monitor_last_process_ms_ = process_ms;
   monitor_total_process_ms_ += process_ms;
+  monitor_last_latency_ms_ = latency_ms;
+  monitor_total_latency_ms_ += latency_ms;
 
   const std::int64_t elapsed = ts_ms - monitor_window_start_ms_;
   if (elapsed >= 1000) {
@@ -653,8 +659,20 @@ void TemplateMatchService::emit_monitor_snapshot(std::int64_t ts_ms, std::uint64
   const double avg_process_ms = monitor_processed_frames_ > 0
                                     ? (monitor_total_process_ms_ / static_cast<double>(monitor_processed_frames_))
                                     : 0.0;
-  (void)avg_process_ms;
-  (void)dropped_frames;
+  const double avg_latency_ms = monitor_processed_frames_ > 0
+                                    ? (monitor_total_latency_ms_ / static_cast<double>(monitor_processed_frames_))
+                                    : 0.0;
+  service_runtime::CvProcessMetrics metrics;
+  metrics.observed_frames = monitor_observed_frames_;
+  metrics.processed_frames = monitor_processed_frames_;
+  metrics.dropped_frames = dropped_frames;
+  metrics.last_process_ms = monitor_last_process_ms_;
+  metrics.avg_process_ms = avg_process_ms;
+  metrics.last_latency_ms = monitor_last_latency_ms_;
+  metrics.avg_latency_ms = avg_latency_ms;
+  metrics.process_fps = monitor_fps_;
+  service_runtime::publish_cv_process_metrics(state_mu_, published_state_, bus_.get(), cfg_.service_id, metrics,
+                                              "runtime", json::object());
 }
 
 bool TemplateMatchService::on_command(const std::string& call, const json& args, const json& meta, json& result,
@@ -797,6 +815,19 @@ json TemplateMatchService::describe() {
                   "If >0, search around the previous detection with this padding.", false),
       state_field("pyramidScale", schema_number(1.0, 0.25, 1.0), "rw", "Pyramid Scale",
                   "Optional downscale factor for faster coarse template matching.", false),
+      state_field("observedFrames", schema_integer(), "ro", "Observed Frames", "New input frames observed.", false),
+      state_field("processedFrames", schema_integer(), "ro", "Processed Frames", "Frames processed by OpenCV.", false),
+      state_field("droppedFrames", schema_integer(), "ro", "Dropped Frames",
+                  "Observed input frames not processed by this node.", false),
+      state_field("lastProcessMs", schema_number(), "ro", "Last Process (ms)",
+                  "Last OpenCV processing duration in milliseconds.", false),
+      state_field("avgProcessMs", schema_number(), "ro", "Avg Process (ms)",
+                  "Average OpenCV processing duration in milliseconds.", false),
+      state_field("lastLatencyMs", schema_number(), "ro", "Last Latency (ms)",
+                  "Last source-frame timestamp to output latency in milliseconds.", false),
+      state_field("avgLatencyMs", schema_number(), "ro", "Avg Latency (ms)",
+                  "Average source-frame timestamp to output latency in milliseconds.", false),
+      state_field("processFps", schema_number(), "ro", "Process FPS", "Measured OpenCV processing rate.", false),
   });
   service["commands"] = json::array({
       json{{"name", "captureTemplateFrame"},

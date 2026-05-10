@@ -114,6 +114,8 @@ class ServiceBus final : public ServiceControlHandler {
                     const std::string& severity = "error", const std::string& fingerprint = "",
                     std::int64_t ts_ms = 0);
   void clear_error(const std::string& node_id, const std::string& fingerprint = "", std::int64_t ts_ms = 0);
+  void record_monitor_processed(const std::string& port, std::int64_t ts_ms = 0);
+  void record_monitor_timing(const std::string& port, double process_ms, double latency_ms, std::int64_t ts_ms = 0);
 
   // Block until terminate/quit is requested.
   void wait_terminate();
@@ -202,6 +204,7 @@ class ServiceBus final : public ServiceControlHandler {
   void request_monitor_publish_once();
   void monitor_record_observed(const std::string& port);
   void monitor_record_processed(const std::string& port, std::int64_t emit_ts_ms, std::int64_t now_ts_ms);
+  void monitor_record_timing(const std::string& port, double process_ms, double latency_ms, std::int64_t ts_ms);
   void monitor_record_wait_ms(double wait_ms);
   void monitor_record_dropped(std::int64_t dropped_count);
   void monitor_record_error(const std::string& code, const std::string& message, std::int64_t ts_ms = 0);
@@ -356,6 +359,7 @@ class ServiceBus final : public ServiceControlHandler {
   mutable std::mutex monitor_mu_;
   std::deque<std::pair<std::int64_t, double>> monitor_wait_ms_;
   std::deque<std::pair<std::int64_t, double>> monitor_process_ms_;
+  std::deque<std::pair<std::int64_t, double>> monitor_latency_ms_;
   std::deque<std::int64_t> monitor_error_ts_ms_;
   std::int64_t monitor_started_ts_ms_ = 0;
   std::uint64_t monitor_observed_ = 0;

@@ -34,6 +34,7 @@ class _BusStub:
         self.errors: list[tuple[str, str, str]] = []
         self.emitted: list[tuple[str, str, Any, int | None, str | int | None]] = []
         self.published_state: list[tuple[str, str, Any, int | None]] = []
+        self.timings: list[tuple[str, float, float, int | None, bool]] = []
 
     async def emit_data(
         self,
@@ -75,6 +76,16 @@ class _BusStub:
     def clear_error(self, node_id: str, fingerprint: str | None = None, ts_ms: int | None = None) -> None:
         del node_id, fingerprint, ts_ms
         self.errors.clear()
+
+    def record_monitor_timing(
+        self,
+        *,
+        port: str,
+        process_ms: float,
+        latency_ms: float,
+        ts_ms: int | None = None,
+    ) -> None:
+        self.timings.append((str(port), float(process_ms), float(latency_ms), ts_ms, True))
 
     def data_input_zenoh_key(self, node_id: str, port: str) -> str | None:
         del node_id

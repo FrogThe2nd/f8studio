@@ -371,6 +371,25 @@ class ServiceBus:
     def _record_buffer_pull_delivery_metrics_enabled(self) -> None:
         self._monitor_collector.record_buffer_pull_delivery()
 
+    def record_monitor_processed(self, *, port: str, ts_ms: int | None = None) -> None:
+        now_ts = int(ts_ms) if ts_ms is not None else int(now_ms())
+        self._monitor_collector.record_processed(port=str(port), emit_ts_ms=0, now_ts_ms=now_ts)
+
+    def record_monitor_timing(
+        self,
+        *,
+        port: str,
+        process_ms: float,
+        latency_ms: float,
+        ts_ms: int | None = None,
+    ) -> None:
+        self._monitor_collector.record_timing(
+            port=str(port),
+            process_ms=float(process_ms),
+            latency_ms=float(latency_ms),
+            ts_ms=ts_ms,
+        )
+
     @property
     def service_name(self) -> str:
         return self._service_name

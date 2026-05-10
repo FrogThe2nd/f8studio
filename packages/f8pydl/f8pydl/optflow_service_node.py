@@ -13,6 +13,7 @@ from f8pysdk.bus import ServiceBus
 from f8pysdk.codec import coerce_bool, coerce_int, coerce_str
 from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
+from f8pysdk.time_utils import now_ms
 from f8pysdk.video_transport import VIDEO_FORMAT_BGRA32, VIDEO_FORMAT_FLOW2_F16
 from f8pysdk.video_transport import ZenohLatestVideoFrameTransport
 from f8pysdk.zenoh_naming import zenoh_data_key
@@ -715,6 +716,19 @@ class OnnxOptflowServiceNode(ServiceNode):
             ts_ms=int(ts_ms),
         )
 
+    def _record_output_timing(self, *, started_at: float, source_ts_ms: int) -> None:
+        completed_ts_ms = int(now_ms())
+        process_ms = max(0.0, (time.perf_counter() - float(started_at)) * 1000.0)
+        latency_ms = 0.0
+        if int(source_ts_ms) > 0:
+            latency_ms = max(0.0, float(completed_ts_ms - int(source_ts_ms)))
+        self.record_monitor_timing(
+            port="flow",
+            process_ms=process_ms,
+            latency_ms=latency_ms,
+            ts_ms=completed_ts_ms,
+        )
+
     async def _loop(self) -> None:
         import numpy as np  # type: ignore
 
@@ -782,6 +796,7 @@ class OnnxOptflowServiceNode(ServiceNode):
                     continue
                 self._last_processed_frame_id = frame_id_seen
                 self._new_frame_counter += 1
+                frame_ts_ms = int(frame.ts_ms)
 
                 try:
                     buf = np.frombuffer(frame.payload, dtype=np.uint8)
@@ -829,13 +844,15 @@ class OnnxOptflowServiceNode(ServiceNode):
                         height=height,
                         pitch=flow_pitch,
                         payload=flow_payload,
-                        ts_ms=int(frame.ts_ms),
+                        ts_ms=frame_ts_ms,
                     )
                 except Exception as exc:
                     await self._record_exception(where="publish_flow_zenoh", exc=exc)
                     await asyncio.sleep(0.1)
                     continue
                 t_infer1 = time.perf_counter()
+                self.record_monitor_processed(port="flow")
+                self._record_output_timing(started_at=t0, source_ts_ms=frame_ts_ms)
                 if self._runtime_warning:
                     await self._set_last_error(self._runtime_warning)
                 elif self._last_error:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import math
 import os
 import threading
 import time
@@ -496,12 +497,35 @@ class MonitorCollector:
             self._observed += 1
 
     def record_processed(self, *, port: str, emit_ts_ms: int, now_ts_ms: int) -> None:
+        del emit_ts_ms
+        del now_ts_ms
         if (not self._enabled) or str(port) == "monitor":
             return
         with self._lock:
             self._processed += 1
-            if int(emit_ts_ms) > 0 and int(now_ts_ms) >= int(emit_ts_ms):
-                self._process_values.add(ts_ms=int(now_ts_ms), value=float(int(now_ts_ms) - int(emit_ts_ms)))
+
+    def record_timing(
+        self,
+        *,
+        port: str,
+        process_ms: float,
+        latency_ms: float,
+        ts_ms: int | None = None,
+    ) -> None:
+        if (not self._enabled) or str(port) == "monitor":
+            return
+        sample_ts = int(ts_ms) if ts_ms is not None else int(now_ms())
+        process_value = float(process_ms)
+        latency_value = float(latency_ms)
+        process_ok = math.isfinite(process_value) and process_value >= 0.0
+        latency_ok = math.isfinite(latency_value) and latency_value >= 0.0
+        if (not process_ok) and (not latency_ok):
+            return
+        with self._lock:
+            if process_ok:
+                self._process_values.add(ts_ms=sample_ts, value=process_value)
+            if latency_ok:
+                self._latency_values.add(ts_ms=sample_ts, value=latency_value)
 
     def record_input_sample_ts(self, *, node_id: str, sample_ts_ms: int) -> None:
         if not self._enabled:

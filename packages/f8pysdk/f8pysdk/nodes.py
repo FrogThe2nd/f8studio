@@ -131,6 +131,28 @@ class RuntimeNode(BusAttachableNode, StatefulNode, DataReceivableNode, Computabl
             return
         self._bus.clear_error(self.node_id, fingerprint=fingerprint, ts_ms=ts_ms)
 
+    def record_monitor_processed(self, *, port: str, ts_ms: int | None = None) -> None:
+        if self._bus is None:
+            return
+        self._bus.record_monitor_processed(port=port, ts_ms=ts_ms)
+
+    def record_monitor_timing(
+        self,
+        *,
+        port: str,
+        process_ms: float,
+        latency_ms: float,
+        ts_ms: int | None = None,
+    ) -> None:
+        if self._bus is None:
+            return
+        self._bus.record_monitor_timing(
+            port=port,
+            process_ms=process_ms,
+            latency_ms=latency_ms,
+            ts_ms=ts_ms,
+        )
+
     async def get_state(self, field: str) -> StateRead:
         if self._bus is None:
             return StateRead(found=False, value=None, ts_ms=None)

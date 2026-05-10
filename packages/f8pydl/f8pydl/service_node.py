@@ -12,6 +12,7 @@ from typing import Any, Literal
 from f8pysdk.codec import coerce_bool, coerce_float, coerce_int, coerce_str, parse_str_list
 from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
+from f8pysdk.time_utils import now_ms
 from f8pysdk.video_transport import VIDEO_FORMAT_BGRA32
 
 from .constants import CLASSIFICATION_SCHEMA_VERSION, DETECTION_SCHEMA_VERSION
@@ -648,6 +649,25 @@ class OnnxVisionServiceNode(ServiceNode):
         self._last_processed_frame_id = None
         self._dup_skipped_since_last_processed = 0
 
+    def _record_output_timing(
+        self,
+        *,
+        port: str,
+        started_at: float,
+        source_ts_ms: int,
+    ) -> None:
+        completed_ts_ms = int(now_ms())
+        process_ms = max(0.0, (time.perf_counter() - float(started_at)) * 1000.0)
+        latency_ms = 0.0
+        if int(source_ts_ms) > 0:
+            latency_ms = max(0.0, float(completed_ts_ms - int(source_ts_ms)))
+        self.record_monitor_timing(
+            port=port,
+            process_ms=process_ms,
+            latency_ms=latency_ms,
+            ts_ms=completed_ts_ms,
+        )
+
     def _resolve_model_yaml(self) -> Path:
         if self._model_yaml_path:
             return _resolve_path_from_cwd_or_repo(self._model_yaml_path)
@@ -878,6 +898,11 @@ class OnnxVisionServiceNode(ServiceNode):
                             detections=detections,
                         )
                         await self.emit("detections", payload_out, ts_ms=int(frame.ts_ms))
+                        self._record_output_timing(
+                            port="detections",
+                            started_at=t0,
+                            source_ts_ms=int(frame.ts_ms),
+                        )
                     elif det_runtime is not None:
                         detections, _meta = det_runtime.infer(frame_bgr)
                         payload_out = self._build_detection_payload(
@@ -888,6 +913,11 @@ class OnnxVisionServiceNode(ServiceNode):
                             detections=detections,
                         )
                         await self.emit("detections", payload_out, ts_ms=int(frame.ts_ms))
+                        self._record_output_timing(
+                            port="detections",
+                            started_at=t0,
+                            source_ts_ms=int(frame.ts_ms),
+                        )
                     elif cls_runtime is not None:
                         topk, _meta = cls_runtime.infer(frame_bgr, top_k=self._top_k)
                         payload_out = self._build_classification_payload(
@@ -896,6 +926,11 @@ class OnnxVisionServiceNode(ServiceNode):
                             topk=topk,
                         )
                         await self.emit("classifications", payload_out, ts_ms=int(frame.ts_ms))
+                        self._record_output_timing(
+                            port="classifications",
+                            started_at=t0,
+                            source_ts_ms=int(frame.ts_ms),
+                        )
                     t_infer1 = time.perf_counter()
                 finally:
                     frame.release()

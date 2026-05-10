@@ -29,6 +29,7 @@ class _BusStub:
     def __init__(self) -> None:
         self.errors: list[tuple[str, str, str]] = []
         self.state_updates: list[tuple[str, str, Any]] = []
+        self.timings: list[tuple[str, float, float, int | None, bool]] = []
 
     def report_error(
         self,
@@ -48,6 +49,16 @@ class _BusStub:
     async def publish_state_runtime(self, node_id: str, field: str, value: Any, *, ts_ms: int | None = None) -> None:
         del ts_ms
         self.state_updates.append((str(node_id), str(field), value))
+
+    def record_monitor_timing(
+        self,
+        *,
+        port: str,
+        process_ms: float,
+        latency_ms: float,
+        ts_ms: int | None = None,
+    ) -> None:
+        self.timings.append((str(port), float(process_ms), float(latency_ms), ts_ms, True))
 
 
 @dataclass(frozen=True)

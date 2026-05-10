@@ -1209,6 +1209,7 @@ void ServiceBus::start_monitor_thread() {
     monitor_dropped_ = 0;
     monitor_wait_ms_.clear();
     monitor_process_ms_.clear();
+    monitor_latency_ms_.clear();
     monitor_error_ts_ms_.clear();
     monitor_last_error_code_.clear();
     monitor_last_error_message_.clear();
@@ -1245,12 +1246,25 @@ void ServiceBus::monitor_record_observed(const std::string& port) {
 
 void ServiceBus::monitor_record_processed(const std::string& port, const std::int64_t emit_ts_ms,
                                           const std::int64_t now_ts_ms) {
+  (void)emit_ts_ms;
+  (void)now_ts_ms;
   if (!cfg_.monitor_enabled) return;
   if (port == "monitor") return;
   std::lock_guard<std::mutex> lock(monitor_mu_);
   ++monitor_processed_;
-  if (emit_ts_ms > 0 && now_ts_ms >= emit_ts_ms) {
-    monitor_process_ms_.push_back({now_ts_ms, static_cast<double>(now_ts_ms - emit_ts_ms)});
+}
+
+void ServiceBus::monitor_record_timing(const std::string& port, double process_ms, double latency_ms,
+                                       std::int64_t ts_ms) {
+  if (!cfg_.monitor_enabled) return;
+  if (port == "monitor") return;
+  if (ts_ms <= 0) ts_ms = now_ms();
+  std::lock_guard<std::mutex> lock(monitor_mu_);
+  if (process_ms >= 0.0 && std::isfinite(process_ms)) {
+    monitor_process_ms_.push_back({ts_ms, process_ms});
+  }
+  if (latency_ms >= 0.0 && std::isfinite(latency_ms)) {
+    monitor_latency_ms_.push_back({ts_ms, latency_ms});
   }
 }
 
@@ -1325,6 +1339,16 @@ void ServiceBus::clear_error(const std::string& node_id, const std::string& fing
   request_monitor_publish_once();
 }
 
+void ServiceBus::record_monitor_timing(const std::string& port, double process_ms, double latency_ms,
+                                       std::int64_t ts_ms) {
+  monitor_record_timing(port, process_ms, latency_ms, ts_ms);
+}
+
+void ServiceBus::record_monitor_processed(const std::string& port, std::int64_t ts_ms) {
+  const std::int64_t now_ts = ts_ms > 0 ? ts_ms : now_ms();
+  monitor_record_processed(port, 0, now_ts);
+}
+
 void ServiceBus::monitor_record_error(const std::string& code, const std::string& message, std::int64_t ts_ms) {
   report_error(cfg_.service_id, code, message, "error", "", ts_ms);
 }
@@ -1387,6 +1411,8 @@ void ServiceBus::monitor_loop() {
     double process_p95 = 0.0;
     double wait_avg = 0.0;
     double wait_p95 = 0.0;
+    double latency_avg = 0.0;
+    double latency_p95 = 0.0;
     std::size_t error_count_window = 0;
     std::string last_error_node_id;
     std::string last_error_code;
@@ -1405,6 +1431,7 @@ void ServiceBus::monitor_loop() {
       std::lock_guard<std::mutex> lock(monitor_mu_);
       prune_timed_values(monitor_wait_ms_, ts, window_ms);
       prune_timed_values(monitor_process_ms_, ts, window_ms);
+      prune_timed_values(monitor_latency_ms_, ts, window_ms);
       prune_timed_errors(monitor_error_ts_ms_, ts, window_ms);
       observed = monitor_observed_;
       processed = monitor_processed_;
@@ -1413,6 +1440,8 @@ void ServiceBus::monitor_loop() {
       process_p95 = percentile95_values(monitor_process_ms_);
       wait_avg = average_values(monitor_wait_ms_);
       wait_p95 = percentile95_values(monitor_wait_ms_);
+      latency_avg = average_values(monitor_latency_ms_);
+      latency_p95 = percentile95_values(monitor_latency_ms_);
       error_count_window = monitor_error_ts_ms_.size();
       last_error_node_id = monitor_last_error_node_id_;
       last_error_code = monitor_last_error_code_;
@@ -1461,8 +1490,8 @@ void ServiceBus::monitor_loop() {
                         {"processMsP95", process_p95},
                         {"waitMsAvg", wait_avg},
                         {"waitMsP95", wait_p95},
-                        {"latencyMsAvg", nullptr},
-                        {"latencyMsP95", nullptr}}},
+                        {"latencyMsAvg", latency_avg},
+                        {"latencyMsP95", latency_p95}}},
         {"queue", json{{"depth", monitor_queue_depth()}}},
         {"error", json{{"countWindow", error_count_window},
                        {"lastNodeId", last_error_node_id},
@@ -1974,8 +2003,7 @@ bool ServiceBus::emit_data(const std::string& from_node_id, const std::string& p
   const std::string node = ensure_token(from_node_id, "from_node_id");
   const std::string port = ensure_token(port_id, "port_id");
   const std::int64_t now_ts = now_ms();
-  const std::int64_t emit_ts = ts_ms > 0 ? ts_ms : now_ts;
-  monitor_record_processed(port, emit_ts, now_ts);
+  monitor_record_processed(port, ts_ms, now_ts);
   return runtime_publish_data(node, port, value, ts_ms);
 }
 

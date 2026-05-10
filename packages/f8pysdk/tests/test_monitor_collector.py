@@ -54,6 +54,7 @@ class MonitorCollectorTests(unittest.IsolatedAsyncioTestCase):
         collector.record_ready(True)
         collector.record_observed(port="in")
         collector.record_processed(port="out", emit_ts_ms=ts - 12, now_ts_ms=ts)
+        collector.record_timing(port="out", process_ms=12.0, latency_ms=25.0, ts_ms=ts)
         collector.record_input_sample_ts(node_id="n1", sample_ts_ms=ts - 25)
         collector.record_emit_completed(node_id="n1", now_ts_ms=ts)
         collector.record_wait_ms(wait_ms=8.0)
@@ -98,6 +99,8 @@ class MonitorCollectorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(str(snapshot.error.currentSeverity.value), "warning")
         self.assertEqual(int(snapshot.error.currentTsMs or 0), ts)
         self.assertFalse(bool(snapshot.gpu.available))
+        self.assertEqual(float(snapshot.timing.processMsAvg or 0.0), 12.0)
+        self.assertEqual(float(snapshot.timing.latencyMsAvg or 0.0), 25.0)
         self.assertGreaterEqual(float(snapshot.timing.latencyMsP95 or 0.0), 0.0)
 
         await collector._publish_snapshot(snapshot)
@@ -106,6 +109,20 @@ class MonitorCollectorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(key, data_key("svcA", from_node_id="svcA", port_id="monitor"))
         envelope = decode_obj(raw)
         self.assertEqual(envelope.get("value", {}).get("schemaVersion"), "f8monitor/1")
+
+    async def test_explicit_timing_does_not_count_processed(self) -> None:
+        bus = _FakeBus()
+        collector = MonitorCollector(
+            bus, MonitorCollectorConfig(enabled=True, interval_ms=200, window_ms=2000, gpu_enabled=False)
+        )
+        ts = int(now_ms())
+
+        collector.record_timing(port="flow", process_ms=7.5, latency_ms=41.0, ts_ms=ts)
+
+        snapshot = collector._build_snapshot(ts_ms=ts)
+        self.assertEqual(int(snapshot.frame.processed), 0)
+        self.assertEqual(float(snapshot.timing.processMsAvg or 0.0), 7.5)
+        self.assertEqual(float(snapshot.timing.latencyMsAvg or 0.0), 41.0)
 
     async def test_report_error_repeats_and_clear_current(self) -> None:
         bus = _FakeBus()

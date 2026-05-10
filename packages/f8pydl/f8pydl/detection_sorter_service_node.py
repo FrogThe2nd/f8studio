@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import re
+import time
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
@@ -12,6 +13,7 @@ import numpy as np
 from f8pysdk.codec import coerce_int, coerce_str
 from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
+from f8pysdk.time_utils import now_ms
 from f8pysdk.video_transport import (
     VIDEO_FORMAT_FLOW2_F16,
     VIDEO_FORMAT_SCALAR1_F32,
@@ -402,6 +404,7 @@ class DetectionSorterServiceNode(ServiceNode):
             return
         if not self._active:
             return
+        started_at = time.perf_counter()
         await self._ensure_config_loaded()
         if not isinstance(value, dict):
             await self._set_last_error("detections payload must be an object")
@@ -415,19 +418,34 @@ class DetectionSorterServiceNode(ServiceNode):
                 await self._set_last_error("")
             else:
                 await self._set_last_error(self._format_score_source_unavailable_error(exc))
-            await self.emit("detections", incoming_payload, ts_ms=_payload_int(incoming_payload, "tsMs"))
+            await self._emit_output_with_timing(incoming_payload, started_at=started_at)
             return
         except Exception as exc:
             logger.exception("detection sorter failed node=%s", self.node_id)
             await self._set_last_error(f"{type(exc).__name__}: {exc}")
-            await self.emit("detections", incoming_payload, ts_ms=_payload_int(incoming_payload, "tsMs"))
+            await self._emit_output_with_timing(incoming_payload, started_at=started_at)
             return
         if output_payload is None:
             await self._set_last_error("")
-            await self.emit("detections", incoming_payload, ts_ms=_payload_int(incoming_payload, "tsMs"))
+            await self._emit_output_with_timing(incoming_payload, started_at=started_at)
             return
         await self._set_last_error("")
-        await self.emit("detections", output_payload, ts_ms=_payload_int(output_payload, "tsMs"))
+        await self._emit_output_with_timing(output_payload, started_at=started_at)
+
+    async def _emit_output_with_timing(self, payload: dict[str, Any], *, started_at: float) -> None:
+        source_ts_ms = _payload_int(payload, "tsMs")
+        await self.emit("detections", payload, ts_ms=source_ts_ms)
+        completed_ts_ms = int(now_ms())
+        process_ms = max(0.0, (time.perf_counter() - float(started_at)) * 1000.0)
+        latency_ms = 0.0
+        if source_ts_ms is not None and int(source_ts_ms) > 0:
+            latency_ms = max(0.0, float(completed_ts_ms - int(source_ts_ms)))
+        self.record_monitor_timing(
+            port="detections",
+            process_ms=process_ms,
+            latency_ms=latency_ms,
+            ts_ms=completed_ts_ms,
+        )
 
     def _close_score_reader(self) -> None:
         source = self._score_source

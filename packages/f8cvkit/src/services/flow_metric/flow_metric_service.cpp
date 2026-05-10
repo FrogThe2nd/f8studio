@@ -115,6 +115,8 @@ bool FlowMetricService::start() {
   monitor_window_start_ms_ = 0;
   monitor_last_process_ms_ = 0.0;
   monitor_total_process_ms_ = 0.0;
+  monitor_last_latency_ms_ = 0.0;
+  monitor_total_latency_ms_ = 0.0;
   monitor_fps_ = 0.0;
 
   auto publisher = std::make_shared<f8::cppsdk::ZenohLatestVideoFramePublisher>();
@@ -191,7 +193,7 @@ void FlowMetricService::publish_error_if_changed(const json& value, const std::s
 }
 
 void FlowMetricService::emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms,
-                                              std::uint64_t points_per_frame) {
+                                              double latency_ms, std::uint64_t points_per_frame) {
   if (!bus_) return;
   (void)frame_id;
   if (monitor_window_start_ms_ <= 0) {
@@ -201,6 +203,8 @@ void FlowMetricService::emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t 
   ++monitor_window_processed_frames_;
   monitor_last_process_ms_ = process_ms;
   monitor_total_process_ms_ += process_ms;
+  monitor_last_latency_ms_ = latency_ms;
+  monitor_total_latency_ms_ += latency_ms;
   monitor_last_points_per_frame_ = points_per_frame;
 
   const std::int64_t elapsed = ts_ms - monitor_window_start_ms_;
@@ -216,8 +220,24 @@ void FlowMetricService::emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t 
   const double avg_process_ms = monitor_processed_frames_ > 0
                                     ? (monitor_total_process_ms_ / static_cast<double>(monitor_processed_frames_))
                                     : 0.0;
-  (void)avg_process_ms;
-  (void)dropped_frames;
+  const double avg_latency_ms = monitor_processed_frames_ > 0
+                                    ? (monitor_total_latency_ms_ / static_cast<double>(monitor_processed_frames_))
+                                    : 0.0;
+  service_runtime::CvProcessMetrics metrics;
+  metrics.observed_frames = monitor_observed_frames_;
+  metrics.processed_frames = monitor_processed_frames_;
+  metrics.dropped_frames = dropped_frames;
+  metrics.failed_frames = monitor_fail_frames_;
+  metrics.last_process_ms = monitor_last_process_ms_;
+  metrics.avg_process_ms = avg_process_ms;
+  metrics.last_latency_ms = monitor_last_latency_ms_;
+  metrics.avg_latency_ms = avg_latency_ms;
+  metrics.process_fps = monitor_fps_;
+  metrics.last_points_per_frame = monitor_last_points_per_frame_;
+  service_runtime::publish_cv_process_metrics(state_mu_, published_state_, bus_.get(), cfg_.service_id, metrics,
+                                              "runtime", json::object());
+  publish_state_if_changed("failedFrames", monitor_fail_frames_, "runtime", json::object());
+  publish_state_if_changed("lastPointsPerFrame", monitor_last_points_per_frame_, "runtime", json::object());
 }
 
 void FlowMetricService::on_lifecycle(bool active, const json& meta) {
@@ -493,7 +513,8 @@ void FlowMetricService::process_frame_once() {
 
   const std::int64_t end_ts_ms = f8::cppsdk::now_ms();
   const std::uint64_t points = static_cast<std::uint64_t>(std::max(0, width)) * static_cast<std::uint64_t>(std::max(0, height));
-  emit_monitor_snapshot(end_ts_ms, source_frame_id, static_cast<double>(end_ts_ms - process_start_ms), points);
+  emit_monitor_snapshot(end_ts_ms, source_frame_id, static_cast<double>(end_ts_ms - process_start_ms),
+                        service_runtime::latency_ms_from_timestamps(end_ts_ms, latest->ts_ms), points);
 }
 
 json FlowMetricService::describe() {
@@ -515,6 +536,22 @@ json FlowMetricService::describe() {
                   "Output payload format. Fixed to scalar1_f32.", false),
       state_field("scalarFrameSchemaVersion", schema_integer(1, 1, 1), "ro", "Scalar Frame Schema",
                   "Output scalar frame schema version.", false),
+      state_field("observedFrames", schema_integer(), "ro", "Observed Frames", "New input flow frames observed.", false),
+      state_field("processedFrames", schema_integer(), "ro", "Processed Frames", "Flow frames processed by OpenCV.", false),
+      state_field("droppedFrames", schema_integer(), "ro", "Dropped Frames",
+                  "Observed flow frames not processed by this node.", false),
+      state_field("failedFrames", schema_integer(), "ro", "Failed Frames", "Flow frames that failed processing.", false),
+      state_field("lastProcessMs", schema_number(), "ro", "Last Process (ms)",
+                  "Last flow metric processing duration in milliseconds.", false),
+      state_field("avgProcessMs", schema_number(), "ro", "Avg Process (ms)",
+                  "Average flow metric processing duration in milliseconds.", false),
+      state_field("lastLatencyMs", schema_number(), "ro", "Last Latency (ms)",
+                  "Last source-flow timestamp to scalar output latency in milliseconds.", false),
+      state_field("avgLatencyMs", schema_number(), "ro", "Avg Latency (ms)",
+                  "Average source-flow timestamp to scalar output latency in milliseconds.", false),
+      state_field("processFps", schema_number(), "ro", "Process FPS", "Measured flow metric processing rate.", false),
+      state_field("lastPointsPerFrame", schema_integer(), "ro", "Points / Frame",
+                  "Scalar points produced by the last processed frame.", false),
   });
   service["commands"] = json::array();
   service["dataInPorts"] = json::array({

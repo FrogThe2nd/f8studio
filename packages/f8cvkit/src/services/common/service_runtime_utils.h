@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <cstdint>
 #include <limits>
 #include <mutex>
 #include <string>
@@ -16,6 +17,27 @@
 namespace f8::cvkit::service_runtime {
 
 using json = nlohmann::json;
+
+struct CvProcessMetrics {
+  std::uint64_t observed_frames = 0;
+  std::uint64_t processed_frames = 0;
+  std::uint64_t dropped_frames = 0;
+  std::uint64_t failed_frames = 0;
+  double last_process_ms = 0.0;
+  double avg_process_ms = 0.0;
+  double last_latency_ms = 0.0;
+  double avg_latency_ms = 0.0;
+  double process_fps = 0.0;
+  std::uint64_t last_points_per_frame = 0;
+  std::uint64_t last_vectors_per_frame = 0;
+};
+
+inline double latency_ms_from_timestamps(std::int64_t end_ts_ms, std::int64_t source_ts_ms) {
+  if (end_ts_ms <= 0 || source_ts_ms <= 0 || end_ts_ms < source_ts_ms) {
+    return 0.0;
+  }
+  return static_cast<double>(end_ts_ms - source_ts_ms);
+}
 
 inline std::string trim_copy(std::string value) {
   while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())) != 0) {
@@ -187,6 +209,35 @@ inline void publish_state_if_changed(std::mutex& state_mu,
   published_state[field] = value;
   if (bus != nullptr) {
     (void)bus->publish_state(service_id, field, value, source, meta);
+  }
+}
+
+inline void publish_cv_process_metrics(std::mutex& state_mu,
+                                       std::unordered_map<std::string, json>& published_state,
+                                       f8::cppsdk::ServiceBus* bus,
+                                       const std::string& service_id,
+                                       const CvProcessMetrics& metrics,
+                                       const std::string& source,
+                                       const json& meta) {
+  publish_state_if_changed(state_mu, published_state, bus, service_id, "observedFrames", metrics.observed_frames,
+                           source, meta);
+  publish_state_if_changed(state_mu, published_state, bus, service_id, "processedFrames", metrics.processed_frames,
+                           source, meta);
+  publish_state_if_changed(state_mu, published_state, bus, service_id, "droppedFrames", metrics.dropped_frames,
+                           source, meta);
+  publish_state_if_changed(state_mu, published_state, bus, service_id, "lastProcessMs", metrics.last_process_ms,
+                           source, meta);
+  publish_state_if_changed(state_mu, published_state, bus, service_id, "avgProcessMs", metrics.avg_process_ms,
+                           source, meta);
+  publish_state_if_changed(state_mu, published_state, bus, service_id, "lastLatencyMs", metrics.last_latency_ms,
+                           source, meta);
+  publish_state_if_changed(state_mu, published_state, bus, service_id, "avgLatencyMs", metrics.avg_latency_ms,
+                           source, meta);
+  publish_state_if_changed(state_mu, published_state, bus, service_id, "processFps", metrics.process_fps, source,
+                           meta);
+  if (bus != nullptr) {
+    bus->record_monitor_processed("cv_process");
+    bus->record_monitor_timing("cv_process", metrics.last_process_ms, metrics.last_latency_ms);
   }
 }
 

@@ -12,6 +12,7 @@ from typing import Any, Literal
 from f8pysdk.codec import coerce_bool, coerce_float, coerce_int, coerce_str
 from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
+from f8pysdk.time_utils import now_ms
 from f8pysdk.video_transport import VIDEO_FORMAT_BGRA32
 
 from .model_config import ModelSpec, ModelTask, build_model_index, build_model_index_with_errors, load_model_spec
@@ -599,6 +600,19 @@ class OnnxTcnWaveServiceNode(ServiceNode):
             f"No model yamls found in {self._weights_dir} for allowedTasks={sorted(self._allowed_tasks)!r}"
         )
 
+    def _record_output_timing(self, *, started_at: float, source_ts_ms: int) -> None:
+        completed_ts_ms = int(now_ms())
+        process_ms = max(0.0, (time.perf_counter() - float(started_at)) * 1000.0)
+        latency_ms = 0.0
+        if int(source_ts_ms) > 0:
+            latency_ms = max(0.0, float(completed_ts_ms - int(source_ts_ms)))
+        self.record_monitor_timing(
+            port="predictedChange",
+            process_ms=process_ms,
+            latency_ms=latency_ms,
+            ts_ms=completed_ts_ms,
+        )
+
     async def _ensure_onnx_available(self, spec: ModelSpec) -> None:
         if spec.onnx_path.exists():
             if onnx_file_matches_sha256(spec.onnx_path, spec.onnx_sha256):
@@ -816,6 +830,10 @@ class OnnxTcnWaveServiceNode(ServiceNode):
                     )
                     for item in ready:
                         await self.emit("predictedChange", float(item.value), ts_ms=int(item.ts_ms))
+                        self._record_output_timing(
+                            started_at=t0,
+                            source_ts_ms=int(item.ts_ms),
+                        )
 
                     t_infer1 = time.perf_counter()
                 finally:

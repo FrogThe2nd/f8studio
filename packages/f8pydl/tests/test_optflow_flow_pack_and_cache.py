@@ -29,6 +29,7 @@ class _BusStub:
     def __init__(self, initial_state: dict[str, Any] | None = None, *, has_rungraph: bool = True) -> None:
         self.state: dict[str, Any] = dict(initial_state or {})
         self.errors: list[tuple[str, str, str]] = []
+        self.timings: list[tuple[str, float, float, int | None, bool]] = []
         self.clear_count = 0
         self._has_rungraph = bool(has_rungraph)
 
@@ -60,6 +61,16 @@ class _BusStub:
         if field in self.state:
             return StateRead(found=True, value=self.state[field], ts_ms=None)
         return StateRead(found=False, value=None, ts_ms=None)
+
+    def record_monitor_timing(
+        self,
+        *,
+        port: str,
+        process_ms: float,
+        latency_ms: float,
+        ts_ms: int | None = None,
+    ) -> None:
+        self.timings.append((str(port), float(process_ms), float(latency_ms), ts_ms, True))
 
 
 class OptflowPackAndCacheTests(unittest.TestCase):

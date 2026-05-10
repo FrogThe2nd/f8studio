@@ -284,7 +284,34 @@ class MonitorErrorBus(Protocol):
 
 
 @runtime_checkable
-class NodeBus(StateIOBus, DataIOBus, RuntimeGraphBus, ExecIOBus, MonitorErrorBus, BusActive, Protocol):
+class MonitorTimingBus(Protocol):
+    """
+    Node-facing monitor timing sample operations.
+    """
+
+    def record_monitor_processed(self, *, port: str, ts_ms: int | None = None) -> None: ...
+
+    def record_monitor_timing(
+        self,
+        *,
+        port: str,
+        process_ms: float,
+        latency_ms: float,
+        ts_ms: int | None = None,
+    ) -> None: ...
+
+
+@runtime_checkable
+class NodeBus(
+    StateIOBus,
+    DataIOBus,
+    RuntimeGraphBus,
+    ExecIOBus,
+    MonitorErrorBus,
+    MonitorTimingBus,
+    BusActive,
+    Protocol,
+):
     """
     Composition of bus capabilities used by `RuntimeNode`.
     """
