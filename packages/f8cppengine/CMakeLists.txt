@@ -1,6 +1,9 @@
 add_library(f8cppengine_core STATIC
   src/cppengine_service.cpp
+  src/core_operators.cpp
+  src/operator_common.cpp
   src/operators.cpp
+  src/script_operators.cpp
 )
 
 target_compile_features(f8cppengine_core PUBLIC cxx_std_17)
