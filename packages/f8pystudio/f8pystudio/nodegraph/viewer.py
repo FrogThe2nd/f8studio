@@ -657,12 +657,10 @@ class F8StudioNodeViewer(NodeViewer):
             event.accept()
             return
         self._mark_context_menu_selection_pending()
-        self._context_menu_active = True
-        try:
-            super().contextMenuEvent(event)
-        finally:
-            self._context_menu_active = False
-            self._clear_context_menu_selection_pending()
+        if self._popup_context_menu(event.globalPos()):
+            event.accept()
+            return
+        QtWidgets.QGraphicsView.contextMenuEvent(self, event)
 
     def _mark_context_menu_selection_pending(self) -> None:
         self._context_menu_selection_pending = True
@@ -673,6 +671,47 @@ class F8StudioNodeViewer(NodeViewer):
 
     def is_context_menu_selection_pending(self) -> bool:
         return bool(self._context_menu_active or self._context_menu_selection_pending)
+
+    def _popup_context_menu(self, global_pos: QtCore.QPoint) -> bool:
+        ctx_menu = None
+        ctx_menus = self.context_menus()
+        prompted_menu_name = "graph"
+        prompted_node_id: object = None
+
+        nodes_menu = ctx_menus["nodes"]
+        if nodes_menu.isEnabled():
+            pos = self.mapToScene(self._previous_pos)
+            items = self._items_near(pos)
+            nodes = [item for item in items if isinstance(item, AbstractNodeItem)]
+            if nodes:
+                node = nodes[0]
+                ctx_menu = nodes_menu.get_menu(node.type_, node.id)
+                if ctx_menu is not None:
+                    for action in ctx_menu.actions():
+                        if action.menu():
+                            continue
+                        action.node_id = node.id
+                    prompted_menu_name = "nodes"
+                    prompted_node_id = node.id
+
+        if ctx_menu is None:
+            ctx_menu = ctx_menus["graph"]
+
+        if len(ctx_menu.actions()) <= 0 or not ctx_menu.isEnabled():
+            return False
+
+        self.context_menu_prompt.emit(prompted_menu_name, prompted_node_id)
+        self._context_menu_active = True
+        try:
+            ctx_menu.aboutToHide.connect(self._on_context_menu_hidden, QtCore.Qt.UniqueConnection)
+        except (RuntimeError, TypeError):
+            pass
+        ctx_menu.popup(global_pos)
+        return True
+
+    def _on_context_menu_hidden(self) -> None:
+        self._context_menu_active = False
+        self._clear_context_menu_selection_pending()
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         if event.key() == QtCore.Qt.Key_Escape:
