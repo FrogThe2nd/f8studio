@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from f8pysdk.f8_naming import ensure_token
+from f8pysdk.specs import F8RuntimeGraph
 
 from ..nodegraph.runtime_compiler import CompiledRuntimeGraphs
 from .rungraph_deployer import RungraphDeployRequest, RungraphGateway
@@ -25,6 +26,20 @@ class RungraphDeployFlow:
     rungraph_gateway: RungraphGateway
     emit_log: Callable[[str], None]
 
+    async def _deploy_one(self, *, service_id: str, graph: F8RuntimeGraph, failure_prefix: str) -> None:
+        try:
+            result = await self.rungraph_gateway.deploy_runtime_graph(
+                RungraphDeployRequest(
+                    service_id=service_id,
+                    graph=graph,
+                    source="studio",
+                )
+            )
+            if not result.success:
+                raise RuntimeError(result.error_message or "set_rungraph rejected")
+        except Exception as exc:
+            self.emit_log(f"{failure_prefix} serviceId={service_id}: {exc}")
+
     async def deploy_service_rungraph(
         self,
         *,
@@ -40,18 +55,7 @@ class RungraphDeployFlow:
         if graph is None:
             return
 
-        try:
-            result = await self.rungraph_gateway.deploy_runtime_graph(
-                RungraphDeployRequest(
-                    service_id=sid,
-                    graph=graph,
-                    source="studio",
-                )
-            )
-            if not result.success:
-                raise RuntimeError(result.error_message or "set_rungraph rejected")
-        except Exception as exc:
-            self.emit_log(f"deploy service rungraph failed serviceId={sid}: {exc}")
+        await self._deploy_one(service_id=sid, graph=graph, failure_prefix="deploy service rungraph failed")
 
     async def deploy_all_service_rungraphs(self, *, compiled: CompiledRuntimeGraphs) -> None:
         await self.deploy_selected_service_rungraphs(compiled=compiled, allowed_service_ids=None)
@@ -62,20 +66,9 @@ class RungraphDeployFlow:
         compiled: CompiledRuntimeGraphs,
         allowed_service_ids: set[str] | None,
     ) -> None:
-        async def _deploy_one(service_id: str, graph: object) -> None:
+        async def _deploy_limited(service_id: str, graph: F8RuntimeGraph) -> None:
             async with semaphore:
-                try:
-                    result = await self.rungraph_gateway.deploy_runtime_graph(
-                        RungraphDeployRequest(
-                            service_id=service_id,
-                            graph=graph,
-                            source="studio",
-                        )
-                    )
-                    if not result.success:
-                        raise RuntimeError(result.error_message or "set_rungraph rejected")
-                except Exception as exc:
-                    self.emit_log(f"deploy failed serviceId={service_id}: {exc}")
+                await self._deploy_one(service_id=service_id, graph=graph, failure_prefix="deploy failed")
 
         tasks: list[asyncio.Task[None]] = []
         semaphore = asyncio.Semaphore(DEPLOY_SERVICE_CONCURRENCY)
@@ -85,6 +78,6 @@ class RungraphDeployFlow:
                 continue
             if allowed_service_ids is not None and service_id not in allowed_service_ids:
                 continue
-            tasks.append(asyncio.create_task(_deploy_one(service_id, graph), name=f"deploy_rungraph:{service_id}"))
+            tasks.append(asyncio.create_task(_deploy_limited(service_id, graph), name=f"deploy_rungraph:{service_id}"))
         if tasks:
             await asyncio.gather(*tasks)

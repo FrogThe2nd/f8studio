@@ -757,6 +757,9 @@ class ServiceBus:
             self._rungraph_apply_worker(graph, target_fingerprint=fingerprint, source=source_s),
             name=f"service_bus:set_rungraph:{self.service_id}:{req_id_s}",
         )
+        self._track_rungraph_task(task)
+
+    def _track_rungraph_task(self, task: asyncio.Task[None]) -> None:
         self._rungraph_apply_tasks.add(task)
         task.add_done_callback(self._on_rungraph_apply_task_done)
 
@@ -782,27 +785,27 @@ class ServiceBus:
             try:
                 await self.set_rungraph(graph)
             except Exception as exc:
+                failed_aliases = set(self._rungraph_inflight_aliases.pop(target_fingerprint, aliases))
                 self._schedule_rungraph_status_publish_for_aliases(
                     graph,
-                    req_ids=set(self._rungraph_inflight_aliases.get(target_fingerprint) or aliases),
+                    req_ids=failed_aliases,
                     phase="failed",
                     source=source,
                     target_fingerprint=target_fingerprint,
                     error_message=f"{type(exc).__name__}: {exc}",
                 )
-                self._rungraph_inflight_aliases.pop(target_fingerprint, None)
                 log.error("rungraph async apply failed service_id=%s", self.service_id, exc_info=exc)
                 return
+            applied_aliases = set(self._rungraph_inflight_aliases.pop(target_fingerprint, aliases))
             applied_fingerprint = self._rungraph_fingerprint or build_rungraph_deploy_fingerprint(graph)
             self._schedule_rungraph_status_publish_for_aliases(
                 graph,
-                req_ids=set(self._rungraph_inflight_aliases.get(target_fingerprint) or aliases),
+                req_ids=applied_aliases,
                 phase="applied",
                 source=source,
                 target_fingerprint=target_fingerprint,
                 applied_fingerprint=applied_fingerprint,
             )
-            self._rungraph_inflight_aliases.pop(target_fingerprint, None)
 
     def _schedule_rungraph_status_publish_for_aliases(
         self,
@@ -849,8 +852,7 @@ class ServiceBus:
             ),
             name=f"service_bus:rungraph_status:{self.service_id}:{req_id}:{phase}",
         )
-        self._rungraph_apply_tasks.add(task)
-        task.add_done_callback(self._on_rungraph_apply_task_done)
+        self._track_rungraph_task(task)
 
     async def _publish_rungraph_status(
         self,
@@ -882,12 +884,13 @@ class ServiceBus:
             "runtimeInstanceId": self.runtime_instance_id,
         }
         raw = encode_obj(payload)
+        status_keys = (
+            self._rungraph_status_key,
+            rungraph_deploy_request_status_key(self.service_id, str(req_id or "")),
+        )
         try:
-            await asyncio.wait_for(self._transport.retained_put(self._rungraph_status_key, raw), timeout=1.0)
-            await asyncio.wait_for(
-                self._transport.retained_put(rungraph_deploy_request_status_key(self.service_id, str(req_id or "")), raw),
-                timeout=1.0,
-            )
+            for key in status_keys:
+                await asyncio.wait_for(self._transport.retained_put(key, raw), timeout=1.0)
         except (asyncio.TimeoutError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             log.error(
                 "publish rungraph status failed service_id=%s req_id=%s phase=%s",

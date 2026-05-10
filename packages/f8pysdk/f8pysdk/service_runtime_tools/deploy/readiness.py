@@ -52,6 +52,45 @@ def rungraph_deploy_request_status_key(service_id: str, req_id: str) -> str:
     return f"f8/svc/{service_id_s}/status/rungraph/requests/{req_hash}"
 
 
+def _decode_payload_or_empty(raw: bytes | None) -> Any:
+    if not raw:
+        return {}
+    try:
+        return decode_obj(raw)
+    except ValueError:
+        return {}
+
+
+async def _retained_payload_or_empty(tr: RuntimeTransport, key: str, *, context: str) -> Any:
+    try:
+        raw = await tr.retained_get(key)
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        log.debug("%s retained_get failed key=%s", context, key, exc_info=exc)
+        return {}
+    return _decode_payload_or_empty(raw)
+
+
+async def _stop_retained_watch(watch: Any, *, key: str, context: str) -> None:
+    if isinstance(watch, tuple):
+        watcher, task = watch
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            log.error("%s watch task stop failed key=%s", context, key, exc_info=exc)
+        try:
+            await watcher.stop()
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            log.error("%s watcher stop failed key=%s", context, key, exc_info=exc)
+        return
+    try:
+        await watch.stop()
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        log.error("%s watch stop failed key=%s", context, key, exc_info=exc)
+
+
 async def wait_service_ready(
     tr: RuntimeTransport,
     *,
@@ -89,18 +128,8 @@ async def wait_service_ready(
         return True
 
     key = f"f8/svc/{service_id_s}/status/ready"
-    try:
-        raw = await tr.retained_get(key)
-    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-        log.debug("initial ready retained_get failed key=%s", key, exc_info=exc)
-        raw = None
-    if raw:
-        try:
-            payload = decode_obj(raw)
-        except ValueError:
-            payload = {}
-        if _accept(payload):
-            return
+    if _accept(await _retained_payload_or_empty(tr, key, context="initial ready")):
+        return
 
     loop = asyncio.get_running_loop()
     fut: asyncio.Future[None] = loop.create_future()
@@ -123,39 +152,12 @@ async def wait_service_ready(
         watch = None
 
     try:
-        try:
-            raw2 = await tr.retained_get(key)
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-            log.debug("second ready retained_get failed key=%s", key, exc_info=exc)
-            raw2 = None
-        if raw2:
-            try:
-                payload2: Any = decode_obj(raw2)
-            except ValueError:
-                payload2 = {}
-            if _accept(payload2):
-                return
+        if _accept(await _retained_payload_or_empty(tr, key, context="second ready")):
+            return
         await asyncio.wait_for(fut, timeout=float(timeout_s))
     finally:
         if watch is not None:
-            if isinstance(watch, tuple):
-                watcher, task = watch
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-                except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-                    log.error("ready watch task stop failed key=%s", key, exc_info=exc)
-                try:
-                    await watcher.stop()
-                except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-                    log.error("ready watcher stop failed key=%s", key, exc_info=exc)
-            else:
-                try:
-                    await watch.stop()
-                except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-                    log.error("ready watch stop failed key=%s", key, exc_info=exc)
+            await _stop_retained_watch(watch, key=key, context="ready")
 
 
 def _rungraph_status_from_payload(payload: Any) -> RungraphDeployStatus | None:
@@ -237,19 +239,9 @@ async def wait_rungraph_deploy_status(
             return None
         return status
 
-    try:
-        raw = await tr.retained_get(key)
-    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-        log.debug("initial rungraph status retained_get failed key=%s", key, exc_info=exc)
-        raw = None
-    if raw:
-        try:
-            payload = decode_obj(raw)
-        except ValueError:
-            payload = {}
-        status = _accept(payload)
-        if status is not None:
-            return status
+    status = _accept(await _retained_payload_or_empty(tr, key, context="initial rungraph status"))
+    if status is not None:
+        return status
 
     loop = asyncio.get_running_loop()
     fut: asyncio.Future[RungraphDeployStatus] = loop.create_future()
@@ -273,19 +265,9 @@ async def wait_rungraph_deploy_status(
         watch = None
 
     try:
-        try:
-            raw2 = await tr.retained_get(key)
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-            log.debug("second rungraph status retained_get failed key=%s", key, exc_info=exc)
-            raw2 = None
-        if raw2:
-            try:
-                payload2: Any = decode_obj(raw2)
-            except ValueError:
-                payload2 = {}
-            status2 = _accept(payload2)
-            if status2 is not None:
-                return status2
+        status2 = _accept(await _retained_payload_or_empty(tr, key, context="second rungraph status"))
+        if status2 is not None:
+            return status2
         try:
             return await asyncio.wait_for(fut, timeout=float(timeout_s))
         except asyncio.TimeoutError as exc:
@@ -299,24 +281,7 @@ async def wait_rungraph_deploy_status(
             ) from exc
     finally:
         if watch is not None:
-            if isinstance(watch, tuple):
-                watcher, task = watch
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-                except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-                    log.error("rungraph status watch task stop failed key=%s", key, exc_info=exc)
-                try:
-                    await watcher.stop()
-                except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-                    log.error("rungraph status watcher stop failed key=%s", key, exc_info=exc)
-            else:
-                try:
-                    await watch.stop()
-                except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-                    log.error("rungraph status watch stop failed key=%s", key, exc_info=exc)
+            await _stop_retained_watch(watch, key=key, context="rungraph status")
 
 
 __all__ = [

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -20,6 +22,9 @@ from f8pysdk.service_runtime_tools.deploy.readiness import (
     rungraph_deploy_status_key,
 )
 from f8pysdk.codec import decode_as, encode_obj
+
+
+logger = logging.getLogger(__name__)
 
 
 class RungraphGateway(Protocol):
@@ -141,14 +146,22 @@ class RuntimeRungraphGateway:
             return build_rungraph_deploy_fingerprint(payload)
         if isinstance(payload, str):
             try:
-                import json
-
                 decoded = json.loads(payload)
             except (TypeError, ValueError):
                 return ""
             if isinstance(decoded, dict):
                 return build_rungraph_deploy_fingerprint(decoded)
         return ""
+
+    @staticmethod
+    async def _stop_retained_watch(watch: Any) -> None:
+        if isinstance(watch, tuple):
+            watcher, task = watch
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await watcher.stop()
+            return
+        await watch.stop()
 
     async def _retained_config_has_target(
         self,
@@ -171,9 +184,8 @@ class RuntimeRungraphGateway:
         deadline_s: float,
     ) -> RungraphDeployResult:
         loop = asyncio.get_running_loop()
-        status_keys = (
-            rungraph_deploy_request_status_key(service_id, req_id),
-            rungraph_deploy_status_key(service_id),
+        evidence_keys = (
+            f"{rungraph_deploy_status_key(service_id)}/**",
             f"f8/svc/{service_id}/config/rungraph",
         )
         fut: asyncio.Future[RungraphDeployResult] = loop.create_future()
@@ -206,11 +218,12 @@ class RuntimeRungraphGateway:
 
         watches: list[Any] = []
         try:
-            for key in status_keys:
+            for key in evidence_keys:
                 try:
                     watch = await transport.retained_watch(key, cb=_on_evidence, with_initial=True)
                     watches.append(watch)
-                except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+                except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                    logger.debug("rungraph evidence retained_watch failed key=%s", key, exc_info=exc)
                     continue
             while True:
                 if fut.done():
@@ -255,19 +268,10 @@ class RuntimeRungraphGateway:
                     continue
         finally:
             for watch in watches:
-                if isinstance(watch, tuple):
-                    watcher, task = watch
-                    task.cancel()
-                    await asyncio.gather(task, return_exceptions=True)
-                    try:
-                        await watcher.stop()
-                    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
-                        pass
-                else:
-                    try:
-                        await watch.stop()
-                    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
-                        pass
+                try:
+                    await self._stop_retained_watch(watch)
+                except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                    logger.debug("rungraph evidence retained_watch stop failed", exc_info=exc)
 
     def _build_transport(self) -> RuntimeTransport:
         if self.config.bus_backend == "mem":
@@ -403,7 +407,8 @@ class RuntimeRungraphGateway:
         )
         try:
             last_ack_error = ""
-            for attempt_index in range(max(1, int(self.config.request_attempts))):
+            request_attempts = max(1, int(self.config.request_attempts))
+            for attempt_index in range(request_attempts):
                 if evidence_task.done():
                     return await evidence_task
                 try:
@@ -440,7 +445,7 @@ class RuntimeRungraphGateway:
                                 error_message=error_message or "set_rungraph rejected",
                             )
                         break
-                if attempt_index + 1 < max(1, int(self.config.request_attempts)):
+                if attempt_index + 1 < request_attempts:
                     await asyncio.sleep(float(self.config.request_retry_sleep_s))
             result = await evidence_task
             if result.success or not last_ack_error:

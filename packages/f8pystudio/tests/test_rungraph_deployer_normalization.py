@@ -18,6 +18,15 @@ from f8pysdk.specs import F8RuntimeGraph, F8RuntimeNode
 from f8pystudio.bridge.rungraph_deployer import RuntimeRungraphGateway, RungraphDeployConfig
 
 
+def _match_retained_pattern(pattern: str, key: str) -> bool:
+    if pattern == key:
+        return True
+    if pattern.endswith("/**"):
+        prefix = pattern[:-3].rstrip("/")
+        return key == prefix or key.startswith(f"{prefix}/")
+    return False
+
+
 def test_normalize_graph_for_request_omits_null_operator_class_for_service_nodes() -> None:
     graph = F8RuntimeGraph(
         graphId="g1",
@@ -110,7 +119,7 @@ class _GatewayTransportStub:
     async def retained_put(self, key: str, value: bytes) -> None:
         key_s = str(key)
         self.retained[key_s] = bytes(value)
-        callbacks = [cb for pattern, cb in list(self._watchers) if pattern == key_s]
+        callbacks = [cb for pattern, cb in list(self._watchers) if _match_retained_pattern(pattern, key_s)]
         for cb in callbacks:
             await cb(key_s, bytes(value))
 
@@ -127,9 +136,9 @@ class _GatewayTransportStub:
         key_s = str(key_expr)
         self._watchers.append((key_s, cb))
         if with_initial:
-            value = self.retained.get(key_s)
-            if value is not None:
-                await cb(key_s, bytes(value))
+            for retained_key, value in list(self.retained.items()):
+                if _match_retained_pattern(key_s, retained_key):
+                    await cb(retained_key, bytes(value))
         return _WatchStub(self, key_s, cb)
 
     async def _publish_apply_evidence(self, req_id: str) -> None:
