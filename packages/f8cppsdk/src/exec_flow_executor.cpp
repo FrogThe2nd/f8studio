@@ -91,9 +91,14 @@ ExecRouteMap validate_exec_topology_or_throw(const generated::F8RuntimeGraph& gr
   return out;
 }
 
-ExecFlowExecutor::ExecFlowExecutor(ServiceBus& bus) : bus_(bus), service_id_(ensure_token(bus.config().service_id, "service_id")) {}
+ExecFlowExecutor::ExecFlowExecutor(ServiceBus& bus) : bus_(bus), service_id_(ensure_token(bus.config().service_id, "service_id")) {
+  bus_.set_data_pull_resolver([this](const std::string& node_id, const std::string& port, std::int64_t ctx_id) {
+    return resolve_data_pull(node_id, port, ctx_id);
+  });
+}
 
 ExecFlowExecutor::~ExecFlowExecutor() {
+  bus_.set_data_pull_resolver({});
   set_active(false);
   stop_worker();
 }
@@ -129,6 +134,7 @@ void ExecFlowExecutor::apply_rungraph(const nlohmann::json& graph_obj) {
     exec_out_ = validate_exec_topology_or_throw(graph, service_id_);
     graph_ = graph;
     rebuild_half_out_ports(graph);
+    rebuild_local_data_routes(graph);
   }
 
   if (active()) {
@@ -345,6 +351,64 @@ void ExecFlowExecutor::rebuild_half_out_ports(const generated::F8RuntimeGraph& g
     if (from_node.empty() || edge.fromPort.empty()) continue;
     half_out_ports_[from_node].insert(edge.fromPort);
   }
+}
+
+void ExecFlowExecutor::rebuild_local_data_routes(const generated::F8RuntimeGraph& graph) {
+  local_data_in_.clear();
+  for (const auto& edge : graph.edges.value_or(std::vector<generated::F8Edge>{})) {
+    if (edge.kind != generated::F8EdgeKindEnum::data) continue;
+    if (edge.fromServiceId != service_id_ || edge.toServiceId != service_id_) continue;
+    if (edge.direction.has_value()) continue;
+    const std::string from_node = node_or_service_id(edge.fromOperatorId, edge.fromServiceId);
+    const std::string to_node = node_or_service_id(edge.toOperatorId, edge.toServiceId);
+    if (from_node.empty() || to_node.empty() || edge.fromPort.empty() || edge.toPort.empty()) continue;
+    const ExecRouteKey to{to_node, edge.toPort};
+    if (local_data_in_.find(to) == local_data_in_.end()) {
+      local_data_in_[to] = ExecRouteKey{from_node, edge.fromPort};
+    }
+  }
+}
+
+std::optional<nlohmann::json> ExecFlowExecutor::resolve_data_pull(const std::string& node_id,
+                                                                  const std::string& port,
+                                                                  std::int64_t ctx_id) {
+  thread_local std::vector<ExecRouteKey> resolving;
+  const ExecRouteKey target{node_id, port};
+  if (std::find(resolving.begin(), resolving.end(), target) != resolving.end()) {
+    bus_.report_error(node_id, "DATA_PULL_CYCLE", "cycle while resolving local data input", "error",
+                      "data_pull_cycle:" + node_id + ":" + port);
+    return std::nullopt;
+  }
+
+  ExecRouteKey source;
+  OperatorNode* node = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mu_);
+    const auto route_it = local_data_in_.find(target);
+    if (route_it == local_data_in_.end()) return std::nullopt;
+    source = route_it->second;
+    const auto node_it = nodes_.find(source.node_id);
+    if (node_it != nodes_.end()) node = node_it->second;
+  }
+  if (node == nullptr) return std::nullopt;
+  auto* computable = dynamic_cast<ComputableNode*>(node);
+  if (computable == nullptr) return std::nullopt;
+
+  resolving.push_back(target);
+  try {
+    nlohmann::json value = computable->compute_output(source.port, ctx_id);
+    resolving.pop_back();
+    return value;
+  } catch (const std::exception& exc) {
+    resolving.pop_back();
+    bus_.report_error(source.node_id, "COMPUTE_OUTPUT_FAILED", exc.what(), "error",
+                      "compute:" + source.node_id + ":" + source.port);
+  } catch (...) {
+    resolving.pop_back();
+    bus_.report_error(source.node_id, "COMPUTE_OUTPUT_FAILED", "compute_output threw unknown exception", "error",
+                      "compute:" + source.node_id + ":" + source.port);
+  }
+  return std::nullopt;
 }
 
 std::vector<std::string> ExecFlowExecutor::entrypoint_node_ids_for_graph(const generated::F8RuntimeGraph& graph) const {

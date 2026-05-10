@@ -2267,50 +2267,66 @@ bool ServiceBus::emit_data(const std::string& from_node_id, const std::string& p
 }
 
 std::optional<json> ServiceBus::pull_data(const std::string& node_id, const std::string& port_id) {
+  return pull_data(node_id, port_id, 0);
+}
+
+std::optional<json> ServiceBus::pull_data(const std::string& node_id, const std::string& port_id,
+                                          std::int64_t ctx_id) {
   const std::string nid = ensure_token(node_id, "node_id");
   const std::string pid = ensure_token(port_id, "port_id");
 
   std::shared_ptr<_InputBuffer> buf_ptr;
+  DataPullResolver resolver;
   {
     std::lock_guard<std::mutex> lock(data_mu_);
     const auto it = data_inputs_.find({nid, pid});
-    if (it == data_inputs_.end()) {
-      return std::nullopt;
+    if (it != data_inputs_.end()) {
+      buf_ptr = it->second;
     }
-    buf_ptr = it->second;
-  }
-  if (!buf_ptr) return std::nullopt;
-
-  const std::int64_t now = now_ms();
-  auto& mut = *buf_ptr;
-  std::lock_guard<std::mutex> lock(mut.mu);
-  if (mut.timeout_ms > 0 && mut.last_seen_ts_ms > 0 && (now - mut.last_seen_ts_ms) > mut.timeout_ms) {
-    return std::nullopt;
-  }
-  if (mut.strategy == EdgeStrategy::kQueue) {
-    if (mut.queue.empty()) return std::nullopt;
-    const auto& sample = mut.queue.front();
-    json v = sample.first ? *sample.first : json(nullptr);
-    if (sample.second > 0) {
-      monitor_record_wait_ms(static_cast<double>(std::max<std::int64_t>(0, now - sample.second)));
-    }
-    mut.queue.pop_front();
-    return v;
+    resolver = data_pull_resolver_;
   }
 
-  // latest
-  if (!mut.queue.empty()) {
-    const auto& sample = mut.queue.back();
-    json v = sample.first ? *sample.first : json(nullptr);
-    if (sample.second > 0) {
-      monitor_record_wait_ms(static_cast<double>(std::max<std::int64_t>(0, now - sample.second)));
+  if (buf_ptr) {
+    const std::int64_t now = now_ms();
+    auto& mut = *buf_ptr;
+    std::lock_guard<std::mutex> lock(mut.mu);
+    const bool timed_out = mut.timeout_ms > 0 && mut.last_seen_ts_ms > 0 && (now - mut.last_seen_ts_ms) > mut.timeout_ms;
+    if (!timed_out && mut.strategy == EdgeStrategy::kQueue) {
+      if (!mut.queue.empty()) {
+        const auto& sample = mut.queue.front();
+        json v = sample.first ? *sample.first : json(nullptr);
+        if (sample.second > 0) {
+          monitor_record_wait_ms(static_cast<double>(std::max<std::int64_t>(0, now - sample.second)));
+        }
+        mut.queue.pop_front();
+        return v;
+      }
     }
-    mut.queue.clear();
-    return v;
+
+    // latest
+    if (!timed_out && !mut.queue.empty()) {
+      const auto& sample = mut.queue.back();
+      json v = sample.first ? *sample.first : json(nullptr);
+      if (sample.second > 0) {
+        monitor_record_wait_ms(static_cast<double>(std::max<std::int64_t>(0, now - sample.second)));
+      }
+      mut.queue.clear();
+      return v;
+    }
+    if (!timed_out && mut.last_seen_ts_ms > 0 && mut.last_seen_value) {
+      return *mut.last_seen_value;
+    }
   }
-  if (mut.last_seen_ts_ms <= 0) return std::nullopt;
-  if (!mut.last_seen_value) return std::nullopt;
-  return *mut.last_seen_value;
+
+  if (resolver) {
+    return resolver(nid, pid, ctx_id);
+  }
+  return std::nullopt;
+}
+
+void ServiceBus::set_data_pull_resolver(DataPullResolver resolver) {
+  std::lock_guard<std::mutex> lock(data_mu_);
+  data_pull_resolver_ = std::move(resolver);
 }
 
 void ServiceBus::push_data_input_for_local_test(const std::string& node_id, const std::string& port_id,

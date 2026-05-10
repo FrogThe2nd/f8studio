@@ -118,7 +118,7 @@ void CppEngineService::sync_exec_nodes() {
   if (!host_ || !executor_) return;
   executor_->clear_nodes();
   for (f8::cppsdk::OperatorNode* node : host_->operator_nodes()) {
-    if (node != nullptr && (!node->exec_in_ports().empty() || !node->exec_out_ports().empty())) {
+    if (node != nullptr) {
       executor_->register_node(node);
     }
   }

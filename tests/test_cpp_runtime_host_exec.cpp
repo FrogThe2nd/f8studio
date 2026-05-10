@@ -40,6 +40,52 @@ class RecordingNode final : public f8::cppsdk::OperatorNode, public f8::cppsdk::
   std::mutex mu_;
 };
 
+class ConstantNode final : public f8::cppsdk::OperatorNode, public f8::cppsdk::ComputableNode {
+ public:
+  ConstantNode(std::string node_id, json value)
+      : OperatorNode(std::move(node_id), {}, {"out"}, {}, {}, {}), value_(std::move(value)) {}
+
+  json compute_output(const std::string& port, std::int64_t ctx_id) override {
+    last_ctx_id = ctx_id;
+    if (port != "out") return nullptr;
+    return value_;
+  }
+
+  std::int64_t last_ctx_id = 0;
+
+ private:
+  json value_;
+};
+
+class AddOneNode final : public f8::cppsdk::OperatorNode, public f8::cppsdk::ComputableNode {
+ public:
+  explicit AddOneNode(std::string node_id)
+      : OperatorNode(std::move(node_id), {"in"}, {"out"}, {}, {}, {}) {}
+
+  json compute_output(const std::string& port, std::int64_t ctx_id) override {
+    if (port != "out") return nullptr;
+    const auto raw = pull("in", ctx_id);
+    if (!raw.has_value() || !raw->is_number()) return nullptr;
+    return raw->get<double>() + 1.0;
+  }
+};
+
+class PullingSinkNode final : public f8::cppsdk::OperatorNode {
+ public:
+  explicit PullingSinkNode(std::string node_id)
+      : OperatorNode(std::move(node_id), {"in"}, {}, {}, {"exec"}, {}) {}
+
+  std::vector<std::string> on_exec(std::int64_t exec_id, const std::string& in_port) override {
+    (void)in_port;
+    last_value = pull("in", exec_id).value_or(nullptr);
+    last_exec_id = exec_id;
+    return {};
+  }
+
+  json last_value = nullptr;
+  std::int64_t last_exec_id = 0;
+};
+
 json runtime_node(const std::string& service_id, const std::string& node_id, const std::string& op,
                   json exec_in = json::array({"exec"}), json exec_out = json::array({"exec"})) {
   return json{{"nodeId", node_id},
@@ -57,6 +103,18 @@ json exec_edge(const std::string& id, const std::string& service_id, const std::
                const std::string& from_port, const std::string& to_node, const std::string& to_port) {
   return json{{"edgeId", id},
               {"kind", "exec"},
+              {"fromServiceId", service_id},
+              {"fromOperatorId", from_node},
+              {"fromPort", from_port},
+              {"toServiceId", service_id},
+              {"toOperatorId", to_node},
+              {"toPort", to_port}};
+}
+
+json data_edge(const std::string& id, const std::string& service_id, const std::string& from_node,
+               const std::string& from_port, const std::string& to_node, const std::string& to_port) {
+  return json{{"edgeId", id},
+              {"kind", "data"},
               {"fromServiceId", service_id},
               {"fromOperatorId", from_node},
               {"fromPort", from_port},
@@ -141,6 +199,79 @@ TEST(CppExecFlow, PropagatesDepthFirstAndEmitsHalfEdgeOutputs) {
   ASSERT_EQ(calls.size(), 2u);
   EXPECT_EQ(calls[0], "a.exec");
   EXPECT_EQ(calls[1], "b.exec");
+}
+
+TEST(CppExecFlow, PullResolvesLocalComputableDataEdge) {
+  f8::cppsdk::ServiceBus::Config cfg;
+  cfg.service_id = "svc";
+  cfg.service_class = "f8.test";
+  cfg.bus_backend = f8::cppsdk::BusBackend::kInMemory;
+  f8::cppsdk::ServiceBus bus(cfg);
+  f8::cppsdk::ExecFlowExecutor executor(bus);
+
+  std::vector<std::string> calls;
+  RecordingNode start("start", {"exec"}, &calls);
+  ConstantNode source("source", 42.0);
+  PullingSinkNode sink("sink");
+  start.attach(&bus);
+  source.attach(&bus);
+  sink.attach(&bus);
+  executor.register_node(&start);
+  executor.register_node(&source);
+  executor.register_node(&sink);
+
+  json graph{{"graphId", "g"},
+             {"revision", "r"},
+             {"nodes", json::array({runtime_node("svc", "start", "op", json::array(), json::array({"exec"})),
+                                     runtime_node("svc", "source", "op", json::array(), json::array()),
+                                     runtime_node("svc", "sink", "op", json::array({"exec"}), json::array())})},
+             {"edges", json::array({exec_edge("e1", "svc", "start", "exec", "sink", "exec"),
+                                     data_edge("d1", "svc", "source", "out", "sink", "in")})}};
+  executor.apply_rungraph(graph);
+  executor.trigger_exec("start", "exec", 123);
+
+  EXPECT_EQ(sink.last_exec_id, 123);
+  EXPECT_EQ(sink.last_value, json(42.0));
+  EXPECT_EQ(source.last_ctx_id, 123);
+}
+
+TEST(CppExecFlow, PullResolvesChainedLocalComputableDataEdges) {
+  f8::cppsdk::ServiceBus::Config cfg;
+  cfg.service_id = "svc";
+  cfg.service_class = "f8.test";
+  cfg.bus_backend = f8::cppsdk::BusBackend::kInMemory;
+  f8::cppsdk::ServiceBus bus(cfg);
+  f8::cppsdk::ExecFlowExecutor executor(bus);
+
+  std::vector<std::string> calls;
+  RecordingNode start("start", {"exec"}, &calls);
+  ConstantNode source("source", 10.0);
+  AddOneNode mid("mid");
+  PullingSinkNode sink("sink");
+  start.attach(&bus);
+  source.attach(&bus);
+  mid.attach(&bus);
+  sink.attach(&bus);
+  executor.register_node(&start);
+  executor.register_node(&source);
+  executor.register_node(&mid);
+  executor.register_node(&sink);
+
+  json graph{{"graphId", "g"},
+             {"revision", "r"},
+             {"nodes", json::array({runtime_node("svc", "start", "op", json::array(), json::array({"exec"})),
+                                     runtime_node("svc", "source", "op", json::array(), json::array()),
+                                     runtime_node("svc", "mid", "op", json::array(), json::array()),
+                                     runtime_node("svc", "sink", "op", json::array({"exec"}), json::array())})},
+             {"edges", json::array({exec_edge("e1", "svc", "start", "exec", "sink", "exec"),
+                                     data_edge("d1", "svc", "source", "out", "mid", "in"),
+                                     data_edge("d2", "svc", "mid", "out", "sink", "in")})}};
+  executor.apply_rungraph(graph);
+  executor.trigger_exec("start", "exec", 124);
+
+  EXPECT_EQ(sink.last_exec_id, 124);
+  EXPECT_EQ(sink.last_value, json(11.0));
+  EXPECT_EQ(source.last_ctx_id, 124);
 }
 
 TEST(CppServiceHost, CreatesRecreatesAndRemovesNodes) {

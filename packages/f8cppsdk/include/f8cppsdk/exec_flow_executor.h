@@ -34,6 +34,7 @@ struct ExecRouteKeyHash {
 };
 
 using ExecRouteMap = std::unordered_map<ExecRouteKey, ExecRouteKey, ExecRouteKeyHash>;
+using DataRouteMap = std::unordered_map<ExecRouteKey, ExecRouteKey, ExecRouteKeyHash>;
 
 ExecRouteMap validate_exec_topology_or_throw(const generated::F8RuntimeGraph& graph, const std::string& service_id);
 
@@ -78,6 +79,9 @@ class ExecFlowExecutor final {
   void propagate_exec_dfs(const std::string& node_id, const std::string& out_port, std::int64_t exec_id);
   void emit_half_edge_outputs(const std::string& node_id, std::int64_t exec_id);
   void rebuild_half_out_ports(const generated::F8RuntimeGraph& graph);
+  void rebuild_local_data_routes(const generated::F8RuntimeGraph& graph);
+  std::optional<nlohmann::json> resolve_data_pull(const std::string& node_id, const std::string& port,
+                                                  std::int64_t ctx_id);
   std::vector<std::string> entrypoint_node_ids_for_graph(const generated::F8RuntimeGraph& graph) const;
   void start_entrypoints_for_graph(const generated::F8RuntimeGraph& graph);
   void start_entrypoint(const std::string& node_id);
@@ -94,6 +98,7 @@ class ExecFlowExecutor final {
   bool worker_running_ = false;
   std::deque<std::shared_ptr<ExecTrigger>> queue_;
   ExecRouteMap exec_out_;
+  DataRouteMap local_data_in_;
   std::unordered_map<std::string, OperatorNode*> nodes_;
   std::unordered_map<std::string, std::unordered_set<std::string>> half_out_ports_;
   std::unordered_set<std::string> entrypoint_node_ids_;

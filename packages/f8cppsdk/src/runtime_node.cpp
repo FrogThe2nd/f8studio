@@ -50,6 +50,11 @@ std::optional<nlohmann::json> RuntimeNode::pull(const std::string& port) const {
   return bus_->pull_data(node_id_, port);
 }
 
+std::optional<nlohmann::json> RuntimeNode::pull(const std::string& port, std::int64_t ctx_id) const {
+  if (bus_ == nullptr) return std::nullopt;
+  return bus_->pull_data(node_id_, port, ctx_id);
+}
+
 bool RuntimeNode::set_state(const std::string& field, const nlohmann::json& value, std::int64_t ts_ms) {
   if (bus_ == nullptr) return false;
   return bus_->publish_state(node_id_, field, value, "runtime", nlohmann::json::object(), ts_ms, "runtime");

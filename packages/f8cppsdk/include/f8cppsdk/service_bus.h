@@ -37,6 +37,8 @@ namespace f8::cppsdk {
 class ServiceBus final : public ServiceControlHandler {
  public:
   using json = nlohmann::json;
+  using DataPullResolver =
+      std::function<std::optional<json>(const std::string&, const std::string&, std::int64_t)>;
 
   enum class DataDeliveryMode {
     kPull,
@@ -134,6 +136,8 @@ class ServiceBus final : public ServiceControlHandler {
 
   // Pull buffered inbound data for (node,port). Returns nullopt if empty/stale.
   std::optional<json> pull_data(const std::string& node_id, const std::string& port_id);
+  std::optional<json> pull_data(const std::string& node_id, const std::string& port_id, std::int64_t ctx_id);
+  void set_data_pull_resolver(DataPullResolver resolver);
 
   // Resolve the Zenoh stream key feeding a local typed stream input port.
   std::optional<std::string> data_input_zenoh_key(const std::string& node_id, const std::string& port_id) const;
@@ -339,6 +343,7 @@ class ServiceBus final : public ServiceControlHandler {
   std::unordered_map<std::string, std::unique_ptr<RuntimeSubscription>> runtime_data_subs_;
   std::unordered_map<_NodePortKey, std::shared_ptr<_InputBuffer>, _NodePortKeyHash> data_inputs_;
   std::unordered_map<_NodePortKey, std::string, _NodePortKeyHash> data_input_stream_keys_;
+  DataPullResolver data_pull_resolver_;
 
   struct _RouteRuntime {
     std::string to_node_id;

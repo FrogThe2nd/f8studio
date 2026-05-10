@@ -405,7 +405,7 @@ class RangeMapNode final : public OperatorNode, public ComputableNode {
 
   json compute_output(const std::string& port, std::int64_t ctx_id) override {
     if (port != "value") return nullptr;
-    const auto raw = pull("value");
+    const auto raw = pull("value", ctx_id);
     if (!raw.has_value()) return last_output_.has_value() ? json(last_output_.value()) : json(nullptr);
     const auto numeric = json_number(raw.value());
     if (!numeric.has_value()) return last_output_.has_value() ? json(last_output_.value()) : json(nullptr);
@@ -499,7 +499,7 @@ class DataExprNode final : public OperatorNode, public ComputableNode {
     }
     last_outputs_.clear();
     try {
-      bind_inputs();
+      bind_inputs(ctx_id);
       compile_if_needed();
       last_outputs_[default_output_port()] = evaluator_.evaluate();
       clear_error("data_expr:" + node_id());
@@ -544,12 +544,12 @@ class DataExprNode final : public OperatorNode, public ComputableNode {
     dirty_ = true;
   }
 
-  void bind_inputs() {
+  void bind_inputs(std::int64_t ctx_id) {
     if (bound_values_.empty() && !data_in_ports().empty()) {
       rebuild_evaluator_bindings();
     }
     for (auto& item : bound_values_) {
-      const auto raw = pull(item.first);
+      const auto raw = pull(item.first, ctx_id);
       if (!raw.has_value()) continue;
       const auto numeric = json_number(raw.value());
       if (numeric.has_value()) item.second = numeric.value();
@@ -612,7 +612,7 @@ class PrintNode final : public OperatorNode {
 
   std::vector<std::string> on_exec(std::int64_t exec_id, const std::string& in_port) override {
     (void)in_port;
-    const auto value = pull("value");
+    const auto value = pull("value", exec_id);
     std::cout << "[" << node_id() << "] exec=" << exec_id << " value="
               << json_to_printable(value.value_or(nullptr), strip_) << std::endl;
     return {};
@@ -656,9 +656,9 @@ class PhaseNode final : public OperatorNode, public ComputableNode {
   json compute_output(const std::string& port, std::int64_t ctx_id) override {
     if (port != "phase" && port != "phaseTurns") return nullptr;
     if (last_ctx_id_.has_value() && last_ctx_id_.value() == ctx_id && cache_.contains(port)) return cache_[port];
-    const auto in_hz = pull("hz");
-    const auto in_phase = pull("phase");
-    const auto in_reset = pull("reset");
+    const auto in_hz = pull("hz", ctx_id);
+    const auto in_phase = pull("phase", ctx_id);
+    const auto in_reset = pull("reset", ctx_id);
     const double hz = std::max(0.0, in_hz.has_value() ? json_number_or(in_hz.value(), hz_) : hz_);
     if (in_reset.has_value() && json_bool_or(in_reset.value(), false)) turns_ = 0.0;
     if (in_phase.has_value()) {
@@ -711,12 +711,11 @@ class CosineNode final : public OperatorNode, public ComputableNode {
   }
 
   json compute_output(const std::string& port, std::int64_t ctx_id) override {
-    (void)ctx_id;
     if (port != "value") return nullptr;
-    const double phase = json_number_or(pull("phase").value_or(0.0), 0.0);
-    const double amp = json_number_or(pull("amp").value_or(amp_), amp_);
-    const double dc = json_number_or(pull("dc").value_or(dc_), dc_);
-    const double offset = json_number_or(pull("phaseOffset").value_or(phase_offset_), phase_offset_);
+    const double phase = json_number_or(pull("phase", ctx_id).value_or(0.0), 0.0);
+    const double amp = json_number_or(pull("amp", ctx_id).value_or(amp_), amp_);
+    const double dc = json_number_or(pull("dc", ctx_id).value_or(dc_), dc_);
+    const double offset = json_number_or(pull("phaseOffset", ctx_id).value_or(phase_offset_), phase_offset_);
     return dc + amp * std::cos(2.0 * kPi * (std::fmod(std::fmod(phase, 1.0) + 1.0, 1.0) + offset));
   }
 
@@ -757,13 +756,12 @@ class TempestNode final : public OperatorNode, public ComputableNode {
   }
 
   json compute_output(const std::string& port, std::int64_t ctx_id) override {
-    (void)ctx_id;
     if (port != "out") return nullptr;
-    const double phase = std::fmod(std::fmod(json_number_or(pull("phase").value_or(0.0), 0.0), 1.0) + 1.0, 1.0);
-    const double amp = json_number_or(pull("amp").value_or(amp_), amp_);
-    const double offset = json_number_or(pull("phaseOffset").value_or(phase_offset_), phase_offset_);
-    const double eccentric = json_number_or(pull("eccentric").value_or(eccentric_), eccentric_);
-    const double dc = json_number_or(pull("dc").value_or(dc_), dc_);
+    const double phase = std::fmod(std::fmod(json_number_or(pull("phase", ctx_id).value_or(0.0), 0.0), 1.0) + 1.0, 1.0);
+    const double amp = json_number_or(pull("amp", ctx_id).value_or(amp_), amp_);
+    const double offset = json_number_or(pull("phaseOffset", ctx_id).value_or(phase_offset_), phase_offset_);
+    const double eccentric = json_number_or(pull("eccentric", ctx_id).value_or(eccentric_), eccentric_);
+    const double dc = json_number_or(pull("dc", ctx_id).value_or(dc_), dc_);
     const double theta = 2.0 * kPi * (phase + offset);
     return amp * std::cos(theta + eccentric * std::sin(theta)) + dc;
   }
@@ -885,7 +883,7 @@ class SmoothFilterNode final : public OperatorNode, public ComputableNode {
 
   json compute_output(const std::string& port, std::int64_t ctx_id) override {
     if (port != "value") return nullptr;
-    const auto raw = pull("value");
+    const auto raw = pull("value", ctx_id);
     if (!raw.has_value()) return format_number_sequence(last_output_);
     const auto sample = json_number_sequence(raw.value());
     if (sample.empty()) return format_number_sequence(last_output_);
@@ -988,7 +986,7 @@ class DetrendNode final : public OperatorNode, public ComputableNode {
 
   json compute_output(const std::string& port, std::int64_t ctx_id) override {
     if (port != "value") return nullptr;
-    const auto raw = pull("value");
+    const auto raw = pull("value", ctx_id);
     if (!raw.has_value()) return format_number_sequence(last_output_);
     const auto sample = json_number_sequence(raw.value());
     if (sample.empty()) return format_number_sequence(last_output_);
@@ -1087,7 +1085,7 @@ class RateLimiterNode final : public OperatorNode, public ComputableNode {
 
   json compute_output(const std::string& port, std::int64_t ctx_id) override {
     if (port != "value") return nullptr;
-    const auto raw = pull("value");
+    const auto raw = pull("value", ctx_id);
     if (!raw.has_value()) return last_out_.has_value() ? json(last_out_.value()) : json(nullptr);
     const auto numeric = json_number(raw.value());
     if (!numeric.has_value()) return last_out_.has_value() ? json(last_out_.value()) : json(nullptr);
@@ -1188,12 +1186,11 @@ class TCodeNode final : public OperatorNode, public ComputableNode {
   }
 
   json compute_output(const std::string& port, std::int64_t ctx_id) override {
-    (void)ctx_id;
     if (port != "tcode") return nullptr;
-    const int interval = std::max(1, js_round(json_number_or(pull("intervalMs").value_or(interval_ms_), interval_ms_)));
+    const int interval = std::max(1, js_round(json_number_or(pull("intervalMs", ctx_id).value_or(interval_ms_), interval_ms_)));
     std::vector<std::string> commands;
     for (const auto& axis : axes()) {
-      const auto raw = pull(axis);
+      const auto raw = pull(axis, ctx_id);
       if (!raw.has_value()) continue;
       const auto numeric = json_number(raw.value());
       if (!numeric.has_value()) continue;
@@ -1254,7 +1251,7 @@ class QuatToEulerNode final : public OperatorNode, public ComputableNode {
 
   json compute_output(const std::string& port, std::int64_t ctx_id) override {
     if (port != "euler") return nullptr;
-    const auto raw = pull("quat");
+    const auto raw = pull("quat", ctx_id);
     if (!raw.has_value() || !raw->is_array() || raw->size() != 4) return last_output_;
     std::array<double, 4> q{};
     double norm = 0.0;
@@ -1385,15 +1382,14 @@ class SilenceDetectorNode final : public OperatorNode {
   }
 
   std::vector<std::string> on_exec(std::int64_t exec_id, const std::string& in_port) override {
-    (void)exec_id;
     (void)in_port;
-    sample_and_publish();
+    sample_and_publish(exec_id);
     return exec_out_ports();
   }
 
  private:
-  void sample_and_publish() {
-    const auto raw = pull("value");
+  void sample_and_publish(std::int64_t ctx_id) {
+    const auto raw = pull("value", ctx_id);
     const auto value = raw.has_value() ? json_number(raw.value()) : std::nullopt;
     const double now_s = now_seconds();
     if (value.has_value()) {
@@ -1466,7 +1462,7 @@ class SwitchMixerNode final : public OperatorNode, public ComputableNode {
   json compute_output(const std::string& port, std::int64_t ctx_id) override {
     if (port != "out" && port != "alpha") return nullptr;
     if (last_ctx_id_.has_value() && last_ctx_id_.value() == ctx_id && cache_.contains(port)) return cache_[port];
-    step();
+    step(ctx_id);
     last_ctx_id_ = ctx_id;
     return cache_.value(port, nullptr);
   }
@@ -1484,9 +1480,9 @@ class SwitchMixerNode final : public OperatorNode, public ComputableNode {
     return data_in_ports().empty() ? "" : data_in_ports().front();
   }
 
-  void step() {
+  void step(std::int64_t ctx_id) {
     for (const auto& port : data_in_ports()) {
-      const auto raw = pull(port);
+      const auto raw = pull(port, ctx_id);
       if (!raw.has_value()) continue;
       const auto numeric = json_number(raw.value());
       if (numeric.has_value()) last_values_[port] = numeric.value();

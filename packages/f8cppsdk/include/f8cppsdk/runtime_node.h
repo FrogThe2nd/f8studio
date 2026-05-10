@@ -48,6 +48,7 @@ class RuntimeNode {
  protected:
   bool emit(const std::string& port, const nlohmann::json& value, std::int64_t ts_ms = 0);
   std::optional<nlohmann::json> pull(const std::string& port) const;
+  std::optional<nlohmann::json> pull(const std::string& port, std::int64_t ctx_id) const;
   bool set_state(const std::string& field, const nlohmann::json& value, std::int64_t ts_ms = 0);
   void report_error(const std::string& code, const std::string& message, const std::string& severity = "error",
                     const std::string& fingerprint = "", std::int64_t ts_ms = 0);
