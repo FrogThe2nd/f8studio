@@ -3,6 +3,8 @@ from __future__ import annotations
 import time
 from typing import Any, cast
 
+from qtpy import QtCore
+
 from ....nodegraph.node_base import F8StudioBaseNode
 
 

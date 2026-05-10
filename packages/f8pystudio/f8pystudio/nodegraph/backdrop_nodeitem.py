@@ -7,6 +7,8 @@ from NodeGraphQt.qgraphics.node_abstract import AbstractNodeItem
 from NodeGraphQt.qgraphics.node_backdrop import BackdropNodeItem
 from NodeGraphQt.qgraphics.node_text_item import NodeTextItem
 
+from .items.backdrop_sizer import F8StudioBackdropSizer
+
 
 class F8StudioBackdropNodeItem(BackdropNodeItem):
     _FILL_ALPHA = 20
@@ -19,10 +21,21 @@ class F8StudioBackdropNodeItem(BackdropNodeItem):
 
     def __init__(self, name: str = "backdrop", text: str = "", parent=None):
         super().__init__(name=name, text=text, parent=parent)
+        self._replace_default_sizer()
         self._text_item = NodeTextItem(self.name, self)
         self._sync_title_text_item_text()
         self._sync_title_text_item_style()
         self._sync_title_text_item_geometry()
+
+    def _replace_default_sizer(self) -> None:
+        old_sizer = self._sizer
+        sizer_x = float(old_sizer.pos().x()) + float(old_sizer.size)
+        sizer_y = float(old_sizer.pos().y()) + float(old_sizer.size)
+        if old_sizer.scene() is not None:
+            old_sizer.scene().removeItem(old_sizer)
+        old_sizer.setParentItem(None)
+        self._sizer = F8StudioBackdropSizer(self, 26.0)
+        self._sizer.set_pos(sizer_x, sizer_y)
 
     def _sync_title_text_item_text(self) -> None:
         text_item = self._text_item

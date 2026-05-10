@@ -8,12 +8,12 @@ from qtpy import QtCore, QtGui, QtWidgets
 from NodeGraphQt.constants import Z_VAL_BACKDROP, NodeEnum
 from NodeGraphQt.constants import NodePropWidgetEnum
 from NodeGraphQt.qgraphics.node_abstract import AbstractNodeItem
-from NodeGraphQt.qgraphics.node_backdrop import BackdropSizer
 from NodeGraphQt.qgraphics.node_overlay_disabled import XDisabledItem
 from NodeGraphQt.qgraphics.node_text_item import NodeTextItem
 
 from f8pysdk.specs import F8ServiceSpec
 from f8pysdk.specs import schema_default, schema_type
+from .items.backdrop_sizer import F8StudioBackdropSizer
 from .node_base import F8StudioBaseNode
 from .service_process_toolbar import ServiceProcessToolbar
 from .viewer import F8StudioNodeViewer
@@ -174,10 +174,10 @@ class F8StudioContainerNodeItem(AbstractNodeItem):
         # `BaseNode.update_model()` can iterate `self.view.widgets`.
         self._widgets = OrderedDict()
         self._text_item = NodeTextItem(self.name, self)
-        # Must exist before BackdropSizer calls `itemChange()` which may call `_position_service_toolbar()`.
+        # Must exist before F8StudioBackdropSizer calls `itemChange()` which may call `_position_service_toolbar()`.
         self._svc_toolbar_proxy: QtWidgets.QGraphicsProxyWidget | None = None
         self._min_size = 500, 300
-        self._sizer = BackdropSizer(self, 26.0)
+        self._sizer = F8StudioBackdropSizer(self, 26.0)
         self._sizer.set_pos(*self._min_size)
         self._child_views: list[AbstractNodeItem] = []
         self._x_item = XDisabledItem(self, "DISABLED")

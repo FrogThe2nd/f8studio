@@ -4,12 +4,12 @@ from qtpy import QtWidgets
 
 from NodeGraphQt.constants import NodeEnum
 from NodeGraphQt.qgraphics.node_abstract import AbstractNodeItem
-from NodeGraphQt.qgraphics.node_backdrop import BackdropSizer
 
 from .items.embedded_resize_contract import (
     ResizableEmbeddedWidget,
     clamp_content_size,
 )
+from .items.backdrop_sizer import F8StudioBackdropSizer
 from .service_basenode import F8StudioServiceNodeItem
 from .viz_operator_nodeitem import F8StudioVizOperatorNodeItem
 
@@ -28,7 +28,7 @@ class F8StudioNoteNodeItem(F8StudioVizOperatorNodeItem):
         self._user_width: float | None = None
         self._user_height: float | None = None
         self._syncing_sizer = False
-        self._sizer = BackdropSizer(self, _SIZER_SIZE)
+        self._sizer = F8StudioBackdropSizer(self, _SIZER_SIZE)
         self._sync_sizer_pos()
 
     @property

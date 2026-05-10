@@ -8,6 +8,7 @@ from qtpy import QtCore, QtWidgets
 from f8pystudio.nodegraph.node_base import F8StudioBaseNode
 from f8pystudio.nodegraph.backdrop_nodeitem import F8StudioBackdropNodeItem
 from f8pystudio.nodegraph.container_basenode import F8StudioContainerNodeItem
+from f8pystudio.nodegraph.items.backdrop_sizer import F8StudioBackdropSizer
 from f8pystudio.nodegraph.node_graph import F8StudioGraph
 from f8pystudio.nodegraph.viewer import F8StudioNodeViewer
 
@@ -207,3 +208,25 @@ def test_backdrop_title_double_click_enters_inline_rename() -> None:
 
     assert event.ignored is True
     assert item.text_item.textInteractionFlags() != QtCore.Qt.NoTextInteraction
+
+
+def test_resize_handle_press_clears_other_selected_resize_handles() -> None:
+    _ensure_app()
+    scene = QtWidgets.QGraphicsScene()
+    first = F8StudioBackdropNodeItem(name="First")
+    second = F8StudioContainerNodeItem(name="Second")
+    scene.addItem(first)
+    scene.addItem(second)
+
+    assert isinstance(first._sizer, F8StudioBackdropSizer)
+    assert isinstance(second._sizer, F8StudioBackdropSizer)
+
+    first._sizer.setSelected(True)
+    second._sizer.setSelected(True)
+    assert first._sizer in scene.selectedItems()
+    assert second._sizer in scene.selectedItems()
+
+    second._sizer.begin_exclusive_resize_drag()
+
+    assert first._sizer not in scene.selectedItems()
+    assert second._sizer in scene.selectedItems()
