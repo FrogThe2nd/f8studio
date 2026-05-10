@@ -257,7 +257,15 @@ class StateIOBus(Protocol):
     State read/write operations against the bus.
     """
 
-    async def publish_state_runtime(self, node_id: str, field: str, value: Any, *, ts_ms: int | None = None) -> None: ...
+    async def publish_state_runtime(
+        self,
+        node_id: str,
+        field: str,
+        value: Any,
+        *,
+        ts_ms: int | None = None,
+        force_publish: bool = False,
+    ) -> None: ...
 
     async def get_state(self, node_id: str, field: str) -> "StateRead": ...
 

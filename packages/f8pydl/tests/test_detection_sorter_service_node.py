@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import sys
+import threading
+import time
 import unittest
 from types import SimpleNamespace
 from typing import Any
@@ -385,6 +388,40 @@ class DetectionSorterHelpersTests(unittest.TestCase):
 
 
 class DetectionSorterServiceNodeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_service_node_keeps_event_loop_responsive_during_sort(self) -> None:
+        started = threading.Event()
+
+        class _SlowSorterNode(DetectionSorterServiceNode):
+            def _sort_latest_detections(self) -> dict[str, Any] | None:
+                started.set()
+                time.sleep(0.2)
+                return self._latest_detections
+
+        bus = _BusStub()
+        node = _SlowSorterNode(node_id="sorterResponsive", node=SimpleNamespace(stateFields=[]), initial_state=None)
+        node.attach(bus)
+        payload = _make_detection_payload(
+            [{"cls": "x", "score": 0.8, "bbox": [0, 0, 2, 2]}],
+            frame_id=1,
+            width=2,
+            height=2,
+        )
+
+        sort_task = asyncio.create_task(node.on_data("detections", payload))
+        try:
+            t0 = time.perf_counter()
+            started_ok = await asyncio.to_thread(started.wait, 1.0)
+            self.assertTrue(started_ok)
+            elapsed_s = time.perf_counter() - t0
+
+            self.assertLess(elapsed_s, 0.15)
+            self.assertEqual(bus.emitted, [])
+        finally:
+            await sort_task
+            node._close_score_reader()
+
+        self.assertEqual(len(bus.emitted), 1)
+
     async def test_validate_state_cls_weights_rejects_invalid_json(self) -> None:
         node = DetectionSorterServiceNode(node_id="sorterZ", node=SimpleNamespace(stateFields=[]), initial_state=None)
         with self.assertRaises(ValueError):

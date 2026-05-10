@@ -356,7 +356,7 @@ async def publish_state(
     # This is important for intra-service state edges: a graph may contain
     # cycles, and without dedupe a value can loop until hop-limit cutoff.
     existing = bus.state_store.cache_entry(node_id=node_id, field=field)
-    if existing is not None and not is_hidden_command_state:
+    if existing is not None and not is_hidden_command_state and not publish_options.force_publish:
         try:
             if existing[0] == update.value:
                 if bus._debug_state:

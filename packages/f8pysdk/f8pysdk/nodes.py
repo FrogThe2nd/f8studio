@@ -102,8 +102,18 @@ class RuntimeNode(BusAttachableNode, StatefulNode, DataReceivableNode, Computabl
             return False
         return self._bus.has_rungraph()
 
-    async def set_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
+    async def set_state(
+        self,
+        field: str,
+        value: Any,
+        *,
+        ts_ms: int | None = None,
+        force_publish: bool = False,
+    ) -> None:
         if self._bus is None:
+            return
+        if force_publish:
+            await self._bus.publish_state_runtime(self.node_id, field, value, ts_ms=ts_ms, force_publish=True)
             return
         await self._bus.publish_state_runtime(self.node_id, field, value, ts_ms=ts_ms)
 

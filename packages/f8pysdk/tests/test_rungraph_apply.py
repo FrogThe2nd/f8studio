@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 import unittest
@@ -10,6 +11,7 @@ if ROOT not in sys.path:
 
 from f8pysdk.codec import decode_obj  # noqa: E402
 from f8pysdk.service_runtime_tools.deploy.readiness import (  # noqa: E402
+    rungraph_deploy_request_status_key,
     rungraph_deploy_status_key,
     wait_rungraph_deploy_status,
 )
@@ -92,7 +94,7 @@ class RungraphApplyTests(unittest.IsolatedAsyncioTestCase):
         )
         graph = F8RuntimeGraph(graphId="g4", revision="r1", nodes=[service_node], edges=[])
 
-        bus.submit_rungraph(graph, req_id="req-apply", source="test")
+        await bus.submit_rungraph(graph, req_id="req-apply", source="test")
         status = await wait_rungraph_deploy_status(
             bus._transport,
             service_id="svc",
@@ -106,6 +108,39 @@ class RungraphApplyTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(status.ok)
         self.assertTrue(bus.has_rungraph())
 
+    async def test_submit_rungraph_publishes_accepted_status_before_apply_completes(self) -> None:
+        class _SlowRungraphHook:
+            async def on_rungraph(self, graph: F8RuntimeGraph) -> None:
+                _ = graph
+                await asyncio.Event().wait()
+
+            async def validate_rungraph(self, graph: F8RuntimeGraph) -> None:
+                _ = graph
+                return None
+
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svc")
+        bus.register_rungraph_hook(_SlowRungraphHook())
+        service_node = F8RuntimeNode(
+            nodeId="svc",
+            serviceId="svc",
+            serviceClass="svc",
+            operatorClass=None,
+            stateFields=[],
+        )
+        graph = F8RuntimeGraph(graphId="g-accepted", revision="r1", nodes=[service_node], edges=[])
+
+        await bus.submit_rungraph(graph, req_id="req-accepted", source="test")
+        raw = await bus._transport.retained_get(rungraph_deploy_request_status_key("svc", "req-accepted"))
+        payload = decode_obj(raw) if raw is not None else {}
+
+        self.assertEqual(payload.get("phase"), "accepted")
+        self.assertEqual(payload.get("reqId"), "req-accepted")
+
+        for task in list(bus._rungraph_apply_tasks):
+            task.cancel()
+        await asyncio.gather(*list(bus._rungraph_apply_tasks), return_exceptions=True)
+
     async def test_submit_rungraph_publishes_retained_failed_status(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svc")
@@ -118,7 +153,7 @@ class RungraphApplyTests(unittest.IsolatedAsyncioTestCase):
         )
         graph = F8RuntimeGraph(graphId="g5", revision="r1", nodes=[service_node], edges=[])
 
-        bus.submit_rungraph(graph, req_id="req-fail", source="test")
+        await bus.submit_rungraph(graph, req_id="req-fail", source="test")
         status = await wait_rungraph_deploy_status(
             bus._transport,
             service_id="svc",

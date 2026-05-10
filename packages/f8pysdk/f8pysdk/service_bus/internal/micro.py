@@ -418,7 +418,7 @@ class ServiceBusControlHandlers:
             meta = decoded_req.meta
             if isinstance(meta, dict):
                 source = str(meta.get("source") or "control")
-            self._bus.submit_rungraph(graph, req_id=req_id, source=source)
+            await self._bus.submit_rungraph(graph, req_id=req_id, source=source)
         except Exception as exc:
             await req.respond(
                 encode_obj(

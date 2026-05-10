@@ -8,6 +8,7 @@ from typing import Any
 import msgspec
 
 from .capabilities import ClosableNode
+from .capabilities import RungraphHook
 from .bus import ServiceBus
 from .generated import F8RuntimeGraph, F8RuntimeNode
 from .codec import unwrap_json_value
@@ -74,8 +75,15 @@ class ServiceHost:
         self._service_node = node
         try:
             self._bus.register_node(node)
+            if isinstance(node, RungraphHook):
+                self._bus.register_rungraph_hook(node)
         except Exception as exc:
             self._service_node = None
+            if isinstance(node, RungraphHook):
+                try:
+                    self._bus.unregister_rungraph_hook(node)
+                except ValueError:
+                    pass
             raise RuntimeError(f"failed to register service node node_id={node_id}") from exc
 
     async def stop(self) -> None:
@@ -93,6 +101,11 @@ class ServiceHost:
         timeout_s = max(0.05, float(self._config.node_close_timeout_s))
         for node in nodes:
             node_id = str(node.node_id or "").strip()
+            if isinstance(node, RungraphHook):
+                try:
+                    self._bus.unregister_rungraph_hook(node)
+                except ValueError:
+                    pass
             if node_id:
                 self._bus.detach_node(node_id)
             if not isinstance(node, ClosableNode):
@@ -140,6 +153,9 @@ class ServiceHost:
             if node_id in want_ids:
                 continue
             try:
+                existing = self._operator_nodes.get(node_id)
+                if existing is not None and isinstance(existing, RungraphHook):
+                    self._bus.unregister_rungraph_hook(existing)
                 self._bus.unregister_node(node_id)
             except Exception as exc:
                 log.error("failed to unregister runtime node node_id=%s", node_id, exc_info=exc)
@@ -151,6 +167,9 @@ class ServiceHost:
                 existing = self._operator_nodes.get(node_id)
                 if existing is not None and self._needs_recreate(existing, node):
                     try:
+                        existing = self._operator_nodes.get(node_id)
+                        if existing is not None and isinstance(existing, RungraphHook):
+                            self._bus.unregister_rungraph_hook(existing)
                         self._bus.unregister_node(node_id)
                     except Exception as exc:
                         log.error("failed to unregister recreated node node_id=%s", node_id, exc_info=exc)
@@ -188,8 +207,16 @@ class ServiceHost:
             self._operator_nodes[node_id] = runtime_node
             try:
                 self._bus.register_node(runtime_node)
+                if isinstance(runtime_node, RungraphHook):
+                    self._bus.register_rungraph_hook(runtime_node)
+                    await runtime_node.on_rungraph(graph)
             except Exception as exc:
                 log.error("failed to register runtime node node_id=%s", node_id, exc_info=exc)
+                if isinstance(runtime_node, RungraphHook):
+                    try:
+                        self._bus.unregister_rungraph_hook(runtime_node)
+                    except ValueError:
+                        pass
                 self._operator_nodes.pop(node_id, None)
                 continue
 

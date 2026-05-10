@@ -201,6 +201,8 @@ async def apply_rungraph(bus: "ServiceBus", graph: F8RuntimeGraph) -> bool:
     await seed_builtin_identity_state(bus, graph)
 
     for hook in list(bus._rungraph_hooks):
+        if hook not in bus._rungraph_hooks:
+            continue
         try:
             r = hook.on_rungraph(graph)
             if asyncio.iscoroutine(r):

@@ -219,6 +219,24 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload.get("source"), "runtime")
         self.assertEqual(payload.get("origin"), "runtime")
 
+    async def test_publish_state_runtime_force_publish_rewrites_same_value(self) -> None:
+        cluster = InMemoryCluster()
+        transport = InMemoryTransport(cluster=cluster)
+        bus = ServiceBus(ServiceBusConfig(service_id="svc"), transport=transport)
+        bus.state_store.access_by_node_field[("svc", "status")] = F8StateAccess.ro
+
+        await bus.publish_state_runtime("svc", "status", 7, ts_ms=42)
+        await bus.publish_state_runtime("svc", "status", 7, ts_ms=43)
+        key = zenoh_state_key("svc", node_id="svc", field="status")
+        raw = await transport.retained_get(key)
+        payload = decode_obj(raw) if raw else {}
+        self.assertEqual(payload.get("tsMs"), 42)
+
+        await bus.publish_state_runtime("svc", "status", 7, ts_ms=44, force_publish=True)
+        raw2 = await transport.retained_get(key)
+        payload2 = decode_obj(raw2) if raw2 else {}
+        self.assertEqual(payload2.get("tsMs"), 44)
+
     async def test_publish_state_options_disable_intra_state_fanout(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")

@@ -39,6 +39,7 @@ from .workflow.rungraph import set_rungraph as _set_rungraph_impl
 
 if TYPE_CHECKING:
     from .internal.control_endpoints import ServiceControlEndpointServer
+    from .state.options import StatePublishOptions
 
 
 log = logging.getLogger(__name__)
@@ -615,7 +616,15 @@ class ServiceBus:
             meta=dict(meta or {}),
         )
 
-    async def publish_state_runtime(self, node_id: str, field: str, value: Any, *, ts_ms: int | None = None) -> None:
+    async def publish_state_runtime(
+        self,
+        node_id: str,
+        field: str,
+        value: Any,
+        *,
+        ts_ms: int | None = None,
+        force_publish: bool = False,
+    ) -> None:
         """
         Publish a runtime-owned state update through the same validated/persisted state chain.
 
@@ -630,7 +639,16 @@ class ServiceBus:
             origin=StateWriteOrigin.runtime,
             source=StateWriteSource.runtime,
             ts_ms=ts_ms,
+            options=self._runtime_state_publish_options(force_publish=bool(force_publish)),
         )
+
+    @staticmethod
+    def _runtime_state_publish_options(*, force_publish: bool) -> "StatePublishOptions | None":
+        if not force_publish:
+            return None
+        from .state.options import StatePublishOptions
+
+        return StatePublishOptions(force_publish=True)
 
     async def invoke_command(
         self,
@@ -678,7 +696,7 @@ class ServiceBus:
     async def set_rungraph(self, graph: F8RuntimeGraph) -> None:
         await _set_rungraph_impl(self, graph)
 
-    def submit_rungraph(self, graph: F8RuntimeGraph, *, req_id: str, source: str = "control") -> None:
+    async def submit_rungraph(self, graph: F8RuntimeGraph, *, req_id: str, source: str = "control") -> None:
         """
         Accept a remote rungraph deployment request and apply it asynchronously.
 
@@ -690,6 +708,7 @@ class ServiceBus:
         if not req_id_s:
             raise ValueError("req_id is empty")
         source_s = str(source or "control").strip() or "control"
+        await self._publish_rungraph_status(graph, req_id=req_id_s, phase="accepted", source=source_s)
         task = asyncio.create_task(
             self._rungraph_apply_worker(graph, req_id=req_id_s, source=source_s),
             name=f"service_bus:set_rungraph:{self.service_id}:{req_id_s}",
@@ -707,7 +726,6 @@ class ServiceBus:
             log.error("rungraph apply task failed service_id=%s", self.service_id, exc_info=exc)
 
     async def _rungraph_apply_worker(self, graph: F8RuntimeGraph, *, req_id: str, source: str) -> None:
-        await self._publish_rungraph_status(graph, req_id=req_id, phase="accepted", source=source)
         async with self._rungraph_apply_lock:
             await self._publish_rungraph_status(graph, req_id=req_id, phase="applying", source=source)
             try:

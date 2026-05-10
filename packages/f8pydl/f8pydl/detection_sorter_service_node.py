@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
@@ -333,6 +334,7 @@ class DetectionSorterServiceNode(ServiceNode):
         self._latest_detections: dict[str, Any] | None = None
         self._score_source_config = VideoFrameSourceConfig.from_bus(None)
         self._score_source: LatestVideoFrameSource | None = None
+        self._on_data_lock = asyncio.Lock()
 
     def attach(self, bus: Any) -> None:
         super().attach(bus)
@@ -409,28 +411,29 @@ class DetectionSorterServiceNode(ServiceNode):
         if not isinstance(value, dict):
             await self._set_last_error("detections payload must be an object")
             return
-        incoming_payload = dict(value)
-        self._latest_detections = incoming_payload
-        try:
-            output_payload = self._sort_latest_detections()
-        except ScoreSourceUnavailableError as exc:
-            if exc.reason == "not_ready":
+        async with self._on_data_lock:
+            incoming_payload = dict(value)
+            self._latest_detections = incoming_payload
+            try:
+                output_payload = await asyncio.to_thread(self._sort_latest_detections)
+            except ScoreSourceUnavailableError as exc:
+                if exc.reason == "not_ready":
+                    await self._set_last_error("")
+                else:
+                    await self._set_last_error(self._format_score_source_unavailable_error(exc))
+                await self._emit_output_with_timing(incoming_payload, started_at=started_at)
+                return
+            except Exception as exc:
+                logger.exception("detection sorter failed node=%s", self.node_id)
+                await self._set_last_error(f"{type(exc).__name__}: {exc}")
+                await self._emit_output_with_timing(incoming_payload, started_at=started_at)
+                return
+            if output_payload is None:
                 await self._set_last_error("")
-            else:
-                await self._set_last_error(self._format_score_source_unavailable_error(exc))
-            await self._emit_output_with_timing(incoming_payload, started_at=started_at)
-            return
-        except Exception as exc:
-            logger.exception("detection sorter failed node=%s", self.node_id)
-            await self._set_last_error(f"{type(exc).__name__}: {exc}")
-            await self._emit_output_with_timing(incoming_payload, started_at=started_at)
-            return
-        if output_payload is None:
+                await self._emit_output_with_timing(incoming_payload, started_at=started_at)
+                return
             await self._set_last_error("")
-            await self._emit_output_with_timing(incoming_payload, started_at=started_at)
-            return
-        await self._set_last_error("")
-        await self._emit_output_with_timing(output_payload, started_at=started_at)
+            await self._emit_output_with_timing(output_payload, started_at=started_at)
 
     async def _emit_output_with_timing(self, payload: dict[str, Any], *, started_at: float) -> None:
         source_ts_ms = _payload_int(payload, "tsMs")

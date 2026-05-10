@@ -268,6 +268,15 @@ class OnnxVisionServiceNode(ServiceNode):
         del meta
         self._active = bool(active)
 
+    async def on_rungraph(self, graph: Any) -> None:
+        del graph
+        await self._ensure_config_loaded()
+        await self._publish_model_index(force_publish=True)
+
+    async def validate_rungraph(self, graph: Any) -> None:
+        del graph
+        return None
+
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
         del value
         del ts_ms
@@ -277,7 +286,7 @@ class OnnxVisionServiceNode(ServiceNode):
         if name == "weightsDir":
             raw = coerce_str(await self.get_state_value("weightsDir"), default=str(self._weights_dir))
             self._weights_dir = _resolve_path_from_cwd_or_repo(raw)
-            await self._publish_model_index()
+            await self._publish_model_index(force_publish=True)
             await self._reset_runtime()
             return
 
@@ -410,9 +419,9 @@ class OnnxVisionServiceNode(ServiceNode):
             default=bool(self._initial_state.get("autoDownloadWeights", True)),
         )
         self._config_loaded = True
-        await self._publish_model_index()
+        await self._publish_model_index(force_publish=True)
 
-    async def _publish_model_index(self) -> None:
+    async def _publish_model_index(self, *, force_publish: bool = False) -> None:
         idx, errors = build_model_index_with_errors(self._weights_dir, allowed_tasks=self._allowed_tasks)
         warning = ""
         if errors:
@@ -448,32 +457,34 @@ class OnnxVisionServiceNode(ServiceNode):
         elif warning:
             await self._set_last_error(warning)
         payload = [i.model_id for i in idx]
-        await self.set_state("availableModels", payload)
+        await self.set_state("availableModels", payload, force_publish=force_publish)
         if idx:
             available = set(payload)
             if not self._model_id or self._model_id not in available:
                 self._model_id = idx[0].model_id
-                await self.set_state("modelId", self._model_id)
+                await self.set_state("modelId", self._model_id, force_publish=force_publish)
+            elif force_publish:
+                await self.set_state("modelId", self._model_id, force_publish=True)
         else:
             self._model_id = ""
-            await self.set_state("modelId", self._model_id)
-        await self._publish_selected_model_metadata()
+            await self.set_state("modelId", self._model_id, force_publish=force_publish)
+        await self._publish_selected_model_metadata(force_publish=force_publish)
 
-    async def _publish_selected_model_metadata(self) -> None:
+    async def _publish_selected_model_metadata(self, *, force_publish: bool = False) -> None:
         try:
             yaml_path = self._resolve_model_yaml()
             spec = load_model_spec(yaml_path)
         except Exception:
-            await self.set_state("modelClasses", [])
-            await self.set_state("enabledClasses", [])
+            await self.set_state("modelClasses", [], force_publish=force_publish)
+            await self.set_state("enabledClasses", [], force_publish=force_publish)
             return
 
-        await self.set_state("modelClasses", [str(x) for x in (spec.classes or [])])
+        await self.set_state("modelClasses", [str(x) for x in (spec.classes or [])], force_publish=force_publish)
         self._enabled_classes = self._normalize_enabled_classes(
             self._enabled_classes,
             allowed_classes=list(spec.classes or []),
         )
-        await self.set_state("enabledClasses", list(self._enabled_classes))
+        await self.set_state("enabledClasses", list(self._enabled_classes), force_publish=force_publish)
 
     async def _set_last_error(self, message: str) -> None:
         self._last_error = str(message or "")
@@ -515,7 +526,7 @@ class OnnxVisionServiceNode(ServiceNode):
         await self.set_state("loadedModel", "")
         await self.clear_error()
         await self.set_state("ortActiveProviders", "")
-        await self._publish_selected_model_metadata()
+        await self._publish_selected_model_metadata(force_publish=True)
         if self._model_index_warning:
             await self._set_last_error(self._model_index_warning)
 
@@ -702,18 +713,18 @@ class OnnxVisionServiceNode(ServiceNode):
                 spec = replace(spec, iou_threshold=float(self._iou_override))
 
         if spec.task == "yolo_cls":
-            runtime = OnnxClassifierRuntime(spec, ort_provider=self._ort_provider)
+            runtime = await self._create_classifier_runtime(spec)
             self._cls_runtime = runtime
             providers = runtime.active_providers
             warn = runtime.provider_warning
         elif spec.task == "yowo_temporal_det":
-            runtime = OnnxYowoTemporalDetectorRuntime(spec, ort_provider=self._ort_provider)
+            runtime = await self._create_temporal_detector_runtime(spec)
             self._temporal_det_runtime = runtime
             self._reset_temporal_buffer(maxlen=runtime.buffer_span)
             providers = runtime.active_providers
             warn = runtime.provider_warning
         else:
-            runtime = OnnxYoloDetectorRuntime(spec, ort_provider=self._ort_provider)
+            runtime = await self._create_yolo_detector_runtime(spec)
             self._det_runtime = runtime
             providers = runtime.active_providers
             warn = runtime.provider_warning
@@ -749,6 +760,42 @@ class OnnxVisionServiceNode(ServiceNode):
             warn_parts.append(self._model_index_warning)
         await self._set_last_error("\n".join([x for x in warn_parts if str(x).strip()]).strip())
         return True
+
+    async def _create_yolo_detector_runtime(self, spec: ModelSpec) -> OnnxYoloDetectorRuntime:
+        provider = self._ort_provider
+        return await asyncio.to_thread(OnnxYoloDetectorRuntime, spec, ort_provider=provider)
+
+    async def _create_temporal_detector_runtime(self, spec: ModelSpec) -> OnnxYowoTemporalDetectorRuntime:
+        provider = self._ort_provider
+        return await asyncio.to_thread(OnnxYowoTemporalDetectorRuntime, spec, ort_provider=provider)
+
+    async def _create_classifier_runtime(self, spec: ModelSpec) -> OnnxClassifierRuntime:
+        provider = self._ort_provider
+        return await asyncio.to_thread(OnnxClassifierRuntime, spec, ort_provider=provider)
+
+    async def _prepare_temporal_frame(self, runtime: OnnxYowoTemporalDetectorRuntime, frame_bgr: Any) -> Any:
+        return await asyncio.to_thread(runtime.prepare_frame, frame_bgr)
+
+    async def _infer_temporal_sequence(
+        self,
+        runtime: OnnxYowoTemporalDetectorRuntime,
+        sequence: Any,
+        *,
+        frame_size_hw: tuple[int, int],
+    ) -> tuple[list[Any], Any]:
+        return await asyncio.to_thread(runtime.infer_sequence, sequence, frame_size_hw=frame_size_hw)
+
+    async def _infer_detections(self, runtime: OnnxYoloDetectorRuntime, frame_bgr: Any) -> tuple[list[Any], Any]:
+        return await asyncio.to_thread(runtime.infer, frame_bgr)
+
+    async def _infer_classifications(
+        self,
+        runtime: OnnxClassifierRuntime,
+        frame_bgr: Any,
+        *,
+        top_k: int,
+    ) -> tuple[list[Any], Any]:
+        return await asyncio.to_thread(runtime.infer, frame_bgr, top_k=top_k)
 
     async def _ensure_onnx_available(self, spec: ModelSpec) -> None:
         if spec.onnx_path.exists():
@@ -875,7 +922,7 @@ class OnnxVisionServiceNode(ServiceNode):
 
                     t_infer0 = time.perf_counter()
                     if temporal_runtime is not None:
-                        prepared = temporal_runtime.prepare_frame(frame_bgr)
+                        prepared = await self._prepare_temporal_frame(temporal_runtime, frame_bgr)
                         self._append_temporal_frame(
                             prepared_frame=prepared,
                             frame_id=frame_id_seen,
@@ -886,7 +933,8 @@ class OnnxVisionServiceNode(ServiceNode):
                         if not self._should_infer_temporal():
                             continue
                         sequence = self._build_temporal_sequence()
-                        detections, _meta = temporal_runtime.infer_sequence(
+                        detections, _meta = await self._infer_temporal_sequence(
+                            temporal_runtime,
                             sequence,
                             frame_size_hw=(height, width),
                         )
@@ -904,7 +952,7 @@ class OnnxVisionServiceNode(ServiceNode):
                             source_ts_ms=int(frame.ts_ms),
                         )
                     elif det_runtime is not None:
-                        detections, _meta = det_runtime.infer(frame_bgr)
+                        detections, _meta = await self._infer_detections(det_runtime, frame_bgr)
                         payload_out = self._build_detection_payload(
                             width=width,
                             height=height,
@@ -919,7 +967,7 @@ class OnnxVisionServiceNode(ServiceNode):
                             source_ts_ms=int(frame.ts_ms),
                         )
                     elif cls_runtime is not None:
-                        topk, _meta = cls_runtime.infer(frame_bgr, top_k=self._top_k)
+                        topk, _meta = await self._infer_classifications(cls_runtime, frame_bgr, top_k=self._top_k)
                         payload_out = self._build_classification_payload(
                             frame_id=frame_id_seen,
                             ts_ms=int(frame.ts_ms),

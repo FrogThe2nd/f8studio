@@ -14,6 +14,7 @@ class StatePublishOptions:
     """
 
     fanout_intra_state_edges: bool = True
+    force_publish: bool = False
 
 
 __all__ = ["StatePublishOptions"]

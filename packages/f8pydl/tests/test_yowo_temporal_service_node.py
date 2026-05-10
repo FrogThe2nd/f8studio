@@ -1,6 +1,8 @@
 import asyncio
 import os
 import sys
+import threading
+import time
 import unittest
 from collections import deque
 from dataclasses import dataclass
@@ -20,8 +22,11 @@ for p in (PKG_PYDL, PKG_SDK):
 from f8pydl.service_node import OnnxVisionServiceNode  # noqa: E402
 from f8pysdk.bus import ServiceBus, ServiceBusConfig  # noqa: E402
 from f8pysdk.codec import decode_obj  # noqa: E402
-from f8pysdk.specs import F8RuntimeNode, F8StateAccess  # noqa: E402
+from f8pysdk.specs import F8RuntimeGraph, F8RuntimeNode, F8StateAccess, F8StateSpec  # noqa: E402
+from f8pysdk.specs import array_schema  # noqa: E402
+from f8pysdk.specs import string_schema  # noqa: E402
 from f8pysdk.testing import InMemoryCluster, InMemoryTransport  # noqa: E402
+from f8pysdk.video_transport import VIDEO_FORMAT_BGRA32  # noqa: E402
 from f8pysdk.zenoh_naming import zenoh_state_key  # noqa: E402
 
 
@@ -182,6 +187,98 @@ class YowoTemporalServiceNodeTests(unittest.TestCase):
 
 
 class OnnxVisionServiceNodeLoopTests(unittest.IsolatedAsyncioTestCase):
+    async def test_loop_keeps_event_loop_responsive_during_detector_inference(self) -> None:
+        class _Frame:
+            fmt = VIDEO_FORMAT_BGRA32
+            frame_id = 1
+            ts_ms = 100
+            width = 1
+            height = 1
+            pitch = 4
+            payload = bytes([0, 0, 0, 255])
+
+            def release(self) -> None:
+                return None
+
+        class _Source:
+            def __init__(self) -> None:
+                self._returned = False
+
+            def read_latest(self, *, stream_key: str, timeout_ms: int) -> _Frame | None:
+                del stream_key, timeout_ms
+                if self._returned:
+                    return None
+                self._returned = True
+                return _Frame()
+
+        class _SlowDetectorRuntime:
+            def __init__(self, *, started: threading.Event) -> None:
+                self._started = started
+
+            def infer(self, frame_bgr: object) -> tuple[list[Any], dict[str, object]]:
+                del frame_bgr
+                self._started.set()
+                time.sleep(0.2)
+                return [], {}
+
+        class _ResponsiveNode(OnnxVisionServiceNode):
+            def __init__(self, *, runtime: _SlowDetectorRuntime, source: _Source) -> None:
+                super().__init__(
+                    node_id="detector",
+                    node=SimpleNamespace(stateFields=[]),
+                    initial_state=None,
+                    service_class="f8.dl.detector",
+                    service_task="detector",
+                    output_port="detections",
+                    allowed_tasks={"yolo_det"},
+                )
+                self._runtime = runtime
+                self._source = source
+                self.emitted: list[tuple[str, Any]] = []
+
+            async def _ensure_config_loaded(self) -> None:
+                return None
+
+            async def _ensure_runtime(self) -> bool:
+                self._det_runtime = self._runtime  # type: ignore[assignment]
+                self._temporal_det_runtime = None
+                self._cls_runtime = None
+                return True
+
+            def _ensure_video_source(self) -> _Source:
+                return self._source
+
+            def _resolve_video_stream_key(self) -> str:
+                return "video-stream"
+
+            async def emit(
+                self,
+                port: str,
+                value: Any,
+                *,
+                ts_ms: int | None = None,
+                ctx_id: str | int | None = None,
+            ) -> None:
+                del ts_ms, ctx_id
+                self.emitted.append((str(port), value))
+
+        started = threading.Event()
+        node = _ResponsiveNode(runtime=_SlowDetectorRuntime(started=started), source=_Source())
+        node._bus = _BusStub()
+        loop_task = asyncio.create_task(node._loop())
+        try:
+            t0 = time.perf_counter()
+            started_ok = await asyncio.to_thread(started.wait, 1.0)
+            self.assertTrue(started_ok)
+            elapsed_s = time.perf_counter() - t0
+
+            self.assertLess(elapsed_s, 0.15)
+            self.assertEqual(node.emitted, [])
+        finally:
+            loop_task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await loop_task
+
     async def test_publish_model_index_scans_local_detector_models(self) -> None:
         bus = _BusStub()
         node = OnnxVisionServiceNode(
@@ -225,6 +322,60 @@ class OnnxVisionServiceNodeLoopTests(unittest.IsolatedAsyncioTestCase):
 
         raw = await transport.retained_get(zenoh_state_key("detector", node_id="detector", field="availableModels"))
         payload = decode_obj(raw) if raw is not None else {}
+        self.assertEqual(payload.get("origin"), "runtime")
+        self.assertIn("nudenet-320n", payload.get("value") or [])
+
+    async def test_detector_republishes_model_index_after_rungraph_apply(self) -> None:
+        transport = InMemoryTransport(cluster=InMemoryCluster())
+        bus = ServiceBus(ServiceBusConfig(service_id="detector", service_class="f8.dl.detector"), transport=transport)
+        node = OnnxVisionServiceNode(
+            node_id="detector",
+            node=F8RuntimeNode(nodeId="detector", serviceId="detector", serviceClass="f8.dl.detector"),
+            initial_state=None,
+            service_class="f8.dl.detector",
+            service_task="detector",
+            output_port="detections",
+            allowed_tasks={"yolo_det", "yolo_obb", "yowo_temporal_det"},
+        )
+        bus.register_node(node)
+        bus.register_rungraph_hook(node)
+        graph = F8RuntimeGraph(
+            graphId="g-detector-models",
+            revision="r1",
+            nodes=[
+                F8RuntimeNode(
+                    nodeId="detector",
+                    serviceId="detector",
+                    serviceClass="f8.dl.detector",
+                    operatorClass=None,
+                    stateFields=[
+                        F8StateSpec(
+                            name="availableModels",
+                            valueSchema=array_schema(items=string_schema()),
+                            access=F8StateAccess.ro,
+                        ),
+                        F8StateSpec(name="modelId", valueSchema=string_schema(), access=F8StateAccess.rw),
+                        F8StateSpec(
+                            name="modelClasses",
+                            valueSchema=array_schema(items=string_schema()),
+                            access=F8StateAccess.ro,
+                        ),
+                        F8StateSpec(
+                            name="enabledClasses",
+                            valueSchema=array_schema(items=string_schema()),
+                            access=F8StateAccess.rw,
+                        ),
+                    ],
+                )
+            ],
+            edges=[],
+        )
+
+        await bus.set_rungraph(graph)
+        key = zenoh_state_key("detector", node_id="detector", field="availableModels")
+        raw = await transport.retained_get(key)
+        payload = decode_obj(raw) if raw is not None else {}
+
         self.assertEqual(payload.get("origin"), "runtime")
         self.assertIn("nudenet-320n", payload.get("value") or [])
 
