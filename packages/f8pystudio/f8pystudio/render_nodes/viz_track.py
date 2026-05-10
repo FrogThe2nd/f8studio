@@ -26,6 +26,7 @@ import pyqtgraph as pg  # type: ignore[import-not-found]
 
 _STATE_UI_UPDATE = "uiUpdate"
 _WIDGET_NAME = "__trackviz"
+_TRACKVIZ_VIDEO_MIN_INTERVAL_MS = 250
 
 
 @dataclass(frozen=True)
@@ -149,7 +150,6 @@ class _TrackVizCanvas(pg.GraphicsObject):  # type: ignore[misc]
         self._payload: dict[str, Any] | None = None
         self._w: int = 0
         self._h: int = 0
-        self._frame: QtGui.QImage | None = None
 
     def set_canvas_size(self, width: int, height: int) -> None:
         ww = max(0, int(width))
@@ -159,10 +159,6 @@ class _TrackVizCanvas(pg.GraphicsObject):  # type: ignore[misc]
         self._w = ww
         self._h = hh
         self.prepareGeometryChange()
-        self.update()
-
-    def set_video_frame(self, image: QtGui.QImage | None) -> None:
-        self._frame = image
         self.update()
 
     def set_payload(self, payload: dict[str, Any]) -> None:
@@ -178,25 +174,16 @@ class _TrackVizCanvas(pg.GraphicsObject):  # type: ignore[misc]
 
     def paint(self, p: QtGui.QPainter, *args) -> None:  # type: ignore[override]
         payload = self._payload
-        if not payload and not self._frame:
-            return
-
-        has_frame = self._frame is not None
-        if has_frame and self._frame is not None:
-            target_w = max(1.0, float(self._w if self._w > 0 else self._frame.width()))
-            target_h = max(1.0, float(self._h if self._h > 0 else self._frame.height()))
-            p.drawImage(QtCore.QRectF(0.0, 0.0, target_w, target_h), self._frame)
-
         if not payload:
             return
 
         try:
             now_ms = int(payload.get("nowMs") or 0)
-        except Exception:
+        except (TypeError, ValueError):
             now_ms = 0
         try:
             history_ms = int(payload.get("historyMs") or 0)
-        except Exception:
+        except (TypeError, ValueError):
             history_ms = 0
 
         tracks = payload.get("tracks") if isinstance(payload.get("tracks"), list) else []
@@ -372,6 +359,7 @@ class _TrackVizPane(QtWidgets.QWidget):
         top.addWidget(self._update)
 
         layout.addLayout(top)
+        self._video_item: QtWidgets.QGraphicsPixmapItem | None = None
 
         if pg is None:
             label = QtWidgets.QLabel("pyqtgraph not installed", self)
@@ -397,7 +385,15 @@ class _TrackVizPane(QtWidgets.QWidget):
         layout.addWidget(plot, 1)
         self._plot = plot
         self._vb = vb
+        video_item = QtWidgets.QGraphicsPixmapItem()
+        video_item.setTransformationMode(QtCore.Qt.TransformationMode.FastTransformation)
+        video_item.setCacheMode(QtWidgets.QGraphicsItem.CacheMode.DeviceCoordinateCache)
+        video_item.setZValue(-10.0)
+        video_item.setVisible(False)
+        vb.addItem(video_item)
+        self._video_item = video_item
         self._canvas = _TrackVizCanvas()
+        self._canvas.setZValue(10.0)
         vb.addItem(self._canvas)
 
         # self._status = QtWidgets.QLabel("")
@@ -408,7 +404,7 @@ class _TrackVizPane(QtWidgets.QWidget):
         self._last_wh: tuple[int, int] | None = None
         self._scene_size: tuple[int, int] | None = None
         self._video_stream_key = ""
-        self._video_frame_throttle_ms = embedded_video_timer_interval_ms(33)
+        self._video_frame_throttle_ms = self._track_video_interval_ms(33)
         self._video_reader: LatestVideoFrameTransport | None = None
         self._flow_stream_key = ""
         self._flow_reader: LatestVideoFrameTransport | None = None
@@ -422,13 +418,16 @@ class _TrackVizPane(QtWidgets.QWidget):
         self._scene_payload: dict[str, Any] | None = None
         self._video_timer = QtCore.QTimer(self)
         self._video_timer.timeout.connect(self._tick_video)  # type: ignore[attr-defined]
-        self._video_timer.setInterval(33)
+        self._video_timer.setInterval(self._video_frame_throttle_ms)
 
         # Smaller default footprint for graph-embedded preview.
         self.setMinimumWidth(240)
         self.setMinimumHeight(180)
         self.setMaximumWidth(240)
         self.setMaximumHeight(180)
+
+    def _track_video_interval_ms(self, throttle_ms: int) -> int:
+        return max(embedded_video_timer_interval_ms(throttle_ms), _TRACKVIZ_VIDEO_MIN_INTERVAL_MS)
 
     def update_checkbox(self) -> QtWidgets.QCheckBox:
         return self._update
@@ -515,7 +514,7 @@ class _TrackVizPane(QtWidgets.QWidget):
         show_sparse_flow: bool,
         dense_flow_mode: str,
     ) -> None:
-        next_throttle_ms = embedded_video_timer_interval_ms(throttle_ms)
+        next_throttle_ms = self._track_video_interval_ms(throttle_ms)
         if self._video_frame_throttle_ms != next_throttle_ms:
             self._video_frame_throttle_ms = next_throttle_ms
             self._video_timer.setInterval(self._video_frame_throttle_ms)
@@ -551,7 +550,7 @@ class _TrackVizPane(QtWidgets.QWidget):
         if self._video_timer.isActive():
             self._video_timer.stop()
         if not has_video_input:
-            self._canvas.set_video_frame(None)
+            self._set_video_frame(None)
             self._video_size = None
             self._sync_canvas_geometry()
 
@@ -568,6 +567,7 @@ class _TrackVizPane(QtWidgets.QWidget):
         if width <= 0 or height <= 0:
             return
         self._canvas.set_canvas_size(width, height)
+        self._sync_video_item_geometry()
         wh = (int(width), int(height))
         if self._last_wh == wh:
             return
@@ -589,7 +589,38 @@ class _TrackVizPane(QtWidgets.QWidget):
         self._video_frame_id = 0
         self._video_frame_bytes = None
         self._video_size = None
+        self._set_video_frame(None)
         self._sync_canvas_geometry()
+
+    def _set_video_frame(self, image: QtGui.QImage | None) -> None:
+        video_item = self._video_item
+        if video_item is None:
+            return
+        if image is None:
+            video_item.setPixmap(QtGui.QPixmap())
+            video_item.setVisible(False)
+            return
+        pixmap = QtGui.QPixmap.fromImage(image)
+        video_item.setPixmap(pixmap)
+        video_item.setVisible(not pixmap.isNull())
+        self._sync_video_item_geometry()
+
+    def _sync_video_item_geometry(self) -> None:
+        video_item = self._video_item
+        if video_item is None:
+            return
+        if self._video_size is None:
+            return
+        pixmap = video_item.pixmap()
+        if pixmap.isNull():
+            return
+        source_w = max(1.0, float(pixmap.width()))
+        source_h = max(1.0, float(pixmap.height()))
+        target_w = max(1.0, float(self._video_size[0]))
+        target_h = max(1.0, float(self._video_size[1]))
+        transform = QtGui.QTransform()
+        transform.scale(target_w / source_w, target_h / source_h)
+        video_item.setTransform(transform)
 
     def _reset_flow_reader(self) -> None:
         try:
@@ -702,7 +733,7 @@ class _TrackVizPane(QtWidgets.QWidget):
                                 self._video_frame_bytes = None
                                 self._video_frame_id = frame_id
                                 self._video_size = (w, h)
-                                self._canvas.set_video_frame(safe_img)
+                                self._set_video_frame(safe_img)
                                 self._sync_canvas_geometry()
                 finally:
                     frame.release()
@@ -736,7 +767,7 @@ class _TrackVizPane(QtWidgets.QWidget):
             try:
                 img = QtGui.QImage(rgb.data, w, h, w * 3, QtGui.QImage.Format_RGB888).copy()
                 self._video_size = (flow_data.source_width, flow_data.source_height)
-                self._canvas.set_video_frame(img)
+                self._set_video_frame(img)
                 self._sync_canvas_geometry()
             except (AttributeError, RuntimeError, TypeError, ValueError):
                 return
