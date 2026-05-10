@@ -26,7 +26,6 @@ import pyqtgraph as pg  # type: ignore[import-not-found]
 
 _STATE_UI_UPDATE = "uiUpdate"
 _WIDGET_NAME = "__trackviz"
-_TRACKVIZ_RENDER_VIDEO_BACKGROUND = True
 
 
 @dataclass(frozen=True)
@@ -415,7 +414,6 @@ class _TrackVizPane(QtWidgets.QWidget):
         self._flow_reader: LatestVideoFrameTransport | None = None
         self._video_frame_id = 0
         self._flow_frame_id = 0
-        self._video_frame_bytes: bytes | None = None
         self._video_size: tuple[int, int] | None = None
         self._show_dense_flow = True
         self._show_sparse_flow = True
@@ -452,12 +450,10 @@ class _TrackVizPane(QtWidgets.QWidget):
             self._pending = payload
             return
 
-        video_stream_key = ""
-        if _TRACKVIZ_RENDER_VIDEO_BACKGROUND:
-            try:
-                video_stream_key = str(payload.get("videoStreamKey") or "").strip()
-            except (AttributeError, TypeError, ValueError):
-                video_stream_key = ""
+        try:
+            video_stream_key = str(payload.get("videoStreamKey") or "").strip()
+        except (AttributeError, TypeError, ValueError):
+            video_stream_key = ""
         try:
             flow_stream_key = str(payload.get("flowStreamKey") or "").strip()
         except (AttributeError, TypeError, ValueError):
@@ -590,7 +586,6 @@ class _TrackVizPane(QtWidgets.QWidget):
             pass
         self._video_reader = None
         self._video_frame_id = 0
-        self._video_frame_bytes = None
         self._video_size = None
         self._sync_canvas_geometry()
 
@@ -702,7 +697,6 @@ class _TrackVizPane(QtWidgets.QWidget):
                         if w > 0 and h > 0 and pitch > 0:
                             safe_img = copy_bgra_preview_image(frame.payload, width=w, height=h, pitch=pitch)
                             if safe_img is not None:
-                                self._video_frame_bytes = None
                                 self._video_frame_id = frame_id
                                 self._video_size = (w, h)
                                 self._canvas.set_video_frame(safe_img)

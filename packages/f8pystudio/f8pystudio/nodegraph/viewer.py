@@ -89,11 +89,6 @@ class F8StudioNodeViewer(NodeViewer):
         self._pending_graph_insert_request: Any | None = None
         self._pending_graph_label: str = ""
         self._pending_graph_size: tuple[float, float] | None = None
-        self._context_menu_active: bool = False
-        self._context_menu_selection_pending: bool = False
-        self._context_menu_saved_update_mode = self.viewportUpdateMode()
-        self._context_menu_saved_animate_menu_effect = True
-        self._context_menu_saved_fade_menu_effect = True
         self._placement_preview_rect: QtWidgets.QGraphicsRectItem | None = None
         self._placement_preview_label: QtWidgets.QGraphicsSimpleTextItem | None = None
         self._edge_kind_visibility: dict[str, bool] = {
@@ -660,92 +655,7 @@ class F8StudioNodeViewer(NodeViewer):
         if self._is_proxy_widget_hit(scene_pos):
             event.accept()
             return
-        self._mark_context_menu_selection_pending()
-        if self._popup_context_menu(event.globalPos()):
-            event.accept()
-            return
-        QtWidgets.QGraphicsView.contextMenuEvent(self, event)
-
-    def _mark_context_menu_selection_pending(self) -> None:
-        self._context_menu_selection_pending = True
-        QtCore.QTimer.singleShot(500, self._clear_context_menu_selection_pending)
-
-    def _clear_context_menu_selection_pending(self) -> None:
-        self._context_menu_selection_pending = False
-
-    def is_context_menu_selection_pending(self) -> bool:
-        return bool(self._context_menu_active or self._context_menu_selection_pending)
-
-    def _pause_graph_updates_for_context_menu(self) -> None:
-        self._context_menu_saved_update_mode = self.viewportUpdateMode()
-        self.setViewportUpdateMode(QtWidgets.QGraphicsView.NoViewportUpdate)
-        app = QtWidgets.QApplication.instance()
-        if app is None:
-            return
-        try:
-            self._context_menu_saved_animate_menu_effect = bool(app.isEffectEnabled(QtCore.Qt.UI_AnimateMenu))
-            self._context_menu_saved_fade_menu_effect = bool(app.isEffectEnabled(QtCore.Qt.UI_FadeMenu))
-            app.setEffectEnabled(QtCore.Qt.UI_AnimateMenu, False)
-            app.setEffectEnabled(QtCore.Qt.UI_FadeMenu, False)
-        except (AttributeError, RuntimeError, TypeError):
-            return
-
-    def _resume_graph_updates_after_context_menu(self) -> None:
-        app = QtWidgets.QApplication.instance()
-        if app is not None:
-            try:
-                app.setEffectEnabled(QtCore.Qt.UI_AnimateMenu, self._context_menu_saved_animate_menu_effect)
-                app.setEffectEnabled(QtCore.Qt.UI_FadeMenu, self._context_menu_saved_fade_menu_effect)
-            except (AttributeError, RuntimeError, TypeError):
-                pass
-        self.setViewportUpdateMode(self._context_menu_saved_update_mode)
-        try:
-            self.viewport().update()
-        except (AttributeError, RuntimeError, TypeError):
-            return
-
-    def _popup_context_menu(self, global_pos: QtCore.QPoint) -> bool:
-        ctx_menu = None
-        ctx_menus = self.context_menus()
-        prompted_menu_name = "graph"
-        prompted_node_id: object = None
-
-        nodes_menu = ctx_menus["nodes"]
-        if nodes_menu.isEnabled():
-            pos = self.mapToScene(self._previous_pos)
-            items = self._items_near(pos)
-            nodes = [item for item in items if isinstance(item, AbstractNodeItem)]
-            if nodes:
-                node = nodes[0]
-                ctx_menu = nodes_menu.get_menu(node.type_, node.id)
-                if ctx_menu is not None:
-                    for action in ctx_menu.actions():
-                        if action.menu():
-                            continue
-                        action.node_id = node.id
-                    prompted_menu_name = "nodes"
-                    prompted_node_id = node.id
-
-        if ctx_menu is None:
-            ctx_menu = ctx_menus["graph"]
-
-        if len(ctx_menu.actions()) <= 0 or not ctx_menu.isEnabled():
-            return False
-
-        self.context_menu_prompt.emit(prompted_menu_name, prompted_node_id)
-        self._context_menu_active = True
-        self._pause_graph_updates_for_context_menu()
-        try:
-            ctx_menu.aboutToHide.connect(self._on_context_menu_hidden, QtCore.Qt.UniqueConnection)
-        except (RuntimeError, TypeError):
-            pass
-        ctx_menu.popup(global_pos)
-        return True
-
-    def _on_context_menu_hidden(self) -> None:
-        self._context_menu_active = False
-        self._clear_context_menu_selection_pending()
-        self._resume_graph_updates_after_context_menu()
+        super().contextMenuEvent(event)
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         if event.key() == QtCore.Qt.Key_Escape:
@@ -864,8 +774,6 @@ class F8StudioNodeViewer(NodeViewer):
         # Always reserve MMB for canvas pan, regardless of what's under cursor.
         # NodeGraphQt disables MMB pan when clicking on nodes; we want consistent
         # navigation behavior.
-        if event.button() == QtCore.Qt.RightButton:
-            self._mark_context_menu_selection_pending()
         if event.button() == QtCore.Qt.MiddleButton:
             self._f8_mmb_panning = True
             self._f8_mmb_prev_pos = event.pos()
