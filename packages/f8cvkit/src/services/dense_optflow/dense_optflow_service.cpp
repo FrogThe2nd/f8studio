@@ -253,10 +253,7 @@ void DenseOptflowService::emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_
   metrics.avg_latency_ms = avg_latency_ms;
   metrics.process_fps = monitor_fps_;
   metrics.last_vectors_per_frame = monitor_last_vectors_per_frame_;
-  service_runtime::publish_cv_process_metrics(state_mu_, published_state_, bus_.get(), cfg_.service_id, metrics,
-                                              "runtime", json::object());
-  publish_state_if_changed("failedFrames", monitor_fail_frames_, "runtime", json::object());
-  publish_state_if_changed("lastVectorsPerFrame", monitor_last_vectors_per_frame_, "runtime", json::object());
+  service_runtime::publish_cv_process_metrics(bus_.get(), metrics);
 }
 
 void DenseOptflowService::on_lifecycle(bool active, const json& meta) {
@@ -546,22 +543,6 @@ json DenseOptflowService::describe() {
                   "Farneback compute scale; output flow stays at compute scale.", false),
       state_field("flowOutputScaleX", schema_number(), "ro", "Flow Output Scale X", "Output flow width / source width.", false),
       state_field("flowOutputScaleY", schema_number(), "ro", "Flow Output Scale Y", "Output flow height / source height.", false),
-      state_field("observedFrames", schema_integer(), "ro", "Observed Frames", "New input frames observed.", false),
-      state_field("processedFrames", schema_integer(), "ro", "Processed Frames", "Frames processed by OpenCV.", false),
-      state_field("droppedFrames", schema_integer(), "ro", "Dropped Frames",
-                  "Observed input frames not processed by this node.", false),
-      state_field("failedFrames", schema_integer(), "ro", "Failed Frames", "Frames that failed processing.", false),
-      state_field("lastProcessMs", schema_number(), "ro", "Last Process (ms)",
-                  "Last Farneback processing duration in milliseconds.", false),
-      state_field("avgProcessMs", schema_number(), "ro", "Avg Process (ms)",
-                  "Average Farneback processing duration in milliseconds.", false),
-      state_field("lastLatencyMs", schema_number(), "ro", "Last Latency (ms)",
-                  "Last source-frame timestamp to flow output latency in milliseconds.", false),
-      state_field("avgLatencyMs", schema_number(), "ro", "Avg Latency (ms)",
-                  "Average source-frame timestamp to flow output latency in milliseconds.", false),
-      state_field("processFps", schema_number(), "ro", "Process FPS", "Measured optical-flow processing rate.", false),
-      state_field("lastVectorsPerFrame", schema_integer(), "ro", "Vectors / Frame",
-                  "Dense flow vectors produced by the last processed frame.", false),
   });
   service["commands"] = json::array();
   service["dataInPorts"] = json::array({

@@ -770,8 +770,7 @@ void TrackingService::emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t fr
   metrics.last_latency_ms = monitor_last_latency_ms_;
   metrics.avg_latency_ms = avg_latency_ms;
   metrics.process_fps = monitor_fps_;
-  service_runtime::publish_cv_process_metrics(state_mu_, published_state_, bus_.get(), cfg_.service_id, metrics,
-                                              "runtime", json::object());
+  service_runtime::publish_cv_process_metrics(bus_.get(), metrics);
 }
 
 void TrackingService::on_lifecycle(bool active, const json& meta) {
@@ -1383,19 +1382,6 @@ json TrackingService::describe() {
                   "After stopTracking, ignore initBox for this many ms. Set to 0 to disable.", true),
       state_field("isTracking", schema_boolean(), "ro", "Is Tracking", "True when tracker is running.", true),
       state_field("isNotTracking", schema_boolean(), "ro", "Is Not Tracking", "Negation of isTracking.", true),
-      state_field("observedFrames", schema_integer(), "ro", "Observed Frames", "New input frames observed.", false),
-      state_field("processedFrames", schema_integer(), "ro", "Processed Frames", "Frames processed by OpenCV.", false),
-      state_field("droppedFrames", schema_integer(), "ro", "Dropped Frames",
-                  "Observed input frames not processed by this node.", false),
-      state_field("lastProcessMs", schema_number(), "ro", "Last Process (ms)",
-                  "Last OpenCV tracker update duration in milliseconds.", false),
-      state_field("avgProcessMs", schema_number(), "ro", "Avg Process (ms)",
-                  "Average OpenCV tracker update duration in milliseconds.", false),
-      state_field("lastLatencyMs", schema_number(), "ro", "Last Latency (ms)",
-                  "Last source-frame timestamp to tracking output latency in milliseconds.", false),
-      state_field("avgLatencyMs", schema_number(), "ro", "Avg Latency (ms)",
-                  "Average source-frame timestamp to tracking output latency in milliseconds.", false),
-      state_field("processFps", schema_number(), "ro", "Process FPS", "Measured OpenCV tracker update rate.", false),
   });
   service["commands"] = json::array({
       json{{"name", "stopTracking"},

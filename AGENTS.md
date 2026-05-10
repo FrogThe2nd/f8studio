@@ -96,3 +96,9 @@ Method Dispatch: If a class has methods, call them directly (obj.save()). Do not
   - executing user-provided/custom code
   - external I/O boundaries (network/serial/process), where you can add retries *with explicit criteria* (not try-random-things)
 - When converting/validating input, use explicit checks and raise `ValueError` with a clear message instead of swallowing parse errors.
+
+## 📡 Service Telemetry Boundary
+
+- High-frequency runtime telemetry must not be modeled as service `stateFields` and must not be published with state APIs.
+- Latency, process/wait timing, FPS, observed/processed/dropped/failed frame counters, and per-frame output counts belong on the monitor/data channel.
+- State is reserved for configuration, lifecycle, and low-frequency semantic status that graph authors may reasonably wire into state-driven logic.

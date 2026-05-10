@@ -212,29 +212,7 @@ inline void publish_state_if_changed(std::mutex& state_mu,
   }
 }
 
-inline void publish_cv_process_metrics(std::mutex& state_mu,
-                                       std::unordered_map<std::string, json>& published_state,
-                                       f8::cppsdk::ServiceBus* bus,
-                                       const std::string& service_id,
-                                       const CvProcessMetrics& metrics,
-                                       const std::string& source,
-                                       const json& meta) {
-  publish_state_if_changed(state_mu, published_state, bus, service_id, "observedFrames", metrics.observed_frames,
-                           source, meta);
-  publish_state_if_changed(state_mu, published_state, bus, service_id, "processedFrames", metrics.processed_frames,
-                           source, meta);
-  publish_state_if_changed(state_mu, published_state, bus, service_id, "droppedFrames", metrics.dropped_frames,
-                           source, meta);
-  publish_state_if_changed(state_mu, published_state, bus, service_id, "lastProcessMs", metrics.last_process_ms,
-                           source, meta);
-  publish_state_if_changed(state_mu, published_state, bus, service_id, "avgProcessMs", metrics.avg_process_ms,
-                           source, meta);
-  publish_state_if_changed(state_mu, published_state, bus, service_id, "lastLatencyMs", metrics.last_latency_ms,
-                           source, meta);
-  publish_state_if_changed(state_mu, published_state, bus, service_id, "avgLatencyMs", metrics.avg_latency_ms,
-                           source, meta);
-  publish_state_if_changed(state_mu, published_state, bus, service_id, "processFps", metrics.process_fps, source,
-                           meta);
+inline void publish_cv_process_metrics(f8::cppsdk::ServiceBus* bus, const CvProcessMetrics& metrics) {
   if (bus != nullptr) {
     bus->record_monitor_processed("cv_process");
     bus->record_monitor_timing("cv_process", metrics.last_process_ms, metrics.last_latency_ms);

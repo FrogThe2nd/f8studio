@@ -234,10 +234,7 @@ void FlowMetricService::emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t 
   metrics.avg_latency_ms = avg_latency_ms;
   metrics.process_fps = monitor_fps_;
   metrics.last_points_per_frame = monitor_last_points_per_frame_;
-  service_runtime::publish_cv_process_metrics(state_mu_, published_state_, bus_.get(), cfg_.service_id, metrics,
-                                              "runtime", json::object());
-  publish_state_if_changed("failedFrames", monitor_fail_frames_, "runtime", json::object());
-  publish_state_if_changed("lastPointsPerFrame", monitor_last_points_per_frame_, "runtime", json::object());
+  service_runtime::publish_cv_process_metrics(bus_.get(), metrics);
 }
 
 void FlowMetricService::on_lifecycle(bool active, const json& meta) {
@@ -536,22 +533,6 @@ json FlowMetricService::describe() {
                   "Output payload format. Fixed to scalar1_f32.", false),
       state_field("scalarFrameSchemaVersion", schema_integer(1, 1, 1), "ro", "Scalar Frame Schema",
                   "Output scalar frame schema version.", false),
-      state_field("observedFrames", schema_integer(), "ro", "Observed Frames", "New input flow frames observed.", false),
-      state_field("processedFrames", schema_integer(), "ro", "Processed Frames", "Flow frames processed by OpenCV.", false),
-      state_field("droppedFrames", schema_integer(), "ro", "Dropped Frames",
-                  "Observed flow frames not processed by this node.", false),
-      state_field("failedFrames", schema_integer(), "ro", "Failed Frames", "Flow frames that failed processing.", false),
-      state_field("lastProcessMs", schema_number(), "ro", "Last Process (ms)",
-                  "Last flow metric processing duration in milliseconds.", false),
-      state_field("avgProcessMs", schema_number(), "ro", "Avg Process (ms)",
-                  "Average flow metric processing duration in milliseconds.", false),
-      state_field("lastLatencyMs", schema_number(), "ro", "Last Latency (ms)",
-                  "Last source-flow timestamp to scalar output latency in milliseconds.", false),
-      state_field("avgLatencyMs", schema_number(), "ro", "Avg Latency (ms)",
-                  "Average source-flow timestamp to scalar output latency in milliseconds.", false),
-      state_field("processFps", schema_number(), "ro", "Process FPS", "Measured flow metric processing rate.", false),
-      state_field("lastPointsPerFrame", schema_integer(), "ro", "Points / Frame",
-                  "Scalar points produced by the last processed frame.", false),
   });
   service["commands"] = json::array();
   service["dataInPorts"] = json::array({

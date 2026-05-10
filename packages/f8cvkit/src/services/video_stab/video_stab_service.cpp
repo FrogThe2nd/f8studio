@@ -298,9 +298,7 @@ void VideoStabService::emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t f
   metrics.last_latency_ms = monitor_last_latency_ms_;
   metrics.avg_latency_ms = avg_latency_ms;
   metrics.process_fps = monitor_fps_;
-  service_runtime::publish_cv_process_metrics(state_mu_, published_state_, bus_.get(), cfg_.service_id, metrics,
-                                              "runtime", json::object());
-  publish_state_if_changed("failedFrames", monitor_fail_frames_, "runtime", json::object());
+  service_runtime::publish_cv_process_metrics(bus_.get(), metrics);
 }
 
 void VideoStabService::on_lifecycle(bool active, const json& meta) {
@@ -968,20 +966,6 @@ json VideoStabService::describe() {
                   "Scene cut threshold for trackedPoints/max(prevPoints,1).", false),
       state_field("sceneCutCooldownFrames", schema_integer(5, 0, 120), "rw", "Cut Cooldown Frames",
                   "Suppress repeated scene cut triggers for N frames after a cut.", false),
-      state_field("observedFrames", schema_integer(), "ro", "Observed Frames", "New input frames observed.", false),
-      state_field("processedFrames", schema_integer(), "ro", "Processed Frames", "Frames processed by OpenCV.", false),
-      state_field("droppedFrames", schema_integer(), "ro", "Dropped Frames",
-                  "Observed input frames not processed by this node.", false),
-      state_field("failedFrames", schema_integer(), "ro", "Failed Frames", "Frames that failed processing.", false),
-      state_field("lastProcessMs", schema_number(), "ro", "Last Process (ms)",
-                  "Last stabilization processing duration in milliseconds.", false),
-      state_field("avgProcessMs", schema_number(), "ro", "Avg Process (ms)",
-                  "Average stabilization processing duration in milliseconds.", false),
-      state_field("lastLatencyMs", schema_number(), "ro", "Last Latency (ms)",
-                  "Last source-frame timestamp to stabilized output latency in milliseconds.", false),
-      state_field("avgLatencyMs", schema_number(), "ro", "Avg Latency (ms)",
-                  "Average source-frame timestamp to stabilized output latency in milliseconds.", false),
-      state_field("processFps", schema_number(), "ro", "Process FPS", "Measured stabilization processing rate.", false),
   });
 
   service["commands"] = json::array({
