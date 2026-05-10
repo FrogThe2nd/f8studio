@@ -1104,7 +1104,6 @@ void ImPlayerService::tick() {
                 gui_->renderOverlay(*player_, cb, err, playlist_snapshot, playlist_index_snapshot, playing,
                                     loop_snapshot, tick_ema_fps_, tick_ema_ms_, vr_mode_, vr_sbs_eye_, vr_yaw_deg_,
                                     vr_pitch_deg_, vr_fov_deg_);
-                gui_->clearRepaintFlag();
               }
             },
             view, vr_view);
@@ -1948,9 +1947,12 @@ bool ImPlayerService::open_media_internal(const std::string& url, bool keep_play
           player_->seek(0.0);
         }
         if (wants_playback) {
-          (void)player_->play();
+          if (player_->play()) {
+            playing_.store(true, std::memory_order_release);
+          }
         } else {
           player_->pause();
+          playing_.store(false, std::memory_order_release);
         }
         return true;
       }
@@ -1995,9 +1997,12 @@ bool ImPlayerService::open_media_internal(const std::string& url, bool keep_play
     vr_dragging_ = false;
   }
   if (wants_playback) {
-    (void)player_->play();
+    if (player_->play()) {
+      playing_.store(true, std::memory_order_release);
+    }
   } else {
     player_->pause();
+    playing_.store(false, std::memory_order_release);
   }
 
   return true;
@@ -2061,7 +2066,11 @@ bool ImPlayerService::cmd_play(std::string& err) {
     media_finished_.store(false, std::memory_order_release);
     player_->seek(0.0);
   }
-  return player_->play();
+  if (!player_->play()) {
+    return false;
+  }
+  playing_.store(true, std::memory_order_release);
+  return true;
 }
 
 bool ImPlayerService::cmd_pause(std::string& err) {
@@ -2071,6 +2080,7 @@ bool ImPlayerService::cmd_pause(std::string& err) {
   }
   set_playback_intent(PlaybackIntent::Paused);
   player_->pause();
+  playing_.store(false, std::memory_order_release);
   return true;
 }
 
@@ -2198,9 +2208,12 @@ bool ImPlayerService::cmd_seek(const nlohmann::json& args, std::string& err) {
   }
   player_->seek(pos);
   if (wants_playback) {
-    (void)player_->play();
+    if (player_->play()) {
+      playing_.store(true, std::memory_order_release);
+    }
   } else {
     player_->pause();
+    playing_.store(false, std::memory_order_release);
   }
   return true;
 }

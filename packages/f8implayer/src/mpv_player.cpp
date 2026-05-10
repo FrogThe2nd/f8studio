@@ -593,8 +593,6 @@ void MpvPlayer::processEvent(const mpv_event& event) {
     case MPV_EVENT_FILE_LOADED:
       eofReached_.store(false, std::memory_order_release);
       eofNotified_.store(false, std::memory_order_release);
-      if (playingCallback_)
-        playingCallback_(true);
       break;
     case MPV_EVENT_LOG_MESSAGE:
       LogMpvMessage(static_cast<mpv_event_log_message*>(event.data));

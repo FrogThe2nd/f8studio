@@ -172,6 +172,8 @@ void ImPlayerGui::renderOverlay(const MpvPlayer& player, const Callbacks& cb, co
   if (!started_)
     return;
 
+  dirty_ = false;
+
   ImGui_ImplOpenGL3_NewFrame();
   ImGui_ImplSDL3_NewFrame();
   ImGui::NewFrame();
