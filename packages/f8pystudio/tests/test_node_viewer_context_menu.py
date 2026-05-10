@@ -47,6 +47,7 @@ def test_context_menu_popup_is_non_blocking_for_video_timers() -> None:
     viewer = F8StudioNodeViewer()
     viewer.resize(640, 480)
     viewer.show()
+    assert viewer.viewportUpdateMode() == QtWidgets.QGraphicsView.BoundingRectViewportUpdate
     graph_menu = _FakeMenu(enabled=True, actions=[QtWidgets.QAction("Noop", viewer)])
     nodes_menu = _FakeMenu(enabled=False)
     viewer.context_menus = lambda: {"graph": graph_menu, "nodes": nodes_menu}  # type: ignore[method-assign]
@@ -58,7 +59,9 @@ def test_context_menu_popup_is_non_blocking_for_video_timers() -> None:
     assert graph_menu.exec_calls == []
     assert len(graph_menu.aboutToHide.callbacks) == 1
     assert viewer.is_context_menu_selection_pending() is True
+    assert viewer.viewportUpdateMode() == QtWidgets.QGraphicsView.NoViewportUpdate
 
     viewer._on_context_menu_hidden()
 
     assert viewer.is_context_menu_selection_pending() is False
+    assert viewer.viewportUpdateMode() == QtWidgets.QGraphicsView.BoundingRectViewportUpdate

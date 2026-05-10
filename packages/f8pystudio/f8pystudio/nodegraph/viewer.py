@@ -51,9 +51,10 @@ class F8StudioNodeViewer(NodeViewer):
 
     def __init__(self, parent=None, undo_stack=None):
         super().__init__(parent=parent, undo_stack=undo_stack)
-        # Stability-first: force full viewport updates for embedded proxy
-        # editors (caret/selection refresh).
-        self.setViewportUpdateMode(QtWidgets.QGraphicsView.FullViewportUpdate)
+        # Keep embedded viz widgets from turning small plot refreshes into
+        # full graph repaints. Inline editors still get a light periodic
+        # viewport nudge from `_inline_editor_refresh_timer`.
+        self.setViewportUpdateMode(QtWidgets.QGraphicsView.BoundingRectViewportUpdate)
         self.setCacheMode(QtWidgets.QGraphicsView.CacheNone)
         self.setOptimizationFlags(QtWidgets.QGraphicsView.OptimizationFlags())
         self._ensure_cursor_flash_enabled()
@@ -90,6 +91,7 @@ class F8StudioNodeViewer(NodeViewer):
         self._pending_graph_size: tuple[float, float] | None = None
         self._context_menu_active: bool = False
         self._context_menu_selection_pending: bool = False
+        self._context_menu_saved_update_mode = self.viewportUpdateMode()
         self._placement_preview_rect: QtWidgets.QGraphicsRectItem | None = None
         self._placement_preview_label: QtWidgets.QGraphicsSimpleTextItem | None = None
         self._edge_kind_visibility: dict[str, bool] = {
@@ -672,6 +674,17 @@ class F8StudioNodeViewer(NodeViewer):
     def is_context_menu_selection_pending(self) -> bool:
         return bool(self._context_menu_active or self._context_menu_selection_pending)
 
+    def _pause_graph_updates_for_context_menu(self) -> None:
+        self._context_menu_saved_update_mode = self.viewportUpdateMode()
+        self.setViewportUpdateMode(QtWidgets.QGraphicsView.NoViewportUpdate)
+
+    def _resume_graph_updates_after_context_menu(self) -> None:
+        self.setViewportUpdateMode(self._context_menu_saved_update_mode)
+        try:
+            self.viewport().update()
+        except (AttributeError, RuntimeError, TypeError):
+            return
+
     def _popup_context_menu(self, global_pos: QtCore.QPoint) -> bool:
         ctx_menu = None
         ctx_menus = self.context_menus()
@@ -702,6 +715,7 @@ class F8StudioNodeViewer(NodeViewer):
 
         self.context_menu_prompt.emit(prompted_menu_name, prompted_node_id)
         self._context_menu_active = True
+        self._pause_graph_updates_for_context_menu()
         try:
             ctx_menu.aboutToHide.connect(self._on_context_menu_hidden, QtCore.Qt.UniqueConnection)
         except (RuntimeError, TypeError):
@@ -712,6 +726,7 @@ class F8StudioNodeViewer(NodeViewer):
     def _on_context_menu_hidden(self) -> None:
         self._context_menu_active = False
         self._clear_context_menu_selection_pending()
+        self._resume_graph_updates_after_context_menu()
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         if event.key() == QtCore.Qt.Key_Escape:
