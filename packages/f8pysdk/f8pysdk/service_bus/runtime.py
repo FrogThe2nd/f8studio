@@ -888,17 +888,18 @@ class ServiceBus:
             self._rungraph_status_key,
             rungraph_deploy_request_status_key(self.service_id, str(req_id or "")),
         )
-        try:
-            for key in status_keys:
+        for key in status_keys:
+            try:
                 await asyncio.wait_for(self._transport.retained_put(key, raw), timeout=1.0)
-        except (asyncio.TimeoutError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-            log.error(
-                "publish rungraph status failed service_id=%s req_id=%s phase=%s",
-                self.service_id,
-                req_id,
-                phase_s,
-                exc_info=exc,
-            )
+            except (asyncio.TimeoutError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                log.error(
+                    "publish rungraph status failed service_id=%s req_id=%s phase=%s key=%s",
+                    self.service_id,
+                    req_id,
+                    phase_s,
+                    key,
+                    exc_info=exc,
+                )
 
     async def publish(self, key: str, payload: bytes) -> None:
         """Publish a message to a Zenoh key."""

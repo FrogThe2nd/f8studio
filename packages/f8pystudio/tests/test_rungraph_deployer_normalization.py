@@ -221,6 +221,50 @@ class _NoEvidenceGatewayTransportStub(_GatewayTransportStub):
         await asyncio.sleep(0)
 
 
+class _RequestOnlyNoEvidenceTransportStub(_NoEvidenceGatewayTransportStub):
+    async def request(
+        self,
+        key: str,
+        payload: bytes,
+        *,
+        timeout: float = 1.0,
+        raise_on_error: bool = False,
+    ) -> bytes | None:
+        if key == svc_endpoint_key("svc1", "status"):
+            decoded_status = decode_obj(payload)
+            assert isinstance(decoded_status, dict)
+            return encode_obj(
+                {
+                    "reqId": str(decoded_status.get("reqId") or ""),
+                    "ok": True,
+                    "result": {
+                        "serviceId": "svc1",
+                        "serviceClass": "f8.tests.svc1",
+                        "runtimeInstanceId": "inst_svc1",
+                        "active": True,
+                        "rungraphGraphId": "",
+                        "rungraphRevision": "",
+                        "rungraphFingerprint": "",
+                    },
+                    "error": None,
+                }
+            )
+        return await super().request(key, payload, timeout=timeout, raise_on_error=raise_on_error)
+
+
+class _RepublishConfigOnlyTransportStub(_RequestOnlyNoEvidenceTransportStub):
+    async def _publish_apply_evidence(self, req_id: str) -> None:
+        _ = req_id
+        await asyncio.sleep(0)
+        request_payload = self.request_payloads[-1]
+        args = request_payload.get("args")
+        assert isinstance(args, dict)
+        graph = args.get("graph")
+        assert isinstance(graph, dict)
+        self.status_fingerprint = build_rungraph_deploy_fingerprint(graph)
+        await self.retained_put("f8/svc/svc1/config/rungraph", encode_obj(graph))
+
+
 class _WatchStub:
     def __init__(
         self,
@@ -306,6 +350,96 @@ def test_gateway_uses_rungraph_status_when_ack_times_out() -> None:
 
         assert result.success is True
         assert result.error_message == ""
+
+    asyncio.run(_run())
+
+
+def test_gateway_ignores_stale_retained_config_before_request() -> None:
+    async def _run() -> None:
+        transport = _RequestOnlyNoEvidenceTransportStub()
+        transport.retained["f8/svc/svc1/status/ready"] = encode_obj(_ready_payload())
+        graph = F8RuntimeGraph(
+            graphId="g1",
+            revision="r1",
+            nodes=[F8RuntimeNode(nodeId="svc1", serviceId="svc1", serviceClass="svc.a", operatorClass=None)],
+            edges=[],
+        )
+        normalized = RuntimeRungraphGateway._normalize_graph_for_request(graph, source="test:stale")
+        target_fingerprint = build_rungraph_deploy_fingerprint(normalized)
+        transport.retained["f8/svc/svc1/config/rungraph"] = encode_obj(normalized)
+        gateway = RuntimeRungraphGateway(RungraphDeployConfig(apply_timeout_s=0.01))
+        gateway._transport = transport
+
+        result = await gateway.deploy_runtime_graph(_DeployRequest(service_id="svc1", graph=graph, source="test"))
+
+        assert result.success is False
+        assert len(transport.request_payloads) == 1
+        assert target_fingerprint
+        assert "rungraph apply status not received" in result.error_message
+
+    asyncio.run(_run())
+
+
+def test_gateway_accepts_config_republish_after_request() -> None:
+    async def _run() -> None:
+        transport = _RepublishConfigOnlyTransportStub()
+        transport.retained["f8/svc/svc1/status/ready"] = encode_obj(_ready_payload())
+        graph = F8RuntimeGraph(
+            graphId="g1",
+            revision="r1",
+            nodes=[F8RuntimeNode(nodeId="svc1", serviceId="svc1", serviceClass="svc.a", operatorClass=None)],
+            edges=[],
+        )
+        normalized = RuntimeRungraphGateway._normalize_graph_for_request(graph, source="test:stale")
+        transport.retained["f8/svc/svc1/config/rungraph"] = encode_obj(normalized)
+        gateway = RuntimeRungraphGateway(RungraphDeployConfig(apply_timeout_s=1.0))
+        gateway._transport = transport
+
+        result = await gateway.deploy_runtime_graph(_DeployRequest(service_id="svc1", graph=graph, source="test"))
+
+        assert result.success is True
+        assert result.error_message == ""
+        assert len(transport.request_payloads) == 1
+
+    asyncio.run(_run())
+
+
+def test_gateway_ignores_stale_request_status_for_same_target() -> None:
+    async def _run() -> None:
+        transport = _NoEvidenceGatewayTransportStub()
+        transport.retained["f8/svc/svc1/status/ready"] = encode_obj(_ready_payload())
+        graph = F8RuntimeGraph(
+            graphId="g1",
+            revision="r1",
+            nodes=[F8RuntimeNode(nodeId="svc1", serviceId="svc1", serviceClass="svc.a", operatorClass=None)],
+            edges=[],
+        )
+        normalized = RuntimeRungraphGateway._normalize_graph_for_request(graph, source="test:stale")
+        target_fingerprint = build_rungraph_deploy_fingerprint(normalized)
+        stale_payload = {
+            "schemaVersion": "f8.rungraphDeployStatus/2",
+            "serviceId": "svc1",
+            "reqId": "old-request",
+            "graphId": "g1",
+            "revision": "r1",
+            "phase": "applied",
+            "ok": True,
+            "source": "old",
+            "errorMessage": "",
+            "ts": 1,
+            "targetFingerprint": target_fingerprint,
+            "appliedFingerprint": target_fingerprint,
+            "runtimeInstanceId": "old-instance",
+        }
+        transport.retained[rungraph_deploy_request_status_key("svc1", "old-request")] = encode_obj(stale_payload)
+        gateway = RuntimeRungraphGateway(RungraphDeployConfig(apply_timeout_s=0.01))
+        gateway._transport = transport
+
+        result = await gateway.deploy_runtime_graph(_DeployRequest(service_id="svc1", graph=graph, source="test"))
+
+        assert result.success is False
+        assert len(transport.request_payloads) == 1
+        assert "rungraph apply status not received" in result.error_message
 
     asyncio.run(_run())
 

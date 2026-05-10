@@ -109,6 +109,33 @@ class RungraphApplyTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(status.ok)
         self.assertTrue(bus.has_rungraph())
 
+    async def test_submit_rungraph_request_status_survives_generic_status_publish_failure(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svc")
+        original_retained_put = bus._transport.retained_put
+
+        async def _retained_put(key: str, value: bytes) -> None:
+            if str(key) == rungraph_deploy_status_key("svc"):
+                raise TimeoutError("generic status blocked")
+            await original_retained_put(key, value)
+
+        bus._transport.retained_put = _retained_put  # type: ignore[method-assign]
+        service_node = F8RuntimeNode(nodeId="svc", serviceId="svc", serviceClass="svc", operatorClass=None)
+        graph = F8RuntimeGraph(graphId="g-request-status", revision="r1", nodes=[service_node], edges=[])
+
+        await bus.submit_rungraph(graph, req_id="req-request-status", source="test")
+        status = await wait_rungraph_deploy_status(
+            bus._transport,
+            service_id="svc",
+            req_id="req-request-status",
+            graph_id="g-request-status",
+            revision="r1",
+            timeout_s=1.0,
+        )
+
+        self.assertEqual(status.phase, "applied")
+        self.assertTrue(status.ok)
+
     async def test_submit_rungraph_publishes_accepted_status_before_apply_completes(self) -> None:
         class _SlowRungraphHook:
             async def on_rungraph(self, graph: F8RuntimeGraph) -> None:

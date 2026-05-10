@@ -1,6 +1,7 @@
 #include "f8cppsdk/service_bus.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <chrono>
@@ -2037,14 +2038,25 @@ void ServiceBus::publish_rungraph_deploy_status(const json& graph_obj, const std
     payload["runtimeInstanceId"] = runtime_instance_id_;
 
     const auto raw = encode_json(payload);
-    (void)runtime_retained_put(rungraph_deploy_status_key(cfg_.service_id), raw);
-    (void)runtime_retained_put(rungraph_deploy_request_status_key(cfg_.service_id, req_id), raw);
+    const std::array<std::string, 2> keys = {
+        rungraph_deploy_status_key(cfg_.service_id),
+        rungraph_deploy_request_status_key(cfg_.service_id, req_id),
+    };
+    for (const auto& key : keys) {
+      try {
+        (void)runtime_retained_put(key, raw);
+      } catch (const std::exception& exc) {
+        spdlog::warn("publish rungraph deploy status failed serviceId={} reqId={} key={}: {}", cfg_.service_id,
+                     req_id, key, exc.what());
+      } catch (...) {
+        spdlog::warn("publish rungraph deploy status failed serviceId={} reqId={} key={}: unknown error",
+                     cfg_.service_id, req_id, key);
+      }
+    }
   } catch (const std::exception& exc) {
-    spdlog::warn("publish rungraph deploy status failed serviceId={} reqId={}: {}", cfg_.service_id, req_id,
-                 exc.what());
+    spdlog::warn("build rungraph deploy status failed serviceId={} reqId={}: {}", cfg_.service_id, req_id, exc.what());
   } catch (...) {
-    spdlog::warn("publish rungraph deploy status failed serviceId={} reqId={}: unknown error", cfg_.service_id,
-                 req_id);
+    spdlog::warn("build rungraph deploy status failed serviceId={} reqId={}: unknown error", cfg_.service_id, req_id);
   }
 }
 
