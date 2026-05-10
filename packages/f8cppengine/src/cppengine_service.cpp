@@ -1,11 +1,14 @@
 #include "f8cppengine/cppengine_service.h"
 
+#include <algorithm>
 #include <utility>
 
 #include <spdlog/spdlog.h>
 
 #include "f8cppengine/constants.h"
 #include "f8cppengine/operators.h"
+#include "f8cppsdk/generated/protocol_models.h"
+#include "f8cppsdk/time_utils.h"
 
 namespace f8::cppengine {
 
@@ -50,6 +53,7 @@ void CppEngineService::stop() {
   stop_requested_.store(true, std::memory_order_release);
   if (!running_.exchange(false, std::memory_order_acq_rel)) return;
 
+  clear_auto_samples();
   if (executor_) {
     executor_->set_active(false);
     executor_->clear_nodes();
@@ -77,10 +81,12 @@ void CppEngineService::tick() {
       stop_requested_.store(true, std::memory_order_release);
     }
   }
+  process_auto_samples();
 }
 
 void CppEngineService::on_lifecycle(bool active, const nlohmann::json& meta) {
   (void)meta;
+  active_.store(active, std::memory_order_release);
   if (executor_) {
     executor_->set_active(active);
   }
@@ -107,6 +113,7 @@ bool CppEngineService::on_set_rungraph(const nlohmann::json& graph_obj, const nl
     error_message = exc.what();
     return false;
   }
+  sync_auto_samples(graph_obj);
   return true;
 }
 
@@ -122,6 +129,112 @@ void CppEngineService::sync_exec_nodes() {
       executor_->register_node(node);
     }
   }
+}
+
+void CppEngineService::sync_auto_samples(const nlohmann::json& graph_obj) {
+  f8::cppsdk::generated::F8RuntimeGraph graph;
+  f8::cppsdk::generated::ParseError parse_error;
+  if (!f8::cppsdk::generated::parse_F8RuntimeGraph(graph_obj, graph, parse_error)) {
+    clear_auto_samples();
+    if (bus_) {
+      bus_->report_error(cfg_.service_id, "AUTO_SAMPLE_RUNGRAPH_INVALID",
+                         parse_error.message.empty() ? "invalid rungraph" : parse_error.message, "error",
+                         "cppengine:auto_sample:rungraph");
+    }
+    return;
+  }
+
+  std::vector<AutoSample> next;
+  const std::int64_t now = f8::cppsdk::now_ms();
+  for (const auto& service : graph.services.value_or(std::vector<f8::cppsdk::generated::F8RuntimeService>{})) {
+    if (service.serviceId != cfg_.service_id) continue;
+    for (const auto& request :
+         service.autoSampleRequests.value_or(std::vector<f8::cppsdk::generated::F8AutoSampleRequest>{})) {
+      if (request.sourceNodeId.empty() || request.sourcePort.empty()) continue;
+      AutoSample sample;
+      sample.source_node_id = request.sourceNodeId;
+      sample.source_port = request.sourcePort;
+      sample.interval_ms = std::min<std::int64_t>(5000, std::max<std::int64_t>(8, request.intervalMs));
+      sample.next_due_ms = now;
+      sample.publish_cross_service = request.publishCrossService.value_or(true);
+      next.push_back(std::move(sample));
+    }
+    break;
+  }
+
+  std::lock_guard<std::mutex> lock(auto_samples_mu_);
+  auto_samples_ = std::move(next);
+  auto_sample_error_last_ms_.clear();
+}
+
+void CppEngineService::clear_auto_samples() {
+  std::lock_guard<std::mutex> lock(auto_samples_mu_);
+  auto_samples_.clear();
+  auto_sample_error_last_ms_.clear();
+}
+
+void CppEngineService::process_auto_samples() {
+  if (!active_.load(std::memory_order_acquire) || !bus_ || !host_) return;
+  const std::int64_t now = f8::cppsdk::now_ms();
+  std::vector<AutoSample> due;
+  {
+    std::lock_guard<std::mutex> lock(auto_samples_mu_);
+    for (auto& sample : auto_samples_) {
+      if (sample.next_due_ms > now) continue;
+      due.push_back(sample);
+      sample.next_due_ms = now + sample.interval_ms;
+    }
+  }
+
+  for (const auto& sample : due) {
+    if (!sample.publish_cross_service) continue;
+    f8::cppsdk::RuntimeNode* runtime_node = host_->get_node(sample.source_node_id);
+    if (runtime_node == nullptr) {
+      const std::string fingerprint = "cppengine:auto_sample:missing:" + sample.source_node_id + ":" + sample.source_port;
+      if (should_report_auto_sample_error(fingerprint, now)) {
+        bus_->report_error(sample.source_node_id, "AUTO_SAMPLE_SOURCE_MISSING",
+                           "auto sample source node is missing", "warning", fingerprint, now);
+      }
+      continue;
+    }
+    auto* computable = dynamic_cast<f8::cppsdk::ComputableNode*>(runtime_node);
+    if (computable == nullptr) {
+      const std::string fingerprint = "cppengine:auto_sample:not_computable:" + sample.source_node_id + ":" + sample.source_port;
+      if (should_report_auto_sample_error(fingerprint, now)) {
+        bus_->report_error(sample.source_node_id, "AUTO_SAMPLE_SOURCE_NOT_COMPUTABLE",
+                           "auto sample source node does not implement ComputableNode", "warning", fingerprint, now);
+      }
+      continue;
+    }
+
+    try {
+      const nlohmann::json value = computable->compute_output(sample.source_port, now);
+      if (!value.is_null()) {
+        (void)bus_->emit_data(sample.source_node_id, sample.source_port, value, now);
+      }
+    } catch (const std::exception& exc) {
+      const std::string fingerprint = "cppengine:auto_sample:compute:" + sample.source_node_id + ":" + sample.source_port;
+      if (should_report_auto_sample_error(fingerprint, now)) {
+        bus_->report_error(sample.source_node_id, "AUTO_SAMPLE_COMPUTE_FAILED", exc.what(), "error", fingerprint, now);
+      }
+    } catch (...) {
+      const std::string fingerprint = "cppengine:auto_sample:compute:" + sample.source_node_id + ":" + sample.source_port;
+      if (should_report_auto_sample_error(fingerprint, now)) {
+        bus_->report_error(sample.source_node_id, "AUTO_SAMPLE_COMPUTE_FAILED",
+                           "auto sample compute_output threw unknown exception", "error", fingerprint, now);
+      }
+    }
+  }
+}
+
+bool CppEngineService::should_report_auto_sample_error(const std::string& fingerprint, std::int64_t now_ms) {
+  std::lock_guard<std::mutex> lock(auto_samples_mu_);
+  const auto it = auto_sample_error_last_ms_.find(fingerprint);
+  if (it != auto_sample_error_last_ms_.end() && (now_ms - it->second) < 2000) {
+    return false;
+  }
+  auto_sample_error_last_ms_[fingerprint] = now_ms;
+  return true;
 }
 
 }  // namespace f8::cppengine

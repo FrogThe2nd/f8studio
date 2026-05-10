@@ -398,6 +398,15 @@ std::optional<nlohmann::json> ExecFlowExecutor::resolve_data_pull(const std::str
   try {
     nlohmann::json value = computable->compute_output(source.port, ctx_id);
     resolving.pop_back();
+    bool should_emit = false;
+    {
+      std::lock_guard<std::mutex> lock(mu_);
+      const auto ports_it = half_out_ports_.find(source.node_id);
+      should_emit = ports_it != half_out_ports_.end() && ports_it->second.find(source.port) != ports_it->second.end();
+    }
+    if (should_emit && !value.is_null()) {
+      (void)bus_.emit_data(source.node_id, source.port, value, now_ms());
+    }
     return value;
   } catch (const std::exception& exc) {
     resolving.pop_back();

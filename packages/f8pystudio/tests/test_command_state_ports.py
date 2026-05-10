@@ -407,6 +407,65 @@ def test_runtime_compiler_attaches_pyengine_auto_sample_request_to_source_servic
     assert bool(request.publishCrossService) is True
 
 
+def test_runtime_compiler_attaches_cppengine_auto_sample_request_to_source_service() -> None:
+    service = _FakeServiceNode(
+        id="svc_cpp",
+        spec=F8ServiceSpec(
+            serviceClass="f8.cppengine",
+            label="C++ Engine",
+        ),
+    )
+    src = _FakeOperatorNode(
+        id="phase_src",
+        svcId="svc_cpp",
+        spec=F8OperatorSpec(
+            serviceClass="f8.cppengine",
+            operatorClass="f8.phase",
+            label="Phase",
+            dataOutPorts=[F8DataPortSpec(name="phase", valueSchema=any_schema(), required=False)],
+        ),
+    )
+    dst = _FakeOperatorNode(
+        id="viz_wave",
+        svcId="unused",
+        spec=F8OperatorSpec(
+            serviceClass=STUDIO_SERVICE_CLASS,
+            operatorClass="f8.viz.wave",
+            label="Wave Viz",
+            dataInPorts=[F8DataPortSpec(name="inputData", valueSchema=any_schema(), required=False)],
+            stateFields=[
+                F8StateSpec(name="upstreamSamplingMode", valueSchema=any_schema(), access=F8StateAccess.rw, showOnNode=False),
+                F8StateSpec(
+                    name="upstreamSampleIntervalMs",
+                    valueSchema=number_schema(),
+                    access=F8StateAccess.rw,
+                    showOnNode=False,
+                ),
+            ],
+        ),
+    )
+    state_values = {"upstreamSamplingMode": "auto", "upstreamSampleIntervalMs": 16}
+    dst.model = SimpleNamespace(
+        properties=state_values,
+        custom_properties={},
+        get_property=lambda name: state_values[name],
+    )
+
+    src.add_output_port("phase[D]").connect_to(dst.add_input_port("[D]inputData"))
+
+    graph = compile_global_runtime_graph(services=[service], operators=[src, dst], service_nodes=[])
+
+    runtime_service = next(service for service in list(graph.services or []) if str(service.serviceId) == "svc_cpp")
+    requests = list(runtime_service.autoSampleRequests or [])
+    assert len(requests) == 1
+    request = requests[0]
+    assert str(request.sourceNodeId) == "phase_src"
+    assert str(request.sourcePort) == "phase"
+    assert int(request.intervalMs) == 16
+    assert bool(request.deliverLocal) is False
+    assert bool(request.publishCrossService) is True
+
+
 def test_runtime_compiler_defaults_viz_sampling_mode_to_auto_when_missing() -> None:
     service = _FakeServiceNode(
         id="svc_engine",

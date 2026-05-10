@@ -50,6 +50,7 @@ from ..operators.patch_hub import OPERATOR_CLASS as PATCH_HUB_OPERATOR_CLASS
 
 logger = logging.getLogger(__name__)
 PYENGINE_SERVICE_CLASS = "f8.pyengine"
+CPPENGINE_SERVICE_CLASS = "f8.cppengine"
 
 
 def _port_kind(name: str) -> F8EdgeKindEnum | None:
@@ -226,8 +227,8 @@ def _attach_studio_auto_sample_requests(graph: F8RuntimeGraph) -> tuple[F8Runtim
         from_service_id, from_node_id, from_port = src_key
         service = services_by_id.get(from_service_id)
         service_class = str(service.serviceClass) if service is not None else ""
-        if service_class != PYENGINE_SERVICE_CLASS:
-            # Studio auto sampling is a pyengine-only facility here. Other services either
+        if service_class not in {PYENGINE_SERVICE_CLASS, CPPENGINE_SERVICE_CLASS}:
+            # Studio auto sampling is implemented by graph engines. Other services either
             # push data proactively or own their own scheduling semantics, so leave
             # the original cross-service edge untouched without surfacing a warning.
             continue
