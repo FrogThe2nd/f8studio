@@ -412,6 +412,182 @@ class CPythonScriptNode final : public OperatorNode, public ComputableNode, publ
   bool closed_ = false;
 };
 
+std::string lua_script_template() {
+  return R"F8(-- f8.lua_script starter for cppengine graphs.
+-- Target runtime: LuaJIT via the C++ engine script bridge.
+-- Current V1 builds may report LUA_SCRIPT_UNAVAILABLE until the LuaJIT bridge is linked.
+--
+-- Hooks: define any subset.
+--   on_start(ctx)
+--   on_state(ctx, field, value, ts_ms)
+--   on_msg(ctx, inputs)
+--   on_exec(ctx, exec_in, inputs)
+--   on_stop(ctx)
+--
+-- Context API planned for cppengine script runtimes:
+--   ctx.node_id
+--   ctx:pull(port)                         -- fresh pull from a data input
+--   ctx:emit(port, value)                  -- emit a data output immediately
+--   ctx:set_state(field, value)            -- update an explicit state field
+--   ctx:report_error(code, message, severity, fingerprint)
+--   ctx:clear_error(fingerprint)
+--   ctx:log(message)
+--
+-- Return protocol:
+--   on_msg may return { outputs = { out = value } } or a plain value for output 'out'.
+--   on_exec returns { exec = { "exec" }, outputs = { out = value } }.
+--   Values must be JSON-compatible: nil, boolean, number, string, array tables, object tables.
+
+local state = {
+  count = 0,
+}
+
+local function input_value(inputs, name)
+  if inputs == nil then
+    return nil
+  end
+  return inputs[name]
+end
+
+function on_start(ctx)
+  ctx:log("lua_script started")
+end
+
+function on_msg(ctx, inputs)
+  return {
+    outputs = {
+      out = input_value(inputs, "msg"),
+    },
+  }
+end
+
+function on_exec(ctx, exec_in, inputs)
+  state.count = state.count + 1
+
+  local msg = input_value(inputs, "msg")
+  if msg == nil then
+    msg = ctx:pull("msg")
+  end
+
+  return {
+    outputs = {
+      out = {
+        value = msg,
+        count = state.count,
+        exec_in = exec_in,
+        node = ctx.node_id,
+      },
+    },
+    exec = { "exec" },
+  }
+end
+
+function on_state(ctx, field, value, ts_ms)
+  ctx:log("state " .. tostring(field) .. "=" .. tostring(value))
+end
+
+function on_stop(ctx)
+  ctx:log("lua_script stopped")
+end
+)F8";
+}
+
+std::string angelscript_template() {
+  return R"F8(// f8.angelscript starter for cppengine graphs.
+// Target runtime: AngelScript module embedded in the C++ engine script bridge.
+// Current V1 builds may report ANGELSCRIPT_UNAVAILABLE until the AngelScript bridge is linked.
+//
+// Hooks: define any subset.
+//   void on_start(F8Context@ ctx)
+//   void on_state(F8Context@ ctx, const string &in field, F8Value@ value, int64 ts_ms)
+//   F8Result@ on_msg(F8Context@ ctx, F8Map@ inputs)
+//   F8Result@ on_exec(F8Context@ ctx, const string &in exec_in, F8Map@ inputs)
+//   void on_stop(F8Context@ ctx)
+//
+// Context API planned for cppengine script runtimes:
+//   ctx.node_id()
+//   ctx.pull("msg")
+//   ctx.emit("out", value)
+//   ctx.set_state("field", value)
+//   ctx.report_error("CODE", "message", "error", "fingerprint")
+//   ctx.clear_error("fingerprint")
+//   ctx.log("message")
+//
+// Result protocol:
+//   F8Result@ r = F8Result();
+//   r.outputs["out"] = value;
+//   r.exec.insertLast("exec");
+//   return r;
+// Values must be JSON-compatible scalar, array, or object values exposed by the runtime API.
+
+int count = 0;
+
+F8Value@ input_value(F8Map@ inputs, const string &in name) {
+  if (inputs is null) {
+    return null;
+  }
+  return inputs[name];
+}
+
+void on_start(F8Context@ ctx) {
+  ctx.log("angelscript started");
+}
+
+F8Result@ on_msg(F8Context@ ctx, F8Map@ inputs) {
+  F8Result@ result = F8Result();
+  result.outputs["out"] = input_value(inputs, "msg");
+  return result;
+}
+
+F8Result@ on_exec(F8Context@ ctx, const string &in exec_in, F8Map@ inputs) {
+  count += 1;
+
+  F8Value@ msg = input_value(inputs, "msg");
+  if (msg is null) {
+    @msg = ctx.pull("msg");
+  }
+
+  F8Map@ out = F8Map();
+  out["value"] = msg;
+  out["count"] = count;
+  out["exec_in"] = exec_in;
+  out["node"] = ctx.node_id();
+
+  F8Result@ result = F8Result();
+  result.outputs["out"] = out;
+  result.exec.insertLast("exec");
+  return result;
+}
+
+void on_state(F8Context@ ctx, const string &in field, F8Value@ value, int64 ts_ms) {
+  ctx.log("state " + field);
+}
+
+void on_stop(F8Context@ ctx) {
+  ctx.log("angelscript stopped");
+}
+)F8";
+}
+
+std::string script_template_for_language(const std::string& lang) {
+  if (lang == "Lua") return lua_script_template();
+  return angelscript_template();
+}
+
+std::string script_description_for_language(const std::string& lang) {
+  if (lang == "Lua") {
+    return "LuaJIT script node for C++ engine graphs. The default code documents the planned hook/context contract and starts from a pass-through exec scaffold. Current V1 builds report a clear runtime error until the LuaJIT bridge is linked.";
+  }
+  return "AngelScript node for C++ engine graphs. The default code documents the planned strongly typed hook/context contract and starts from a pass-through exec scaffold. Current V1 builds report a clear runtime error until the AngelScript bridge is linked.";
+}
+
+json script_code_state_field(const std::string& lang, const std::string& lower) {
+  json field = state_field("code", "Code", lang + " source code and starter hook scaffold.",
+                           string_schema(script_template_for_language(lang)), "rw", true, false, "code[" + lower + "]");
+  field["editorAssist"] = json{{"version", 1}, {"language", lower}};
+  return field;
+}
+
 json service_spec() {
   return json{{"specKind", "service"},
               {"schemaVersion", "f8service/1"},
@@ -769,15 +945,14 @@ json script_spec(const std::string& operator_class, const std::string& label, co
               {"operatorClass", operator_class},
               {"version", "0.0.1"},
               {"label", label},
-              {"description", lang + " script node for C++ engine graphs. The V1 bridge reports a clear runtime error when the interpreter is not linked."},
+              {"description", script_description_for_language(lang)},
               {"tags", json::array({"script", lower, "programmable"})},
               {"execInPorts", json::array({"exec"})},
               {"execOutPorts", json::array({"exec"})},
               {"dataInPorts", json::array({data_port("msg", "Message input.", any_schema(), false, true)})},
               {"dataOutPorts", json::array({data_port("out", "Script output.", any_schema(), false, true)})},
               {"editPolicy", editable_script_policy()},
-              {"stateFields", json::array({state_field("code", "Code", lang + " source code.", string_schema(""), "rw", true, false,
-                                                      "code[" + lower + "]")})}};
+              {"stateFields", json::array({script_code_state_field(lang, lower)})}};
 }
 
 json cpython_script_spec() {

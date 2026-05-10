@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 _WARNED_PROTOCOL_ERRORS: set[str] = set()
 _FIELD_KINDS: tuple[str, ...] = ("state", "port", "prop")
+_CONTEXT_ONLY_LANGUAGES: tuple[str, ...] = ("angelscript", "json", "lua")
 
 
 def _spec_label(spec: F8ServiceSpec | F8OperatorSpec | None) -> str:
@@ -312,7 +313,7 @@ def editor_assist_context_for_field(
     lang = str(language or "").strip().lower()
     key = str(field_key or "").strip()
     kind = str(field_kind or "").strip().lower()
-    if lang not in ("python", "json") or not key:
+    if lang not in ("python", *_CONTEXT_ONLY_LANGUAGES) or not key:
         return None
     if kind not in _FIELD_KINDS:
         return _error_context(spec, f"unsupported field_kind={kind!r}", language=lang)
@@ -367,11 +368,11 @@ def editor_assist_context_for_field(
             language=lang,
         )
 
-    if lang == "json":
-        # Future: handle JSON-specific payload features. Currently just provide context.
+    if lang in _CONTEXT_ONLY_LANGUAGES:
+        # Future: handle language-specific payload features. Currently just provide context.
         node_kind = "service" if isinstance(spec, F8ServiceSpec) else "operator"
         return EditorAssistContext(
-            language="json",
+            language=lang,
             node_kind=node_kind,
             service_class=str(spec.serviceClass or "").strip(),
             operator_class=(
