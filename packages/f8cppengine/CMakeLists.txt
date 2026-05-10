@@ -1,9 +1,53 @@
 add_library(f8cppengine_core STATIC
+  src/bandpass_filter_operator.cpp
+  src/bone_filter_operator.cpp
+  src/bone_selector_operator.cpp
+  src/buttplug_out_operator.cpp
+  src/cosine_operator.cpp
   src/cppengine_service.cpp
+  src/cppengine_service_node.cpp
   src/core_operators.cpp
+  src/data_expr_operator.cpp
+  src/detrend_operator.cpp
+  src/envelope_operator.cpp
+  src/exec_sequence_operator.cpp
+  src/handy_out_operator.cpp
+  src/highpass_filter_operator.cpp
+  src/lovense_mock_server_operator.cpp
+  src/lovense_out_operator.cpp
+  src/lowpass_filter_operator.cpp
   src/operator_common.cpp
   src/operators.cpp
+  src/pending_operator_common.cpp
+  src/periodicity_detector_operator.cpp
+  src/phase_operator.cpp
+  src/print_operator.cpp
+  src/playback_sync_operator.cpp
+  src/program_wave_operator.cpp
+  src/quat_to_euler_operator.cpp
+  src/range_map_operator.cpp
+  src/rate_limiter_operator.cpp
+  src/recorder_operator.cpp
+  src/replayer_operator.cpp
   src/script_operators.cpp
+  src/sequence_player_operator.cpp
+  src/serial_out_operator.cpp
+  src/silence_detector_operator.cpp
+  src/skeleton_decoder_operator.cpp
+  src/smooth_filter_operator.cpp
+  src/state_expr_operator.cpp
+  src/state_trigger_operator.cpp
+  src/switch_mixer_operator.cpp
+  src/tcode_operator.cpp
+  src/tempest_operator.cpp
+  src/tick_operator.cpp
+  src/udp_in_operator.cpp
+  src/udp_out_operator.cpp
+  src/unsupported_operators.cpp
+  src/vmc_decoder_operator.cpp
+  src/wave_expr_operator.cpp
+  src/wave_funscript_operator.cpp
+  src/wave_pattern_operator.cpp
 )
 
 target_compile_features(f8cppengine_core PUBLIC cxx_std_17)
