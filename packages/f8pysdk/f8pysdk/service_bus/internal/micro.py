@@ -214,6 +214,9 @@ class ServiceBusControlHandlers:
                         "serviceClass": self._bus.service_class,
                         "runtimeInstanceId": self._bus.runtime_instance_id,
                         "active": self._bus.active,
+                        "rungraphGraphId": str(self._bus._graph.graphId or "") if self._bus._graph is not None else "",
+                        "rungraphRevision": str(self._bus._graph.revision or "") if self._bus._graph is not None else "",
+                        "rungraphFingerprint": self._bus._rungraph_fingerprint,
                     },
                     "error": None,
                 }
@@ -415,10 +418,17 @@ class ServiceBusControlHandlers:
 
         try:
             source = "control"
+            target_fingerprint = ""
             meta = decoded_req.meta
             if isinstance(meta, dict):
                 source = str(meta.get("source") or "control")
-            await self._bus.submit_rungraph(graph, req_id=req_id, source=source)
+                target_fingerprint = str(meta.get("targetFingerprint") or "")
+            await self._bus.submit_rungraph(
+                graph,
+                req_id=req_id,
+                source=source,
+                target_fingerprint=target_fingerprint,
+            )
         except Exception as exc:
             await req.respond(
                 encode_obj(

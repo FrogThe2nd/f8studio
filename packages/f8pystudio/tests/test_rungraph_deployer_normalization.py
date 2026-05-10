@@ -8,7 +8,11 @@ import msgspec
 
 from f8pysdk.codec import decode_obj, dump_json, encode_obj
 from f8pysdk.f8_naming import svc_endpoint_key
-from f8pysdk.service_runtime_tools.deploy.readiness import rungraph_deploy_request_status_key
+from f8pysdk.rungraph_fingerprint import build_rungraph_deploy_fingerprint
+from f8pysdk.service_runtime_tools.deploy.readiness import (
+    rungraph_deploy_request_status_key,
+    rungraph_deploy_status_key,
+)
 from f8pysdk.specs import F8RuntimeGraph, F8RuntimeNode
 
 from f8pystudio.bridge.rungraph_deployer import RuntimeRungraphGateway, RungraphDeployConfig
@@ -49,6 +53,7 @@ class _GatewayTransportStub:
         self.status_probe_count = 0
         self.publish_status = bool(publish_status)
         self.request_timeout = bool(request_timeout)
+        self.status_fingerprint = ""
 
     async def connect(self) -> None:
         return None
@@ -85,6 +90,9 @@ class _GatewayTransportStub:
                         "serviceClass": "f8.tests.svc1",
                         "runtimeInstanceId": "inst_svc1",
                         "active": True,
+                        "rungraphGraphId": "g1",
+                        "rungraphRevision": "r1",
+                        "rungraphFingerprint": self.status_fingerprint,
                     },
                     "error": None,
                 }
@@ -131,27 +139,36 @@ class _GatewayTransportStub:
         assert isinstance(args, dict)
         graph = args.get("graph")
         assert isinstance(graph, dict)
+        self.status_fingerprint = build_rungraph_deploy_fingerprint(graph)
         meta = graph.get("meta")
         assert isinstance(meta, dict)
         deploy_source = str(meta.get("source") or "")
+        request_meta = request_payload.get("meta")
+        assert isinstance(request_meta, dict)
+        target_fingerprint = str(request_meta.get("targetFingerprint") or "")
+        assert target_fingerprint == self.status_fingerprint
         if self.publish_status:
+            payload = {
+                "schemaVersion": "f8.rungraphDeployStatus/2",
+                "serviceId": "svc1",
+                "reqId": req_id,
+                "graphId": "g1",
+                "revision": "r1",
+                "phase": "applied",
+                "ok": True,
+                "source": deploy_source,
+                "errorMessage": "",
+                "ts": 1,
+                "targetFingerprint": target_fingerprint,
+                "appliedFingerprint": self.status_fingerprint,
+                "runtimeInstanceId": "inst_svc1",
+            }
             await self.retained_put(
                 rungraph_deploy_request_status_key("svc1", req_id),
-                encode_obj(
-                    {
-                        "schemaVersion": "f8.rungraphDeployStatus/1",
-                        "serviceId": "svc1",
-                        "reqId": req_id,
-                        "graphId": "g1",
-                        "revision": "r1",
-                        "phase": "applied",
-                        "ok": True,
-                        "source": deploy_source,
-                        "errorMessage": "",
-                        "ts": 1,
-                    }
-                ),
+                encode_obj(payload),
             )
+            await self.retained_put(rungraph_deploy_status_key("svc1"), encode_obj(payload))
+            await self.retained_put("f8/svc/svc1/config/rungraph", encode_obj(graph))
 
     def remove_watch(self, key: str, cb: Callable[[str, bytes], Awaitable[None]]) -> None:
         try:
@@ -163,11 +180,15 @@ class _GatewayTransportStub:
 class _ApplyingOnlyGatewayTransportStub(_GatewayTransportStub):
     async def _publish_apply_evidence(self, req_id: str) -> None:
         await asyncio.sleep(0)
+        request_payload = self.request_payloads[-1]
+        request_meta = request_payload.get("meta")
+        assert isinstance(request_meta, dict)
+        target_fingerprint = str(request_meta.get("targetFingerprint") or "")
         await self.retained_put(
             rungraph_deploy_request_status_key("svc1", req_id),
             encode_obj(
                 {
-                    "schemaVersion": "f8.rungraphDeployStatus/1",
+                    "schemaVersion": "f8.rungraphDeployStatus/2",
                     "serviceId": "svc1",
                     "reqId": req_id,
                     "graphId": "g1",
@@ -177,6 +198,9 @@ class _ApplyingOnlyGatewayTransportStub(_GatewayTransportStub):
                     "source": "test",
                     "errorMessage": "",
                     "ts": 1,
+                    "targetFingerprint": target_fingerprint,
+                    "appliedFingerprint": "",
+                    "runtimeInstanceId": "inst_svc1",
                 }
             ),
         )
@@ -229,7 +253,7 @@ def test_gateway_waits_for_rungraph_applied_status_after_ack() -> None:
         assert result.success is True
         assert result.error_message == ""
         assert len(transport.request_payloads) == 1
-        assert transport.status_probe_count == 1
+        assert transport.status_probe_count >= 1
 
     asyncio.run(_run())
 
@@ -251,7 +275,7 @@ def test_gateway_accepts_control_endpoint_when_ready_retained_status_is_missing(
         assert result.success is True
         assert result.error_message == ""
         assert len(transport.request_payloads) == 1
-        assert transport.status_probe_count == 1
+        assert transport.status_probe_count >= 1
 
     asyncio.run(_run())
 
@@ -345,7 +369,7 @@ def test_gateway_accepts_ready_payload_without_protocol_fields() -> None:
 
         assert result.success is True
         assert result.error_message == ""
-        assert transport.status_probe_count == 1
+        assert transport.status_probe_count >= 1
 
     asyncio.run(_run())
 

@@ -1781,6 +1781,9 @@ struct F8StatusReplyResult {
   std::string serviceClass;
   std::string runtimeInstanceId;
   bool active;
+  std::optional<std::string> rungraphGraphId;
+  std::optional<std::string> rungraphRevision;
+  std::optional<std::string> rungraphFingerprint;
 };
 
 inline bool parse_F8StatusReplyResult(const nlohmann::json& j, F8StatusReplyResult& out, ParseError& err) {
@@ -1791,6 +1794,9 @@ inline bool parse_F8StatusReplyResult(const nlohmann::json& j, F8StatusReplyResu
   if (!j.contains("active") || j["active"].is_null() || !j["active"].is_boolean()) {
     err.code="INVALID_SCHEMA"; err.message="missing/invalid required boolean"; return false; }
   out.active = j["active"].get<bool>();
+  out.rungraphGraphId = _get_str_opt(j, "rungraphGraphId");
+  out.rungraphRevision = _get_str_opt(j, "rungraphRevision");
+  out.rungraphFingerprint = _get_str_opt(j, "rungraphFingerprint");
   return true;
 }
 

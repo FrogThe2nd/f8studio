@@ -2,20 +2,22 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Any, Protocol
 
 import msgspec
 from f8pysdk.bus import BusBackend
+from f8pysdk.codec import decode_obj
 from f8pysdk.specs import F8EmptyArgs, F8RuntimeGraph, F8RuntimeGraphMeta
 from f8pysdk.specs import F8StatusReply, F8StatusRequest
 from f8pysdk.specs import F8SetRungraphArgs, F8SetRungraphReply, F8SetRungraphRequest
 from f8pysdk.codec import copy_model
 from f8pysdk.f8_naming import new_id, svc_endpoint_key
 from f8pysdk.runtime_transport import RuntimeTransport
+from f8pysdk.rungraph_fingerprint import build_rungraph_deploy_fingerprint
 from f8pysdk.zenoh_transport import ZenohTransport, ZenohTransportConfig
 from f8pysdk.service_runtime_tools.deploy.readiness import (
-    RungraphDeployStatusTimeout,
-    wait_rungraph_deploy_status,
+    rungraph_deploy_request_status_key,
+    rungraph_deploy_status_key,
 )
 from f8pysdk.codec import decode_as, encode_obj
 
@@ -28,7 +30,9 @@ class RungraphGateway(Protocol):
 class RungraphDeployConfig:
     endpoint_ready_timeout_s: float = 4.0
     endpoint_probe_timeout_s: float = 0.5
-    request_timeout_s: float = 2.0
+    request_timeout_s: float = 0.75
+    request_attempts: int = 3
+    request_retry_sleep_s: float = 0.15
     apply_timeout_s: float = 15.0
     bus_backend: BusBackend = "zenoh"
     client_service_id: str = "studio"
@@ -79,51 +83,191 @@ class RuntimeRungraphGateway:
             return graph
         return copy_model(graph, update={"nodes": normalized_nodes, "meta": meta2})
 
-    async def _wait_apply_evidence(
+    async def _status_endpoint_has_target(
+        self,
+        transport: RuntimeTransport,
+        *,
+        service_id: str,
+        target_fingerprint: str,
+        timeout_s: float,
+    ) -> bool:
+        request_payload = F8StatusRequest(reqId=new_id(), args=F8EmptyArgs(), meta={"source": "studio:deploy-evidence"})
+        try:
+            raw = await transport.request(
+                svc_endpoint_key(service_id, "status"),
+                encode_obj(request_payload),
+                timeout=float(timeout_s),
+                raise_on_error=True,
+            )
+        except (TimeoutError, ValueError, RuntimeError, OSError) as exc:
+            _ = exc
+            return False
+        if not raw:
+            return False
+        try:
+            response = decode_as(raw, F8StatusReply)
+        except ValueError:
+            return False
+        if not bool(response.ok):
+            return False
+        result = response.result
+        if result is None or isinstance(result, msgspec.UnsetType):
+            return False
+        fingerprint = str(result.rungraphFingerprint or "").strip()
+        return bool(fingerprint and fingerprint == target_fingerprint)
+
+    @staticmethod
+    def _status_payload_matches_target(payload: Any, *, target_fingerprint: str) -> tuple[bool, str]:
+        if not isinstance(payload, dict):
+            return (False, "")
+        phase = str(payload.get("phase") or "").strip()
+        target = str(payload.get("targetFingerprint") or "").strip()
+        applied = str(payload.get("appliedFingerprint") or "").strip()
+        if applied and applied == target_fingerprint and phase == "applied":
+            return (True, "")
+        if phase == "failed" and target == target_fingerprint:
+            return (False, str(payload.get("errorMessage") or "rungraph apply failed"))
+        return (False, "")
+
+    @staticmethod
+    def _decode_retained_rungraph_fingerprint(raw: bytes | None) -> str:
+        if not raw:
+            return ""
+        try:
+            payload = decode_obj(raw)
+        except ValueError:
+            return ""
+        if isinstance(payload, dict) and "nodes" in payload and "edges" in payload:
+            return build_rungraph_deploy_fingerprint(payload)
+        if isinstance(payload, str):
+            try:
+                import json
+
+                decoded = json.loads(payload)
+            except (TypeError, ValueError):
+                return ""
+            if isinstance(decoded, dict):
+                return build_rungraph_deploy_fingerprint(decoded)
+        return ""
+
+    async def _retained_config_has_target(
+        self,
+        transport: RuntimeTransport,
+        *,
+        service_id: str,
+        target_fingerprint: str,
+    ) -> bool:
+        raw = await transport.retained_get(f"f8/svc/{service_id}/config/rungraph")
+        fingerprint = self._decode_retained_rungraph_fingerprint(raw)
+        return bool(fingerprint and fingerprint == target_fingerprint)
+
+    async def _wait_target_evidence(
         self,
         transport: RuntimeTransport,
         *,
         service_id: str,
         req_id: str,
-        graph_id: str,
-        revision: str,
+        target_fingerprint: str,
+        deadline_s: float,
     ) -> RungraphDeployResult:
-        status_task = asyncio.create_task(
-            wait_rungraph_deploy_status(
-                transport,
-                service_id=service_id,
-                req_id=req_id,
-                graph_id=graph_id,
-                revision=revision,
-                timeout_s=float(self.config.apply_timeout_s),
-            ),
-            name=f"rungraph_deploy_status:{service_id}:{req_id}",
+        loop = asyncio.get_running_loop()
+        status_keys = (
+            rungraph_deploy_request_status_key(service_id, req_id),
+            rungraph_deploy_status_key(service_id),
+            f"f8/svc/{service_id}/config/rungraph",
         )
+        fut: asyncio.Future[RungraphDeployResult] = loop.create_future()
+        failed_message = ""
+        last_phase = ""
+        last_status_key = rungraph_deploy_request_status_key(service_id, req_id)
+
+        async def _on_evidence(key: str, value: bytes) -> None:
+            nonlocal failed_message, last_phase
+            if fut.done():
+                return
+            if key.endswith("/config/rungraph"):
+                fingerprint = self._decode_retained_rungraph_fingerprint(value)
+                if fingerprint == target_fingerprint:
+                    fut.set_result(RungraphDeployResult(service_id=service_id, success=True, error_message=""))
+                return
+            try:
+                payload = decode_obj(value or b"")
+            except ValueError:
+                return
+            if isinstance(payload, dict):
+                phase = str(payload.get("phase") or "").strip()
+                if phase:
+                    last_phase = phase
+            matched, error = self._status_payload_matches_target(payload, target_fingerprint=target_fingerprint)
+            if matched:
+                fut.set_result(RungraphDeployResult(service_id=service_id, success=True, error_message=""))
+            elif error:
+                failed_message = error
+
+        watches: list[Any] = []
         try:
-            result = await status_task
-            if result.phase == "failed":
-                return RungraphDeployResult(
+            for key in status_keys:
+                try:
+                    watch = await transport.retained_watch(key, cb=_on_evidence, with_initial=True)
+                    watches.append(watch)
+                except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+                    continue
+            while True:
+                if fut.done():
+                    return await fut
+                if await self._retained_config_has_target(
+                    transport,
                     service_id=service_id,
-                    success=False,
-                    error_message=result.error_message or "rungraph apply failed",
-                )
-            return RungraphDeployResult(service_id=service_id, success=True, error_message="")
-        except RungraphDeployStatusTimeout as exc:
-            return RungraphDeployResult(
-                service_id=service_id,
-                success=False,
-                error_message=str(exc),
-            )
-        except asyncio.TimeoutError:
-            return RungraphDeployResult(
-                service_id=service_id,
-                success=False,
-                error_message=f"rungraph apply status not received within {float(self.config.apply_timeout_s):g}s",
-            )
+                    target_fingerprint=target_fingerprint,
+                ):
+                    return RungraphDeployResult(service_id=service_id, success=True, error_message="")
+                if await self._status_endpoint_has_target(
+                    transport,
+                    service_id=service_id,
+                    target_fingerprint=target_fingerprint,
+                    timeout_s=min(0.25, max(0.05, self.config.endpoint_probe_timeout_s)),
+                ):
+                    return RungraphDeployResult(service_id=service_id, success=True, error_message="")
+                remaining = deadline_s - loop.time()
+                if remaining <= 0:
+                    if failed_message:
+                        return RungraphDeployResult(service_id=service_id, success=False, error_message=failed_message)
+                    if last_phase:
+                        return RungraphDeployResult(
+                            service_id=service_id,
+                            success=False,
+                            error_message=(
+                                f"rungraph apply status not final within {float(self.config.apply_timeout_s):g}s "
+                                f"(last phase={last_phase}, key={last_status_key})"
+                            ),
+                        )
+                    return RungraphDeployResult(
+                        service_id=service_id,
+                        success=False,
+                        error_message=(
+                            f"rungraph apply status not received within {float(self.config.apply_timeout_s):g}s "
+                            f"(key={last_status_key}, fingerprint={target_fingerprint[:16]})"
+                        ),
+                    )
+                try:
+                    return await asyncio.wait_for(asyncio.shield(fut), timeout=min(0.2, remaining))
+                except asyncio.TimeoutError:
+                    continue
         finally:
-            if not status_task.done():
-                status_task.cancel()
-            await asyncio.gather(status_task, return_exceptions=True)
+            for watch in watches:
+                if isinstance(watch, tuple):
+                    watcher, task = watch
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+                    try:
+                        await watcher.stop()
+                    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+                        pass
+                else:
+                    try:
+                        await watch.stop()
+                    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+                        pass
 
     def _build_transport(self) -> RuntimeTransport:
         if self.config.bus_backend == "mem":
@@ -234,55 +378,81 @@ class RuntimeRungraphGateway:
         req_id = new_id()
         deploy_source = f"{str(req.source or 'studio')}:{req_id}"
         graph_for_request = self._normalize_graph_for_request(req.graph, source=deploy_source)
+        target_fingerprint = build_rungraph_deploy_fingerprint(graph_for_request)
         request_payload = F8SetRungraphRequest(
             reqId=req_id,
             args=F8SetRungraphArgs(graph=graph_for_request),
-            meta={"source": deploy_source},
+            meta={"source": deploy_source, "targetFingerprint": target_fingerprint},
         )
-        graph_id = str(graph_for_request.graphId or "")
-        revision = str(graph_for_request.revision or "")
-        try:
-            response_bytes = await transport.request(
-                svc_endpoint_key(service_id, "set_rungraph"),
-                encode_obj(request_payload),
-                timeout=float(self.config.request_timeout_s),
-                raise_on_error=True,
-            )
-        except TimeoutError:
-            fallback = await self._wait_apply_evidence(
+        deadline_s = asyncio.get_running_loop().time() + max(0.001, float(self.config.apply_timeout_s))
+        if await self._retained_config_has_target(
+            transport,
+            service_id=service_id,
+            target_fingerprint=target_fingerprint,
+        ):
+            return RungraphDeployResult(service_id=service_id, success=True, error_message="")
+        evidence_task = asyncio.create_task(
+            self._wait_target_evidence(
                 transport,
                 service_id=service_id,
                 req_id=req_id,
-                graph_id=graph_id,
-                revision=revision,
-            )
-            if fallback.success:
-                return fallback
-            return RungraphDeployResult(
-                service_id=service_id,
-                success=False,
-                error_message=f"set_rungraph acknowledgement timed out; {fallback.error_message}",
-            )
-        if not response_bytes:
-            return RungraphDeployResult(service_id=service_id, success=False, error_message="empty response")
-        try:
-            response_payload = decode_as(response_bytes, F8SetRungraphReply)
-        except ValueError:
-            return RungraphDeployResult(service_id=service_id, success=False, error_message="invalid response")
-        if response_payload.error is None or isinstance(response_payload.error, msgspec.UnsetType):
-            error_message = ""
-        else:
-            error_message = str(response_payload.error.message or "")
-        if not bool(response_payload.ok):
-            return RungraphDeployResult(
-                service_id=service_id,
-                success=False,
-                error_message=error_message or "set_rungraph rejected",
-            )
-        return await self._wait_apply_evidence(
-            transport,
-            service_id=service_id,
-            req_id=req_id,
-            graph_id=graph_id,
-            revision=revision,
+                target_fingerprint=target_fingerprint,
+                deadline_s=deadline_s,
+            ),
+            name=f"rungraph_target_evidence:{service_id}:{req_id}",
         )
+        try:
+            last_ack_error = ""
+            for attempt_index in range(max(1, int(self.config.request_attempts))):
+                if evidence_task.done():
+                    return await evidence_task
+                try:
+                    response_bytes = await transport.request(
+                        svc_endpoint_key(service_id, "set_rungraph"),
+                        encode_obj(request_payload),
+                        timeout=float(self.config.request_timeout_s),
+                        raise_on_error=True,
+                    )
+                except TimeoutError as exc:
+                    last_ack_error = str(exc)
+                except (RuntimeError, OSError) as exc:
+                    last_ack_error = f"{type(exc).__name__}: {exc}"
+                else:
+                    if not response_bytes:
+                        last_ack_error = "empty response"
+                    else:
+                        try:
+                            response_payload = decode_as(response_bytes, F8SetRungraphReply)
+                        except ValueError:
+                            return RungraphDeployResult(
+                                service_id=service_id,
+                                success=False,
+                                error_message="invalid response",
+                            )
+                        if response_payload.error is None or isinstance(response_payload.error, msgspec.UnsetType):
+                            error_message = ""
+                        else:
+                            error_message = str(response_payload.error.message or "")
+                        if not bool(response_payload.ok):
+                            return RungraphDeployResult(
+                                service_id=service_id,
+                                success=False,
+                                error_message=error_message or "set_rungraph rejected",
+                            )
+                        break
+                if attempt_index + 1 < max(1, int(self.config.request_attempts)):
+                    await asyncio.sleep(float(self.config.request_retry_sleep_s))
+            result = await evidence_task
+            if result.success or not last_ack_error:
+                return result
+            if "not observed" in result.error_message:
+                return RungraphDeployResult(
+                    service_id=service_id,
+                    success=False,
+                    error_message=f"set_rungraph acknowledgement failed ({last_ack_error}); {result.error_message}",
+                )
+            return result
+        finally:
+            if not evidence_task.done():
+                evidence_task.cancel()
+                await asyncio.gather(evidence_task, return_exceptions=True)

@@ -20,6 +20,7 @@ from ...generated import (
 from ..._specs.schema import data_port_payload_kind
 from ...codec import unwrap_json_value
 from ...f8_naming import data_key
+from ...rungraph_fingerprint import build_rungraph_deploy_fingerprint
 from ...state import StateWriteOrigin, StateWriteSource
 from ..internal.logging import log_error_once
 from ..state.helpers import build_intra_state_route_meta
@@ -144,8 +145,12 @@ async def set_rungraph(bus: "ServiceBus", graph: F8RuntimeGraph) -> None:
     ok = await apply_rungraph(bus, graph2)
     if not ok:
         raise RuntimeError("set_rungraph: apply_rungraph failed")
+    bus._rungraph_fingerprint = build_rungraph_deploy_fingerprint(graph2)
     raw = _encode_rungraph_bytes(graph2)
-    await bus._transport.retained_put(bus._rungraph_key, raw)
+    try:
+        await asyncio.wait_for(bus._transport.retained_put(bus._rungraph_key, raw), timeout=1.0)
+    except (asyncio.TimeoutError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        log.error("rungraph config retained publish failed service_id=%s", bus.service_id, exc_info=exc)
 
 
 async def apply_rungraph(bus: "ServiceBus", graph: F8RuntimeGraph) -> bool:

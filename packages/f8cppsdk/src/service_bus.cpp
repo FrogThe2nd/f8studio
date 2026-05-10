@@ -176,6 +176,165 @@ std::string command_output_state_field(const std::string& name) {
   return "__cmd__." + command_key_for_name(name) + ".out";
 }
 
+json sorted_json_array(const json& arr, const std::function<std::string(const json&)>& key_fn) {
+  if (!arr.is_array()) return json::array();
+  std::vector<json> items;
+  for (const auto& item : arr) {
+    items.push_back(item);
+  }
+  std::sort(items.begin(), items.end(), [&](const json& a, const json& b) { return key_fn(a) < key_fn(b); });
+  json out = json::array();
+  for (const auto& item : items) {
+    out.push_back(item);
+  }
+  return out;
+}
+
+std::string json_string_value(const json& obj, const char* key) {
+  if (!obj.is_object() || !obj.contains(key)) return "";
+  const auto& value = obj.at(key);
+  if (value.is_string()) return value.get<std::string>();
+  if (value.is_null()) return "";
+  return value.dump();
+}
+
+json normalize_spec_payload(const json& payload) {
+  if (payload.is_object()) {
+    json out = json::object();
+    std::vector<std::string> keys;
+    for (auto it = payload.begin(); it != payload.end(); ++it) {
+      keys.push_back(it.key());
+    }
+    std::sort(keys.begin(), keys.end());
+    for (const auto& key : keys) {
+      out[key] = normalize_spec_payload(payload.at(key));
+    }
+    return out;
+  }
+  if (payload.is_array()) {
+    json out = json::array();
+    for (const auto& item : payload) {
+      out.push_back(normalize_spec_payload(item));
+    }
+    return out;
+  }
+  return payload;
+}
+
+std::string normalized_named_spec_sort_key(const json& payload) {
+  if (!payload.is_object()) return std::string("|") + payload.dump();
+  return json_string_value(payload, "name") + "|" + json_string_value(payload, "type") + "|" +
+         json_string_value(payload, "access");
+}
+
+json normalize_named_specs(const json& specs) {
+  if (!specs.is_array()) return json::array();
+  json normalized = json::array();
+  for (const auto& item : specs) {
+    normalized.push_back(normalize_spec_payload(item));
+  }
+  return sorted_json_array(normalized, normalized_named_spec_sort_key);
+}
+
+json normalize_deploy_service_payload(const json& payload) {
+  if (!payload.is_object()) return json::object();
+  json out = json::object();
+  std::vector<std::string> keys;
+  for (auto it = payload.begin(); it != payload.end(); ++it) {
+    keys.push_back(it.key());
+  }
+  std::sort(keys.begin(), keys.end());
+  for (const auto& key : keys) {
+    out[key] = normalize_spec_payload(payload.at(key));
+  }
+  return out;
+}
+
+json normalize_deploy_node_payload(const json& payload) {
+  if (!payload.is_object()) return json::object();
+  json out = json::object();
+  std::vector<std::string> keys;
+  for (auto it = payload.begin(); it != payload.end(); ++it) {
+    keys.push_back(it.key());
+  }
+  std::sort(keys.begin(), keys.end());
+  for (const auto& key : keys) {
+    if (key == "stateValues") continue;
+    const auto& value = payload.at(key);
+    if ((key == "execInPorts" || key == "execOutPorts") && value.is_array()) {
+      std::vector<std::string> ports;
+      for (const auto& item : value) {
+        ports.push_back(item.is_string() ? item.get<std::string>() : item.dump());
+      }
+      std::sort(ports.begin(), ports.end());
+      out[key] = ports;
+      continue;
+    }
+    if ((key == "dataInPorts" || key == "dataOutPorts" || key == "stateFields") && value.is_array()) {
+      out[key] = normalize_named_specs(value);
+      continue;
+    }
+    out[key] = normalize_spec_payload(value);
+  }
+  return out;
+}
+
+json normalize_deploy_edge_payload(const json& payload) {
+  if (!payload.is_object()) return json::object();
+  json out = json::object();
+  std::vector<std::string> keys;
+  for (auto it = payload.begin(); it != payload.end(); ++it) {
+    if (it.key() == "edgeId") continue;
+    keys.push_back(it.key());
+  }
+  std::sort(keys.begin(), keys.end());
+  for (const auto& key : keys) {
+    out[key] = normalize_spec_payload(payload.at(key));
+  }
+  return out;
+}
+
+std::string normalized_service_sort_key(const json& payload) {
+  return json_string_value(payload, "serviceId") + "|" + json_string_value(payload, "serviceClass");
+}
+
+std::string normalized_node_sort_key(const json& payload) {
+  return json_string_value(payload, "serviceId") + "|" + json_string_value(payload, "nodeId") + "|" +
+         json_string_value(payload, "operatorClass");
+}
+
+std::string normalized_edge_sort_key(const json& payload) {
+  return json_string_value(payload, "kind") + "|" + json_string_value(payload, "fromServiceId") + "|" +
+         json_string_value(payload, "fromOperatorId") + "|" + json_string_value(payload, "fromPort") + "|" +
+         json_string_value(payload, "toServiceId") + "|" + json_string_value(payload, "toPort");
+}
+
+std::string build_rungraph_deploy_fingerprint(const json& graph_obj) {
+  json services = json::array();
+  if (graph_obj.is_object() && graph_obj.contains("services") && graph_obj["services"].is_array()) {
+    for (const auto& item : graph_obj["services"]) {
+      services.push_back(normalize_deploy_service_payload(item));
+    }
+    services = sorted_json_array(services, normalized_service_sort_key);
+  }
+  json nodes = json::array();
+  if (graph_obj.is_object() && graph_obj.contains("nodes") && graph_obj["nodes"].is_array()) {
+    for (const auto& item : graph_obj["nodes"]) {
+      nodes.push_back(normalize_deploy_node_payload(item));
+    }
+    nodes = sorted_json_array(nodes, normalized_node_sort_key);
+  }
+  json edges = json::array();
+  if (graph_obj.is_object() && graph_obj.contains("edges") && graph_obj["edges"].is_array()) {
+    for (const auto& item : graph_obj["edges"]) {
+      edges.push_back(normalize_deploy_edge_payload(item));
+    }
+    edges = sorted_json_array(edges, normalized_edge_sort_key);
+  }
+  json snapshot = json{{"services", services}, {"nodes", nodes}, {"edges", edges}};
+  return snapshot.dump(-1, ' ', false, json::error_handler_t::strict);
+}
+
 std::string new_control_req_id() {
   return std::to_string(static_cast<long long>(now_ms()));
 }
@@ -970,7 +1129,10 @@ RuntimeBytes ServiceBus::handle_runtime_control_request(const std::string& endpo
       return ok_response(json{{"serviceId", cfg_.service_id},
                               {"serviceClass", cfg_.service_class},
                               {"runtimeInstanceId", runtime_instance_id_},
-                              {"active", is_active()}});
+                              {"active", is_active()},
+                              {"rungraphGraphId", rungraph_graph_id_},
+                              {"rungraphRevision", rungraph_revision_},
+                              {"rungraphFingerprint", rungraph_fingerprint_}});
     }
     if (endpoint == "terminate" || endpoint == "quit") {
       spdlog::info("{} requested serviceId={}", endpoint, cfg_.service_id);
@@ -1649,6 +1811,9 @@ bool ServiceBus::on_set_rungraph(const json& graph_obj, const json& meta, std::s
     if (!error_code.empty()) {
       return false;
     }
+    rungraph_fingerprint_ = build_rungraph_deploy_fingerprint(persisted);
+    rungraph_graph_id_ = persisted.value("graphId", "");
+    rungraph_revision_ = persisted.value("revision", "");
     const auto bytes = encode_json(persisted);
     (void)runtime_retained_put(rungraph_key(cfg_.service_id), bytes);
   } catch (const std::exception& ex) {
@@ -1692,24 +1857,52 @@ bool ServiceBus::submit_rungraph(const json& graph_obj, const json& meta, const 
   }
 
   std::string source = "control";
+  std::string target_fingerprint;
   if (meta.is_object() && meta.contains("source") && meta["source"].is_string()) {
     source = trim_copy(meta["source"].get<std::string>());
     if (source.empty()) {
       source = "control";
     }
   }
+  if (meta.is_object() && meta.contains("targetFingerprint") && meta["targetFingerprint"].is_string()) {
+    target_fingerprint = trim_copy(meta["targetFingerprint"].get<std::string>());
+  }
+  if (target_fingerprint.empty()) {
+    target_fingerprint = build_rungraph_deploy_fingerprint(graph_obj);
+  }
+  bool publish_applied = false;
+  bool publish_accepted = false;
+  bool notify_worker = false;
 
   try {
     {
       std::lock_guard<std::mutex> lock(rungraph_apply_mu_);
-      if (!rungraph_apply_running_) {
+      const auto existing_req = rungraph_req_fingerprints_.find(req_id_s);
+      if (existing_req != rungraph_req_fingerprints_.end() && existing_req->second != target_fingerprint) {
+        error_code = "INVALID_ARGS";
+        error_message = "reqId already used for a different rungraph fingerprint";
+        return false;
+      }
+      rungraph_req_fingerprints_[req_id_s] = target_fingerprint;
+      if (!rungraph_fingerprint_.empty() && rungraph_fingerprint_ == target_fingerprint) {
+        publish_applied = true;
+      } else if (auto aliases_it = rungraph_inflight_aliases_.find(target_fingerprint);
+                 aliases_it != rungraph_inflight_aliases_.end()) {
+        aliases_it->second.insert(req_id_s);
+        publish_accepted = true;
+      } else if (!rungraph_apply_running_) {
         error_code = "NOT_READY";
         error_message = "rungraph apply worker is not running";
         return false;
+      } else {
+        rungraph_inflight_aliases_[target_fingerprint].insert(req_id_s);
+        notify_worker = true;
+        rungraph_apply_queue_.push_back(_RungraphApplyRequest{graph_obj, meta, req_id_s, source, target_fingerprint});
       }
-      rungraph_apply_queue_.push_back(_RungraphApplyRequest{graph_obj, meta, req_id_s, source});
     }
-    rungraph_apply_cv_.notify_one();
+    if (notify_worker) {
+      rungraph_apply_cv_.notify_one();
+    }
   } catch (const std::exception& exc) {
     error_code = "INTERNAL";
     error_message = exc.what();
@@ -1718,6 +1911,12 @@ bool ServiceBus::submit_rungraph(const json& graph_obj, const json& meta, const 
     error_code = "INTERNAL";
     error_message = "failed to start rungraph apply task";
     return false;
+  }
+  if (publish_applied) {
+    publish_rungraph_deploy_status(graph_obj, req_id_s, "applied", source, target_fingerprint, target_fingerprint);
+  }
+  if (publish_accepted) {
+    publish_rungraph_deploy_status(graph_obj, req_id_s, "accepted", source, target_fingerprint);
   }
   return true;
 }
@@ -1763,37 +1962,67 @@ void ServiceBus::rungraph_apply_worker_loop() {
       request = std::move(rungraph_apply_queue_.front());
       rungraph_apply_queue_.pop_front();
     }
-    run_rungraph_apply_worker(std::move(request.graph_obj), std::move(request.meta), std::move(request.req_id),
-                              std::move(request.source));
+    run_rungraph_apply_worker(std::move(request.graph_obj), std::move(request.meta),
+                              std::move(request.target_fingerprint), std::move(request.source));
   }
 }
 
-void ServiceBus::run_rungraph_apply_worker(json graph_obj, json meta, std::string req_id, std::string source) {
-  publish_rungraph_deploy_status(graph_obj, req_id, "accepted", source);
-  publish_rungraph_deploy_status(graph_obj, req_id, "applying", source);
+void ServiceBus::run_rungraph_apply_worker(json graph_obj, json meta, std::string target_fingerprint,
+                                           std::string source) {
+  std::vector<std::string> aliases;
+  {
+    std::lock_guard<std::mutex> lock(rungraph_apply_mu_);
+    const auto it = rungraph_inflight_aliases_.find(target_fingerprint);
+    if (it != rungraph_inflight_aliases_.end()) {
+      aliases.assign(it->second.begin(), it->second.end());
+    }
+  }
+  publish_rungraph_deploy_status_for_aliases(graph_obj, aliases, "accepted", source, target_fingerprint);
+  publish_rungraph_deploy_status_for_aliases(graph_obj, aliases, "applying", source, target_fingerprint);
 
   std::string error_code;
   std::string error_message;
   const bool ok = on_set_rungraph(graph_obj, meta, error_code, error_message);
   if (!ok) {
     const std::string message = error_message.empty() ? error_code : error_message;
-    publish_rungraph_deploy_status(graph_obj, req_id, "failed", source, message);
-    spdlog::error("rungraph async apply failed serviceId={} reqId={} code={} message={}", cfg_.service_id, req_id,
+    {
+      std::lock_guard<std::mutex> lock(rungraph_apply_mu_);
+      const auto it = rungraph_inflight_aliases_.find(target_fingerprint);
+      if (it != rungraph_inflight_aliases_.end()) {
+        aliases.assign(it->second.begin(), it->second.end());
+        rungraph_inflight_aliases_.erase(it);
+      }
+    }
+    publish_rungraph_deploy_status_for_aliases(graph_obj, aliases, "failed", source, target_fingerprint, "", message);
+    spdlog::error("rungraph async apply failed serviceId={} fingerprint={} code={} message={}", cfg_.service_id,
+                  target_fingerprint.substr(0, 16),
                   error_code, error_message);
     return;
   }
-  publish_rungraph_deploy_status(graph_obj, req_id, "applied", source);
+  const std::string applied_fingerprint = rungraph_fingerprint_.empty() ? target_fingerprint : rungraph_fingerprint_;
+  {
+    std::lock_guard<std::mutex> lock(rungraph_apply_mu_);
+    const auto it = rungraph_inflight_aliases_.find(target_fingerprint);
+    if (it != rungraph_inflight_aliases_.end()) {
+      aliases.assign(it->second.begin(), it->second.end());
+      rungraph_inflight_aliases_.erase(it);
+    }
+  }
+  publish_rungraph_deploy_status_for_aliases(graph_obj, aliases, "applied", source, target_fingerprint,
+                                             applied_fingerprint);
 }
 
 void ServiceBus::publish_rungraph_deploy_status(const json& graph_obj, const std::string& req_id,
                                                 const std::string& phase, const std::string& source,
+                                                const std::string& target_fingerprint,
+                                                const std::string& applied_fingerprint,
                                                 const std::string& error_message) {
   try {
     const std::string graph_id = graph_obj.is_object() ? graph_obj.value("graphId", "") : "";
     const std::string revision = graph_obj.is_object() ? graph_obj.value("revision", "") : "";
     const std::string phase_s = trim_copy(phase);
     json payload = json::object();
-    payload["schemaVersion"] = "f8.rungraphDeployStatus/1";
+    payload["schemaVersion"] = "f8.rungraphDeployStatus/2";
     payload["serviceId"] = cfg_.service_id;
     payload["reqId"] = req_id;
     payload["graphId"] = graph_id;
@@ -1803,6 +2032,9 @@ void ServiceBus::publish_rungraph_deploy_status(const json& graph_obj, const std
     payload["source"] = source;
     payload["errorMessage"] = error_message;
     payload["ts"] = now_ms();
+    payload["targetFingerprint"] = target_fingerprint;
+    payload["appliedFingerprint"] = applied_fingerprint;
+    payload["runtimeInstanceId"] = runtime_instance_id_;
 
     const auto raw = encode_json(payload);
     (void)runtime_retained_put(rungraph_deploy_status_key(cfg_.service_id), raw);
@@ -1813,6 +2045,18 @@ void ServiceBus::publish_rungraph_deploy_status(const json& graph_obj, const std
   } catch (...) {
     spdlog::warn("publish rungraph deploy status failed serviceId={} reqId={}: unknown error", cfg_.service_id,
                  req_id);
+  }
+}
+
+void ServiceBus::publish_rungraph_deploy_status_for_aliases(const json& graph_obj,
+                                                            const std::vector<std::string>& req_ids,
+                                                            const std::string& phase, const std::string& source,
+                                                            const std::string& target_fingerprint,
+                                                            const std::string& applied_fingerprint,
+                                                            const std::string& error_message) {
+  for (const auto& req_id : req_ids) {
+    publish_rungraph_deploy_status(graph_obj, req_id, phase, source, target_fingerprint, applied_fingerprint,
+                                   error_message);
   }
 }
 

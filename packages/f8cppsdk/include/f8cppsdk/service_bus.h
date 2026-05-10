@@ -166,9 +166,16 @@ class ServiceBus final : public ServiceControlHandler {
   void start_rungraph_apply_worker();
   void stop_rungraph_apply_worker();
   void rungraph_apply_worker_loop();
-  void run_rungraph_apply_worker(json graph_obj, json meta, std::string req_id, std::string source);
+  void run_rungraph_apply_worker(json graph_obj, json meta, std::string target_fingerprint, std::string source);
   void publish_rungraph_deploy_status(const json& graph_obj, const std::string& req_id, const std::string& phase,
-                                      const std::string& source, const std::string& error_message = "");
+                                      const std::string& source, const std::string& target_fingerprint = "",
+                                      const std::string& applied_fingerprint = "",
+                                      const std::string& error_message = "");
+  void publish_rungraph_deploy_status_for_aliases(const json& graph_obj, const std::vector<std::string>& req_ids,
+                                                  const std::string& phase, const std::string& source,
+                                                  const std::string& target_fingerprint,
+                                                  const std::string& applied_fingerprint = "",
+                                                  const std::string& error_message = "");
   bool runtime_publish_data(const std::string& from_node_id, const std::string& port_id, const json& value,
                             std::int64_t ts_ms = 0);
   bool runtime_retained_put(const std::string& key, const RuntimeBytes& bytes);
@@ -230,6 +237,7 @@ class ServiceBus final : public ServiceControlHandler {
     json meta = json::object();
     std::string req_id;
     std::string source;
+    std::string target_fingerprint;
   };
 
   std::thread rungraph_apply_thread_;
@@ -238,6 +246,11 @@ class ServiceBus final : public ServiceControlHandler {
   std::deque<_RungraphApplyRequest> rungraph_apply_queue_;
   bool rungraph_apply_stop_requested_ = false;
   bool rungraph_apply_running_ = false;
+  std::unordered_map<std::string, std::string> rungraph_req_fingerprints_;
+  std::unordered_map<std::string, std::unordered_set<std::string>> rungraph_inflight_aliases_;
+  std::string rungraph_fingerprint_;
+  std::string rungraph_graph_id_;
+  std::string rungraph_revision_;
 
   mutable std::mutex lifecycle_mu_;
   std::vector<LifecycleNode*> lifecycle_nodes_;

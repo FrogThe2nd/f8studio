@@ -101,6 +101,34 @@ def test_deploy_all_service_rungraphs_runs_services_concurrently() -> None:
     assert gateway.finished == ["implayer", "engine"]
 
 
+def test_deploy_all_service_rungraphs_limits_concurrency_to_two() -> None:
+    class _TrackingGateway(_FakeRungraphGateway):
+        def __init__(self) -> None:
+            super().__init__(delays={"svc_a": 0.03, "svc_b": 0.03, "svc_c": 0.03})
+            self.active = 0
+            self.max_active = 0
+
+        async def deploy_runtime_graph(self, req: object) -> _DeployResult:
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            try:
+                return await super().deploy_runtime_graph(req)
+            finally:
+                self.active -= 1
+
+    gateway = _TrackingGateway()
+    flow = RungraphDeployFlow(
+        studio_service_id="studio",
+        rungraph_gateway=gateway,
+        emit_log=lambda line: None,
+    )
+    compiled = _compiled({"svc_a": object(), "svc_b": object(), "svc_c": object()})
+
+    asyncio.run(flow.deploy_all_service_rungraphs(compiled=compiled))  # type: ignore[arg-type]
+
+    assert gateway.max_active == 2
+
+
 def test_deploy_selected_service_rungraphs_skips_blocked_services() -> None:
     gateway = _FakeRungraphGateway()
     flow = RungraphDeployFlow(

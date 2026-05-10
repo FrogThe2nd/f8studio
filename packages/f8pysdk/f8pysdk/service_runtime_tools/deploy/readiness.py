@@ -25,6 +25,9 @@ class RungraphDeployStatus:
     ok: bool
     error_message: str
     ts_ms: int
+    target_fingerprint: str = ""
+    applied_fingerprint: str = ""
+    runtime_instance_id: str = ""
 
 
 class RungraphDeployStatusTimeout(Exception):
@@ -32,6 +35,7 @@ class RungraphDeployStatusTimeout(Exception):
 
 
 RUNGRAPH_DEPLOY_PROTOCOL = "f8.rungraphDeployStatus/1"
+RUNGRAPH_DEPLOY_PROTOCOL_V2 = "f8.rungraphDeployStatus/2"
 
 
 def rungraph_deploy_status_key(service_id: str) -> str:
@@ -163,6 +167,9 @@ def _rungraph_status_from_payload(payload: Any) -> RungraphDeployStatus | None:
     revision = str(payload.get("revision") or "").strip()
     phase = str(payload.get("phase") or "").strip()
     error_message = str(payload.get("errorMessage") or "").strip()
+    target_fingerprint = str(payload.get("targetFingerprint") or "").strip()
+    applied_fingerprint = str(payload.get("appliedFingerprint") or "").strip()
+    runtime_instance_id = str(payload.get("runtimeInstanceId") or "").strip()
     try:
         ts_ms = int(payload.get("ts") or 0)
     except (TypeError, ValueError):
@@ -176,6 +183,9 @@ def _rungraph_status_from_payload(payload: Any) -> RungraphDeployStatus | None:
         ok=bool(payload.get("ok") is True),
         error_message=error_message,
         ts_ms=ts_ms,
+        target_fingerprint=target_fingerprint,
+        applied_fingerprint=applied_fingerprint,
+        runtime_instance_id=runtime_instance_id,
     )
 
 
@@ -186,6 +196,7 @@ async def wait_rungraph_deploy_status(
     req_id: str,
     graph_id: str = "",
     revision: str = "",
+    target_fingerprint: str = "",
     timeout_s: float = 15.0,
 ) -> RungraphDeployStatus:
     """
@@ -200,6 +211,7 @@ async def wait_rungraph_deploy_status(
         raise ValueError("req_id is required")
     graph_id_s = str(graph_id or "").strip()
     revision_s = str(revision or "").strip()
+    target_fingerprint_s = str(target_fingerprint or "").strip()
     key = rungraph_deploy_request_status_key(service_id_s, req_id_s)
     last_status: RungraphDeployStatus | None = None
 
@@ -215,6 +227,10 @@ async def wait_rungraph_deploy_status(
         if graph_id_s and status.graph_id != graph_id_s:
             return None
         if revision_s and status.revision != revision_s:
+            return None
+        if target_fingerprint_s and status.target_fingerprint and status.target_fingerprint != target_fingerprint_s:
+            return None
+        if target_fingerprint_s and status.applied_fingerprint and status.applied_fingerprint != target_fingerprint_s:
             return None
         last_status = status
         if status.phase not in ("applied", "failed"):

@@ -9,6 +9,8 @@ from f8pysdk.f8_naming import ensure_token
 from ..nodegraph.runtime_compiler import CompiledRuntimeGraphs
 from .rungraph_deployer import RungraphDeployRequest, RungraphGateway
 
+DEPLOY_SERVICE_CONCURRENCY = 2
+
 
 def pick_compiled(
     compiled: CompiledRuntimeGraphs | None,
@@ -61,20 +63,22 @@ class RungraphDeployFlow:
         allowed_service_ids: set[str] | None,
     ) -> None:
         async def _deploy_one(service_id: str, graph: object) -> None:
-            try:
-                result = await self.rungraph_gateway.deploy_runtime_graph(
-                    RungraphDeployRequest(
-                        service_id=service_id,
-                        graph=graph,
-                        source="studio",
+            async with semaphore:
+                try:
+                    result = await self.rungraph_gateway.deploy_runtime_graph(
+                        RungraphDeployRequest(
+                            service_id=service_id,
+                            graph=graph,
+                            source="studio",
+                        )
                     )
-                )
-                if not result.success:
-                    raise RuntimeError(result.error_message or "set_rungraph rejected")
-            except Exception as exc:
-                self.emit_log(f"deploy failed serviceId={service_id}: {exc}")
+                    if not result.success:
+                        raise RuntimeError(result.error_message or "set_rungraph rejected")
+                except Exception as exc:
+                    self.emit_log(f"deploy failed serviceId={service_id}: {exc}")
 
         tasks: list[asyncio.Task[None]] = []
+        semaphore = asyncio.Semaphore(DEPLOY_SERVICE_CONCURRENCY)
         for sid_raw, graph in compiled.per_service.items():
             service_id = ensure_token(str(sid_raw), label="service_id")
             if service_id == str(self.studio_service_id):

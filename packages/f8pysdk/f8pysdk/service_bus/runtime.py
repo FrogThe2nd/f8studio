@@ -19,6 +19,7 @@ from ..command import CommandExecutionResult, CommandOutputPolicy
 from ..data import CrossPublishPolicy, DataDeliveryMode
 from ..generated import F8RuntimeGraph
 from ..f8_naming import ensure_token
+from ..rungraph_fingerprint import build_rungraph_deploy_fingerprint
 from ..service_runtime_tools.deploy.readiness import rungraph_deploy_request_status_key
 from ..runtime_transport import RuntimeTransport
 from ..zenoh_transport import ZenohTransport, ZenohTransportConfig
@@ -230,6 +231,7 @@ class ServiceBus:
 
         self._nodes: dict[str, _ServiceBusNode] = {}
         self._graph: F8RuntimeGraph | None = None
+        self._rungraph_fingerprint = ""
 
         self._rungraph_key = f"f8/svc/{self.service_id}/config/rungraph"
         self._rungraph_status_key = f"f8/svc/{self.service_id}/status/rungraph"
@@ -261,6 +263,8 @@ class ServiceBus:
         self._state_publish_seq = 0
         self._rungraph_apply_lock = asyncio.Lock()
         self._rungraph_apply_tasks: set[asyncio.Task[None]] = set()
+        self._rungraph_req_fingerprints: dict[str, str] = {}
+        self._rungraph_inflight_aliases: dict[str, set[str]] = {}
 
         # Process-level termination request (set via `svc.<serviceId>.terminate`).
         # Service entrypoints may `await bus.wait_terminate()` to exit gracefully.
@@ -696,7 +700,14 @@ class ServiceBus:
     async def set_rungraph(self, graph: F8RuntimeGraph) -> None:
         await _set_rungraph_impl(self, graph)
 
-    async def submit_rungraph(self, graph: F8RuntimeGraph, *, req_id: str, source: str = "control") -> None:
+    async def submit_rungraph(
+        self,
+        graph: F8RuntimeGraph,
+        *,
+        req_id: str,
+        source: str = "control",
+        target_fingerprint: str = "",
+    ) -> None:
         """
         Accept a remote rungraph deployment request and apply it asynchronously.
 
@@ -708,9 +719,42 @@ class ServiceBus:
         if not req_id_s:
             raise ValueError("req_id is empty")
         source_s = str(source or "control").strip() or "control"
-        await self._publish_rungraph_status(graph, req_id=req_id_s, phase="accepted", source=source_s)
+        fingerprint = str(target_fingerprint or "").strip() or build_rungraph_deploy_fingerprint(graph)
+        existing_fingerprint = self._rungraph_req_fingerprints.get(req_id_s)
+        if existing_fingerprint is not None and existing_fingerprint != fingerprint:
+            raise ValueError("req_id already used for a different rungraph fingerprint")
+        self._rungraph_req_fingerprints[req_id_s] = fingerprint
+        if self._rungraph_fingerprint and self._rungraph_fingerprint == fingerprint:
+            self._schedule_rungraph_status_publish(
+                graph,
+                req_id=req_id_s,
+                phase="applied",
+                source=source_s,
+                target_fingerprint=fingerprint,
+                applied_fingerprint=fingerprint,
+            )
+            return
+        aliases = self._rungraph_inflight_aliases.get(fingerprint)
+        if aliases is not None:
+            aliases.add(req_id_s)
+            self._schedule_rungraph_status_publish(
+                graph,
+                req_id=req_id_s,
+                phase="accepted",
+                source=source_s,
+                target_fingerprint=fingerprint,
+            )
+            return
+        self._rungraph_inflight_aliases[fingerprint] = {req_id_s}
+        self._schedule_rungraph_status_publish(
+            graph,
+            req_id=req_id_s,
+            phase="accepted",
+            source=source_s,
+            target_fingerprint=fingerprint,
+        )
         task = asyncio.create_task(
-            self._rungraph_apply_worker(graph, req_id=req_id_s, source=source_s),
+            self._rungraph_apply_worker(graph, target_fingerprint=fingerprint, source=source_s),
             name=f"service_bus:set_rungraph:{self.service_id}:{req_id_s}",
         )
         self._rungraph_apply_tasks.add(task)
@@ -725,22 +769,88 @@ class ServiceBus:
         except Exception as exc:
             log.error("rungraph apply task failed service_id=%s", self.service_id, exc_info=exc)
 
-    async def _rungraph_apply_worker(self, graph: F8RuntimeGraph, *, req_id: str, source: str) -> None:
+    async def _rungraph_apply_worker(self, graph: F8RuntimeGraph, *, target_fingerprint: str, source: str) -> None:
         async with self._rungraph_apply_lock:
-            await self._publish_rungraph_status(graph, req_id=req_id, phase="applying", source=source)
+            aliases = set(self._rungraph_inflight_aliases.get(target_fingerprint) or set())
+            self._schedule_rungraph_status_publish_for_aliases(
+                graph,
+                req_ids=aliases,
+                phase="applying",
+                source=source,
+                target_fingerprint=target_fingerprint,
+            )
             try:
                 await self.set_rungraph(graph)
             except Exception as exc:
-                await self._publish_rungraph_status(
+                self._schedule_rungraph_status_publish_for_aliases(
                     graph,
-                    req_id=req_id,
+                    req_ids=set(self._rungraph_inflight_aliases.get(target_fingerprint) or aliases),
                     phase="failed",
                     source=source,
+                    target_fingerprint=target_fingerprint,
                     error_message=f"{type(exc).__name__}: {exc}",
                 )
-                log.error("rungraph async apply failed service_id=%s req_id=%s", self.service_id, req_id, exc_info=exc)
+                self._rungraph_inflight_aliases.pop(target_fingerprint, None)
+                log.error("rungraph async apply failed service_id=%s", self.service_id, exc_info=exc)
                 return
-            await self._publish_rungraph_status(graph, req_id=req_id, phase="applied", source=source)
+            applied_fingerprint = self._rungraph_fingerprint or build_rungraph_deploy_fingerprint(graph)
+            self._schedule_rungraph_status_publish_for_aliases(
+                graph,
+                req_ids=set(self._rungraph_inflight_aliases.get(target_fingerprint) or aliases),
+                phase="applied",
+                source=source,
+                target_fingerprint=target_fingerprint,
+                applied_fingerprint=applied_fingerprint,
+            )
+            self._rungraph_inflight_aliases.pop(target_fingerprint, None)
+
+    def _schedule_rungraph_status_publish_for_aliases(
+        self,
+        graph: F8RuntimeGraph,
+        *,
+        req_ids: set[str],
+        phase: str,
+        source: str,
+        target_fingerprint: str,
+        applied_fingerprint: str = "",
+        error_message: str = "",
+    ) -> None:
+        for req_id in sorted(str(item) for item in req_ids if str(item or "").strip()):
+            self._schedule_rungraph_status_publish(
+                graph,
+                req_id=req_id,
+                phase=phase,
+                source=source,
+                target_fingerprint=target_fingerprint,
+                applied_fingerprint=applied_fingerprint,
+                error_message=error_message,
+            )
+
+    def _schedule_rungraph_status_publish(
+        self,
+        graph: F8RuntimeGraph,
+        *,
+        req_id: str,
+        phase: str,
+        source: str,
+        target_fingerprint: str = "",
+        applied_fingerprint: str = "",
+        error_message: str = "",
+    ) -> None:
+        task = asyncio.create_task(
+            self._publish_rungraph_status(
+                graph,
+                req_id=req_id,
+                phase=phase,
+                source=source,
+                target_fingerprint=target_fingerprint,
+                applied_fingerprint=applied_fingerprint,
+                error_message=error_message,
+            ),
+            name=f"service_bus:rungraph_status:{self.service_id}:{req_id}:{phase}",
+        )
+        self._rungraph_apply_tasks.add(task)
+        task.add_done_callback(self._on_rungraph_apply_task_done)
 
     async def _publish_rungraph_status(
         self,
@@ -749,13 +859,15 @@ class ServiceBus:
         req_id: str,
         phase: str,
         source: str,
+        target_fingerprint: str = "",
+        applied_fingerprint: str = "",
         error_message: str = "",
     ) -> None:
         graph_id = str(graph.graphId or "")
         revision = str(graph.revision or "")
         phase_s = str(phase or "").strip()
         payload = {
-            "schemaVersion": "f8.rungraphDeployStatus/1",
+            "schemaVersion": "f8.rungraphDeployStatus/2",
             "serviceId": self.service_id,
             "reqId": str(req_id or ""),
             "graphId": graph_id,
@@ -765,10 +877,25 @@ class ServiceBus:
             "source": str(source or ""),
             "errorMessage": str(error_message or ""),
             "ts": int(now_ms()),
+            "targetFingerprint": str(target_fingerprint or ""),
+            "appliedFingerprint": str(applied_fingerprint or ""),
+            "runtimeInstanceId": self.runtime_instance_id,
         }
         raw = encode_obj(payload)
-        await self._transport.retained_put(self._rungraph_status_key, raw)
-        await self._transport.retained_put(rungraph_deploy_request_status_key(self.service_id, str(req_id or "")), raw)
+        try:
+            await asyncio.wait_for(self._transport.retained_put(self._rungraph_status_key, raw), timeout=1.0)
+            await asyncio.wait_for(
+                self._transport.retained_put(rungraph_deploy_request_status_key(self.service_id, str(req_id or "")), raw),
+                timeout=1.0,
+            )
+        except (asyncio.TimeoutError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            log.error(
+                "publish rungraph status failed service_id=%s req_id=%s phase=%s",
+                self.service_id,
+                req_id,
+                phase_s,
+                exc_info=exc,
+            )
 
     async def publish(self, key: str, payload: bytes) -> None:
         """Publish a message to a Zenoh key."""
