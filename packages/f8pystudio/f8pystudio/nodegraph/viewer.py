@@ -92,6 +92,8 @@ class F8StudioNodeViewer(NodeViewer):
         self._context_menu_active: bool = False
         self._context_menu_selection_pending: bool = False
         self._context_menu_saved_update_mode = self.viewportUpdateMode()
+        self._context_menu_saved_animate_menu_effect = True
+        self._context_menu_saved_fade_menu_effect = True
         self._placement_preview_rect: QtWidgets.QGraphicsRectItem | None = None
         self._placement_preview_label: QtWidgets.QGraphicsSimpleTextItem | None = None
         self._edge_kind_visibility: dict[str, bool] = {
@@ -677,8 +679,25 @@ class F8StudioNodeViewer(NodeViewer):
     def _pause_graph_updates_for_context_menu(self) -> None:
         self._context_menu_saved_update_mode = self.viewportUpdateMode()
         self.setViewportUpdateMode(QtWidgets.QGraphicsView.NoViewportUpdate)
+        app = QtWidgets.QApplication.instance()
+        if app is None:
+            return
+        try:
+            self._context_menu_saved_animate_menu_effect = bool(app.isEffectEnabled(QtCore.Qt.UI_AnimateMenu))
+            self._context_menu_saved_fade_menu_effect = bool(app.isEffectEnabled(QtCore.Qt.UI_FadeMenu))
+            app.setEffectEnabled(QtCore.Qt.UI_AnimateMenu, False)
+            app.setEffectEnabled(QtCore.Qt.UI_FadeMenu, False)
+        except (AttributeError, RuntimeError, TypeError):
+            return
 
     def _resume_graph_updates_after_context_menu(self) -> None:
+        app = QtWidgets.QApplication.instance()
+        if app is not None:
+            try:
+                app.setEffectEnabled(QtCore.Qt.UI_AnimateMenu, self._context_menu_saved_animate_menu_effect)
+                app.setEffectEnabled(QtCore.Qt.UI_FadeMenu, self._context_menu_saved_fade_menu_effect)
+            except (AttributeError, RuntimeError, TypeError):
+                pass
         self.setViewportUpdateMode(self._context_menu_saved_update_mode)
         try:
             self.viewport().update()

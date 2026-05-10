@@ -43,11 +43,13 @@ class _FakeMenu:
 
 
 def test_context_menu_popup_is_non_blocking_for_video_timers() -> None:
-    _ensure_app()
+    app = _ensure_app()
     viewer = F8StudioNodeViewer()
     viewer.resize(640, 480)
     viewer.show()
     assert viewer.viewportUpdateMode() == QtWidgets.QGraphicsView.BoundingRectViewportUpdate
+    original_animate = bool(app.isEffectEnabled(QtCore.Qt.UI_AnimateMenu))
+    original_fade = bool(app.isEffectEnabled(QtCore.Qt.UI_FadeMenu))
     graph_menu = _FakeMenu(enabled=True, actions=[QtWidgets.QAction("Noop", viewer)])
     nodes_menu = _FakeMenu(enabled=False)
     viewer.context_menus = lambda: {"graph": graph_menu, "nodes": nodes_menu}  # type: ignore[method-assign]
@@ -60,8 +62,12 @@ def test_context_menu_popup_is_non_blocking_for_video_timers() -> None:
     assert len(graph_menu.aboutToHide.callbacks) == 1
     assert viewer.is_context_menu_selection_pending() is True
     assert viewer.viewportUpdateMode() == QtWidgets.QGraphicsView.NoViewportUpdate
+    assert app.isEffectEnabled(QtCore.Qt.UI_AnimateMenu) is False
+    assert app.isEffectEnabled(QtCore.Qt.UI_FadeMenu) is False
 
     viewer._on_context_menu_hidden()
 
     assert viewer.is_context_menu_selection_pending() is False
     assert viewer.viewportUpdateMode() == QtWidgets.QGraphicsView.BoundingRectViewportUpdate
+    assert bool(app.isEffectEnabled(QtCore.Qt.UI_AnimateMenu)) is original_animate
+    assert bool(app.isEffectEnabled(QtCore.Qt.UI_FadeMenu)) is original_fade
