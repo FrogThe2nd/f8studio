@@ -26,7 +26,7 @@ import pyqtgraph as pg  # type: ignore[import-not-found]
 
 _STATE_UI_UPDATE = "uiUpdate"
 _WIDGET_NAME = "__trackviz"
-_TRACKVIZ_RENDER_VIDEO_BACKGROUND = False
+_TRACKVIZ_RENDER_VIDEO_BACKGROUND = True
 
 
 @dataclass(frozen=True)
@@ -423,7 +423,7 @@ class _TrackVizPane(QtWidgets.QWidget):
         self._scene_payload: dict[str, Any] | None = None
         self._video_timer = QtCore.QTimer(self)
         self._video_timer.timeout.connect(self._tick_video)  # type: ignore[attr-defined]
-        self._video_timer.setInterval(33)
+        self._video_timer.setInterval(self._video_frame_throttle_ms)
 
         # Smaller default footprint for graph-embedded preview.
         self.setMinimumWidth(240)
@@ -490,7 +490,6 @@ class _TrackVizPane(QtWidgets.QWidget):
         except (AttributeError, TypeError, ValueError):
             self._scene_size = None
         self._scene_payload = dict(payload)
-        self._scene_payload["videoStreamKey"] = ""
         if not self._show_sparse_flow:
             self._scene_payload["flow"] = None
         self._scene_payload["flowDense"] = None
@@ -688,7 +687,7 @@ class _TrackVizPane(QtWidgets.QWidget):
     def _tick_video(self) -> None:
         if not self.update_enabled():
             return
-        if _TRACKVIZ_RENDER_VIDEO_BACKGROUND and self._ensure_video_reader() and self._video_reader is not None:
+        if self._ensure_video_reader() and self._video_reader is not None:
             frame = self._video_reader.poll_latest()
             if frame is not None:
                 try:
