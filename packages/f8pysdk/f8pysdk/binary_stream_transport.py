@@ -52,6 +52,7 @@ class ZenohLatestBinaryStreamTransport:
         subscriber: Any | None = None,
         publisher: Any | None = None,
         log_context: str = "stream",
+        min_sample_interval_ms: int = 0,
     ) -> None:
         key = str(key_expr or "").strip()
         if not key:
@@ -66,6 +67,14 @@ class ZenohLatestBinaryStreamTransport:
         self._latest_raw: bytes | None = None
         self._latest_seq = 0
         self._delivered_seq = 0
+        self._min_sample_interval_s = max(0.0, float(int(min_sample_interval_ms)) / 1000.0)
+        self._last_accepted_sample_s = 0.0
+
+    def set_min_sample_interval_ms(self, min_sample_interval_ms: int) -> None:
+        next_interval_s = max(0.0, float(int(min_sample_interval_ms)) / 1000.0)
+        with self._cv:
+            self._min_sample_interval_s = next_interval_s
+            self._last_accepted_sample_s = 0.0
 
     @classmethod
     def open_publisher(
@@ -99,6 +108,7 @@ class ZenohLatestBinaryStreamTransport:
         listen: tuple[str, ...] = (),
         shm_pool_bytes: int = 256 * 1024 * 1024,
         log_context: str = "stream",
+        min_sample_interval_ms: int = 0,
     ) -> "ZenohLatestBinaryStreamTransport":
         session = _open_zenoh_stream_session(
             config_path=config_path,
@@ -107,7 +117,12 @@ class ZenohLatestBinaryStreamTransport:
             shm_pool_bytes=shm_pool_bytes,
             log_context=log_context,
         )
-        transport = cls(key_expr=key_expr, session=session, log_context=log_context)
+        transport = cls(
+            key_expr=key_expr,
+            session=session,
+            log_context=log_context,
+            min_sample_interval_ms=int(min_sample_interval_ms),
+        )
 
         def _on_sample(sample: Any) -> None:
             transport._on_sample(sample)
@@ -126,6 +141,7 @@ class ZenohLatestBinaryStreamTransport:
         listen: tuple[str, ...] = (),
         shm_pool_bytes: int = 256 * 1024 * 1024,
         log_context: str = "stream",
+        min_sample_interval_ms: int = 0,
     ) -> "ZenohLatestBinaryStreamTransport":
         session = _open_zenoh_stream_session(
             config_path=config_path,
@@ -134,7 +150,12 @@ class ZenohLatestBinaryStreamTransport:
             shm_pool_bytes=shm_pool_bytes,
             log_context=log_context,
         )
-        transport = cls(key_expr=key_expr, session=session, log_context=log_context)
+        transport = cls(
+            key_expr=key_expr,
+            session=session,
+            log_context=log_context,
+            min_sample_interval_ms=int(min_sample_interval_ms),
+        )
 
         def _on_sample(sample: Any) -> None:
             transport._on_sample(sample)
@@ -229,6 +250,15 @@ class ZenohLatestBinaryStreamTransport:
         return None
 
     def _on_sample(self, sample: Any) -> None:
+        now_s = time.monotonic()
+        with self._cv:
+            if self._closed:
+                return
+            if self._min_sample_interval_s > 0.0:
+                elapsed_s = now_s - float(self._last_accepted_sample_s)
+                if elapsed_s < self._min_sample_interval_s:
+                    return
+                self._last_accepted_sample_s = now_s
         try:
             raw = bytes(sample.payload)
         except (TypeError, ValueError) as exc:

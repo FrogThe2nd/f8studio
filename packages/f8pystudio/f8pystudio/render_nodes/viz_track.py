@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import colorsys
 import math
+from dataclasses import dataclass
 from typing import Any, Callable
 
 import numpy as np
@@ -15,6 +16,7 @@ from f8pysdk.video_transport import (
     ZenohLatestVideoFrameTransport,
 )
 
+from .video_preview import copy_bgra_preview_image, embedded_video_timer_interval_ms, preview_sample_steps
 from ..nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from ..nodegraph.viz_operator_nodeitem import F8StudioVizOperatorNodeItem
 from f8pystudio.visualization.skeletons import skeleton_edges_for_protocol
@@ -24,6 +26,17 @@ import pyqtgraph as pg  # type: ignore[import-not-found]
 
 _STATE_UI_UPDATE = "uiUpdate"
 _WIDGET_NAME = "__trackviz"
+
+
+@dataclass(frozen=True)
+class _FlowPreview:
+    uv: np.ndarray
+    sampled_width: int
+    sampled_height: int
+    source_width: int
+    source_height: int
+    step_x: int
+    step_y: int
 
 
 def _color_for_id(track_id: int) -> tuple[int, int, int]:
@@ -395,7 +408,7 @@ class _TrackVizPane(QtWidgets.QWidget):
         self._last_wh: tuple[int, int] | None = None
         self._scene_size: tuple[int, int] | None = None
         self._video_stream_key = ""
-        self._video_frame_throttle_ms = 33
+        self._video_frame_throttle_ms = embedded_video_timer_interval_ms(33)
         self._video_reader: LatestVideoFrameTransport | None = None
         self._flow_stream_key = ""
         self._flow_reader: LatestVideoFrameTransport | None = None
@@ -502,10 +515,14 @@ class _TrackVizPane(QtWidgets.QWidget):
         show_sparse_flow: bool,
         dense_flow_mode: str,
     ) -> None:
-        next_throttle_ms = max(1, int(throttle_ms))
+        next_throttle_ms = embedded_video_timer_interval_ms(throttle_ms)
         if self._video_frame_throttle_ms != next_throttle_ms:
             self._video_frame_throttle_ms = next_throttle_ms
             self._video_timer.setInterval(self._video_frame_throttle_ms)
+            if self._video_reader is not None:
+                self._video_reader.set_min_sample_interval_ms(self._video_frame_throttle_ms)
+            if self._flow_reader is not None:
+                self._flow_reader.set_min_sample_interval_ms(self._video_frame_throttle_ms)
 
         next_video_stream_key = str(video_stream_key or "").strip()
         if next_video_stream_key != self._video_stream_key:
@@ -589,7 +606,10 @@ class _TrackVizPane(QtWidgets.QWidget):
         try:
             if not self._video_stream_key:
                 return False
-            reader: LatestVideoFrameTransport = ZenohLatestVideoFrameTransport.open_subscriber(self._video_stream_key)
+            reader: LatestVideoFrameTransport = ZenohLatestVideoFrameTransport.open_subscriber(
+                self._video_stream_key,
+                min_sample_interval_ms=self._video_frame_throttle_ms,
+            )
             self._video_reader = reader
             return True
         except (OSError, RuntimeError, ValueError):
@@ -602,14 +622,17 @@ class _TrackVizPane(QtWidgets.QWidget):
         try:
             if not self._flow_stream_key:
                 return False
-            reader: LatestVideoFrameTransport = ZenohLatestVideoFrameTransport.open_subscriber(self._flow_stream_key)
+            reader: LatestVideoFrameTransport = ZenohLatestVideoFrameTransport.open_subscriber(
+                self._flow_stream_key,
+                min_sample_interval_ms=self._video_frame_throttle_ms,
+            )
             self._flow_reader = reader
             return True
         except (OSError, RuntimeError, ValueError):
             self._flow_reader = None
             return False
 
-    def _read_flow_uv(self) -> tuple[np.ndarray, int, int] | None:
+    def _read_flow_uv(self) -> _FlowPreview | None:
         if not self._ensure_flow_reader() or self._flow_reader is None:
             return None
         frame = self._flow_reader.poll_latest()
@@ -628,13 +651,33 @@ class _TrackVizPane(QtWidgets.QWidget):
             pitch = int(frame.pitch)
             if w <= 0 or h <= 0 or pitch < w * 4:
                 return None
+            step_x, step_y, sampled_w, sampled_h = preview_sample_steps(width=w, height=h)
             row_bytes = w * 4
+            sampled_row_bytes = sampled_w * 4
             rows = []
-            for y in range(h):
+            for y in range(0, h, step_y):
                 off = y * pitch
-                rows.append(bytes(frame.payload[off : off + row_bytes]))
-            uv = np.frombuffer(b"".join(rows), dtype="<f2").reshape(h, w, 2).astype(np.float32)
-            return uv, w, h
+                row = frame.payload[off : off + row_bytes]
+                if step_x == 1:
+                    rows.append(bytes(row[:sampled_row_bytes]))
+                    continue
+                sampled = bytearray(sampled_row_bytes)
+                write_offset = 0
+                for x in range(0, w, step_x):
+                    read_offset = x * 4
+                    sampled[write_offset : write_offset + 4] = row[read_offset : read_offset + 4]
+                    write_offset += 4
+                rows.append(bytes(sampled))
+            uv = np.frombuffer(b"".join(rows), dtype="<f2").reshape(sampled_h, sampled_w, 2).astype(np.float32)
+            return _FlowPreview(
+                uv=uv,
+                sampled_width=sampled_w,
+                sampled_height=sampled_h,
+                source_width=w,
+                source_height=h,
+                step_x=step_x,
+                step_y=step_y,
+            )
         finally:
             frame.release()
 
@@ -654,17 +697,13 @@ class _TrackVizPane(QtWidgets.QWidget):
                         h = int(frame.height)
                         pitch = int(frame.pitch)
                         if w > 0 and h > 0 and pitch > 0:
-                            frame_bytes = bytes(frame.payload[: int(pitch) * int(h)])
-                            self._video_frame_bytes = frame_bytes
-                            self._video_frame_id = frame_id
-                            try:
-                                img = QtGui.QImage(frame_bytes, w, h, pitch, QtGui.QImage.Format_ARGB32)
-                                safe_img = img.copy()
+                            safe_img = copy_bgra_preview_image(frame.payload, width=w, height=h, pitch=pitch)
+                            if safe_img is not None:
+                                self._video_frame_bytes = None
+                                self._video_frame_id = frame_id
                                 self._video_size = (w, h)
                                 self._canvas.set_video_frame(safe_img)
                                 self._sync_canvas_geometry()
-                            except (AttributeError, RuntimeError, TypeError, ValueError):
-                                pass
                 finally:
                     frame.release()
 
@@ -675,7 +714,9 @@ class _TrackVizPane(QtWidgets.QWidget):
         flow_data = self._read_flow_uv()
         if flow_data is None:
             return
-        uv, w, h = flow_data
+        uv = flow_data.uv
+        w = flow_data.sampled_width
+        h = flow_data.sampled_height
 
         if self._dense_flow_mode == "hsv":
             u = uv[:, :, 0]
@@ -694,7 +735,7 @@ class _TrackVizPane(QtWidgets.QWidget):
             rgb = _hsv_to_rgb_u8(hue, sat, val)
             try:
                 img = QtGui.QImage(rgb.data, w, h, w * 3, QtGui.QImage.Format_RGB888).copy()
-                self._video_size = (w, h)
+                self._video_size = (flow_data.source_width, flow_data.source_height)
                 self._canvas.set_video_frame(img)
                 self._sync_canvas_geometry()
             except (AttributeError, RuntimeError, TypeError, ValueError):
@@ -729,7 +770,9 @@ class _TrackVizPane(QtWidgets.QWidget):
                 mag = float(np.hypot(dx, dy))
                 if mag < min_mag:
                     continue
-                vectors.append({"x": float(x), "y": float(y), "dx": dx, "dy": dy, "mag": mag})
+                source_x = float(x * flow_data.step_x)
+                source_y = float(y * flow_data.step_y)
+                vectors.append({"x": source_x, "y": source_y, "dx": dx, "dy": dy, "mag": mag})
                 if len(vectors) >= max_count:
                     break
             if len(vectors) >= max_count:
@@ -737,8 +780,8 @@ class _TrackVizPane(QtWidgets.QWidget):
 
         self._scene_payload["flowDense"] = {
             "schemaVersion": "f8visionFlowField/1",
-            "width": int(w),
-            "height": int(h),
+            "width": int(flow_data.source_width),
+            "height": int(flow_data.source_height),
             "vectors": vectors,
         }
         try:

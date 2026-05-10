@@ -12,6 +12,25 @@ from f8pystudio.render_nodes.viz_video import (
     _normalize_scalar_values,
     _to_bool,
 )
+from f8pystudio.render_nodes.video_preview import EMBEDDED_VIDEO_MIN_INTERVAL_MS
+
+
+class _IntervalReader:
+    def __init__(self) -> None:
+        self.intervals: list[int] = []
+
+    def close(self) -> None:
+        return
+
+    def poll_latest(self) -> None:
+        return None
+
+    def wait_latest(self, timeout_ms: int) -> None:
+        _ = timeout_ms
+        return None
+
+    def set_min_sample_interval_ms(self, min_sample_interval_ms: int) -> None:
+        self.intervals.append(int(min_sample_interval_ms))
 
 
 def _ensure_app() -> QtWidgets.QApplication:
@@ -184,5 +203,45 @@ def test_video_pane_accepts_zenoh_video_source() -> None:
     try:
         assert pane._video_stream_key == "f8/test/video/source"
         assert pane._timer.isActive()
+        assert pane._timer.interval() == EMBEDDED_VIDEO_MIN_INTERVAL_MS
+    finally:
+        pane.detach()
+
+
+def test_video_pane_updates_existing_reader_sample_interval() -> None:
+    _ensure_app()
+    pane = _LatestVideoPane()
+    pane._timer.stop()
+    video_reader = _IntervalReader()
+    flow_reader = _IntervalReader()
+    scalar_reader = _IntervalReader()
+    pane._video_reader = video_reader
+    pane._flow_reader = flow_reader
+    pane._scalar_reader = scalar_reader
+
+    pane.set_config(
+        video_stream_key="",
+        throttle_ms=250,
+        flow_stream_key="",
+        flow_display_mode="off",
+        flow_mag_scale=20.0,
+        flow_stride=12,
+        scalar_stream_key="",
+        scalar_display_mode="off",
+        scalar_colormap="turbo",
+        scalar_range_mode="auto",
+        scalar_min=-1.0,
+        scalar_max=1.0,
+        scalar_auto_percentile_lo=2.0,
+        scalar_auto_percentile_hi=98.0,
+        scalar_invert=False,
+        scalar_nan_mode="transparent",
+        scale_mode="fit",
+    )
+    try:
+        assert pane._timer.interval() == 250
+        assert video_reader.intervals == [250]
+        assert flow_reader.intervals == [250]
+        assert scalar_reader.intervals == [250]
     finally:
         pane.detach()

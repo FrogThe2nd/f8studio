@@ -14,6 +14,7 @@ from f8pysdk.video_transport import (
     ZenohLatestVideoFrameTransport,
 )
 
+from .video_preview import copy_bgra_preview_image, embedded_video_timer_interval_ms
 from ..nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from ..nodegraph.viz_operator_nodeitem import F8StudioVizOperatorNodeItem
 from f8pystudio.contracts.ui_commands import UiCommand
@@ -192,7 +193,7 @@ class _LatestVideoPane(QtWidgets.QWidget):
 
         self._timer = QtCore.QTimer(self)
         self._timer.timeout.connect(self._tick)  # type: ignore[attr-defined]
-        self._timer.setInterval(33)
+        self._timer.setInterval(embedded_video_timer_interval_ms(33))
 
         self._video_reader: LatestVideoFrameTransport | None = None
         self._flow_reader: LatestVideoFrameTransport | None = None
@@ -294,7 +295,15 @@ class _LatestVideoPane(QtWidgets.QWidget):
         self._scalar_nan_mode = next_scalar_nan_mode
         next_scale_mode = str(scale_mode or "fit").strip().lower()
         self._scale_mode = next_scale_mode if next_scale_mode in ("native", "fit") else "fit"
-        self._timer.setInterval(max(1, int(throttle_ms)))
+        next_timer_interval_ms = embedded_video_timer_interval_ms(throttle_ms)
+        if self._timer.interval() != next_timer_interval_ms:
+            self._timer.setInterval(next_timer_interval_ms)
+            if self._video_reader is not None:
+                self._video_reader.set_min_sample_interval_ms(next_timer_interval_ms)
+            if self._flow_reader is not None:
+                self._flow_reader.set_min_sample_interval_ms(next_timer_interval_ms)
+            if self._scalar_reader is not None:
+                self._scalar_reader.set_min_sample_interval_ms(next_timer_interval_ms)
         self._sync_timer_with_update_state()
 
     def detach(self) -> None:
@@ -351,7 +360,10 @@ class _LatestVideoPane(QtWidgets.QWidget):
         if not self._video_stream_key:
             return False
         try:
-            self._video_reader = ZenohLatestVideoFrameTransport.open_subscriber(self._video_stream_key)
+            self._video_reader = ZenohLatestVideoFrameTransport.open_subscriber(
+                self._video_stream_key,
+                min_sample_interval_ms=self._timer.interval(),
+            )
             return True
         except (OSError, RuntimeError, ValueError):
             self._video_reader = None
@@ -363,7 +375,10 @@ class _LatestVideoPane(QtWidgets.QWidget):
         if not self._flow_stream_key:
             return False
         try:
-            self._flow_reader = ZenohLatestVideoFrameTransport.open_subscriber(self._flow_stream_key)
+            self._flow_reader = ZenohLatestVideoFrameTransport.open_subscriber(
+                self._flow_stream_key,
+                min_sample_interval_ms=self._timer.interval(),
+            )
             return True
         except (OSError, RuntimeError, ValueError):
             self._flow_reader = None
@@ -375,7 +390,10 @@ class _LatestVideoPane(QtWidgets.QWidget):
         if not self._scalar_stream_key:
             return False
         try:
-            self._scalar_reader = ZenohLatestVideoFrameTransport.open_subscriber(self._scalar_stream_key)
+            self._scalar_reader = ZenohLatestVideoFrameTransport.open_subscriber(
+                self._scalar_stream_key,
+                min_sample_interval_ms=self._timer.interval(),
+            )
             return True
         except (OSError, RuntimeError, ValueError):
             self._scalar_reader = None
@@ -401,10 +419,11 @@ class _LatestVideoPane(QtWidgets.QWidget):
             pitch = int(frame.pitch)
             if w <= 0 or h <= 0 or pitch <= 0:
                 return
-            frame_bytes = frame.payload_bytes()
             try:
-                img = QtGui.QImage(frame_bytes, w, h, pitch, QtGui.QImage.Format_ARGB32)
-                self._latest_video = img.copy()
+                img = copy_bgra_preview_image(frame.payload, width=w, height=h, pitch=pitch)
+                if img is None:
+                    return
+                self._latest_video = img
                 self._last_video_frame_id = frame_id
             except (AttributeError, RuntimeError, TypeError, ValueError):
                 return

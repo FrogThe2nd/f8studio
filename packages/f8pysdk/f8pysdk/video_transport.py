@@ -59,6 +59,8 @@ class LatestVideoFrame:
 class LatestVideoFrameTransport(Protocol):
     def close(self) -> None: ...
 
+    def set_min_sample_interval_ms(self, min_sample_interval_ms: int) -> None: ...
+
     def publish_frame(
         self,
         *,
@@ -168,6 +170,7 @@ class ZenohLatestVideoFrameTransport:
         subscriber: Any | None = None,
         publisher: Any | None = None,
         raw_transport: ZenohLatestBinaryStreamTransport | None = None,
+        min_sample_interval_ms: int = 0,
     ) -> None:
         key = str(key_expr or "").strip()
         if not key:
@@ -182,6 +185,7 @@ class ZenohLatestVideoFrameTransport:
                 subscriber=subscriber,
                 publisher=publisher,
                 log_context="video",
+                min_sample_interval_ms=int(min_sample_interval_ms),
             )
         self._raw = raw_transport
         self._frame_id = 0
@@ -215,6 +219,7 @@ class ZenohLatestVideoFrameTransport:
         connect: tuple[str, ...] = (),
         listen: tuple[str, ...] = (),
         shm_pool_bytes: int = 256 * 1024 * 1024,
+        min_sample_interval_ms: int = 0,
     ) -> "ZenohLatestVideoFrameTransport":
         raw = ZenohLatestBinaryStreamTransport.open_subscriber(
             key_expr,
@@ -223,6 +228,7 @@ class ZenohLatestVideoFrameTransport:
             listen=listen,
             shm_pool_bytes=shm_pool_bytes,
             log_context="video",
+            min_sample_interval_ms=int(min_sample_interval_ms),
         )
         return cls(key_expr=key_expr, raw_transport=raw)
 
@@ -235,6 +241,7 @@ class ZenohLatestVideoFrameTransport:
         connect: tuple[str, ...] = (),
         listen: tuple[str, ...] = (),
         shm_pool_bytes: int = 256 * 1024 * 1024,
+        min_sample_interval_ms: int = 0,
     ) -> "ZenohLatestVideoFrameTransport":
         raw = ZenohLatestBinaryStreamTransport.open_pubsub(
             key_expr,
@@ -243,11 +250,15 @@ class ZenohLatestVideoFrameTransport:
             listen=listen,
             shm_pool_bytes=shm_pool_bytes,
             log_context="video",
+            min_sample_interval_ms=int(min_sample_interval_ms),
         )
         return cls(key_expr=key_expr, raw_transport=raw)
 
     def close(self) -> None:
         self._raw.close()
+
+    def set_min_sample_interval_ms(self, min_sample_interval_ms: int) -> None:
+        self._raw.set_min_sample_interval_ms(int(min_sample_interval_ms))
 
     def publish_frame(
         self,
