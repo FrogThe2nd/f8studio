@@ -6,6 +6,9 @@ from typing import Any, cast
 from qtpy import QtCore
 
 from ....nodegraph.node_base import F8StudioBaseNode
+from ....nodegraph.viewer import F8StudioNodeViewer
+
+_CONTEXT_MENU_SELECTION_DELAY_MS = 120
 
 
 class NodePropertyPanelSelectionMixin:
@@ -71,6 +74,25 @@ class NodePropertyPanelSelectionMixin:
         except (AttributeError, RuntimeError, TypeError, ValueError):
             host._log_exception("Failed to restore property panel scroll position")
 
+    def _should_defer_selection_editor_update(self) -> bool:
+        host = cast(Any, self)
+        viewer = host._node_graph.viewer()
+        return isinstance(viewer, F8StudioNodeViewer) and viewer.is_context_menu_selection_pending()
+
+    def _set_node_after_context_menu(self, node: F8StudioBaseNode | None) -> None:
+        host = cast(Any, self)
+        QtCore.QTimer.singleShot(
+            _CONTEXT_MENU_SELECTION_DELAY_MS,
+            lambda selected_node=node: host._apply_deferred_selected_node(selected_node),
+        )
+
+    def _apply_deferred_selected_node(self, node: F8StudioBaseNode | None) -> None:
+        host = cast(Any, self)
+        if host._should_defer_selection_editor_update():
+            host._set_node_after_context_menu(node)
+            return
+        host.set_node(node)
+
     def set_node(self, node: F8StudioBaseNode | None, *, force_clear: bool = False) -> None:
         host = cast(Any, self)
         if node is None:
@@ -102,6 +124,9 @@ class NodePropertyPanelSelectionMixin:
     def _on_node_selected(self, node: Any) -> None:
         host = cast(Any, self)
         host._last_node_click_ts = time.monotonic()
+        if host._should_defer_selection_editor_update():
+            host._set_node_after_context_menu(node)
+            return
         host.set_node(node)
 
     def _on_node_selection_changed(self, selected: list[Any], _deselected: list[Any]) -> None:
@@ -126,4 +151,7 @@ class NodePropertyPanelSelectionMixin:
         host = cast(Any, self)
         selected_nodes = list(host._node_graph.selected_nodes() or [])
         if selected_nodes:
+            if host._should_defer_selection_editor_update():
+                host._set_node_after_context_menu(selected_nodes[0])
+                return
             host.set_node(selected_nodes[0])

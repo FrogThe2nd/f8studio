@@ -362,7 +362,7 @@ class ServiceManagerWidget(QtWidgets.QWidget):
         layout.addLayout(controls)
         layout.addWidget(self._table)
 
-        self._refresh_btn.clicked.connect(self.refresh)  # type: ignore[attr-defined]
+        self._refresh_btn.clicked.connect(self.refresh_with_status_requests)  # type: ignore[attr-defined]
         self._toggle_btn.clicked.connect(self._on_toggle_clicked)  # type: ignore[attr-defined]
         self._stop_btn.clicked.connect(self._on_stop_clicked)  # type: ignore[attr-defined]
         self._deploy_btn.clicked.connect(self._on_deploy_clicked)  # type: ignore[attr-defined]
@@ -372,7 +372,7 @@ class ServiceManagerWidget(QtWidgets.QWidget):
 
         self._poll_timer = QtCore.QTimer(self)
         self._poll_timer.setInterval(1000)
-        self._poll_timer.timeout.connect(self.refresh)  # type: ignore[attr-defined]
+        self._poll_timer.timeout.connect(self.refresh_with_status_requests)  # type: ignore[attr-defined]
         self._poll_timer.start()
 
         self._monitor_refresh_timer = QtCore.QTimer(self)
@@ -392,7 +392,7 @@ class ServiceManagerWidget(QtWidgets.QWidget):
 
     def _flush_refresh_queue(self) -> None:
         self._refresh_queued = False
-        self.refresh()
+        self.refresh_with_status_requests()
 
     def queue_monitor_refresh(self) -> None:
         if self._monitor_refresh_queued:
@@ -402,7 +402,7 @@ class ServiceManagerWidget(QtWidgets.QWidget):
 
     def _flush_monitor_refresh_queue(self) -> None:
         self._monitor_refresh_queued = False
-        self.refresh()
+        self.refresh(request_status=False)
 
     def _apply_default_column_widths(self) -> None:
         for index, width in enumerate(self._DEFAULT_COLUMN_WIDTHS):
@@ -666,7 +666,10 @@ class ServiceManagerWidget(QtWidgets.QWidget):
         self._toggle_btn.setToolTip("Deactivate service")
 
     @QtCore.Slot()
-    def refresh(self) -> None:
+    def refresh_with_status_requests(self) -> None:
+        self.refresh(request_status=True)
+
+    def refresh(self, *, request_status: bool = True) -> None:
         previous_service_id = self._selected_service_id()
         vertical_scrollbar = self._table.verticalScrollBar()
         horizontal_scrollbar = self._table.horizontalScrollBar()
@@ -681,8 +684,9 @@ class ServiceManagerWidget(QtWidgets.QWidget):
 
         self._table.setUpdatesEnabled(False)
         try:
-            for row in rows:
-                self._bridge.request_service_status(row.service_id)
+            if request_status:
+                for row in rows:
+                    self._bridge.request_service_status(row.service_id)
             self._model.update_rows(rows)
 
             if previous_service_id:

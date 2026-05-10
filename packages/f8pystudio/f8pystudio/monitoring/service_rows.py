@@ -83,6 +83,7 @@ def build_service_monitor_rows(
     get_cached_service_active: Callable[[str], bool | None],
     managed_service_classes: Mapping[str, str],
     service_alive_cache: Mapping[str, tuple[bool, float]],
+    include_latest_snapshot: bool = False,
 ) -> list[ServiceMonitorRow]:
     rows: list[ServiceMonitorRow] = []
 
@@ -107,10 +108,8 @@ def build_service_monitor_rows(
         latest_payload: dict[str, Any] | None = None
 
         if latest_snapshot is not None:
-            try:
-                latest_payload = dump_json(latest_snapshot, mode="json", by_alias=True)
-            except (AttributeError, TypeError, ValueError):
-                latest_payload = None
+            if include_latest_snapshot:
+                latest_payload = _monitor_snapshot_payload(latest_snapshot)
             service_class = str(latest_snapshot.serviceClass or "").strip() or service_class
             alive = bool(latest_snapshot.alive)
             ready = bool(latest_snapshot.ready)
@@ -156,3 +155,13 @@ def build_service_monitor_rows(
         )
 
     return rows
+
+
+def _monitor_snapshot_payload(latest_snapshot: F8MonitorSnapshot) -> dict[str, Any] | None:
+    try:
+        payload = dump_json(latest_snapshot, mode="json", by_alias=True)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    if isinstance(payload, dict):
+        return payload
+    return None

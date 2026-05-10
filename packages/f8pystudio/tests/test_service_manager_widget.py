@@ -154,7 +154,7 @@ def test_monitor_refresh_queue_coalesces_and_immediate_refresh_wins(monkeypatch)
 
     QtTest.QTest.qWait(30)
     QtWidgets.QApplication.processEvents()
-    assert bridge.status_requests == ["svcA"]
+    assert bridge.status_requests == []
 
     bridge.status_requests.clear()
     widget.queue_monitor_refresh()
@@ -167,6 +167,48 @@ def test_monitor_refresh_queue_coalesces_and_immediate_refresh_wins(monkeypatch)
     QtTest.QTest.qWait(30)
     QtWidgets.QApplication.processEvents()
     assert bridge.status_requests == ["svcA"]
+
+    widget.close()
+
+
+def test_manual_refresh_requests_status_but_monitor_refresh_only_updates_table(monkeypatch) -> None:
+    _ensure_app()
+    monkeypatch.setattr(ServiceManagerWidget, "_MONITOR_REFRESH_INTERVAL_MS", 10)
+    bridge = _FakeBridge([_row(running=True, active=True, service_class="f8.tests.a")])
+    widget = ServiceManagerWidget(
+        bridge=bridge,  # type: ignore[arg-type]
+        get_declared_services=lambda: {"svcA": "f8.tests.a"},
+    )
+    bridge.status_requests.clear()
+
+    widget.refresh()
+    assert bridge.status_requests == ["svcA"]
+
+    bridge.status_requests.clear()
+    bridge._rows = [
+        ServiceMonitorRow(
+            service_id="svcA",
+            service_class="f8.tests.a",
+            running=True,
+            alive=True,
+            ready=True,
+            active=True,
+            cpu_process_percent=32.0,
+            memory_rss_bytes=128 * 1024 * 1024,
+            gpu_util_percent=3.0,
+            latency_ms_p95=2.5,
+            wait_ms_p95=None,
+            error_count_window=0,
+            latest_snapshot=None,
+        )
+    ]
+    widget.queue_monitor_refresh()
+    QtTest.QTest.qWait(30)
+    QtWidgets.QApplication.processEvents()
+
+    assert bridge.status_requests == []
+    assert _cell_text(widget, 0, widget._COL_CPU) == "32.0"
+    assert _cell_text(widget, 0, widget._COL_LATENCY_P95) == "2.50"
 
     widget.close()
 

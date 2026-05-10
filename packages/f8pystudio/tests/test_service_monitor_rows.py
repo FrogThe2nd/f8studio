@@ -15,6 +15,7 @@ from f8pystudio.bridge.studio_bridge import (  # noqa: E402
     PyStudioServiceBridgeConfig,
 )
 from f8pystudio.contracts.ui_commands import UiCommand  # noqa: E402
+from f8pystudio.monitoring.service_rows import build_service_monitor_rows  # noqa: E402
 
 
 def _snapshot(*, service_id: str, service_class: str, ts_ms: int) -> dict[str, object]:
@@ -52,7 +53,7 @@ def _snapshot(*, service_id: str, service_class: str, ts_ms: int) -> dict[str, o
     }
 
 
-def test_list_service_monitor_rows_includes_snapshot_and_managed_services() -> None:
+def test_list_service_monitor_rows_includes_monitor_fields_and_managed_services() -> None:
     bridge = PyStudioServiceBridge(PyStudioServiceBridgeConfig())
     ts_ms = int(now_ms())
     bridge._monitor_center.ingest_snapshot(_snapshot(service_id="svcA", service_class="f8.tests.a", ts_ms=ts_ms))
@@ -74,7 +75,7 @@ def test_list_service_monitor_rows_includes_snapshot_and_managed_services() -> N
     assert svc_a.latency_ms_p95 == 9.5
     assert svc_a.wait_ms_p95 == 5.5
     assert svc_a.error_count_window == 2
-    assert isinstance(svc_a.latest_snapshot, dict)
+    assert svc_a.latest_snapshot is None
 
     assert "svcB" in by_id
     svc_b = by_id["svcB"]
@@ -82,6 +83,28 @@ def test_list_service_monitor_rows_includes_snapshot_and_managed_services() -> N
     assert svc_b.latest_snapshot is None
     assert svc_b.alive is True
     assert svc_b.active is False
+
+
+def test_build_service_monitor_rows_can_include_latest_snapshot_payload() -> None:
+    bridge = PyStudioServiceBridge(PyStudioServiceBridgeConfig())
+    ts_ms = int(now_ms())
+    snapshot = bridge._monitor_center.ingest_snapshot(
+        _snapshot(service_id="svcA", service_class="f8.tests.a", ts_ms=ts_ms)
+    )
+
+    rows = build_service_monitor_rows(
+        service_ids=["svcA"],
+        latest_snapshot_by_service={"svcA": snapshot},
+        is_service_running=lambda _service_id: True,
+        get_cached_service_active=lambda _service_id: None,
+        managed_service_classes={},
+        service_alive_cache={},
+        include_latest_snapshot=True,
+    )
+
+    assert len(rows) == 1
+    assert isinstance(rows[0].latest_snapshot, dict)
+    assert rows[0].latest_snapshot["serviceId"] == "svcA"
 
 
 def test_bridge_exports_monitor_snapshot_stream() -> None:

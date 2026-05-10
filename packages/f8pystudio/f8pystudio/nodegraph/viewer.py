@@ -88,6 +88,8 @@ class F8StudioNodeViewer(NodeViewer):
         self._pending_graph_insert_request: Any | None = None
         self._pending_graph_label: str = ""
         self._pending_graph_size: tuple[float, float] | None = None
+        self._context_menu_active: bool = False
+        self._context_menu_selection_pending: bool = False
         self._placement_preview_rect: QtWidgets.QGraphicsRectItem | None = None
         self._placement_preview_label: QtWidgets.QGraphicsSimpleTextItem | None = None
         self._edge_kind_visibility: dict[str, bool] = {
@@ -654,7 +656,23 @@ class F8StudioNodeViewer(NodeViewer):
         if self._is_proxy_widget_hit(scene_pos):
             event.accept()
             return
-        super().contextMenuEvent(event)
+        self._mark_context_menu_selection_pending()
+        self._context_menu_active = True
+        try:
+            super().contextMenuEvent(event)
+        finally:
+            self._context_menu_active = False
+            self._clear_context_menu_selection_pending()
+
+    def _mark_context_menu_selection_pending(self) -> None:
+        self._context_menu_selection_pending = True
+        QtCore.QTimer.singleShot(500, self._clear_context_menu_selection_pending)
+
+    def _clear_context_menu_selection_pending(self) -> None:
+        self._context_menu_selection_pending = False
+
+    def is_context_menu_selection_pending(self) -> bool:
+        return bool(self._context_menu_active or self._context_menu_selection_pending)
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         if event.key() == QtCore.Qt.Key_Escape:
@@ -773,6 +791,8 @@ class F8StudioNodeViewer(NodeViewer):
         # Always reserve MMB for canvas pan, regardless of what's under cursor.
         # NodeGraphQt disables MMB pan when clicking on nodes; we want consistent
         # navigation behavior.
+        if event.button() == QtCore.Qt.RightButton:
+            self._mark_context_menu_selection_pending()
         if event.button() == QtCore.Qt.MiddleButton:
             self._f8_mmb_panning = True
             self._f8_mmb_prev_pos = event.pos()

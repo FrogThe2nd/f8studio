@@ -413,6 +413,7 @@ class PyStudioServiceBridge(
             get_cached_service_active=self.get_cached_service_active,
             managed_service_classes=managed_service_classes,
             service_alive_cache=self._service_alive_cache,
+            include_latest_snapshot=False,
         )
 
     def stop(self) -> None:
