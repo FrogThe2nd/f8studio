@@ -2044,7 +2044,10 @@ void ServiceBus::publish_rungraph_deploy_status(const json& graph_obj, const std
     };
     for (const auto& key : keys) {
       try {
-        (void)runtime_retained_put(key, raw);
+        if (!runtime_retained_put(key, raw)) {
+          spdlog::warn("publish rungraph deploy status returned false serviceId={} reqId={} key={}", cfg_.service_id,
+                       req_id, key);
+        }
       } catch (const std::exception& exc) {
         spdlog::warn("publish rungraph deploy status failed serviceId={} reqId={} key={}: {}", cfg_.service_id,
                      req_id, key, exc.what());

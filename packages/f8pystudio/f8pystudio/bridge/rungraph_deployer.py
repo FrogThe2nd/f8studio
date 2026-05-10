@@ -190,11 +190,12 @@ class RuntimeRungraphGateway:
         initial_config_raw: bytes | None,
         initial_config_fingerprint: str,
         deadline_s: float,
+        watcher_ready: asyncio.Future[None] | None = None,
     ) -> RungraphDeployResult:
         loop = asyncio.get_running_loop()
         watch_specs = (
             (f"{rungraph_deploy_status_key(service_id)}/**", True),
-            (f"f8/svc/{service_id}/config/rungraph", initial_config_fingerprint != target_fingerprint),
+            (f"f8/svc/{service_id}/config/rungraph", False),
         )
         fut: asyncio.Future[RungraphDeployResult] = loop.create_future()
         failed_message = ""
@@ -238,6 +239,8 @@ class RuntimeRungraphGateway:
                 except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
                     logger.debug("rungraph evidence retained_watch failed key=%s", key, exc_info=exc)
                     continue
+            if watcher_ready is not None and not watcher_ready.done():
+                watcher_ready.set_result(None)
             while True:
                 if fut.done():
                     return await fut
@@ -281,6 +284,8 @@ class RuntimeRungraphGateway:
                 except asyncio.TimeoutError:
                     continue
         finally:
+            if watcher_ready is not None and not watcher_ready.done():
+                watcher_ready.set_result(None)
             for watch in watches:
                 try:
                     await self._stop_retained_watch(watch)
@@ -404,13 +409,17 @@ class RuntimeRungraphGateway:
             timeout_s=min(0.25, max(0.05, self.config.endpoint_probe_timeout_s)),
         ):
             return RungraphDeployResult(service_id=service_id, success=True, error_message="")
-        initial_config_raw, initial_config_fingerprint = await self._retained_config_sample(transport, service_id=service_id)
+        initial_config_raw, initial_config_fingerprint = await self._retained_config_sample(
+            transport,
+            service_id=service_id,
+        )
         request_payload = F8SetRungraphRequest(
             reqId=req_id,
             args=F8SetRungraphArgs(graph=graph_for_request),
             meta={"source": deploy_source, "targetFingerprint": target_fingerprint},
         )
         deadline_s = asyncio.get_running_loop().time() + max(0.001, float(self.config.apply_timeout_s))
+        watcher_ready: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         evidence_task = asyncio.create_task(
             self._wait_target_evidence(
                 transport,
@@ -420,10 +429,18 @@ class RuntimeRungraphGateway:
                 initial_config_raw=initial_config_raw,
                 initial_config_fingerprint=initial_config_fingerprint,
                 deadline_s=deadline_s,
+                watcher_ready=watcher_ready,
             ),
             name=f"rungraph_target_evidence:{service_id}:{req_id}",
         )
         try:
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(watcher_ready),
+                    timeout=min(0.5, max(0.05, float(self.config.endpoint_probe_timeout_s))),
+                )
+            except asyncio.TimeoutError:
+                logger.debug("rungraph evidence watchers not ready before request service_id=%s", service_id)
             last_ack_error = ""
             request_attempts = max(1, int(self.config.request_attempts))
             for attempt_index in range(request_attempts):
