@@ -1,6 +1,7 @@
 #include "operator_common.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -94,7 +95,7 @@ json py_to_json(const py::handle value) {
                               py::str(value.get_type()).cast<std::string>());
 }
 
-class ScriptPlaceholderNode : public OperatorNode {
+class ScriptPlaceholderNode final : public OperatorNode, public ComputableNode {
  public:
   ScriptPlaceholderNode(const std::string& node_id, const F8RuntimeNode& node, const json& initial_state, std::string lang)
       : OperatorNode(node_id, data_port_names(node.dataInPorts, {"msg"}), data_port_names(node.dataOutPorts, {"out"}),
@@ -120,21 +121,30 @@ class ScriptPlaceholderNode : public OperatorNode {
   void on_data(const std::string& port, const json& value, std::int64_t ts_ms, const json& meta) override {
     (void)port;
     (void)value;
-    report_error(script_error_code(), lang_ + " runtime bridge is not linked in this build", "warning",
-                 lang_ + "-script-placeholder:" + node_id(), ts_ms);
+    report_runtime_unavailable(ts_ms);
     (void)meta;
   }
 
   std::vector<std::string> on_exec(std::int64_t exec_id, const std::string& in_port) override {
     (void)exec_id;
     (void)in_port;
-    report_error(script_error_code(), lang_ + " runtime bridge is not linked in this build", "warning",
-                 lang_ + "-script-placeholder:" + node_id());
+    report_runtime_unavailable();
     return exec_out_ports();
+  }
+
+  json compute_output(const std::string& port, std::int64_t ctx_id) override {
+    if (std::find(data_out_ports().begin(), data_out_ports().end(), port) == data_out_ports().end()) return nullptr;
+    report_runtime_unavailable(ctx_id);
+    return nullptr;
   }
 
  private:
   std::string script_error_code() const { return lang_ == "Lua" ? "LUA_SCRIPT_UNAVAILABLE" : "ANGELSCRIPT_UNAVAILABLE"; }
+
+  void report_runtime_unavailable(std::int64_t ts_ms = 0) {
+    report_error(script_error_code(), lang_ + " runtime bridge is not linked in this build", "warning",
+                 lang_ + "-script-placeholder:" + node_id(), ts_ms);
+  }
 
   std::string lang_;
   std::string code_;

@@ -190,9 +190,47 @@ void run_cpython_script_operator_smoke() {
   expect(source->last_ctx_id == 77, "source was not pulled with the exec context id");
 }
 
+void run_script_placeholder_operator_smoke() {
+  f8::cppsdk::ServiceBus::Config cfg;
+  cfg.service_id = kServiceId;
+  cfg.service_class = kServiceClass;
+  cfg.bus_backend = f8::cppsdk::BusBackend::kMem;
+  f8::cppsdk::ServiceBus bus(cfg);
+
+  f8::cppsdk::RuntimeNodeRegistry registry;
+  f8::cppengine::register_cppengine_specs(registry);
+
+  f8::cppsdk::ServiceHost host(bus, registry, kServiceClass);
+  host.start();
+
+  json graph{{"graphId", "g"},
+             {"revision", "r"},
+             {"nodes",
+              json::array({runtime_node("lua", "f8.lua_script", json::array({port_spec("msg")}),
+                                        json::array({port_spec("out")}), json::array({"exec"}), json::array({"exec"})),
+                           runtime_node("angelscript", "f8.angelscript", json::array({port_spec("msg")}),
+                                        json::array({port_spec("out")}), json::array({"exec"}), json::array({"exec"}))})},
+             {"edges", json::array()}};
+
+  std::string error_code;
+  std::string error_message;
+  expect(host.apply_rungraph(graph, error_code, error_message),
+         "apply_rungraph failed: " + error_code + ": " + error_message);
+
+  auto* lua = dynamic_cast<f8::cppsdk::ComputableNode*>(host.get_node("lua"));
+  expect(lua != nullptr, "lua_script must implement ComputableNode for external viz auto-sampling");
+  expect(lua->compute_output("out", 123).is_null(), "lua_script placeholder output should be null until runtime is linked");
+
+  auto* angelscript = dynamic_cast<f8::cppsdk::ComputableNode*>(host.get_node("angelscript"));
+  expect(angelscript != nullptr, "angelscript must implement ComputableNode for external viz auto-sampling");
+  expect(angelscript->compute_output("out", 124).is_null(),
+         "angelscript placeholder output should be null until runtime is linked");
+}
+
 int main() {
   try {
     run_cpython_script_operator_smoke();
+    run_script_placeholder_operator_smoke();
   } catch (const std::exception& exc) {
     std::cerr << exc.what() << "\n";
     return 1;
