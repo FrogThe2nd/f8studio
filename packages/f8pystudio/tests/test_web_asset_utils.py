@@ -86,6 +86,23 @@ def test_build_monaco_editor_html_omits_remote_prism_tags_by_default() -> None:
     assert "paths: { 'vs': 'vs' }" in html
 
 
+def test_build_monaco_editor_html_maps_angelscript_to_cpp_highlighting() -> None:
+    html = build_monaco_editor_html(
+        MonacoEditorPageConfig(
+            code="// comment\nstring on_exec_json() { return \"\"; }\n",
+            language="angelscript",
+            monaco_base_url="https://example.invalid/monaco/min",
+        )
+    )
+
+    assert "if (_languageRegistered('cpp')) return 'cpp';" in html
+    assert "language === 'angelscript' ? 'cpp' : language" in html
+    comment_rule = r"[/\/\/.*$/, 'comment']"
+    assert comment_rule in html
+    assert "[/@symbols/" in html
+    assert html.index(comment_rule) < html.index("[/@symbols/")
+
+
 def test_resolve_web_asset_page_base_url_prefers_configured_root(monkeypatch, tmp_path) -> None:
     local_root = tmp_path / "web-assets"
     monkeypatch.setenv("F8_WEB_ASSETS_DIR", str(local_root))

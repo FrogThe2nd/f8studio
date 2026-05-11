@@ -166,6 +166,7 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
       require(['vs/editor/editor.main'], function() {{
         const init = window.__F8_INITIAL__ || {{ code: '', language: 'plaintext', theme: 'vs-dark' }};
         const requestedLanguage = String(init.language || 'plaintext').trim().toLowerCase() || 'plaintext';
+        window._f8_requestedLanguage = requestedLanguage;
         function _languageRegistered(id) {{
           try {{
             return monaco.languages.getLanguages().some(function(lang) {{
@@ -222,10 +223,10 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
                 [/0[xX][0-9a-fA-F]+/, 'number.hex'],
                 [/\\d+/, 'number'],
                 [/[{{}}\\[\\]()]/, '@brackets'],
-                [/@symbols/, {{ cases: {{ '@operators': 'operator', '@default': '' }} }}],
                 [/[;,.]/, 'delimiter'],
                 [/\\/\\*/, 'comment', '@comment'],
                 [/\\/\\/.*$/, 'comment'],
+                [/@symbols/, {{ cases: {{ '@operators': 'operator', '@default': '' }} }}],
                 [/"([^"\\\\]|\\\\.)*$/, 'string.invalid'],
                 [/"/, 'string', '@string_double'],
                 [/'[^\\\\']'/, 'string'],
@@ -244,10 +245,21 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
             }},
           }});
         }}
-        if (requestedLanguage === 'angelscript') {{
+        function _resolveEditorLanguage(language) {{
+          const normalized = String(language || 'plaintext').trim().toLowerCase() || 'plaintext';
+          if (normalized === 'angelscript') {{
+            if (_languageRegistered('cpp')) return 'cpp';
+            _registerAngelScriptLanguage();
+            return _languageRegistered('angelscript') ? 'angelscript' : 'plaintext';
+          }}
+          return _languageRegistered(normalized) ? normalized : 'plaintext';
+        }}
+        if (requestedLanguage === 'angelscript' && !_languageRegistered('cpp')) {{
           _registerAngelScriptLanguage();
         }}
-        const editorLanguage = _languageRegistered(requestedLanguage) ? requestedLanguage : 'plaintext';
+        const editorLanguage = _resolveEditorLanguage(requestedLanguage);
+        window._f8_resolveEditorLanguage = _resolveEditorLanguage;
+        window._f8_editorMonacoLanguage = editorLanguage;
         window._f8_editor = monaco.editor.create(document.getElementById('container'), {{
           value: String(init.code || ''),
           language: editorLanguage,
@@ -1209,7 +1221,11 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
 
       function _f8_editorLanguage() {{
         const init = window.__F8_INITIAL__ || {{}};
-        return String(init.language || 'plaintext');
+        if (typeof window._f8_resolveEditorLanguage === 'function') {{
+          return window._f8_resolveEditorLanguage(String(init.language || 'plaintext'));
+        }}
+        const language = String(init.language || 'plaintext').trim().toLowerCase() || 'plaintext';
+        return language === 'angelscript' ? 'cpp' : language;
       }}
 
       function _f8_normalizeAiPanelWidth(value) {{
