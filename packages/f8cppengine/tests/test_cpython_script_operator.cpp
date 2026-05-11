@@ -144,9 +144,12 @@ void run_cpython_script_operator_smoke() {
   host.start();
 
   const std::string code =
+      "import json\n"
+      "import os\n"
       "def onExec(ctx, exec_in, inputs):\n"
       "    value = inputs.get('msg')\n"
-      "    return {'outputs': {'out': {'seen': value, 'node': ctx.node_id}}, 'exec': ['exec']}\n";
+      "    encoded = json.dumps({'seen': value}, sort_keys=True)\n"
+      "    return {'outputs': {'out': {'seen': value, 'node': ctx.node_id, 'encoded': encoded, 'sep': os.sep}}, 'exec': ['exec']}\n";
   json graph{{"graphId", "g"},
              {"revision", "r"},
              {"nodes",
@@ -182,7 +185,14 @@ void run_cpython_script_operator_smoke() {
   auto* sink = dynamic_cast<PullingSinkNode*>(host.get_node("sink"));
   expect(sink != nullptr, "sink node was not created");
   expect(sink->last_exec_id == 77, "sink did not receive expected exec id");
-  expect(sink->last_value == (json{{"seen", 41}, {"node", "script"}}),
+  const std::string expected_sep =
+#ifdef _WIN32
+      "\\";
+#else
+      "/";
+#endif
+  expect(sink->last_value ==
+             (json{{"seen", 41}, {"node", "script"}, {"encoded", "{\"seen\": 41}"}, {"sep", expected_sep}}),
          "sink received unexpected script output: " + sink->last_value.dump());
 
   auto* source = dynamic_cast<ConstantNode*>(host.get_node("source"));

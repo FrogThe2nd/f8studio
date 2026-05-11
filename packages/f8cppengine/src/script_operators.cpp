@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -13,6 +14,12 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 #include <angelscript.h>
 #include <pybind11/embed.h>
@@ -36,13 +43,94 @@ using f8::cppsdk::generated::F8RuntimeNode;
 
 namespace {
 
+std::filesystem::path current_executable_path() {
+#ifdef _WIN32
+  std::vector<wchar_t> buffer(1024);
+  while (true) {
+    const DWORD length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+    if (length == 0) {
+      throw std::runtime_error("GetModuleFileNameW failed while resolving embedded CPython runtime path");
+    }
+    if (length < buffer.size() - 1) {
+      return std::filesystem::path(std::wstring(buffer.data(), length));
+    }
+    buffer.resize(buffer.size() * 2);
+  }
+#else
+  std::vector<char> buffer(1024);
+  while (true) {
+    const ssize_t length = readlink("/proc/self/exe", buffer.data(), buffer.size());
+    if (length < 0) break;
+    if (static_cast<std::size_t>(length) < buffer.size()) {
+      return std::filesystem::path(std::string(buffer.data(), static_cast<std::size_t>(length)));
+    }
+    buffer.resize(buffer.size() * 2);
+  }
+  return std::filesystem::current_path();
+#endif
+}
+
+std::optional<std::filesystem::path> deployed_python_home() {
+  const auto exe_dir = current_executable_path().parent_path();
+  const auto lib_dir = exe_dir / "Lib";
+  if (std::filesystem::exists(lib_dir / "os.py") && std::filesystem::exists(lib_dir / "encodings")) {
+    return exe_dir;
+  }
+  return std::nullopt;
+}
+
+void check_py_status(PyConfig& config, const PyStatus status, const std::string& context) {
+  if (PyStatus_Exception(status) == 0) return;
+  const std::string message = PyStatus_IsError(status) != 0 && status.err_msg != nullptr ? status.err_msg
+                                                                                         : "unknown CPython error";
+  PyConfig_Clear(&config);
+  throw std::runtime_error(context + ": " + message);
+}
+
+void set_config_path(PyConfig& config, wchar_t** field, const std::filesystem::path& path,
+                     const std::string& context) {
+  check_py_status(config, PyConfig_SetString(&config, field, path.wstring().c_str()), context);
+}
+
+void append_config_path(PyConfig& config, const std::filesystem::path& path, const std::string& context) {
+  check_py_status(config, PyWideStringList_Append(&config.module_search_paths, path.wstring().c_str()), context);
+}
+
+py::scoped_interpreter* create_python_interpreter() {
+  const auto python_home = deployed_python_home();
+  if (!python_home.has_value()) {
+    return new py::scoped_interpreter(false);
+  }
+
+  PyConfig config;
+  PyConfig_InitPythonConfig(&config);
+  config.parse_argv = 0;
+  config.install_signal_handlers = 0;
+  config.pathconfig_warnings = 0;
+  config.module_search_paths_set = 1;
+
+  const auto exe_path = current_executable_path();
+  set_config_path(config, &config.home, python_home.value(), "failed to set embedded CPython home");
+  set_config_path(config, &config.program_name, exe_path, "failed to set embedded CPython program_name");
+  set_config_path(config, &config.executable, exe_path, "failed to set embedded CPython executable");
+  set_config_path(config, &config.base_executable, exe_path, "failed to set embedded CPython base_executable");
+  append_config_path(config, python_home.value() / "Lib", "failed to add embedded CPython Lib path");
+  append_config_path(config, python_home.value() / "DLLs", "failed to add embedded CPython DLLs path");
+  if (std::filesystem::exists(python_home.value() / "Lib" / "site-packages")) {
+    append_config_path(config, python_home.value() / "Lib" / "site-packages",
+                       "failed to add embedded CPython site-packages path");
+  }
+
+  return new py::scoped_interpreter(&config, 0, nullptr, false);
+}
+
 void ensure_python_interpreter() {
   static std::mutex mu;
   static py::scoped_interpreter* interpreter = nullptr;
   static PyThreadState* main_thread_state = nullptr;
   std::lock_guard<std::mutex> lock(mu);
   if (interpreter != nullptr) return;
-  interpreter = new py::scoped_interpreter();
+  interpreter = create_python_interpreter();
   {
     py::module_ sys = py::module_::import("sys");
     sys.attr("path").attr("insert")(0, "");
@@ -616,6 +704,10 @@ class AngelScriptNode final : public OperatorNode, public ComputableNode, public
     if (std::find(data_out_ports().begin(), data_out_ports().end(), port) == data_out_ports().end()) return nullptr;
     if (last_ctx_id_.has_value() && last_ctx_id_.value() == ctx_id && last_outputs_.contains(port)) {
       return last_outputs_[port];
+    }
+    const auto cached = object_value_or_null(last_outputs_, port);
+    if (!cached.is_null() && !has_function("string on_pull_json(const string &in, const string &in)")) {
+      return cached;
     }
     try {
       std::string result;

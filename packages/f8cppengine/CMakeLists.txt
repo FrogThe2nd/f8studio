@@ -66,6 +66,12 @@ find_package(luajit REQUIRED)
 find_package(sol2 REQUIRED)
 find_package(Angelscript REQUIRED)
 
+if(WIN32)
+  if(DEFINED PYTHON_EXECUTABLE AND NOT "${PYTHON_EXECUTABLE}" STREQUAL "")
+    get_filename_component(F8CPPENGINE_CPYTHON_RUNTIME_ROOT "${PYTHON_EXECUTABLE}" DIRECTORY)
+  endif()
+endif()
+
 target_link_libraries(f8cppengine_core
   PUBLIC
     f8cppsdk
@@ -99,6 +105,29 @@ target_compile_definitions(f8cppengine_service PRIVATE NOMINMAX WIN32_LEAN_AND_M
 
 f8_deploy_service_runtime(f8cppengine_service "f8/cppengine")
 
+function(f8cppengine_deploy_cpython_runtime target dest_dir)
+  if(NOT WIN32)
+    return()
+  endif()
+  if(NOT DEFINED F8CPPENGINE_CPYTHON_RUNTIME_ROOT OR "${F8CPPENGINE_CPYTHON_RUNTIME_ROOT}" STREQUAL "")
+    message(WARNING "f8cppengine: CPython runtime root is unknown; f8.cpython_script may need PYTHONHOME/PYTHONPATH")
+    return()
+  endif()
+  add_custom_command(
+    TARGET ${target}
+    POST_BUILD
+    COMMAND "${CMAKE_COMMAND}"
+      -Dsource_root="${F8CPPENGINE_CPYTHON_RUNTIME_ROOT}"
+      -Ddest_dir="${dest_dir}"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/deploy_cpython_runtime.cmake"
+    VERBATIM
+    COMMENT "Deploy CPython runtime for ${target} to ${dest_dir}"
+  )
+endfunction()
+
+f8cppengine_deploy_cpython_runtime(f8cppengine_service "$<TARGET_FILE_DIR:f8cppengine_service>")
+f8cppengine_deploy_cpython_runtime(f8cppengine_service "${F8_SERVICES_ROOT}/f8/cppengine/win")
+
 add_executable(f8cppengine_cpython_script_smoke EXCLUDE_FROM_ALL
   tests/test_cpython_script_operator.cpp
 )
@@ -111,3 +140,5 @@ target_link_libraries(f8cppengine_cpython_script_smoke
 )
 
 target_compile_definitions(f8cppengine_cpython_script_smoke PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+
+f8cppengine_deploy_cpython_runtime(f8cppengine_cpython_script_smoke "$<TARGET_FILE_DIR:f8cppengine_cpython_script_smoke>")
