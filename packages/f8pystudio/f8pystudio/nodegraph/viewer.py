@@ -20,6 +20,7 @@ from .edge_rules import (
     validate_runtime_connection,
 )
 from .pipe_item import F8StudioPipeItem
+from .fast_tab_search import FastTabSearchMenuWidget
 from ..ui.support.studio_theme import performance_overlay_qss
 
 logger = logging.getLogger(__name__)
@@ -108,6 +109,7 @@ class F8StudioNodeViewer(NodeViewer):
         self._shortcut_backspace = QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Backspace), self)
         self._shortcut_backspace.setContext(QtCore.Qt.WidgetShortcut)
         self._shortcut_backspace.activated.connect(self._delete_selected_nodes)  # type: ignore[attr-defined]
+        self._install_fast_tab_search_widget()
 
     def set_performance_overlay_enabled(self, enabled: bool) -> None:
         target = bool(enabled)
@@ -127,6 +129,14 @@ class F8StudioNodeViewer(NodeViewer):
 
     def performance_overlay_enabled(self) -> bool:
         return bool(self._perf_overlay_enabled)
+
+    def _install_fast_tab_search_widget(self) -> None:
+        original_widget = self._search_widget
+        if isinstance(original_widget, FastTabSearchMenuWidget):
+            return
+        original_widget.deleteLater()
+        self._search_widget = FastTabSearchMenuWidget()
+        self._search_widget.search_submitted.connect(self._on_search_submitted)
 
     def set_auto_proxy_enabled(self, enabled: bool) -> None:
         target = bool(enabled)
