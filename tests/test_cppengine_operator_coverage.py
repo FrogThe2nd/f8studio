@@ -27,15 +27,15 @@ class CppEngineOperatorCoverageTest(unittest.TestCase):
         self.assertEqual(lua_code_field["editorAssist"], {"version": 1, "language": "lua"})
         self.assertIn("on_exec(ctx, exec_in, inputs)", lua_code)
         self.assertIn("ctx:pull(\"msg\")", lua_code)
-        self.assertIn("LUA_SCRIPT_UNAVAILABLE", lua_code)
+        self.assertIn("on_pull(ctx, port, inputs)", lua_code)
 
         angelscript_code_field = specs["f8.angelscript"]["stateFields"][0]
         angelscript_code = angelscript_code_field["valueSchema"]["default"]
         self.assertEqual(angelscript_code_field["uiControl"], "code[angelscript]")
         self.assertEqual(angelscript_code_field["editorAssist"], {"version": 1, "language": "angelscript"})
-        self.assertIn("F8Result@ on_exec", angelscript_code)
-        self.assertIn("ctx.pull(\"msg\")", angelscript_code)
-        self.assertIn("ANGELSCRIPT_UNAVAILABLE", angelscript_code)
+        self.assertIn("string on_exec_json", angelscript_code)
+        self.assertIn("inputs_json", angelscript_code)
+        self.assertIn("AngelScript core", angelscript_code)
 
 
 if __name__ == "__main__":

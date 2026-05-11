@@ -190,7 +190,96 @@ void run_cpython_script_operator_smoke() {
   expect(source->last_ctx_id == 77, "source was not pulled with the exec context id");
 }
 
-void run_script_placeholder_operator_smoke() {
+void run_lua_script_operator_smoke() {
+  f8::cppsdk::ServiceBus::Config cfg;
+  cfg.service_id = kServiceId;
+  cfg.service_class = kServiceClass;
+  cfg.bus_backend = f8::cppsdk::BusBackend::kMem;
+  f8::cppsdk::ServiceBus bus(cfg);
+
+  f8::cppsdk::RuntimeNodeRegistry registry;
+  f8::cppengine::register_cppengine_specs(registry);
+  registry.register_operator_spec(json{{"specKind", "operator"},
+                                       {"serviceClass", kServiceClass},
+                                       {"operatorClass", "f8.test_constant"},
+                                       {"label", "Test Constant"}},
+                                  true);
+  registry.register_operator_factory(
+      kServiceClass, "f8.test_constant",
+      [](const std::string& node_id, const f8::cppsdk::generated::F8RuntimeNode& node, const json& initial_state) {
+        (void)node;
+        const auto value_it = initial_state.find("value");
+        const json value = value_it == initial_state.end() ? json(nullptr) : *value_it;
+        return std::make_unique<ConstantNode>(node_id, value);
+      },
+      true);
+  registry.register_operator_spec(json{{"specKind", "operator"},
+                                       {"serviceClass", kServiceClass},
+                                       {"operatorClass", "f8.test_sink"},
+                                       {"label", "Test Sink"}},
+                                  true);
+  registry.register_operator_factory(
+      kServiceClass, "f8.test_sink",
+      [](const std::string& node_id, const f8::cppsdk::generated::F8RuntimeNode& node, const json& initial_state) {
+        (void)node;
+        (void)initial_state;
+        return std::make_unique<PullingSinkNode>(node_id);
+      },
+      true);
+
+  f8::cppsdk::ServiceHost host(bus, registry, kServiceClass);
+  f8::cppsdk::ExecFlowExecutor executor(bus);
+  host.start();
+
+  const std::string code =
+      "function on_exec(ctx, exec_in, inputs)\n"
+      "  return { outputs = { out = { seen = inputs.msg, node = ctx.node_id } }, exec = { 'exec' } }\n"
+      "end\n";
+  json graph{{"graphId", "g"},
+             {"revision", "r"},
+             {"nodes",
+              json::array({runtime_node("source", "f8.test_constant", json::array(), json::array({port_spec("out")}),
+                                        json::array(), json::array(),
+                                        json::array({json{{"name", "value"},
+                                                          {"access", "rw"},
+                                                          {"valueSchema", json{{"type", "any"}}}}}),
+                                        json{{"value", 42}}),
+                           runtime_node("script", "f8.lua_script", json::array({port_spec("msg")}),
+                                        json::array({port_spec("out")}), json::array({"exec"}), json::array({"exec"}),
+                                        json::array({json{{"name", "code"},
+                                                          {"access", "rw"},
+                                                          {"valueSchema", json{{"type", "string"}}}}}),
+                                        json{{"code", code}}),
+                           runtime_node("sink", "f8.test_sink", json::array({port_spec("in")}), json::array(),
+                                        json::array({"exec"}), json::array())})},
+             {"edges", json::array({data_edge("d1", "source", "out", "script", "msg"),
+                                     data_edge("d2", "script", "out", "sink", "in"),
+                                     exec_edge("e1", "script", "exec", "sink", "exec")})}};
+
+  std::string error_code;
+  std::string error_message;
+  expect(host.apply_rungraph(graph, error_code, error_message),
+         "apply_rungraph failed: " + error_code + ": " + error_message);
+  executor.clear_nodes();
+  for (f8::cppsdk::OperatorNode* node : host.operator_nodes()) {
+    executor.register_node(node);
+  }
+  executor.apply_rungraph(graph);
+  executor.trigger_exec("script", "exec", 78);
+
+  auto* sink = dynamic_cast<PullingSinkNode*>(host.get_node("sink"));
+  expect(sink != nullptr, "sink node was not created");
+  expect(sink->last_exec_id == 78, "sink did not receive expected exec id");
+  expect(sink->last_value == (json{{"seen", 42.0}, {"node", "script"}}),
+         "sink received unexpected lua script output: " + sink->last_value.dump());
+
+  auto* lua = dynamic_cast<f8::cppsdk::ComputableNode*>(host.get_node("script"));
+  expect(lua != nullptr, "lua_script must implement ComputableNode for external viz auto-sampling");
+  expect(lua->compute_output("out", 123) == (json{{"seen", 42.0}, {"node", "script"}}),
+         "lua_script compute_output should return cached-compatible JSON output");
+}
+
+void run_angelscript_operator_smoke() {
   f8::cppsdk::ServiceBus::Config cfg;
   cfg.service_id = kServiceId;
   cfg.service_class = kServiceClass;
@@ -203,13 +292,19 @@ void run_script_placeholder_operator_smoke() {
   f8::cppsdk::ServiceHost host(bus, registry, kServiceClass);
   host.start();
 
+  const std::string code =
+      "string on_msg_json(const string &in port, const string &in value_json) {\n"
+      "  return \"{\\\"outputs\\\":{\\\"out\\\":\" + value_json + \"}}\";\n"
+      "}\n";
   json graph{{"graphId", "g"},
              {"revision", "r"},
              {"nodes",
-              json::array({runtime_node("lua", "f8.lua_script", json::array({port_spec("msg")}),
-                                        json::array({port_spec("out")}), json::array({"exec"}), json::array({"exec"})),
-                           runtime_node("angelscript", "f8.angelscript", json::array({port_spec("msg")}),
-                                        json::array({port_spec("out")}), json::array({"exec"}), json::array({"exec"}))})},
+              json::array({runtime_node("angelscript", "f8.angelscript", json::array({port_spec("msg")}),
+                                        json::array({port_spec("out")}), json::array({"exec"}), json::array({"exec"}),
+                                        json::array({json{{"name", "code"},
+                                                          {"access", "rw"},
+                                                          {"valueSchema", json{{"type", "string"}}}}}),
+                                        json{{"code", code}})})},
              {"edges", json::array()}};
 
   std::string error_code;
@@ -217,14 +312,12 @@ void run_script_placeholder_operator_smoke() {
   expect(host.apply_rungraph(graph, error_code, error_message),
          "apply_rungraph failed: " + error_code + ": " + error_message);
 
-  auto* lua = dynamic_cast<f8::cppsdk::ComputableNode*>(host.get_node("lua"));
-  expect(lua != nullptr, "lua_script must implement ComputableNode for external viz auto-sampling");
-  expect(lua->compute_output("out", 123).is_null(), "lua_script placeholder output should be null until runtime is linked");
+  host.on_data("angelscript", "msg", json{{"value", 12}}, 90, json::object());
 
   auto* angelscript = dynamic_cast<f8::cppsdk::ComputableNode*>(host.get_node("angelscript"));
   expect(angelscript != nullptr, "angelscript must implement ComputableNode for external viz auto-sampling");
-  expect(angelscript->compute_output("out", 124).is_null(),
-         "angelscript placeholder output should be null until runtime is linked");
+  expect(angelscript->compute_output("out", 124) == (json{{"value", 12}}),
+         "angelscript compute_output should return JSON hook output");
 }
 
 void run_all_data_output_operators_are_computable_smoke() {
@@ -292,7 +385,8 @@ void run_all_data_output_operators_are_computable_smoke() {
 int main() {
   try {
     run_cpython_script_operator_smoke();
-    run_script_placeholder_operator_smoke();
+    run_lua_script_operator_smoke();
+    run_angelscript_operator_smoke();
     run_all_data_output_operators_are_computable_smoke();
   } catch (const std::exception& exc) {
     std::cerr << exc.what() << "\n";

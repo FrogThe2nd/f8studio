@@ -62,6 +62,9 @@ find_package(spdlog REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(mexce REQUIRED)
 find_package(pybind11 REQUIRED)
+find_package(luajit REQUIRED)
+find_package(sol2 REQUIRED)
+find_package(Angelscript REQUIRED)
 
 target_link_libraries(f8cppengine_core
   PUBLIC
@@ -71,6 +74,9 @@ target_link_libraries(f8cppengine_core
     spdlog::spdlog
     mexce::mexce
     pybind11::embed
+    sol2::sol2
+    luajit::luajit
+    Angelscript::angelscript
 )
 
 target_compile_definitions(f8cppengine_core PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
