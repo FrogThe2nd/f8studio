@@ -147,9 +147,13 @@ def _use_safe_toast_window_mode() -> bool:
 
 
 def _resolve_parent(parent: QtWidgets.QWidget | None) -> QtWidgets.QWidget | None:
+    app = QtWidgets.QApplication.instance()
+    if app is not None:
+        active_modal_widget = app.activeModalWidget()
+        if active_modal_widget is not None and active_modal_widget.isVisible():
+            return active_modal_widget.window()
     if parent is not None:
         return parent.window()
-    app = QtWidgets.QApplication.instance()
     if app is None:
         return None
     focus_widget = app.focusWidget()
@@ -177,13 +181,7 @@ def _resolve_parent(parent: QtWidgets.QWidget | None) -> QtWidgets.QWidget | Non
 
 
 def _modal_dialog_fallback_parent(parent: QtWidgets.QWidget | None) -> QtWidgets.QWidget | None:
-    app = QtWidgets.QApplication.instance()
-    if app is not None:
-        active_modal_widget = app.activeModalWidget()
-        if isinstance(active_modal_widget, QtWidgets.QDialog) and active_modal_widget.isVisible():
-            return active_modal_widget
-    if isinstance(parent, QtWidgets.QDialog) and parent.isModal():
-        return parent
+    _ = parent
     return None
 
 
@@ -285,8 +283,9 @@ class _StudioToast(QtWidgets.QFrame):
         dedupe_key: str = "",
         repeat_count: int = 1,
     ) -> None:
-        super().__init__(None)
-        self._anchor = anchor.window() if anchor is not None else None
+        anchor_window = anchor.window() if anchor is not None else None
+        super().__init__(anchor_window)
+        self._anchor = anchor_window
         self._anchor_stack_key = None if self._anchor is None else id(self._anchor)
         self._style = style
         self._severity = severity
@@ -312,18 +311,17 @@ class _StudioToast(QtWidgets.QFrame):
         self._logs_button: QtWidgets.QToolButton | None = None
 
         self.setObjectName("studio-toast")
-        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, self._anchor is None)
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
-        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, not self._safe_window_mode)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, self._anchor is None and not self._safe_window_mode)
         self.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
-        window_flags = (
-            QtCore.Qt.WindowType.ToolTip
-            | QtCore.Qt.WindowType.FramelessWindowHint
-            | QtCore.Qt.WindowType.WindowStaysOnTopHint
-        )
-        if self._safe_window_mode:
-            window_flags |= QtCore.Qt.WindowType.NoDropShadowWindowHint
-        self.setWindowFlags(window_flags)
+        if self._anchor is None:
+            window_flags = QtCore.Qt.WindowType.Tool | QtCore.Qt.WindowType.FramelessWindowHint
+            if self._safe_window_mode:
+                window_flags |= QtCore.Qt.WindowType.NoDropShadowWindowHint
+            self.setWindowFlags(window_flags)
+        else:
+            self.setWindowFlags(QtCore.Qt.WindowType.Widget)
         self.setWindowOpacity(1.0 if self._safe_window_mode else 0.0)
         self._apply_style_sheet()
 
@@ -595,8 +593,10 @@ class _StudioToast(QtWidgets.QFrame):
         self._install_anchor_filter()
         self.show()
         self.raise_()
-        if not self._safe_window_mode:
+        if self._anchor is None and not self._safe_window_mode:
             self._animate_opacity(start=0.0, end=1.0)
+        elif not self._safe_window_mode:
+            self.setWindowOpacity(1.0)
         if self._duration_ms > 0:
             self._start_lifetime_animation()
 
@@ -606,6 +606,9 @@ class _StudioToast(QtWidgets.QFrame):
         self._is_closing = True
         self._stop_lifetime_animation()
         if self._safe_window_mode:
+            self.close()
+            return
+        if self._anchor is not None:
             self.close()
             return
         self._animate_opacity(start=self.windowOpacity(), end=0.0, on_finished=self.close)
@@ -712,7 +715,7 @@ class _StudioToast(QtWidgets.QFrame):
     def _target_geometry(self) -> QtCore.QRect:
         anchor = self._live_anchor()
         if anchor is not None:
-            return anchor.frameGeometry()
+            return anchor.rect()
         screen = _screen_for_parent(anchor)
         if screen is None:
             return QtCore.QRect(0, 0, 1280, 720)
@@ -748,10 +751,17 @@ class _StudioToast(QtWidgets.QFrame):
             QtCore.QEvent.Type.Move,
             QtCore.QEvent.Type.Resize,
             QtCore.QEvent.Type.Show,
+            QtCore.QEvent.Type.Hide,
             QtCore.QEvent.Type.WindowStateChange,
         }:
-            self._apply_width_constraints()
-            self._reposition()
+            if event.type() == QtCore.QEvent.Type.Hide:
+                self.hide()
+            else:
+                self._apply_width_constraints()
+                self._reposition()
+                if self._anchor is not None and self._anchor.isVisible() and not self.isVisible() and not self._is_closing:
+                    self.show()
+                    self.raise_()
         return super().eventFilter(watched, event)
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:

@@ -373,10 +373,11 @@ def test_warning_toast_stays_visible_until_acknowledged() -> None:
     QtWidgets.QApplication.processEvents()
 
 
-def test_warning_uses_message_box_fallback_for_modal_dialog(monkeypatch) -> None:
+def test_warning_toast_is_clickable_child_of_modal_dialog(monkeypatch) -> None:
     _ensure_app()
     _close_active_toasts()
     dialog = QtWidgets.QDialog()
+    dialog.setGeometry(100, 120, 420, 260)
     dialog.setModal(True)
     dialog.show()
     QtWidgets.QApplication.processEvents()
@@ -391,10 +392,47 @@ def test_warning_uses_message_box_fallback_for_modal_dialog(monkeypatch) -> None
     show_warning(dialog, "Invalid name", "Name already exists.")
     QtWidgets.QApplication.processEvents()
 
-    assert shown == [(dialog, "Invalid name", "Name already exists.")]
-    assert _ACTIVE_TOASTS == []
+    assert shown == []
+    assert len(_ACTIVE_TOASTS) == 1
+    toast = _ACTIVE_TOASTS[0]
+    assert toast.parentWidget() is dialog
+
+    close_button = toast.findChild(QtWidgets.QToolButton, "studio-toast-close")
+    assert close_button is not None
+    close_button.click()
+    QtWidgets.QApplication.processEvents()
+
+    assert toast not in _ACTIVE_TOASTS
 
     dialog.close()
+    QtWidgets.QApplication.processEvents()
+
+
+def test_toast_is_child_overlay_not_global_always_on_top() -> None:
+    _ensure_app()
+    _close_active_toasts()
+    window = QtWidgets.QWidget()
+    window.setGeometry(100, 120, 640, 360)
+    window.show()
+    QtWidgets.QApplication.processEvents()
+
+    show_warning(window, "Deploy failed", "RuntimeError: boom")
+    QtWidgets.QApplication.processEvents()
+
+    assert len(_ACTIVE_TOASTS) == 1
+    toast = _ACTIVE_TOASTS[0]
+    assert toast.parentWidget() is window
+    assert not bool(toast.windowFlags() & QtCore.Qt.WindowType.WindowStaysOnTopHint)
+    assert toast.geometry().right() <= window.rect().right()
+    assert toast.geometry().bottom() <= window.rect().bottom()
+
+    window.hide()
+    QtWidgets.QApplication.processEvents()
+
+    assert not toast.isVisible()
+
+    _close_active_toasts()
+    window.close()
     QtWidgets.QApplication.processEvents()
 
 
