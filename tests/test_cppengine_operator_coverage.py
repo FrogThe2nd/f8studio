@@ -35,7 +35,8 @@ class CppEngineOperatorCoverageTest(unittest.TestCase):
         self.assertEqual(angelscript_code_field["editorAssist"], {"version": 1, "language": "angelscript"})
         self.assertIn("string on_exec_json", angelscript_code)
         self.assertIn("inputs_json", angelscript_code)
-        self.assertIn("AngelScript core", angelscript_code)
+        self.assertIn("json_get(inputs_json, \"msg\")", angelscript_code)
+        self.assertIn("json_output_exec", angelscript_code)
 
 
 if __name__ == "__main__":

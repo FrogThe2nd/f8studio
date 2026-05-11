@@ -354,6 +354,10 @@ class LuaScriptNode final : public OperatorNode, public ComputableNode, public C
     if (last_ctx_id_.has_value() && last_ctx_id_.value() == ctx_id && last_outputs_.contains(port)) {
       return last_outputs_[port];
     }
+    const auto cached = object_value_or_null(last_outputs_, port);
+    if (!cached.is_null() && !has_hook("on_pull")) {
+      return cached;
+    }
     try {
       const sol::table inputs = pull_inputs(ctx_id);
       sol::object result = sol::make_object(*lua_, sol::nil);
@@ -638,6 +642,91 @@ std::string string_add_double(const std::string& lhs, double rhs) {
   return lhs + std::to_string(rhs);
 }
 
+std::string json_compact(const json& value) {
+  return value.dump();
+}
+
+json json_parse_or_null(const std::string& value) {
+  if (value.empty()) return nullptr;
+  try {
+    return json::parse(value);
+  } catch (const json::parse_error&) {
+    return nullptr;
+  }
+}
+
+std::string json_quote_string(const std::string& value) {
+  return json(value).dump();
+}
+
+std::string json_get_path(const std::string& value_json, const std::string& path) {
+  json value = json_parse_or_null(value_json);
+  if (value.is_null()) return "null";
+  if (path.empty()) return json_compact(value);
+
+  std::size_t start = 0;
+  while (start <= path.size()) {
+    const std::size_t dot = path.find('.', start);
+    const std::string key = path.substr(start, dot == std::string::npos ? std::string::npos : dot - start);
+    if (key.empty()) return "null";
+    if (value.is_object()) {
+      const auto it = value.find(key);
+      if (it == value.end()) return "null";
+      value = *it;
+    } else if (value.is_array()) {
+      try {
+        const std::size_t index = static_cast<std::size_t>(std::stoull(key));
+        if (index >= value.size()) return "null";
+        value = value[index];
+      } catch (const std::invalid_argument&) {
+        return "null";
+      } catch (const std::out_of_range&) {
+        return "null";
+      }
+    } else {
+      return "null";
+    }
+    if (dot == std::string::npos) break;
+    start = dot + 1;
+  }
+  return json_compact(value);
+}
+
+std::string json_get_string_path(const std::string& value_json, const std::string& path, const std::string& fallback) {
+  const json value = json_parse_or_null(json_get_path(value_json, path));
+  if (value.is_string()) return value.get<std::string>();
+  if (value.is_number_integer()) return std::to_string(value.get<std::int64_t>());
+  if (value.is_number_unsigned()) return std::to_string(value.get<std::uint64_t>());
+  if (value.is_number_float()) return std::to_string(value.get<double>());
+  if (value.is_boolean()) return value.get<bool>() ? "true" : "false";
+  return fallback;
+}
+
+double json_get_number_path(const std::string& value_json, const std::string& path, double fallback) {
+  const json value = json_parse_or_null(json_get_path(value_json, path));
+  return value.is_number() ? value.get<double>() : fallback;
+}
+
+bool json_get_bool_path(const std::string& value_json, const std::string& path, bool fallback) {
+  const json value = json_parse_or_null(json_get_path(value_json, path));
+  return value.is_boolean() ? value.get<bool>() : fallback;
+}
+
+std::string json_object_field(const std::string& key, const std::string& value_json) {
+  json value = json_parse_or_null(value_json);
+  return json_compact(json::object({{key, value}}));
+}
+
+std::string json_output_result(const std::string& port, const std::string& value_json) {
+  json value = json_parse_or_null(value_json);
+  return json_compact(json{{"outputs", json::object({{port, value}})}});
+}
+
+std::string json_output_exec_result(const std::string& port, const std::string& value_json, const std::string& exec_port) {
+  json value = json_parse_or_null(value_json);
+  return json_compact(json{{"outputs", json::object({{port, value}})}, {"exec", json::array({exec_port})}});
+}
+
 class AngelScriptNode final : public OperatorNode, public ComputableNode, public ClosableNode {
  public:
   AngelScriptNode(const std::string& node_id, const F8RuntimeNode& node, const json& initial_state)
@@ -818,6 +907,31 @@ class AngelScriptNode final : public OperatorNode, public ComputableNode, public
     rc = engine_->RegisterObjectMethod("string", "string opAdd(double) const", asFUNCTION(string_add_double),
                                        asCALL_CDECL_OBJFIRST);
     if (rc < 0) throw std::runtime_error("failed to register AngelScript string/double concat");
+
+    rc = engine_->RegisterGlobalFunction("string json_quote(const string &in)", asFUNCTION(json_quote_string),
+                                         asCALL_CDECL);
+    if (rc < 0) throw std::runtime_error("failed to register AngelScript json_quote");
+    rc = engine_->RegisterGlobalFunction("string json_get(const string &in, const string &in)", asFUNCTION(json_get_path),
+                                         asCALL_CDECL);
+    if (rc < 0) throw std::runtime_error("failed to register AngelScript json_get");
+    rc = engine_->RegisterGlobalFunction("string json_get_string(const string &in, const string &in, const string &in)",
+                                         asFUNCTION(json_get_string_path), asCALL_CDECL);
+    if (rc < 0) throw std::runtime_error("failed to register AngelScript json_get_string");
+    rc = engine_->RegisterGlobalFunction("double json_get_number(const string &in, const string &in, double)",
+                                         asFUNCTION(json_get_number_path), asCALL_CDECL);
+    if (rc < 0) throw std::runtime_error("failed to register AngelScript json_get_number");
+    rc = engine_->RegisterGlobalFunction("bool json_get_bool(const string &in, const string &in, bool)",
+                                         asFUNCTION(json_get_bool_path), asCALL_CDECL);
+    if (rc < 0) throw std::runtime_error("failed to register AngelScript json_get_bool");
+    rc = engine_->RegisterGlobalFunction("string json_field(const string &in, const string &in)",
+                                         asFUNCTION(json_object_field), asCALL_CDECL);
+    if (rc < 0) throw std::runtime_error("failed to register AngelScript json_field");
+    rc = engine_->RegisterGlobalFunction("string json_output(const string &in, const string &in)",
+                                         asFUNCTION(json_output_result), asCALL_CDECL);
+    if (rc < 0) throw std::runtime_error("failed to register AngelScript json_output");
+    rc = engine_->RegisterGlobalFunction("string json_output_exec(const string &in, const string &in, const string &in)",
+                                         asFUNCTION(json_output_exec_result), asCALL_CDECL);
+    if (rc < 0) throw std::runtime_error("failed to register AngelScript json_output_exec");
   }
 
   static void message_callback(const asSMessageInfo* msg, AngelScriptNode* self) {
@@ -1269,10 +1383,6 @@ std::string lua_script_template() {
 --   on_exec returns { exec = { "exec" }, outputs = { out = value } }.
 --   Values must be JSON-compatible: nil, boolean, number, string, array tables, object tables.
 
-local state = {
-  count = 0,
-}
-
 local function input_value(inputs, name)
   if inputs == nil then
     return nil
@@ -1293,8 +1403,6 @@ function on_msg(ctx, inputs)
 end
 
 function on_exec(ctx, exec_in, inputs)
-  state.count = state.count + 1
-
   local msg = input_value(inputs, "msg")
   if msg == nil then
     msg = ctx:pull("msg")
@@ -1302,14 +1410,17 @@ function on_exec(ctx, exec_in, inputs)
 
   return {
     outputs = {
-      out = {
-        value = msg,
-        count = state.count,
-        exec_in = exec_in,
-        node = ctx.node_id,
-      },
+      out = msg,
     },
     exec = { "exec" },
+  }
+end
+
+function on_pull(ctx, port, inputs)
+  return {
+    outputs = {
+      out = input_value(inputs, "msg"),
+    },
   }
 end
 
@@ -1327,8 +1438,8 @@ std::string angelscript_template() {
   return R"F8(// f8.angelscript starter for cppengine graphs.
 // Target runtime: AngelScript module embedded in the C++ engine script bridge.
 //
-// This Conan package ships AngelScript core only, so cppengine exposes a compact
-// JSON string protocol instead of add-on types like dictionary/array.
+// The bridge passes JSON strings at hook boundaries and registers explicit JSON
+// helper functions so scripts can read values and build valid return payloads.
 //
 // Hooks: define any subset.
 //   void on_start()
@@ -1342,9 +1453,19 @@ std::string angelscript_template() {
 //   Return a JSON object like {"outputs":{"out":123},"exec":["exec"]}.
 //   Return a plain JSON scalar/string to write output "out".
 //
+// JSON helpers:
+//   json_get(json, "msg.value")                         -> JSON string or "null"
+//   json_get_string(json, "msg.name", "fallback")       -> string
+//   json_get_number(json, "msg.phase", 0.0)             -> double
+//   json_get_bool(json, "msg.active", false)            -> bool
+//   json_quote(text)                                    -> JSON quoted string
+//   json_field("key", value_json)                       -> {"key":value}
+//   json_output("out", value_json)                      -> {"outputs":{"out":value}}
+//   json_output_exec("out", value_json, "exec")         -> {"outputs":{"out":value},"exec":["exec"]}
+//
 // Notes:
 //   inputs_json is a JSON object keyed by input port name.
-//   For quick pass-through, returning value_json from on_msg_json is valid.
+//   For quick pass-through, json_output("out", value_json) is valid.
 
 int count = 0;
 
@@ -1352,21 +1473,18 @@ void on_start() {
 }
 
 string on_msg_json(const string &in port, const string &in value_json) {
-  return "{\"outputs\":{\"out\":" + value_json + "}}";
+  return json_output("out", value_json);
 }
 
 string on_exec_json(const string &in exec_in, const string &in inputs_json) {
   count += 1;
 
-  // AngelScript core has no bundled JSON parser. This starter forwards the
-  // complete input object as a string so downstream nodes can inspect it.
-  return "{\"outputs\":{\"out\":{\"inputs\":" + inputs_json +
-         ",\"count\":" + count +
-         ",\"exec_in\":\"" + exec_in + "\"}},\"exec\":[\"exec\"]}";
+  string msg = json_get(inputs_json, "msg");
+  return json_output_exec("out", msg, "exec");
 }
 
 string on_pull_json(const string &in port, const string &in inputs_json) {
-  return "{\"outputs\":{\"out\":" + inputs_json + "}}";
+  return json_output("out", json_get(inputs_json, "msg"));
 }
 
 string on_state_json(const string &in field, const string &in value_json, const string &in ts_ms) {
@@ -1385,9 +1503,9 @@ std::string script_template_for_language(const std::string& lang) {
 
 std::string script_description_for_language(const std::string& lang) {
   if (lang == "Lua") {
-    return "LuaJIT script node for C++ engine graphs. The default code documents the hook/context contract and starts from a pass-through exec scaffold.";
+    return "LuaJIT script node for C++ engine graphs. The default code documents the hook/context contract and starts from a Python-like pass-through scaffold.";
   }
-  return "AngelScript node for C++ engine graphs. V1 uses the AngelScript core runtime and a compact JSON string hook protocol so it runs without external add-on libraries.";
+  return "AngelScript node for C++ engine graphs. V1 uses the AngelScript core runtime plus explicit JSON helper functions for hook inputs and outputs.";
 }
 
 json script_code_state_field(const std::string& lang, const std::string& lower) {

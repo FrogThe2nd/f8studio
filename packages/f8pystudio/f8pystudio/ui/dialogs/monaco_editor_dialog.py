@@ -222,7 +222,7 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
                 monaco_base_url=monaco_base_url,
                 python_assist_enabled=self._controller.assist_bridge() is not None,
                 prism_asset_html=render_prism_asset_html(
-                    languages=("python", "javascript", "bash", "json"),
+                    languages=("python", "javascript", "bash", "json", "lua", "cpp", "c"),
                 ),
             )
         )

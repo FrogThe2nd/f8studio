@@ -102,15 +102,7 @@ void expect(bool condition, const std::string& message) {
   if (!condition) throw std::runtime_error(message);
 }
 
-void run_cpython_script_operator_smoke() {
-  f8::cppsdk::ServiceBus::Config cfg;
-  cfg.service_id = kServiceId;
-  cfg.service_class = kServiceClass;
-  cfg.bus_backend = f8::cppsdk::BusBackend::kMem;
-  f8::cppsdk::ServiceBus bus(cfg);
-
-  f8::cppsdk::RuntimeNodeRegistry registry;
-  f8::cppengine::register_cppengine_specs(registry);
+void register_test_constant(f8::cppsdk::RuntimeNodeRegistry& registry) {
   registry.register_operator_spec(json{{"specKind", "operator"},
                                        {"serviceClass", kServiceClass},
                                        {"operatorClass", "f8.test_constant"},
@@ -125,6 +117,18 @@ void run_cpython_script_operator_smoke() {
         return std::make_unique<ConstantNode>(node_id, value);
       },
       true);
+}
+
+void run_cpython_script_operator_smoke() {
+  f8::cppsdk::ServiceBus::Config cfg;
+  cfg.service_id = kServiceId;
+  cfg.service_class = kServiceClass;
+  cfg.bus_backend = f8::cppsdk::BusBackend::kMem;
+  f8::cppsdk::ServiceBus bus(cfg);
+
+  f8::cppsdk::RuntimeNodeRegistry registry;
+  f8::cppengine::register_cppengine_specs(registry);
+  register_test_constant(registry);
   registry.register_operator_spec(json{{"specKind", "operator"},
                                        {"serviceClass", kServiceClass},
                                        {"operatorClass", "f8.test_sink"},
@@ -209,20 +213,7 @@ void run_lua_script_operator_smoke() {
 
   f8::cppsdk::RuntimeNodeRegistry registry;
   f8::cppengine::register_cppengine_specs(registry);
-  registry.register_operator_spec(json{{"specKind", "operator"},
-                                       {"serviceClass", kServiceClass},
-                                       {"operatorClass", "f8.test_constant"},
-                                       {"label", "Test Constant"}},
-                                  true);
-  registry.register_operator_factory(
-      kServiceClass, "f8.test_constant",
-      [](const std::string& node_id, const f8::cppsdk::generated::F8RuntimeNode& node, const json& initial_state) {
-        (void)node;
-        const auto value_it = initial_state.find("value");
-        const json value = value_it == initial_state.end() ? json(nullptr) : *value_it;
-        return std::make_unique<ConstantNode>(node_id, value);
-      },
-      true);
+  register_test_constant(registry);
   registry.register_operator_spec(json{{"specKind", "operator"},
                                        {"serviceClass", kServiceClass},
                                        {"operatorClass", "f8.test_sink"},
@@ -298,31 +289,41 @@ void run_angelscript_operator_smoke() {
 
   f8::cppsdk::RuntimeNodeRegistry registry;
   f8::cppengine::register_cppengine_specs(registry);
+  register_test_constant(registry);
 
   f8::cppsdk::ServiceHost host(bus, registry, kServiceClass);
   host.start();
 
   const std::string code =
       "string on_msg_json(const string &in port, const string &in value_json) {\n"
-      "  return \"{\\\"outputs\\\":{\\\"out\\\":\" + value_json + \"}}\";\n"
+      "  return json_output(\"out\", value_json);\n"
+      "}\n"
+      "string on_pull_json(const string &in port, const string &in inputs_json) {\n"
+      "  return json_output(\"out\", json_get(inputs_json, \"msg\"));\n"
       "}\n";
   json graph{{"graphId", "g"},
              {"revision", "r"},
              {"nodes",
-              json::array({runtime_node("angelscript", "f8.angelscript", json::array({port_spec("msg")}),
+              json::array({runtime_node("source", "f8.test_constant", json::array(), json::array({port_spec("out")}),
+                                        json::array(), json::array(),
+                                        json::array({json{{"name", "value"},
+                                                          {"access", "rw"},
+                                                          {"valueSchema", json{{"type", "any"}}}}}),
+                                        json{{"value", json{{"value", 12}}}}),
+                           runtime_node("angelscript", "f8.angelscript", json::array({port_spec("msg")}),
                                         json::array({port_spec("out")}), json::array({"exec"}), json::array({"exec"}),
                                         json::array({json{{"name", "code"},
                                                           {"access", "rw"},
                                                           {"valueSchema", json{{"type", "string"}}}}}),
                                         json{{"code", code}})})},
-             {"edges", json::array()}};
+             {"edges", json::array({data_edge("d1", "source", "out", "angelscript", "msg")})}};
 
   std::string error_code;
   std::string error_message;
   expect(host.apply_rungraph(graph, error_code, error_message),
          "apply_rungraph failed: " + error_code + ": " + error_message);
 
-  host.on_data("angelscript", "msg", json{{"value", 12}}, 90, json::object());
+  bus.push_data_input_for_local_test("angelscript", "msg", json{{"value", 12}}, 90);
 
   auto* angelscript = dynamic_cast<f8::cppsdk::ComputableNode*>(host.get_node("angelscript"));
   expect(angelscript != nullptr, "angelscript must implement ComputableNode for external viz auto-sampling");

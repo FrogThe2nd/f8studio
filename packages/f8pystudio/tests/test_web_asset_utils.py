@@ -117,6 +117,9 @@ def test_ensure_web_assets_installed_populates_app_data_root(monkeypatch, tmp_pa
             "package/components/prism-javascript.min.js": "// js",
             "package/components/prism-bash.min.js": "// bash",
             "package/components/prism-json.min.js": "// json",
+            "package/components/prism-lua.min.js": "// lua",
+            "package/components/prism-cpp.min.js": "// cpp",
+            "package/components/prism-c.min.js": "// c",
         },
     )
 
@@ -139,12 +142,16 @@ def test_ensure_web_assets_installed_populates_app_data_root(monkeypatch, tmp_pa
     assert (app_data_root / "monaco" / "min" / "vs" / "loader.js").is_file()
     assert (app_data_root / "prism" / "prism.js").is_file()
     assert (app_data_root / "prism" / "components" / "prism-python.min.js").is_file()
+    assert (app_data_root / "prism" / "components" / "prism-lua.min.js").is_file()
+    assert (app_data_root / "prism" / "components" / "prism-cpp.min.js").is_file()
     assert resolve_monaco_base_url() == (app_data_root / "monaco" / "min").resolve().as_uri()
 
-    prism_html = render_prism_asset_html(languages=("python", "json"))
+    prism_html = render_prism_asset_html(languages=("python", "json", "lua", "cpp"))
     assert "file://" in prism_html
     assert "prism-python.min.js" in prism_html
     assert "prism-json.min.js" in prism_html
+    assert "prism-lua.min.js" in prism_html
+    assert "prism-cpp.min.js" in prism_html
 
 
 def test_resolve_functions_schedule_bootstrap_when_assets_missing(monkeypatch, tmp_path) -> None:
