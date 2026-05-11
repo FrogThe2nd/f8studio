@@ -1,6 +1,7 @@
 #include "f8cppengine/cppengine_service.h"
 
 #include <algorithm>
+#include <chrono>
 #include <utility>
 
 #include <spdlog/spdlog.h>
@@ -11,6 +12,16 @@
 #include "f8cppsdk/time_utils.h"
 
 namespace f8::cppengine {
+
+namespace {
+
+using SteadyClock = std::chrono::steady_clock;
+
+double elapsed_ms(const SteadyClock::time_point start, const SteadyClock::time_point end) {
+  return std::chrono::duration<double, std::milli>(end - start).count();
+}
+
+}  // namespace
 
 CppEngineService::CppEngineService(Config cfg) : cfg_(std::move(cfg)) {
   register_cppengine_specs(registry_);
@@ -207,17 +218,27 @@ void CppEngineService::process_auto_samples() {
       continue;
     }
 
+    const auto start = SteadyClock::now();
     try {
       const nlohmann::json value = computable->compute_output(sample.source_port, now);
+      const auto end = SteadyClock::now();
+      const double latency_ms = elapsed_ms(start, end);
+      bus_->record_monitor_timing("auto_sample", latency_ms, latency_ms, now);
       if (!value.is_null()) {
         (void)bus_->emit_data(sample.source_node_id, sample.source_port, value, now);
       }
     } catch (const std::exception& exc) {
+      const auto end = SteadyClock::now();
+      const double latency_ms = elapsed_ms(start, end);
+      bus_->record_monitor_timing("auto_sample", latency_ms, latency_ms, now);
       const std::string fingerprint = "cppengine:auto_sample:compute:" + sample.source_node_id + ":" + sample.source_port;
       if (should_report_auto_sample_error(fingerprint, now)) {
         bus_->report_error(sample.source_node_id, "AUTO_SAMPLE_COMPUTE_FAILED", exc.what(), "error", fingerprint, now);
       }
     } catch (...) {
+      const auto end = SteadyClock::now();
+      const double latency_ms = elapsed_ms(start, end);
+      bus_->record_monitor_timing("auto_sample", latency_ms, latency_ms, now);
       const std::string fingerprint = "cppengine:auto_sample:compute:" + sample.source_node_id + ":" + sample.source_port;
       if (should_report_auto_sample_error(fingerprint, now)) {
         bus_->report_error(sample.source_node_id, "AUTO_SAMPLE_COMPUTE_FAILED",

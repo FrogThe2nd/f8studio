@@ -1,6 +1,7 @@
 #include "f8cppsdk/exec_flow_executor.h"
 
 #include <algorithm>
+#include <chrono>
 #include <stdexcept>
 
 #include <spdlog/spdlog.h>
@@ -11,6 +12,12 @@
 namespace f8::cppsdk {
 
 namespace {
+
+using SteadyClock = std::chrono::steady_clock;
+
+double elapsed_ms(const SteadyClock::time_point start, const SteadyClock::time_point end) {
+  return std::chrono::duration<double, std::milli>(end - start).count();
+}
 
 std::string node_or_service_id(const std::optional<std::string>& node_id, const std::string& service_id) {
   if (node_id.has_value() && !node_id->empty()) return node_id.value();
@@ -249,7 +256,11 @@ void ExecFlowExecutor::worker_loop() {
       queue_.pop_front();
     }
     if (trigger && active() && bus_.active()) {
+      const auto start = SteadyClock::now();
       propagate_exec_dfs(trigger->node_id, trigger->out_port, trigger->exec_id);
+      const auto end = SteadyClock::now();
+      const double latency_ms = elapsed_ms(start, end);
+      bus_.record_monitor_timing("exec", latency_ms, latency_ms, now_ms());
     }
     if (trigger && trigger->wait) {
       std::lock_guard<std::mutex> lock(mu_);

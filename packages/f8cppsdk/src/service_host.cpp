@@ -1,12 +1,25 @@
 #include "f8cppsdk/service_host.h"
 
 #include <algorithm>
+#include <chrono>
 #include <exception>
 #include <unordered_set>
 
 #include <spdlog/spdlog.h>
 
+#include "f8cppsdk/time_utils.h"
+
 namespace f8::cppsdk {
+
+namespace {
+
+using SteadyClock = std::chrono::steady_clock;
+
+double elapsed_ms(const SteadyClock::time_point start, const SteadyClock::time_point end) {
+  return std::chrono::duration<double, std::milli>(end - start).count();
+}
+
+}  // namespace
 
 ServiceHost::ServiceHost(ServiceBus& bus, RuntimeNodeRegistry& registry, std::string service_class)
     : bus_(bus), registry_(registry), service_class_(std::move(service_class)) {}
@@ -168,11 +181,21 @@ void ServiceHost::on_data(const std::string& node_id, const std::string& port, c
                           std::int64_t ts_ms, const nlohmann::json& meta) {
   RuntimeNode* node = get_node(node_id);
   if (node == nullptr) return;
+  const auto start = SteadyClock::now();
   try {
     node->on_data(port, value, ts_ms, meta);
+    const auto end = SteadyClock::now();
+    const double latency_ms = elapsed_ms(start, end);
+    bus_.record_monitor_timing("data", latency_ms, latency_ms, now_ms());
   } catch (const std::exception& exc) {
+    const auto end = SteadyClock::now();
+    const double latency_ms = elapsed_ms(start, end);
+    bus_.record_monitor_timing("data", latency_ms, latency_ms, now_ms());
     bus_.report_error(node_id, "DATA_CALLBACK_FAILED", exc.what(), "error", "", ts_ms);
   } catch (...) {
+    const auto end = SteadyClock::now();
+    const double latency_ms = elapsed_ms(start, end);
+    bus_.record_monitor_timing("data", latency_ms, latency_ms, now_ms());
     bus_.report_error(node_id, "DATA_CALLBACK_FAILED", "on_data threw unknown exception", "error", "", ts_ms);
   }
 }
