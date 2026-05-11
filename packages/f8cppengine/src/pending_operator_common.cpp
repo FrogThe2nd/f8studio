@@ -1,5 +1,6 @@
 #include "pending_operator_common.h"
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
@@ -13,12 +14,13 @@
 namespace f8::cppengine {
 
 using f8::cppsdk::OperatorNode;
+using f8::cppsdk::ComputableNode;
 using f8::cppsdk::RuntimeNodeRegistry;
 using f8::cppsdk::generated::F8RuntimeNode;
 
 namespace {
 
-class PendingOperatorNode final : public OperatorNode {
+class PendingOperatorNode final : public OperatorNode, public ComputableNode {
  public:
   PendingOperatorNode(const std::string& node_id, const F8RuntimeNode& node, const json& initial_state)
       : OperatorNode(node_id, data_port_names(node.dataInPorts, {}), data_port_names(node.dataOutPorts, {}),
@@ -40,13 +42,24 @@ class PendingOperatorNode final : public OperatorNode {
   std::vector<std::string> on_exec(std::int64_t exec_id, const std::string& in_port) override {
     (void)exec_id;
     (void)in_port;
-    report_error("CPP_OPERATOR_UNIMPLEMENTED",
-                 operator_class_ + " is described by f8.cppengine but its native runtime is not implemented yet",
-                 "warning", "cpp-unimplemented:" + operator_class_ + ":" + node_id());
+    report_unimplemented();
     return {};
   }
 
+  nlohmann::json compute_output(const std::string& port, std::int64_t ctx_id) override {
+    (void)ctx_id;
+    if (std::find(data_out_ports().begin(), data_out_ports().end(), port) == data_out_ports().end()) return nullptr;
+    report_unimplemented(ctx_id);
+    return nullptr;
+  }
+
  private:
+  void report_unimplemented(std::int64_t ts_ms = 0) {
+    report_error("CPP_OPERATOR_UNIMPLEMENTED",
+                 operator_class_ + " is described by f8.cppengine but its native runtime is not implemented yet",
+                 "warning", "cpp-unimplemented:" + operator_class_ + ":" + node_id(), ts_ms);
+  }
+
   std::string operator_class_;
 };
 

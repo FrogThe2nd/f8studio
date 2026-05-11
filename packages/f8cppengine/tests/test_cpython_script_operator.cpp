@@ -227,10 +227,73 @@ void run_script_placeholder_operator_smoke() {
          "angelscript placeholder output should be null until runtime is linked");
 }
 
+void run_all_data_output_operators_are_computable_smoke() {
+  f8::cppsdk::ServiceBus::Config cfg;
+  cfg.service_id = kServiceId;
+  cfg.service_class = kServiceClass;
+  cfg.bus_backend = f8::cppsdk::BusBackend::kMem;
+  f8::cppsdk::ServiceBus bus(cfg);
+
+  f8::cppsdk::RuntimeNodeRegistry registry;
+  f8::cppengine::register_cppengine_specs(registry);
+  const json describe = registry.describe(kServiceClass);
+
+  f8::cppsdk::ServiceHost host(bus, registry, kServiceClass);
+  host.start();
+
+  json nodes = json::array();
+  int index = 0;
+  for (const auto& spec : describe.value("operators", json::array())) {
+    const json data_out = spec.value("dataOutPorts", json::array());
+    if (!data_out.is_array() || data_out.empty()) continue;
+
+    const std::string operator_class = spec.value("operatorClass", "");
+    expect(!operator_class.empty(), "operator with dataOutPorts is missing operatorClass");
+    json data_in = spec.value("dataInPorts", json::array());
+    json exec_in = spec.value("execInPorts", json::array());
+    json exec_out = spec.value("execOutPorts", json::array());
+    json states = spec.value("stateFields", json::array());
+    json state_values = json::object();
+    for (const auto& field : states) {
+      const std::string name = field.value("name", "");
+      if (name.empty()) continue;
+      const auto schema_it = field.find("valueSchema");
+      if (schema_it == field.end() || !schema_it->is_object()) continue;
+      const auto default_it = schema_it->find("default");
+      if (default_it != schema_it->end()) {
+        state_values[name] = *default_it;
+      }
+    }
+    nodes.push_back(runtime_node("node" + std::to_string(index), operator_class, std::move(data_in), data_out,
+                                 std::move(exec_in), std::move(exec_out), std::move(states), std::move(state_values)));
+    ++index;
+  }
+
+  json graph{{"graphId", "g"}, {"revision", "r"}, {"nodes", nodes}, {"edges", json::array()}};
+
+  std::string error_code;
+  std::string error_message;
+  expect(host.apply_rungraph(graph, error_code, error_message),
+         "apply_rungraph failed: " + error_code + ": " + error_message);
+
+  for (const auto& node : nodes) {
+    const std::string node_id = node.value("nodeId", "");
+    const std::string operator_class = node.value("operatorClass", "");
+    auto* computable = dynamic_cast<f8::cppsdk::ComputableNode*>(host.get_node(node_id));
+    expect(computable != nullptr, operator_class + " declares dataOutPorts but does not implement ComputableNode");
+    for (const auto& port : node.value("dataOutPorts", json::array())) {
+      const std::string port_name = port.value("name", "");
+      if (port_name.empty()) continue;
+      (void)computable->compute_output(port_name, 9000);
+    }
+  }
+}
+
 int main() {
   try {
     run_cpython_script_operator_smoke();
     run_script_placeholder_operator_smoke();
+    run_all_data_output_operators_are_computable_smoke();
   } catch (const std::exception& exc) {
     std::cerr << exc.what() << "\n";
     return 1;

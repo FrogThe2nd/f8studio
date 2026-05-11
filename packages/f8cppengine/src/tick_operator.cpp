@@ -37,7 +37,7 @@ using f8::cppsdk::RuntimeNodeRegistry;
 using f8::cppsdk::generated::F8RuntimeNode;
 
 namespace {
-class TickNode final : public OperatorNode, public EntrypointNode {
+class TickNode final : public OperatorNode, public EntrypointNode, public ComputableNode {
  public:
   TickNode(const std::string& node_id, const F8RuntimeNode& node, const json& initial_state)
       : OperatorNode(node_id, data_port_names(node.dataInPorts, {}), data_port_names(node.dataOutPorts, {"processingMs", "intervalMs", "latenessMs"}),
@@ -68,6 +68,14 @@ class TickNode final : public OperatorNode, public EntrypointNode {
     return exec_out_ports();
   }
 
+  json compute_output(const std::string& port, std::int64_t ctx_id) override {
+    (void)ctx_id;
+    if (port == "intervalMs") return last_interval_ms_.load(std::memory_order_acquire);
+    if (port == "latenessMs") return last_lateness_ms_.load(std::memory_order_acquire);
+    if (port == "processingMs") return last_processing_ms_.load(std::memory_order_acquire);
+    return nullptr;
+  }
+
   void start_entrypoint(const EntrypointContext& ctx) override {
     stop_entrypoint();
     stop_requested_.store(false, std::memory_order_release);
@@ -91,6 +99,8 @@ class TickNode final : public OperatorNode, public EntrypointNode {
         last_tick = started;
         const std::int64_t lateness_ms =
             std::max<std::int64_t>(0, std::chrono::duration_cast<std::chrono::milliseconds>(started - next_deadline).count());
+        last_interval_ms_.store(interval_ms, std::memory_order_release);
+        last_lateness_ms_.store(lateness_ms, std::memory_order_release);
         (void)emit("intervalMs", interval_ms);
         (void)emit("latenessMs", lateness_ms);
         for (const auto& port : exec_out_ports()) {
@@ -98,6 +108,7 @@ class TickNode final : public OperatorNode, public EntrypointNode {
         }
         const std::int64_t processing_ms =
             std::max<std::int64_t>(0, std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count());
+        last_processing_ms_.store(processing_ms, std::memory_order_release);
         (void)emit("processingMs", processing_ms);
         const auto now = std::chrono::steady_clock::now();
         if (next_deadline <= now) {
@@ -128,6 +139,9 @@ class TickNode final : public OperatorNode, public EntrypointNode {
   std::atomic<int> tick_ms_{100};
   std::atomic<bool> hi_res_timer_{true};
   std::atomic<bool> stop_requested_{false};
+  std::atomic<std::int64_t> last_interval_ms_{0};
+  std::atomic<std::int64_t> last_lateness_ms_{0};
+  std::atomic<std::int64_t> last_processing_ms_{0};
   std::mutex mu_;
   std::condition_variable cv_;
   std::thread worker_;
