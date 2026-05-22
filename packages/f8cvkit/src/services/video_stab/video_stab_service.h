@@ -127,6 +127,8 @@ class VideoStabService final : public f8::cppsdk::LifecycleNode,
 
   // Tracking state.
   bool has_prev_gray_ = false;
+  int prev_frame_width_ = 0;
+  int prev_frame_height_ = 0;
   cv::Mat prev_gray_;
   bool smooth_initialized_ = false;
   MotionParams smooth_params_{};

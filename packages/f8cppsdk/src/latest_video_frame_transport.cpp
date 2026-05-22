@@ -14,6 +14,9 @@
 namespace f8::cppsdk {
 namespace {
 
+constexpr auto kDecodeFailureWarnDelay = std::chrono::seconds(5);
+constexpr auto kDecodeFailureWarnInterval = std::chrono::seconds(10);
+
 void set_error(std::string* error_message, std::string value) {
   if (error_message != nullptr) {
     *error_message = std::move(value);
@@ -238,13 +241,13 @@ class ZenohLatestVideoFrameSubscriber::Impl final {
   Impl() : subscriber_("video") {}
 
   bool open(const RuntimeBackendConfig& config, const std::string& key_expr) {
-    decode_failure_reported_ = false;
+    reset_decode_failure_tracking();
     return subscriber_.open(config, key_expr);
   }
 
   void close() {
     subscriber_.close();
-    decode_failure_reported_ = false;
+    reset_decode_failure_tracking();
   }
 
   std::optional<LatestVideoFrame> poll_latest() {
@@ -276,18 +279,44 @@ class ZenohLatestVideoFrameSubscriber::Impl final {
     LatestVideoFrame frame;
     std::string error;
     if (!decode_zenoh_video_frame(raw, frame, &error)) {
-      if (!decode_failure_reported_) {
-        decode_failure_reported_ = true;
-        spdlog::error("zenoh video frame decode failed key={}: {}", subscriber_.key_expr(), error);
-      }
+      record_decode_failure(error);
       return std::nullopt;
     }
-    decode_failure_reported_ = false;
+    reset_decode_failure_tracking();
     return frame;
   }
 
+  void reset_decode_failure_tracking() {
+    decode_failure_count_ = 0;
+    first_decode_failure_at_ = std::chrono::steady_clock::time_point{};
+    last_decode_failure_warn_at_ = std::chrono::steady_clock::time_point{};
+  }
+
+  void record_decode_failure(const std::string& error) {
+    const auto now = std::chrono::steady_clock::now();
+    if (decode_failure_count_ == 0) {
+      first_decode_failure_at_ = now;
+    }
+    ++decode_failure_count_;
+
+    const bool warning_due =
+        first_decode_failure_at_ != std::chrono::steady_clock::time_point{} &&
+        (now - first_decode_failure_at_) >= kDecodeFailureWarnDelay &&
+        (last_decode_failure_warn_at_ == std::chrono::steady_clock::time_point{} ||
+         (now - last_decode_failure_warn_at_) >= kDecodeFailureWarnInterval);
+    if (!warning_due) {
+      return;
+    }
+
+    last_decode_failure_warn_at_ = now;
+    spdlog::warn("zenoh video frame decode skipped invalid samples key={} count={} last={}", subscriber_.key_expr(),
+                 decode_failure_count_, error);
+  }
+
   ZenohLatestBinaryStreamSubscriber subscriber_;
-  bool decode_failure_reported_ = false;
+  std::uint64_t decode_failure_count_ = 0;
+  std::chrono::steady_clock::time_point first_decode_failure_at_{};
+  std::chrono::steady_clock::time_point last_decode_failure_warn_at_{};
 };
 
 ZenohLatestVideoFramePublisher::ZenohLatestVideoFramePublisher() : impl_(std::make_unique<Impl>()) {}

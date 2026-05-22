@@ -656,6 +656,8 @@ bool TrackingService::start() {
   frame_bgra_.clear();
   frame_bgr_.release();
   last_frame_id_ = 0;
+  tracking_frame_width_ = 0;
+  tracking_frame_height_ = 0;
   last_processed_frame_ts_ms_ = 0;
   next_tracking_due_ts_ms_ = 0.0;
   last_video_open_attempt_ms_ = 0;
@@ -903,6 +905,8 @@ void TrackingService::stop_tracking_internal(const json& meta) {
   tracker_.release();
   bbox_ = cv::Rect();
   active_tracker_kind_state_.clear();
+  tracking_frame_width_ = 0;
+  tracking_frame_height_ = 0;
   pending_init_boxes_.clear();
   ++pending_init_box_generation_;
   last_processed_frame_ts_ms_ = 0;
@@ -994,6 +998,8 @@ bool TrackingService::ensure_zenoh_video_open() {
   zenoh_video_open_key_ = key;
   last_processed_frame_ts_ms_ = 0;
   next_tracking_due_ts_ms_ = 0.0;
+  tracking_frame_width_ = 0;
+  tracking_frame_height_ = 0;
   publish_error_if_changed("", "runtime", json::object());
   return true;
 }
@@ -1070,6 +1076,13 @@ void TrackingService::apply_init_box_if_any() {
   init_video_wait_started_ms_ = 0;
   init_video_wait_last_log_ms_ = 0;
   init_video_wait_misses_ = 0;
+
+  const auto frame_validation =
+      service_runtime::validate_latest_video_frame(frame_meta, f8::cppsdk::kVideoFormatBgra32, 4u);
+  if (!frame_validation.ok) {
+    return;
+  }
+  const std::size_t row_bytes = frame_validation.row_bytes;
   {
     std::lock_guard<std::mutex> lock(tracking_mu_);
     if (pending_init_box_generation_ == candidates_generation) {
@@ -1077,18 +1090,9 @@ void TrackingService::apply_init_box_if_any() {
       ++pending_init_box_generation_;
     }
   }
-  if (frame_meta.format != 1 || frame_meta.width == 0 || frame_meta.height == 0 || frame_meta.pitch == 0) {
-    publish_error_if_changed("unsupported video frame format", "runtime", json::object());
-    return;
-  }
-  const std::size_t row_bytes = static_cast<std::size_t>(frame_meta.pitch);
-  if (frame_bgra_.size() < row_bytes * static_cast<std::size_t>(frame_meta.height)) {
-    publish_error_if_changed("video frame too small", "runtime", json::object());
-    return;
-  }
 
   cv::Mat bgra_mat(static_cast<int>(frame_meta.height), static_cast<int>(frame_meta.width), CV_8UC4,
-                   const_cast<std::byte*>(frame_bgra_.data()), static_cast<std::size_t>(frame_meta.pitch));
+                   const_cast<std::byte*>(frame_bgra_.data()), row_bytes);
   try {
     cv::cvtColor(bgra_mat, frame_bgr_, cv::COLOR_BGRA2BGR);
   } catch (const cv::Exception& ex) {
@@ -1147,6 +1151,8 @@ void TrackingService::apply_init_box_if_any() {
                    bb.width, bb.height);
       active_tracker_kind_state_ = tracker_kind_state_;
       bbox_ = bb;
+      tracking_frame_width_ = static_cast<int>(frame_meta.width);
+      tracking_frame_height_ = static_cast<int>(frame_meta.height);
       last_processed_frame_ts_ms_ = 0;
       next_tracking_due_ts_ms_ = 0.0;
       publish_error_if_changed("", "runtime", json::object({{"source", "initBox"}}));
@@ -1219,20 +1225,22 @@ void TrackingService::process_frame_once() {
     next_tracking_due_ts_ms_ = 0.0;
   }
 
-  if (frame_meta.format != 1 || frame_meta.width == 0 || frame_meta.height == 0 || frame_meta.pitch == 0) {
-    publish_error_if_changed("unsupported video frame format", "runtime", json::object());
-    set_tracking(false, json::object({{"reason", "bad_format"}}));
+  const auto frame_validation =
+      service_runtime::validate_latest_video_frame(frame_meta, f8::cppsdk::kVideoFormatBgra32, 4u);
+  if (!frame_validation.ok) {
     return;
   }
-  const std::size_t row_bytes = static_cast<std::size_t>(frame_meta.pitch);
-  if (frame_bgra_.size() < row_bytes * static_cast<std::size_t>(frame_meta.height)) {
-    publish_error_if_changed("video frame too small", "runtime", json::object());
-    set_tracking(false, json::object({{"reason", "bad_frame"}}));
+  const std::size_t row_bytes = frame_validation.row_bytes;
+  if (tracking_frame_width_ > 0 && tracking_frame_height_ > 0 &&
+      (tracking_frame_width_ != static_cast<int>(frame_meta.width) ||
+       tracking_frame_height_ != static_cast<int>(frame_meta.height))) {
+    std::lock_guard<std::mutex> lock(tracking_mu_);
+    stop_tracking_internal(json::object({{"reason", "video_dimensions_changed"}}));
     return;
   }
 
   cv::Mat bgra_mat(static_cast<int>(frame_meta.height), static_cast<int>(frame_meta.width), CV_8UC4,
-                   const_cast<std::byte*>(frame_bgra_.data()), static_cast<std::size_t>(frame_meta.pitch));
+                   const_cast<std::byte*>(frame_bgra_.data()), row_bytes);
   try {
     cv::cvtColor(bgra_mat, frame_bgr_, cv::COLOR_BGRA2BGR);
   } catch (const cv::Exception& ex) {

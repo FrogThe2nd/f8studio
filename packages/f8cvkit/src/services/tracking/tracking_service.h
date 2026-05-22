@@ -116,6 +116,8 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
   std::vector<std::byte> frame_bgra_;
   cv::Mat frame_bgr_;
   std::uint64_t last_frame_id_ = 0;
+  int tracking_frame_width_ = 0;
+  int tracking_frame_height_ = 0;
   std::int64_t last_processed_frame_ts_ms_ = 0;
   double next_tracking_due_ts_ms_ = 0.0;
   std::int64_t last_video_open_attempt_ms_ = 0;
