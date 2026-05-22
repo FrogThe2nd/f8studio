@@ -8,6 +8,7 @@ add_library(f8cppengine_core STATIC
   src/cppengine_service_node.cpp
   src/core_operators.cpp
   src/data_expr_operator.cpp
+  src/data_pick_operator.cpp
   src/detrend_operator.cpp
   src/envelope_operator.cpp
   src/exec_sequence_operator.cpp

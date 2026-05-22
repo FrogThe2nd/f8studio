@@ -15,8 +15,26 @@ class CppEngineOperatorCoverageTest(unittest.TestCase):
 
         expected_missing = {"f8.python_script"}
         self.assertEqual(py_operator_classes - cpp_operator_classes, expected_missing)
+        self.assertIn("f8.data_pick", cpp_operator_classes)
         self.assertIn("f8.lua_script", cpp_operator_classes)
         self.assertNotIn("f8.angelscript", cpp_operator_classes)
+
+    def test_cppengine_data_pick_operator_shape(self) -> None:
+        cppengine = json.loads(Path("services/f8/cppengine/describe.json").read_text(encoding="utf-8"))
+        specs = {str(op["operatorClass"]): op for op in cppengine["operators"]}
+
+        data_pick = specs["f8.data_pick"]
+        self.assertEqual(data_pick["label"], "Data Pick")
+        self.assertEqual(data_pick["paletteCategory"], "f8.cppengine.expr")
+        self.assertEqual([port["name"] for port in data_pick["dataInPorts"]], ["msg"])
+        self.assertEqual([port["name"] for port in data_pick["dataOutPorts"]], ["out"])
+
+        state_fields = {str(field["name"]): field for field in data_pick["stateFields"]}
+        self.assertEqual(state_fields["path"]["uiControl"], "wrapline")
+        self.assertEqual(state_fields["path"]["valueSchema"]["default"], "")
+        self.assertEqual(state_fields["valueType"]["valueSchema"]["enum"], ["any", "number", "string", "bool"])
+        self.assertEqual(state_fields["fallback"]["uiControl"], "wrapline[json]")
+        self.assertIsNone(state_fields["fallback"]["valueSchema"]["default"])
 
     def test_cppengine_script_operators_ship_starter_templates(self) -> None:
         cppengine = json.loads(Path("services/f8/cppengine/describe.json").read_text(encoding="utf-8"))
