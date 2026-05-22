@@ -16,6 +16,10 @@ from f8pysdk.service_runtime_tools.inventory.describe import (
 from f8pysdk.service_runtime_tools.inventory.discovery import (
     load_discovery_into_catalog,
 )
+from f8pysdk.service_runtime_tools.inventory.policy import (
+    load_default_service_discovery_policy,
+    merge_disabled_service_classes,
+)
 
 from f8pystudio.plugins.api import StudioPluginManifest
 from f8pystudio.plugins.loader import load_entrypoint_plugins
@@ -230,12 +234,15 @@ class PyStudioProgram:
         manifests = self._load_plugin_manifests()
         studio_registry = Registry.wrap(shared_pystudio_registry())
         self._apply_plugin_manifests_to_registry(manifests, registry=studio_registry)
+        discovery_policy = load_default_service_discovery_policy()
+        disabled_service_classes = merge_disabled_service_classes(policy=discovery_policy)
 
         load_discovery_into_catalog(
             catalog=ServiceCatalog.instance(),
             builtin_injectors=(
                 lambda catalog: self._inject_pystudio_specs_from_registry(catalog, registry=studio_registry),
             ),
+            disabled_service_classes=disabled_service_classes,
         )
         self._apply_plugin_manifests_to_renderers(manifests)
 

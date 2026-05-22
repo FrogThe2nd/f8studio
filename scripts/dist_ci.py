@@ -299,6 +299,15 @@ def _rewrite_dist_service_entries(services_root: Path) -> list[Path]:
     return rewritten_paths
 
 
+def _copy_dist_config(dist_dir: Path) -> Path | None:
+    config_root = REPO_ROOT / "config"
+    if not config_root.is_dir():
+        return None
+    dist_config_root = dist_dir / "config"
+    shutil.copytree(config_root, dist_config_root, dirs_exist_ok=True)
+    return dist_config_root
+
+
 def _build_python_wheels(wheels_dir: Path, dependency_to_package_dir: dict[str, str]) -> dict[str, str]:
     if wheels_dir.exists():
         shutil.rmtree(wheels_dir)
@@ -564,12 +573,13 @@ def main() -> int:
     (dist_dir / "services").mkdir(parents=True, exist_ok=True)
     shutil.copytree(REPO_ROOT / "services", dist_dir / "services", dirs_exist_ok=True)
     _rewrite_dist_service_entries(dist_dir / "services")
+    _copy_dist_config(dist_dir)
 
     wheels_dir = dist_dir / "wheels"
     runtime_environment_names = _discover_launcher_runtime_environments()
     runtime_feature_names = _discover_environment_feature_names(environment_names=runtime_environment_names)
     dependency_to_package_dir = _discover_local_editable_package_dirs(
-        allowed_feature_names=set(runtime_feature_names)
+        allowed_feature_names=set(runtime_feature_names),
     )
     dependency_to_wheel = _build_python_wheels(wheels_dir, dependency_to_package_dir)
     dist_pixi_text = _render_dist_pixi_toml(

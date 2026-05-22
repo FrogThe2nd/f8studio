@@ -22,6 +22,10 @@ from .describe import (
     set_discovery_timing_lines,
 )
 from .entry import default_discovery_roots, find_service_dirs, load_service_entry
+from .policy import (
+    DISABLED_SERVICE_CLASSES_ENV,
+    merge_disabled_service_classes,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -33,12 +37,16 @@ def load_discovery_into_catalog(
     overwrite: bool = True,
     catalog: ServiceCatalog | None = None,
     builtin_injectors: Sequence[Callable[[ServiceCatalog], str | None]] = (),
+    disabled_service_classes: Sequence[str] | None = None,
 ) -> list[str]:
     _ = overwrite
     clear_discovery_errors()
 
     resolved_roots = roots if roots is not None else default_discovery_roots()
     target_catalog = catalog or ServiceCatalog.instance()
+    disabled_service_class_set = set(
+        merge_disabled_service_classes(explicit_service_classes=disabled_service_classes)
+    )
 
     found: list[str] = []
     entries: list[tuple[Path, F8ServiceEntry]] = []
@@ -47,6 +55,10 @@ def load_discovery_into_catalog(
             entry = load_service_entry(service_dir)
         except ValueError as exc:
             logger.warning("Skipping service in %s: %s", service_dir, exc)
+            continue
+        entry_service_class = str(entry.serviceClass or "").strip()
+        if entry_service_class and entry_service_class in disabled_service_class_set:
+            logger.info("Skipping disabled service %s in %s", entry_service_class, service_dir)
             continue
         entries.append((service_dir, entry))
 
@@ -134,6 +146,12 @@ def load_discovery_into_catalog(
         payload = payload_by_dir.get(service_dir)
         if payload is None:
             continue
+        service_payload_raw = payload.get("service")
+        if isinstance(service_payload_raw, dict):
+            described_service_class = str(service_payload_raw.get("serviceClass") or "").strip()
+            if described_service_class and described_service_class in disabled_service_class_set:
+                logger.info("Skipping disabled service %s from %s", described_service_class, service_dir)
+                continue
         try:
             service_payload = payload.get("service")
             if isinstance(service_payload, dict):
@@ -185,13 +203,15 @@ def load_discovery_into_registries(
     overwrite: bool = True,
     catalog: ServiceCatalog | None = None,
     builtin_injectors: Sequence[Callable[[ServiceCatalog], str | None]] = (),
+    disabled_service_classes: Sequence[str] | None = None,
 ) -> list[str]:
     return load_discovery_into_catalog(
         roots=roots,
         overwrite=overwrite,
         catalog=catalog,
         builtin_injectors=builtin_injectors,
+        disabled_service_classes=disabled_service_classes,
     )
 
 
-__all__ = ["load_discovery_into_catalog", "load_discovery_into_registries"]
+__all__ = ["DISABLED_SERVICE_CLASSES_ENV", "load_discovery_into_catalog", "load_discovery_into_registries"]
