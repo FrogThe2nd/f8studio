@@ -23,6 +23,9 @@ from .sequence_player import SequencePlayerRuntimeNode
 from .playback_sync import PlaybackSyncRuntimeNode
 from .handy_out import HandyOutRuntimeNode
 from .state_trigger import StateTriggerRuntimeNode
+from .branching import DataMuxRuntimeNode
+from .branching import ExecBranchRuntimeNode
+from .branching import ExecMergeRuntimeNode
 from .data_expr import DataExprRuntimeNode
 from .state_expr import StateExprRuntimeNode
 from .bone_filter import BoneFilterRuntimeNode
@@ -64,6 +67,9 @@ __all__ = [
     "PlaybackSyncRuntimeNode",
     "HandyOutRuntimeNode",
     "StateTriggerRuntimeNode",
+    "ExecBranchRuntimeNode",
+    "ExecMergeRuntimeNode",
+    "DataMuxRuntimeNode",
     "DataExprRuntimeNode",
     "StateExprRuntimeNode",
     "BoneFilterRuntimeNode",
