@@ -280,57 +280,6 @@ void run_lua_script_operator_smoke() {
          "lua_script compute_output should return cached-compatible JSON output");
 }
 
-void run_angelscript_operator_smoke() {
-  f8::cppsdk::ServiceBus::Config cfg;
-  cfg.service_id = kServiceId;
-  cfg.service_class = kServiceClass;
-  cfg.bus_backend = f8::cppsdk::BusBackend::kMem;
-  f8::cppsdk::ServiceBus bus(cfg);
-
-  f8::cppsdk::RuntimeNodeRegistry registry;
-  f8::cppengine::register_cppengine_specs(registry);
-  register_test_constant(registry);
-
-  f8::cppsdk::ServiceHost host(bus, registry, kServiceClass);
-  host.start();
-
-  const std::string code =
-      "string on_msg_json(const string &in port, const string &in value_json) {\n"
-      "  return json_output(\"out\", value_json);\n"
-      "}\n"
-      "string on_pull_json(const string &in port, const string &in inputs_json) {\n"
-      "  return json_output(\"out\", json_get(inputs_json, \"msg\"));\n"
-      "}\n";
-  json graph{{"graphId", "g"},
-             {"revision", "r"},
-             {"nodes",
-              json::array({runtime_node("source", "f8.test_constant", json::array(), json::array({port_spec("out")}),
-                                        json::array(), json::array(),
-                                        json::array({json{{"name", "value"},
-                                                          {"access", "rw"},
-                                                          {"valueSchema", json{{"type", "any"}}}}}),
-                                        json{{"value", json{{"value", 12}}}}),
-                           runtime_node("angelscript", "f8.angelscript", json::array({port_spec("msg")}),
-                                        json::array({port_spec("out")}), json::array({"exec"}), json::array({"exec"}),
-                                        json::array({json{{"name", "code"},
-                                                          {"access", "rw"},
-                                                          {"valueSchema", json{{"type", "string"}}}}}),
-                                        json{{"code", code}})})},
-             {"edges", json::array({data_edge("d1", "source", "out", "angelscript", "msg")})}};
-
-  std::string error_code;
-  std::string error_message;
-  expect(host.apply_rungraph(graph, error_code, error_message),
-         "apply_rungraph failed: " + error_code + ": " + error_message);
-
-  bus.push_data_input_for_local_test("angelscript", "msg", json{{"value", 12}}, 90);
-
-  auto* angelscript = dynamic_cast<f8::cppsdk::ComputableNode*>(host.get_node("angelscript"));
-  expect(angelscript != nullptr, "angelscript must implement ComputableNode for external viz auto-sampling");
-  expect(angelscript->compute_output("out", 124) == (json{{"value", 12}}),
-         "angelscript compute_output should return JSON hook output");
-}
-
 void run_all_data_output_operators_are_computable_smoke() {
   f8::cppsdk::ServiceBus::Config cfg;
   cfg.service_id = kServiceId;
@@ -397,7 +346,6 @@ int main() {
   try {
     run_cpython_script_operator_smoke();
     run_lua_script_operator_smoke();
-    run_angelscript_operator_smoke();
     run_all_data_output_operators_are_computable_smoke();
   } catch (const std::exception& exc) {
     std::cerr << exc.what() << "\n";

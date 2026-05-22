@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 _WARNED_PROTOCOL_ERRORS: set[str] = set()
 _FIELD_KINDS: tuple[str, ...] = ("state", "port", "prop")
-_CONTEXT_ONLY_LANGUAGES: tuple[str, ...] = ("angelscript", "json", "lua")
+_CONTEXT_ONLY_LANGUAGES: tuple[str, ...] = ("json", "lua")
 
 
 def _spec_label(spec: F8ServiceSpec | F8OperatorSpec | None) -> str:

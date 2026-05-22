@@ -174,33 +174,6 @@ def test_editor_assist_context_for_field_supports_lua_language() -> None:
     assert tuple(port.name for port in context.data_out_ports) == ("result",)
 
 
-def test_editor_assist_context_for_field_supports_angelscript_language() -> None:
-    spec = _operator_spec_with_field_editor_assist(
-        {"version": 1, "language": "angelscript"},
-    )
-    spec.stateFields[0].uiControl = "code[angelscript]"
-    spec.stateFields[0].label = "AngelScript Body"
-
-    context = editor_assist_context_for_field(
-        spec,
-        field_kind="state",
-        field_key="code",
-        language="angelscript",
-        node=_NodeWithPurpose("Prototype native script flow."),
-    )
-
-    assert context is not None
-    assert context.error_message == ""
-    assert context.language == "angelscript"
-    assert context.target_field_kind == "state"
-    assert context.target_field_name == "code"
-    assert context.target_field_label == "AngelScript Body"
-    assert context.target_ui_language == "angelscript"
-    assert context.node_instance_purpose == "Prototype native script flow."
-    assert tuple(port.name for port in context.data_in_ports) == ("x", "y", "z")
-    assert tuple(port.name for port in context.data_out_ports) == ("result",)
-
-
 def test_editor_assist_context_for_field_accepts_dynamic_inputs_binding() -> None:
     spec = _operator_spec_with_field_editor_assist(
         {
