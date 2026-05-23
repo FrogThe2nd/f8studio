@@ -7,6 +7,7 @@ void register_native_operator_specs(f8::cppsdk::RuntimeNodeRegistry& registry) {
   register_tick_operator(registry);
   register_range_map_operator(registry);
   register_data_expr_operator(registry);
+  register_data_pick_operator(registry);
   register_exec_sequence_operator(registry);
   register_print_operator(registry);
   register_phase_operator(registry);

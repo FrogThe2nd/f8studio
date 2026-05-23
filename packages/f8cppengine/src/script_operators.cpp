@@ -2,14 +2,12 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <cstring>
 #include <cstdlib>
 #include <filesystem>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -21,7 +19,6 @@
 #include <unistd.h>
 #endif
 
-#include <angelscript.h>
 #include <pybind11/embed.h>
 #include <pybind11/functional.h>
 #include <pybind11/stl.h>
@@ -572,519 +569,6 @@ void LuaScriptContext::log(const std::string& message) {
   if (node != nullptr) node->log_lua(message);
 }
 
-std::string json_to_script_arg(const json& value) {
-  if (value.is_string()) return value.get<std::string>();
-  return value.dump();
-}
-
-json json_from_script_result(const std::string& value) {
-  if (value.empty()) return nullptr;
-  try {
-    return json::parse(value);
-  } catch (const json::parse_error&) {
-    return value;
-  }
-}
-
-std::string join_messages(const std::vector<std::string>& messages) {
-  std::ostringstream out;
-  for (const auto& message : messages) {
-    if (out.tellp() > 0) out << "\n";
-    out << message;
-  }
-  return out.str();
-}
-
-class AngelStringFactory final : public asIStringFactory {
- public:
-  const void* GetStringConstant(const char* data, asUINT length) override {
-    auto* value = new std::string(data, length);
-    return value;
-  }
-
-  int ReleaseStringConstant(const void* str) override {
-    delete static_cast<const std::string*>(str);
-    return 0;
-  }
-
-  int GetRawStringData(const void* str, char* data, asUINT* length) const override {
-    if (str == nullptr) return -1;
-    const auto* value = static_cast<const std::string*>(str);
-    if (length != nullptr) *length = static_cast<asUINT>(value->size());
-    if (data != nullptr && !value->empty()) {
-      std::memcpy(data, value->data(), value->size());
-    }
-    return 0;
-  }
-};
-
-void construct_string(std::string* self) {
-  new (self) std::string();
-}
-
-void copy_construct_string(const std::string& other, std::string* self) {
-  new (self) std::string(other);
-}
-
-void destruct_string(std::string* self) {
-  self->~basic_string();
-}
-
-std::string string_add(const std::string& lhs, const std::string& rhs) {
-  return lhs + rhs;
-}
-
-std::string string_add_int(const std::string& lhs, std::int64_t rhs) {
-  return lhs + std::to_string(rhs);
-}
-
-std::string string_add_double(const std::string& lhs, double rhs) {
-  return lhs + std::to_string(rhs);
-}
-
-std::string json_compact(const json& value) {
-  return value.dump();
-}
-
-json json_parse_or_null(const std::string& value) {
-  if (value.empty()) return nullptr;
-  try {
-    return json::parse(value);
-  } catch (const json::parse_error&) {
-    return nullptr;
-  }
-}
-
-std::string json_quote_string(const std::string& value) {
-  return json(value).dump();
-}
-
-std::string json_get_path(const std::string& value_json, const std::string& path) {
-  json value = json_parse_or_null(value_json);
-  if (value.is_null()) return "null";
-  if (path.empty()) return json_compact(value);
-
-  std::size_t start = 0;
-  while (start <= path.size()) {
-    const std::size_t dot = path.find('.', start);
-    const std::string key = path.substr(start, dot == std::string::npos ? std::string::npos : dot - start);
-    if (key.empty()) return "null";
-    if (value.is_object()) {
-      const auto it = value.find(key);
-      if (it == value.end()) return "null";
-      value = *it;
-    } else if (value.is_array()) {
-      try {
-        const std::size_t index = static_cast<std::size_t>(std::stoull(key));
-        if (index >= value.size()) return "null";
-        value = value[index];
-      } catch (const std::invalid_argument&) {
-        return "null";
-      } catch (const std::out_of_range&) {
-        return "null";
-      }
-    } else {
-      return "null";
-    }
-    if (dot == std::string::npos) break;
-    start = dot + 1;
-  }
-  return json_compact(value);
-}
-
-std::string json_get_string_path(const std::string& value_json, const std::string& path, const std::string& fallback) {
-  const json value = json_parse_or_null(json_get_path(value_json, path));
-  if (value.is_string()) return value.get<std::string>();
-  if (value.is_number_integer()) return std::to_string(value.get<std::int64_t>());
-  if (value.is_number_unsigned()) return std::to_string(value.get<std::uint64_t>());
-  if (value.is_number_float()) return std::to_string(value.get<double>());
-  if (value.is_boolean()) return value.get<bool>() ? "true" : "false";
-  return fallback;
-}
-
-double json_get_number_path(const std::string& value_json, const std::string& path, double fallback) {
-  const json value = json_parse_or_null(json_get_path(value_json, path));
-  return value.is_number() ? value.get<double>() : fallback;
-}
-
-bool json_get_bool_path(const std::string& value_json, const std::string& path, bool fallback) {
-  const json value = json_parse_or_null(json_get_path(value_json, path));
-  return value.is_boolean() ? value.get<bool>() : fallback;
-}
-
-std::string json_object_field(const std::string& key, const std::string& value_json) {
-  json value = json_parse_or_null(value_json);
-  return json_compact(json::object({{key, value}}));
-}
-
-std::string json_output_result(const std::string& port, const std::string& value_json) {
-  json value = json_parse_or_null(value_json);
-  return json_compact(json{{"outputs", json::object({{port, value}})}});
-}
-
-std::string json_output_exec_result(const std::string& port, const std::string& value_json, const std::string& exec_port) {
-  json value = json_parse_or_null(value_json);
-  return json_compact(json{{"outputs", json::object({{port, value}})}, {"exec", json::array({exec_port})}});
-}
-
-class AngelScriptNode final : public OperatorNode, public ComputableNode, public ClosableNode {
- public:
-  AngelScriptNode(const std::string& node_id, const F8RuntimeNode& node, const json& initial_state)
-      : OperatorNode(node_id, data_port_names(node.dataInPorts, {"msg"}), data_port_names(node.dataOutPorts, {"out"}),
-                     state_names(node.stateFields, {"code"}), strings_or(node.execInPorts, {"exec"}),
-                     strings_or(node.execOutPorts, {"exec"})) {
-    code_ = initial_state.value("code", "");
-    compile_and_start();
-  }
-
-  ~AngelScriptNode() override { close(); }
-
-  json validate_state(const std::string& field, const json& value, std::int64_t ts_ms, const json& meta) override {
-    (void)ts_ms;
-    (void)meta;
-    if (field == "code") return value.is_string() ? value.get<std::string>() : "";
-    return value;
-  }
-
-  void on_state(const std::string& field, const json& value, std::int64_t ts_ms, const json& meta) override {
-    (void)meta;
-    if (field == "code") {
-      code_ = value.is_string() ? value.get<std::string>() : "";
-      compile_and_start();
-      return;
-    }
-    try {
-      const std::string value_json = value.dump();
-      const std::string result = call_string_hook("on_state_json", {field, value_json, std::to_string(ts_ms)});
-      (void)result;
-      clear_error("angelscript:" + node_id());
-    } catch (const std::exception& exc) {
-      report_angelscript_error("on_state_json", exc, ts_ms);
-    }
-  }
-
-  void on_data(const std::string& port, const json& value, std::int64_t ts_ms, const json& meta) override {
-    (void)meta;
-    try {
-      if (!has_function("string on_msg_json(const string &in, const string &in)")) return;
-      const std::string result = call_string_hook("on_msg_json", {port, value.dump()});
-      apply_result(json_from_script_result(result), ts_ms);
-      clear_error("angelscript:" + node_id());
-    } catch (const std::exception& exc) {
-      report_angelscript_error("on_msg_json", exc, ts_ms);
-    }
-  }
-
-  std::vector<std::string> on_exec(std::int64_t exec_id, const std::string& in_port) override {
-    std::vector<std::string> out_ports = exec_out_ports();
-    try {
-      const std::string inputs_json = pull_inputs(exec_id).dump();
-      const std::string result = call_string_hook("on_exec_json", {in_port, inputs_json});
-      const auto selected_ports = apply_result(json_from_script_result(result), exec_id);
-      if (selected_ports.has_value()) out_ports = selected_ports.value();
-      clear_error("angelscript:" + node_id());
-    } catch (const std::exception& exc) {
-      report_angelscript_error("on_exec_json", exc, exec_id);
-    }
-    return out_ports;
-  }
-
-  json compute_output(const std::string& port, std::int64_t ctx_id) override {
-    if (std::find(data_out_ports().begin(), data_out_ports().end(), port) == data_out_ports().end()) return nullptr;
-    if (last_ctx_id_.has_value() && last_ctx_id_.value() == ctx_id && last_outputs_.contains(port)) {
-      return last_outputs_[port];
-    }
-    const auto cached = object_value_or_null(last_outputs_, port);
-    if (!cached.is_null() && !has_function("string on_pull_json(const string &in, const string &in)")) {
-      return cached;
-    }
-    try {
-      std::string result;
-      if (has_function("string on_pull_json(const string &in, const string &in)")) {
-        result = call_string_hook("on_pull_json", {port, pull_inputs(ctx_id).dump()});
-      } else if (has_function("string on_exec_json(const string &in, const string &in)")) {
-        result = call_string_hook("on_exec_json", {"", pull_inputs(ctx_id).dump()});
-      } else if (has_function("string on_msg_json(const string &in, const string &in)")) {
-        result = call_string_hook("on_msg_json", {"", pull_inputs(ctx_id).dump()});
-      }
-      last_outputs_ = extract_outputs(json_from_script_result(result));
-      last_ctx_id_ = ctx_id;
-      clear_error("angelscript:" + node_id());
-      return object_value_or_null(last_outputs_, port);
-    } catch (const std::exception& exc) {
-      report_angelscript_error("compute", exc, ctx_id);
-      return object_value_or_null(last_outputs_, port);
-    }
-  }
-
-  void close() override {
-    if (closed_) return;
-    close_started_script();
-    closed_ = true;
-  }
-
- private:
-  void compile_and_start() {
-    close_started_script();
-    closed_ = false;
-    compile_messages_.clear();
-    engine_ = asCreateScriptEngine();
-    if (engine_ == nullptr) {
-      report_error("ANGELSCRIPT_ERROR", "compile: failed to create AngelScript engine", "error",
-                   "angelscript:" + node_id() + ":compile");
-      return;
-    }
-    try {
-      register_string_type();
-      const int msg_rc = engine_->SetMessageCallback(asFUNCTION(AngelScriptNode::message_callback), this, asCALL_CDECL_OBJLAST);
-      if (msg_rc < 0) {
-        throw std::runtime_error("failed to register compiler message callback");
-      }
-      module_ = engine_->GetModule(("f8_" + node_id()).c_str(), asGM_ALWAYS_CREATE);
-      if (module_ == nullptr) {
-        throw std::runtime_error("failed to create script module");
-      }
-      const int add_rc = module_->AddScriptSection("code", code_.c_str(), code_.size());
-      const int build_rc = add_rc >= 0 ? module_->Build() : add_rc;
-      if (build_rc < 0) {
-        const std::string messages = join_messages(compile_messages_);
-        throw std::runtime_error(messages.empty() ? "script build failed" : messages);
-      }
-      if (has_function("void on_start()")) {
-        (void)call_void_hook("on_start");
-      }
-      clear_error("angelscript:" + node_id());
-    } catch (const std::exception& exc) {
-      report_angelscript_error("compile", exc, 0);
-    }
-  }
-
-  void close_started_script() {
-    if (engine_ != nullptr && !closed_) {
-      try {
-        if (has_function("void on_stop()")) {
-          (void)call_void_hook("on_stop");
-        }
-      } catch (const std::exception& exc) {
-        report_angelscript_error("on_stop", exc, 0);
-      }
-    }
-    module_ = nullptr;
-    if (engine_ != nullptr) {
-      engine_->ShutDownAndRelease();
-      engine_ = nullptr;
-    }
-    last_outputs_ = json::object();
-    last_ctx_id_.reset();
-  }
-
-  void register_string_type() {
-    int rc = engine_->RegisterObjectType("string", static_cast<int>(sizeof(std::string)),
-                                         asOBJ_VALUE | asOBJ_APP_CLASS_CDAK);
-    if (rc < 0) throw std::runtime_error("failed to register AngelScript string type");
-    rc = engine_->RegisterStringFactory("string", &string_factory_);
-    if (rc < 0) throw std::runtime_error("failed to register AngelScript string factory");
-    rc = engine_->RegisterObjectBehaviour("string", asBEHAVE_CONSTRUCT, "void f()", asFUNCTION(construct_string),
-                                          asCALL_CDECL_OBJLAST);
-    if (rc < 0) throw std::runtime_error("failed to register AngelScript string constructor");
-    rc = engine_->RegisterObjectBehaviour("string", asBEHAVE_CONSTRUCT, "void f(const string &in)",
-                                          asFUNCTION(copy_construct_string), asCALL_CDECL_OBJLAST);
-    if (rc < 0) throw std::runtime_error("failed to register AngelScript string copy constructor");
-    rc = engine_->RegisterObjectBehaviour("string", asBEHAVE_DESTRUCT, "void f()", asFUNCTION(destruct_string),
-                                          asCALL_CDECL_OBJLAST);
-    if (rc < 0) throw std::runtime_error("failed to register AngelScript string destructor");
-    rc = engine_->RegisterObjectMethod("string", "string &opAssign(const string &in)", asMETHODPR(std::string, operator=,
-                                                                                                  (const std::string&),
-                                                                                                  std::string&),
-                                       asCALL_THISCALL);
-    if (rc < 0) throw std::runtime_error("failed to register AngelScript string assignment");
-    rc = engine_->RegisterObjectMethod("string", "string opAdd(const string &in) const", asFUNCTION(string_add),
-                                       asCALL_CDECL_OBJFIRST);
-    if (rc < 0) throw std::runtime_error("failed to register AngelScript string concat");
-    rc = engine_->RegisterObjectMethod("string", "string opAdd(int64) const", asFUNCTION(string_add_int),
-                                       asCALL_CDECL_OBJFIRST);
-    if (rc < 0) throw std::runtime_error("failed to register AngelScript string/int concat");
-    rc = engine_->RegisterObjectMethod("string", "string opAdd(double) const", asFUNCTION(string_add_double),
-                                       asCALL_CDECL_OBJFIRST);
-    if (rc < 0) throw std::runtime_error("failed to register AngelScript string/double concat");
-
-    rc = engine_->RegisterGlobalFunction("string json_quote(const string &in)", asFUNCTION(json_quote_string),
-                                         asCALL_CDECL);
-    if (rc < 0) throw std::runtime_error("failed to register AngelScript json_quote");
-    rc = engine_->RegisterGlobalFunction("string json_get(const string &in, const string &in)", asFUNCTION(json_get_path),
-                                         asCALL_CDECL);
-    if (rc < 0) throw std::runtime_error("failed to register AngelScript json_get");
-    rc = engine_->RegisterGlobalFunction("string json_get_string(const string &in, const string &in, const string &in)",
-                                         asFUNCTION(json_get_string_path), asCALL_CDECL);
-    if (rc < 0) throw std::runtime_error("failed to register AngelScript json_get_string");
-    rc = engine_->RegisterGlobalFunction("double json_get_number(const string &in, const string &in, double)",
-                                         asFUNCTION(json_get_number_path), asCALL_CDECL);
-    if (rc < 0) throw std::runtime_error("failed to register AngelScript json_get_number");
-    rc = engine_->RegisterGlobalFunction("bool json_get_bool(const string &in, const string &in, bool)",
-                                         asFUNCTION(json_get_bool_path), asCALL_CDECL);
-    if (rc < 0) throw std::runtime_error("failed to register AngelScript json_get_bool");
-    rc = engine_->RegisterGlobalFunction("string json_field(const string &in, const string &in)",
-                                         asFUNCTION(json_object_field), asCALL_CDECL);
-    if (rc < 0) throw std::runtime_error("failed to register AngelScript json_field");
-    rc = engine_->RegisterGlobalFunction("string json_output(const string &in, const string &in)",
-                                         asFUNCTION(json_output_result), asCALL_CDECL);
-    if (rc < 0) throw std::runtime_error("failed to register AngelScript json_output");
-    rc = engine_->RegisterGlobalFunction("string json_output_exec(const string &in, const string &in, const string &in)",
-                                         asFUNCTION(json_output_exec_result), asCALL_CDECL);
-    if (rc < 0) throw std::runtime_error("failed to register AngelScript json_output_exec");
-  }
-
-  static void message_callback(const asSMessageInfo* msg, AngelScriptNode* self) {
-    if (msg == nullptr || self == nullptr) return;
-    const char* type = msg->type == asMSGTYPE_ERROR ? "error" : msg->type == asMSGTYPE_WARNING ? "warning" : "info";
-    std::ostringstream out;
-    out << (msg->section != nullptr ? msg->section : "script") << ":" << msg->row << ":" << msg->col << " " << type
-        << ": " << (msg->message != nullptr ? msg->message : "");
-    self->compile_messages_.push_back(out.str());
-  }
-
-  bool has_function(const char* decl) const {
-    return module_ != nullptr && module_->GetFunctionByDecl(decl) != nullptr;
-  }
-
-  std::string call_string_hook(const char* name, const std::vector<std::string>& args) {
-    if (module_ == nullptr) return "";
-    std::ostringstream decl;
-    decl << "string " << name << "(";
-    for (std::size_t index = 0; index < args.size(); ++index) {
-      if (index > 0) decl << ", ";
-      decl << "const string &in";
-    }
-    decl << ")";
-    asIScriptFunction* func = module_->GetFunctionByDecl(decl.str().c_str());
-    if (func == nullptr) return "";
-    asIScriptContext* ctx = engine_->CreateContext();
-    if (ctx == nullptr) throw std::runtime_error("failed to create AngelScript context");
-    const int prepare_rc = ctx->Prepare(func);
-    if (prepare_rc < 0) {
-      ctx->Release();
-      throw std::runtime_error("failed to prepare AngelScript function " + std::string(name));
-    }
-    for (asUINT index = 0; index < args.size(); ++index) {
-      const int arg_rc = ctx->SetArgObject(index, const_cast<std::string*>(&args[index]));
-      if (arg_rc < 0) {
-        ctx->Release();
-        throw std::runtime_error("failed to pass AngelScript argument " + std::to_string(index));
-      }
-    }
-    const int exec_rc = ctx->Execute();
-    if (exec_rc != asEXECUTION_FINISHED) {
-      const std::string message = execution_error(ctx, exec_rc);
-      ctx->Release();
-      throw std::runtime_error(message);
-    }
-    std::string result;
-    if (void* result_ptr = ctx->GetReturnObject(); result_ptr != nullptr) {
-      result = *static_cast<std::string*>(result_ptr);
-    }
-    ctx->Release();
-    return result;
-  }
-
-  void call_void_hook(const char* name) {
-    if (module_ == nullptr) return;
-    std::string decl = "void " + std::string(name) + "()";
-    asIScriptFunction* func = module_->GetFunctionByDecl(decl.c_str());
-    if (func == nullptr) return;
-    asIScriptContext* ctx = engine_->CreateContext();
-    if (ctx == nullptr) throw std::runtime_error("failed to create AngelScript context");
-    const int prepare_rc = ctx->Prepare(func);
-    if (prepare_rc < 0) {
-      ctx->Release();
-      throw std::runtime_error("failed to prepare AngelScript function " + std::string(name));
-    }
-    const int exec_rc = ctx->Execute();
-    if (exec_rc != asEXECUTION_FINISHED) {
-      const std::string message = execution_error(ctx, exec_rc);
-      ctx->Release();
-      throw std::runtime_error(message);
-    }
-    ctx->Release();
-  }
-
-  std::string execution_error(asIScriptContext* ctx, int exec_rc) const {
-    if (ctx != nullptr && exec_rc == asEXECUTION_EXCEPTION) {
-      int column = 0;
-      const char* section = nullptr;
-      const int line = ctx->GetExceptionLineNumber(&column, &section);
-      std::ostringstream out;
-      out << "exception";
-      const char* exception = ctx->GetExceptionString();
-      if (exception != nullptr) out << ": " << exception;
-      out << " at " << (section != nullptr ? section : "script") << ":" << line << ":" << column;
-      return out.str();
-    }
-    return "execution failed with AngelScript status " + std::to_string(exec_rc);
-  }
-
-  json pull_inputs(std::int64_t ctx_id) {
-    json inputs = json::object();
-    for (const auto& port : data_in_ports()) {
-      const auto value = pull(port, ctx_id);
-      inputs[port] = value.value_or(nullptr);
-    }
-    return inputs;
-  }
-
-  std::optional<std::vector<std::string>> apply_result(const json& value, std::int64_t ctx_id) {
-    std::optional<std::vector<std::string>> out_ports;
-    if (value.is_object()) {
-      const auto outputs_it = value.find("outputs");
-      last_outputs_ = outputs_it != value.end() && outputs_it->is_object() ? *outputs_it : json::object();
-      last_ctx_id_ = ctx_id;
-      if (outputs_it != value.end() && outputs_it->is_object()) {
-        for (auto it = outputs_it->begin(); it != outputs_it->end(); ++it) {
-          (void)emit(it.key(), it.value(), ctx_id);
-        }
-      }
-      const auto exec_it = value.find("exec");
-      if (exec_it != value.end() && exec_it->is_array()) {
-        out_ports = std::vector<std::string>{};
-        for (const auto& item : *exec_it) {
-          if (item.is_string()) out_ports->push_back(item.get<std::string>());
-        }
-      }
-      return out_ports;
-    }
-    if (!value.is_null() && std::find(data_out_ports().begin(), data_out_ports().end(), "out") != data_out_ports().end()) {
-      last_outputs_ = json{{"out", value}};
-      last_ctx_id_ = ctx_id;
-      (void)emit("out", value, ctx_id);
-    }
-    return std::nullopt;
-  }
-
-  json extract_outputs(const json& value) {
-    if (value.is_object()) {
-      const auto outputs_it = value.find("outputs");
-      if (outputs_it != value.end() && outputs_it->is_object()) return *outputs_it;
-    }
-    if (!value.is_null() && std::find(data_out_ports().begin(), data_out_ports().end(), "out") != data_out_ports().end()) {
-      return json{{"out", value}};
-    }
-    return json::object();
-  }
-
-  void report_angelscript_error(const std::string& stage, const std::exception& exc, std::int64_t ts_ms) {
-    report_error("ANGELSCRIPT_ERROR", stage + ": " + exc.what(), "error", "angelscript:" + node_id() + ":" + stage,
-                 ts_ms);
-  }
-
-  std::string code_;
-  AngelStringFactory string_factory_;
-  asIScriptEngine* engine_ = nullptr;
-  asIScriptModule* module_ = nullptr;
-  std::vector<std::string> compile_messages_;
-  json last_outputs_ = json::object();
-  std::optional<std::int64_t> last_ctx_id_;
-  bool closed_ = false;
-};
-
 class CPythonScriptNode final : public OperatorNode, public ComputableNode, public ClosableNode {
  public:
   CPythonScriptNode(const std::string& node_id, const F8RuntimeNode& node, const json& initial_state)
@@ -1434,104 +918,30 @@ end
 )F8";
 }
 
-std::string angelscript_template() {
-  return R"F8(// f8.angelscript starter for cppengine graphs.
-// Target runtime: AngelScript module embedded in the C++ engine script bridge.
-//
-// The bridge passes JSON strings at hook boundaries and registers explicit JSON
-// helper functions so scripts can read values and build valid return payloads.
-//
-// Hooks: define any subset.
-//   void on_start()
-//   string on_msg_json(const string &in port, const string &in value_json)
-//   string on_exec_json(const string &in exec_in, const string &in inputs_json)
-//   string on_pull_json(const string &in port, const string &in inputs_json)
-//   string on_state_json(const string &in field, const string &in value_json, const string &in ts_ms)
-//   void on_stop()
-//
-// Result protocol:
-//   Return a JSON object like {"outputs":{"out":123},"exec":["exec"]}.
-//   Return a plain JSON scalar/string to write output "out".
-//
-// JSON helpers:
-//   json_get(json, "msg.value")                         -> JSON string or "null"
-//   json_get_string(json, "msg.name", "fallback")       -> string
-//   json_get_number(json, "msg.phase", 0.0)             -> double
-//   json_get_bool(json, "msg.active", false)            -> bool
-//   json_quote(text)                                    -> JSON quoted string
-//   json_field("key", value_json)                       -> {"key":value}
-//   json_output("out", value_json)                      -> {"outputs":{"out":value}}
-//   json_output_exec("out", value_json, "exec")         -> {"outputs":{"out":value},"exec":["exec"]}
-//
-// Notes:
-//   inputs_json is a JSON object keyed by input port name.
-//   For quick pass-through, json_output("out", value_json) is valid.
-
-int count = 0;
-
-void on_start() {
-}
-
-string on_msg_json(const string &in port, const string &in value_json) {
-  return json_output("out", value_json);
-}
-
-string on_exec_json(const string &in exec_in, const string &in inputs_json) {
-  count += 1;
-
-  string msg = json_get(inputs_json, "msg");
-  return json_output_exec("out", msg, "exec");
-}
-
-string on_pull_json(const string &in port, const string &in inputs_json) {
-  return json_output("out", json_get(inputs_json, "msg"));
-}
-
-string on_state_json(const string &in field, const string &in value_json, const string &in ts_ms) {
-  return "";
-}
-
-void on_stop() {
-}
-)F8";
-}
-
-std::string script_template_for_language(const std::string& lang) {
-  if (lang == "Lua") return lua_script_template();
-  return angelscript_template();
-}
-
-std::string script_description_for_language(const std::string& lang) {
-  if (lang == "Lua") {
-    return "LuaJIT script node for C++ engine graphs. The default code documents the hook/context contract and starts from a Python-like pass-through scaffold.";
-  }
-  return "AngelScript node for C++ engine graphs. V1 uses the AngelScript core runtime plus explicit JSON helper functions for hook inputs and outputs.";
-}
-
-json script_code_state_field(const std::string& lang, const std::string& lower) {
-  json field = state_field("code", "Code", lang + " source code and starter hook scaffold.",
-                           string_schema(script_template_for_language(lang)), "rw", true, false, "code[" + lower + "]");
-  field["editorAssist"] = json{{"version", 1}, {"language", lower}};
+json lua_script_code_state_field() {
+  json field = state_field("code", "Code", "Lua source code and starter hook scaffold.",
+                           string_schema(lua_script_template()), "rw", true, false, "code[lua]");
+  field["editorAssist"] = json{{"version", 1}, {"language", "lua"}};
   return field;
 }
 
-json script_spec(const std::string& operator_class, const std::string& label, const std::string& lang) {
-  const std::string lower = lang == "Lua" ? "lua" : "angelscript";
+json lua_script_spec() {
   return json{{"specKind", "operator"},
               {"schemaVersion", "f8operator/1"},
               {"serviceClass", kServiceClass},
               {"paletteCategory", std::string(kServiceClass) + ".script"},
-              {"operatorClass", operator_class},
+              {"operatorClass", "f8.lua_script"},
               {"version", "0.0.1"},
-              {"label", label},
-              {"description", script_description_for_language(lang)},
-              {"tags", json::array({"script", lower, "programmable"})},
+              {"label", "Lua Script"},
+              {"description",
+               "LuaJIT script node for C++ engine graphs. The default code documents the hook/context contract and starts from a Python-like pass-through scaffold."},
+              {"tags", json::array({"script", "lua", "programmable"})},
               {"execInPorts", json::array({"exec"})},
               {"execOutPorts", json::array({"exec"})},
               {"dataInPorts", json::array({data_port("msg", "Message input.", any_schema(), false, true)})},
               {"dataOutPorts", json::array({data_port("out", "Script output.", any_schema(), false, true)})},
               {"editPolicy", editable_script_policy()},
-              {"stateFields", json::array({script_code_state_field(lang, lower)})}};
+              {"stateFields", json::array({lua_script_code_state_field()})}};
 }
 
 json cpython_script_spec() {
@@ -1562,17 +972,10 @@ json cpython_script_spec() {
 }  // namespace
 
 void register_script_operator_specs(RuntimeNodeRegistry& registry) {
-  registry.register_operator_spec(script_spec("f8.lua_script", "Lua Script", "Lua"), true);
+  registry.register_operator_spec(lua_script_spec(), true);
   registry.register_operator_factory(kServiceClass, "f8.lua_script",
                                      [](const std::string& node_id, const F8RuntimeNode& node, const json& initial_state) {
                                        return std::make_unique<LuaScriptNode>(node_id, node, initial_state);
-                                     },
-                                     true);
-
-  registry.register_operator_spec(script_spec("f8.angelscript", "AngelScript", "AngelScript"), true);
-  registry.register_operator_factory(kServiceClass, "f8.angelscript",
-                                     [](const std::string& node_id, const F8RuntimeNode& node, const json& initial_state) {
-                                       return std::make_unique<AngelScriptNode>(node_id, node, initial_state);
                                      },
                                      true);
 

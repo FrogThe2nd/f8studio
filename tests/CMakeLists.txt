@@ -3,6 +3,7 @@ add_executable(f8cppsdk_tests
   test_main_thread_queue.cpp
   test_protocol_models_parse.cpp
   test_cpp_runtime_host_exec.cpp
+  test_cvkit_frame_validation.cpp
   test_rungraph_routes.cpp
   test_service_bus_integration.cpp
 )

@@ -15,7 +15,26 @@ class CppEngineOperatorCoverageTest(unittest.TestCase):
 
         expected_missing = {"f8.python_script"}
         self.assertEqual(py_operator_classes - cpp_operator_classes, expected_missing)
-        self.assertEqual({"f8.lua_script", "f8.angelscript"} - cpp_operator_classes, set())
+        self.assertIn("f8.data_pick", cpp_operator_classes)
+        self.assertIn("f8.lua_script", cpp_operator_classes)
+        self.assertNotIn("f8.angelscript", cpp_operator_classes)
+
+    def test_cppengine_data_pick_operator_shape(self) -> None:
+        cppengine = json.loads(Path("services/f8/cppengine/describe.json").read_text(encoding="utf-8"))
+        specs = {str(op["operatorClass"]): op for op in cppengine["operators"]}
+
+        data_pick = specs["f8.data_pick"]
+        self.assertEqual(data_pick["label"], "Data Pick")
+        self.assertEqual(data_pick["paletteCategory"], "f8.cppengine.expr")
+        self.assertEqual([port["name"] for port in data_pick["dataInPorts"]], ["msg"])
+        self.assertEqual([port["name"] for port in data_pick["dataOutPorts"]], ["out"])
+
+        state_fields = {str(field["name"]): field for field in data_pick["stateFields"]}
+        self.assertEqual(state_fields["path"]["uiControl"], "wrapline")
+        self.assertEqual(state_fields["path"]["valueSchema"]["default"], "")
+        self.assertEqual(state_fields["valueType"]["valueSchema"]["enum"], ["any", "number", "string", "bool"])
+        self.assertEqual(state_fields["fallback"]["uiControl"], "wrapline[json]")
+        self.assertIsNone(state_fields["fallback"]["valueSchema"]["default"])
 
     def test_cppengine_script_operators_ship_starter_templates(self) -> None:
         cppengine = json.loads(Path("services/f8/cppengine/describe.json").read_text(encoding="utf-8"))
@@ -28,15 +47,6 @@ class CppEngineOperatorCoverageTest(unittest.TestCase):
         self.assertIn("on_exec(ctx, exec_in, inputs)", lua_code)
         self.assertIn("ctx:pull(\"msg\")", lua_code)
         self.assertIn("on_pull(ctx, port, inputs)", lua_code)
-
-        angelscript_code_field = specs["f8.angelscript"]["stateFields"][0]
-        angelscript_code = angelscript_code_field["valueSchema"]["default"]
-        self.assertEqual(angelscript_code_field["uiControl"], "code[angelscript]")
-        self.assertEqual(angelscript_code_field["editorAssist"], {"version": 1, "language": "angelscript"})
-        self.assertIn("string on_exec_json", angelscript_code)
-        self.assertIn("inputs_json", angelscript_code)
-        self.assertIn("json_get(inputs_json, \"msg\")", angelscript_code)
-        self.assertIn("json_output_exec", angelscript_code)
 
 
 if __name__ == "__main__":

@@ -388,22 +388,17 @@ void DenseOptflowService::process_frame_once() {
 
   last_frame_id_ = source_frame_id;
 
-  if (frame_format != 1 || frame_width == 0 || frame_height == 0 || frame_pitch == 0) {
-    ++monitor_fail_frames_;
-    publish_error_if_changed("unsupported video frame format", "runtime", json::object());
+  const auto frame_validation = service_runtime::validate_frame_buffer(
+      frame_format, frame_width, frame_height, frame_pitch, frame_bgra_.size(), f8::cppsdk::kVideoFormatBgra32, 4u);
+  if (!frame_validation.ok) {
+    has_prev_gray_ = false;
+    prev_gray_.release();
+    prev_compute_.release();
+    gray_compute_.release();
+    flow_compute_.release();
     return;
   }
-  const std::size_t row_bytes = static_cast<std::size_t>(frame_pitch);
-  if (row_bytes < static_cast<std::size_t>(frame_width) * 4) {
-    ++monitor_fail_frames_;
-    publish_error_if_changed("invalid video frame pitch", "runtime", json::object());
-    return;
-  }
-  if (frame_bgra_.size() < row_bytes * static_cast<std::size_t>(frame_height)) {
-    ++monitor_fail_frames_;
-    publish_error_if_changed("video frame too small", "runtime", json::object());
-    return;
-  }
+  const std::size_t row_bytes = frame_validation.row_bytes;
 
   cv::Mat bgra(static_cast<int>(frame_height), static_cast<int>(frame_width), CV_8UC4,
                const_cast<std::byte*>(frame_bgra_.data()), row_bytes);

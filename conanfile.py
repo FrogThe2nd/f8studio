@@ -79,10 +79,6 @@ class F8Build(ConanFile):
         # Lua plugin
         self.requires("luajit/2.1.0-beta3")
         self.requires("sol2/3.5.0")
-        # AngelScript plugin
-        self.requires("angelscript/2.38.0")
-        # JS intepreter
-        self.requires("jerryscript/2.4.0")
         self.requires("glm/1.0.1")
 
         # Video Player

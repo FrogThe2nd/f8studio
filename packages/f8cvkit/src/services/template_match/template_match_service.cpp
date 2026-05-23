@@ -500,19 +500,17 @@ void TemplateMatchService::detect_once() {
       return;
     }
 
-    if (frame_meta.format != 1 || frame_meta.width == 0 || frame_meta.height == 0 || frame_meta.pitch == 0) {
-      publish_error_if_changed("unsupported video frame format", "runtime", json::object());
+    const auto frame_validation =
+        service_runtime::validate_latest_video_frame(frame_meta, f8::cppsdk::kVideoFormatBgra32, 4u);
+    if (!frame_validation.ok) {
+      has_last_detection_ = false;
+      frame_gray_.release();
+      roi_gray_.release();
+      roi_small_.release();
+      match_result_.release();
       return;
     }
-    const std::size_t row_bytes = static_cast<std::size_t>(frame_meta.pitch);
-    if (row_bytes < static_cast<std::size_t>(frame_meta.width) * 4) {
-      publish_error_if_changed("invalid video frame pitch", "runtime", json::object());
-      return;
-    }
-    if (frame_bgra_.size() < row_bytes * static_cast<std::size_t>(frame_meta.height)) {
-      publish_error_if_changed("video frame too small", "runtime", json::object());
-      return;
-    }
+    const std::size_t row_bytes = frame_validation.row_bytes;
     if (template_bgr_.empty()) {
       template_loaded_ = false;
       template_error_ = "template empty";
@@ -521,10 +519,27 @@ void TemplateMatchService::detect_once() {
     }
 
     cv::Mat bgra_mat(static_cast<int>(frame_meta.height), static_cast<int>(frame_meta.width), CV_8UC4,
-                     const_cast<std::byte*>(frame_bgra_.data()), static_cast<std::size_t>(frame_meta.pitch));
+                     const_cast<std::byte*>(frame_bgra_.data()), row_bytes);
 
     if (template_bgr_.cols > bgra_mat.cols || template_bgr_.rows > bgra_mat.rows) {
-      publish_error_if_changed("template larger than frame", "runtime", json::object());
+      has_last_detection_ = false;
+      json out = json::object();
+      out["schemaVersion"] = "f8visionDetections/1";
+      out["frameId"] = frame_meta.frame_id;
+      out["tsMs"] = frame_meta.ts_ms;
+      out["width"] = frame_meta.width;
+      out["height"] = frame_meta.height;
+      out["model"] = "cvkit.template_match";
+      out["task"] = "template_match";
+      out["skeletonProtocol"] = "none";
+      out["detections"] = json::array();
+
+      publish_error_if_changed("", "runtime", json::object());
+      last_match_ts_ms_ = now_ms;
+      (void)bus_->emit_data(cfg_.service_id, "detections", out);
+      const std::int64_t end_ts_ms = f8::cppsdk::now_ms();
+      emit_monitor_snapshot(end_ts_ms, frame_meta.frame_id, static_cast<double>(end_ts_ms - now_ms),
+                            service_runtime::latency_ms_from_timestamps(end_ts_ms, frame_meta.ts_ms));
       return;
     }
 

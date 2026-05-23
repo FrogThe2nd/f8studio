@@ -151,6 +151,8 @@ bool VideoStabService::start() {
   output_frame_id_ = 0;
   output_initialized_ = false;
   has_prev_gray_ = false;
+  prev_frame_width_ = 0;
+  prev_frame_height_ = 0;
   prev_gray_.release();
   smooth_initialized_ = false;
   smooth_params_ = MotionParams{};
@@ -515,6 +517,8 @@ void VideoStabService::reset_stabilizer_internal(const json& meta, const std::st
   (void)meta;
   (void)reason;
   has_prev_gray_ = false;
+  prev_frame_width_ = 0;
+  prev_frame_height_ = 0;
   prev_gray_.release();
   smooth_initialized_ = false;
   smooth_params_ = MotionParams{};
@@ -617,22 +621,13 @@ void VideoStabService::process_frame_once() {
   input_last_frame_id_ = source_frame_id;
   const std::int64_t process_start_ms = f8::cppsdk::now_ms();
 
-  if (frame_format != 1 || frame_width == 0 || frame_height == 0 || frame_pitch == 0) {
-    ++monitor_fail_frames_;
-    publish_error_if_changed("unsupported video frame format", "runtime", json::object());
+  const auto frame_validation = service_runtime::validate_frame_buffer(
+      frame_format, frame_width, frame_height, frame_pitch, input_frame_bgra_.size(), f8::cppsdk::kVideoFormatBgra32, 4u);
+  if (!frame_validation.ok) {
+    reset_stabilizer_internal(json::object(), "transient_invalid_frame");
     return;
   }
-  const std::size_t row_bytes = static_cast<std::size_t>(frame_pitch);
-  if (row_bytes < static_cast<std::size_t>(frame_width) * 4) {
-    ++monitor_fail_frames_;
-    publish_error_if_changed("invalid video frame pitch", "runtime", json::object());
-    return;
-  }
-  if (input_frame_bgra_.size() < row_bytes * static_cast<std::size_t>(frame_height)) {
-    ++monitor_fail_frames_;
-    publish_error_if_changed("video frame too small", "runtime", json::object());
-    return;
-  }
+  const std::size_t row_bytes = frame_validation.row_bytes;
 
   cv::Mat src_bgra(static_cast<int>(frame_height), static_cast<int>(frame_width), CV_8UC4,
                    const_cast<std::byte*>(input_frame_bgra_.data()), row_bytes);
@@ -663,6 +658,15 @@ void VideoStabService::process_frame_once() {
   if (!has_prev_gray_) {
     prev_gray_ = gray;
     has_prev_gray_ = true;
+    prev_frame_width_ = static_cast<int>(frame_width);
+    prev_frame_height_ = static_cast<int>(frame_height);
+  } else if (prev_frame_width_ != static_cast<int>(frame_width) ||
+             prev_frame_height_ != static_cast<int>(frame_height)) {
+    reset_stabilizer_internal(json::object(), "video_dimensions_changed");
+    prev_gray_ = gray;
+    has_prev_gray_ = true;
+    prev_frame_width_ = static_cast<int>(frame_width);
+    prev_frame_height_ = static_cast<int>(frame_height);
   } else {
     std::vector<cv::Point2f> prev_pts;
     std::vector<cv::Point2f> curr_pts;
@@ -732,6 +736,8 @@ void VideoStabService::process_frame_once() {
       scene_cut_cooldown_remaining_ = scene_cut_cooldown_frames_;
       prev_gray_ = gray;
       has_prev_gray_ = true;
+      prev_frame_width_ = static_cast<int>(frame_width);
+      prev_frame_height_ = static_cast<int>(frame_height);
       consecutive_failures_ = 0;
       publish_error_if_changed("", "runtime", json::object());
     } else if (tracked_points >= 8) {
@@ -831,6 +837,8 @@ void VideoStabService::process_frame_once() {
 
     prev_gray_ = gray;
     has_prev_gray_ = true;
+    prev_frame_width_ = static_cast<int>(frame_width);
+    prev_frame_height_ = static_cast<int>(frame_height);
   }
 
   if (!output_zenoh_video_ || !output_zenoh_video_->valid()) {

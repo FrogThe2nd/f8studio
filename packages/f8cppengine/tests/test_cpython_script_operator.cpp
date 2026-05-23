@@ -57,6 +57,16 @@ json port_spec(const std::string& name) {
   return json{{"name", name}, {"valueSchema", json{{"type", "any"}}}};
 }
 
+json data_pick_state_fields() {
+  return json::array(
+      {json{{"name", "path"}, {"access", "rw"}, {"valueSchema", json{{"type", "string"}, {"default", ""}}}},
+       json{{"name", "valueType"},
+            {"access", "rw"},
+            {"valueSchema",
+             json{{"type", "string"}, {"default", "any"}, {"enum", json::array({"any", "number", "string", "bool"})}}}},
+       json{{"name", "fallback"}, {"access", "rw"}, {"valueSchema", json{{"type", "any"}, {"default", nullptr}}}}});
+}
+
 json runtime_node(const std::string& node_id, const std::string& operator_class, json data_in_ports,
                   json data_out_ports, json exec_in_ports, json exec_out_ports, json state_fields = json::array(),
                   json state_values = json::object()) {
@@ -280,7 +290,7 @@ void run_lua_script_operator_smoke() {
          "lua_script compute_output should return cached-compatible JSON output");
 }
 
-void run_angelscript_operator_smoke() {
+void run_data_pick_operator_smoke() {
   f8::cppsdk::ServiceBus::Config cfg;
   cfg.service_id = kServiceId;
   cfg.service_class = kServiceClass;
@@ -290,45 +300,120 @@ void run_angelscript_operator_smoke() {
   f8::cppsdk::RuntimeNodeRegistry registry;
   f8::cppengine::register_cppengine_specs(registry);
   register_test_constant(registry);
+  registry.register_operator_spec(json{{"specKind", "operator"},
+                                       {"serviceClass", kServiceClass},
+                                       {"operatorClass", "f8.test_sink"},
+                                       {"label", "Test Sink"}},
+                                  true);
+  registry.register_operator_factory(
+      kServiceClass, "f8.test_sink",
+      [](const std::string& node_id, const f8::cppsdk::generated::F8RuntimeNode& node, const json& initial_state) {
+        (void)node;
+        (void)initial_state;
+        return std::make_unique<PullingSinkNode>(node_id);
+      },
+      true);
 
   f8::cppsdk::ServiceHost host(bus, registry, kServiceClass);
+  f8::cppsdk::ExecFlowExecutor executor(bus);
   host.start();
 
-  const std::string code =
-      "string on_msg_json(const string &in port, const string &in value_json) {\n"
-      "  return json_output(\"out\", value_json);\n"
-      "}\n"
-      "string on_pull_json(const string &in port, const string &in inputs_json) {\n"
-      "  return json_output(\"out\", json_get(inputs_json, \"msg\"));\n"
-      "}\n";
-  json graph{{"graphId", "g"},
-             {"revision", "r"},
-             {"nodes",
-              json::array({runtime_node("source", "f8.test_constant", json::array(), json::array({port_spec("out")}),
-                                        json::array(), json::array(),
-                                        json::array({json{{"name", "value"},
-                                                          {"access", "rw"},
-                                                          {"valueSchema", json{{"type", "any"}}}}}),
-                                        json{{"value", json{{"value", 12}}}}),
-                           runtime_node("angelscript", "f8.angelscript", json::array({port_spec("msg")}),
-                                        json::array({port_spec("out")}), json::array({"exec"}), json::array({"exec"}),
-                                        json::array({json{{"name", "code"},
-                                                          {"access", "rw"},
-                                                          {"valueSchema", json{{"type", "string"}}}}}),
-                                        json{{"code", code}})})},
-             {"edges", json::array({data_edge("d1", "source", "out", "angelscript", "msg")})}};
+  const json payload{{"center", json{{"y", 0.72}}},
+                     {"pos", json::array({10, 20, 30})},
+                     {"weird-key", json{{"score", "4.5"}}},
+                     {"flag", "yes"}};
+  const json pick_states = data_pick_state_fields();
+  json graph{
+      {"graphId", "g"},
+      {"revision", "r"},
+      {"nodes",
+       json::array({
+           runtime_node(
+               "source", "f8.test_constant", json::array(), json::array({port_spec("out")}), json::array(),
+               json::array(),
+               json::array({json{{"name", "value"}, {"access", "rw"}, {"valueSchema", json{{"type", "any"}}}}}),
+               json{{"value", payload}}),
+           runtime_node("pick_center_y", "f8.data_pick", json::array({port_spec("msg")}),
+                        json::array({port_spec("out")}), json::array({"exec"}), json::array({"exec"}), pick_states,
+                        json{{"path", "center.y"}, {"valueType", "number"}, {"fallback", -1}}),
+           runtime_node("pick_pos_1", "f8.data_pick", json::array({port_spec("msg")}), json::array({port_spec("out")}),
+                        json::array({"exec"}), json::array({"exec"}), pick_states,
+                        json{{"path", "pos[1]"}, {"valueType", "number"}, {"fallback", -1}}),
+           runtime_node("pick_quoted", "f8.data_pick", json::array({port_spec("msg")}), json::array({port_spec("out")}),
+                        json::array({"exec"}), json::array({"exec"}), pick_states,
+                        json{{"path", "[\"weird-key\"].score"}, {"valueType", "number"}, {"fallback", -1}}),
+           runtime_node("pick_flag", "f8.data_pick", json::array({port_spec("msg")}), json::array({port_spec("out")}),
+                        json::array({"exec"}), json::array({"exec"}), pick_states,
+                        json{{"path", "flag"}, {"valueType", "bool"}, {"fallback", false}}),
+           runtime_node("pick_missing", "f8.data_pick", json::array({port_spec("msg")}),
+                        json::array({port_spec("out")}), json::array({"exec"}), json::array({"exec"}), pick_states,
+                        json{{"path", "missing.value"}, {"valueType", "number"}, {"fallback", -1}}),
+           runtime_node("sink_center_y", "f8.test_sink", json::array({port_spec("in")}), json::array(),
+                        json::array({"exec"}), json::array()),
+           runtime_node("sink_pos_1", "f8.test_sink", json::array({port_spec("in")}), json::array(),
+                        json::array({"exec"}), json::array()),
+           runtime_node("sink_quoted", "f8.test_sink", json::array({port_spec("in")}), json::array(),
+                        json::array({"exec"}), json::array()),
+           runtime_node("sink_flag", "f8.test_sink", json::array({port_spec("in")}), json::array(),
+                        json::array({"exec"}), json::array()),
+           runtime_node("sink_missing", "f8.test_sink", json::array({port_spec("in")}), json::array(),
+                        json::array({"exec"}), json::array()),
+       })},
+      {"edges", json::array({
+                    data_edge("d_source_center_y", "source", "out", "pick_center_y", "msg"),
+                    data_edge("d_source_pos_1", "source", "out", "pick_pos_1", "msg"),
+                    data_edge("d_source_quoted", "source", "out", "pick_quoted", "msg"),
+                    data_edge("d_source_flag", "source", "out", "pick_flag", "msg"),
+                    data_edge("d_source_missing", "source", "out", "pick_missing", "msg"),
+                    data_edge("d_center_y_sink", "pick_center_y", "out", "sink_center_y", "in"),
+                    data_edge("d_pos_1_sink", "pick_pos_1", "out", "sink_pos_1", "in"),
+                    data_edge("d_quoted_sink", "pick_quoted", "out", "sink_quoted", "in"),
+                    data_edge("d_flag_sink", "pick_flag", "out", "sink_flag", "in"),
+                    data_edge("d_missing_sink", "pick_missing", "out", "sink_missing", "in"),
+                    exec_edge("e_center_y_sink", "pick_center_y", "exec", "sink_center_y", "exec"),
+                    exec_edge("e_pos_1_sink", "pick_pos_1", "exec", "sink_pos_1", "exec"),
+                    exec_edge("e_quoted_sink", "pick_quoted", "exec", "sink_quoted", "exec"),
+                    exec_edge("e_flag_sink", "pick_flag", "exec", "sink_flag", "exec"),
+                    exec_edge("e_missing_sink", "pick_missing", "exec", "sink_missing", "exec"),
+                })}};
 
   std::string error_code;
   std::string error_message;
   expect(host.apply_rungraph(graph, error_code, error_message),
          "apply_rungraph failed: " + error_code + ": " + error_message);
+  executor.clear_nodes();
+  for (f8::cppsdk::OperatorNode* node : host.operator_nodes()) {
+    executor.register_node(node);
+  }
+  executor.apply_rungraph(graph);
 
-  bus.push_data_input_for_local_test("angelscript", "msg", json{{"value", 12}}, 90);
+  executor.trigger_exec("pick_center_y", "exec", 80);
+  executor.trigger_exec("pick_pos_1", "exec", 81);
+  executor.trigger_exec("pick_quoted", "exec", 82);
+  executor.trigger_exec("pick_flag", "exec", 83);
+  executor.trigger_exec("pick_missing", "exec", 84);
 
-  auto* angelscript = dynamic_cast<f8::cppsdk::ComputableNode*>(host.get_node("angelscript"));
-  expect(angelscript != nullptr, "angelscript must implement ComputableNode for external viz auto-sampling");
-  expect(angelscript->compute_output("out", 124) == (json{{"value", 12}}),
-         "angelscript compute_output should return JSON hook output");
+  auto* sink_center_y = dynamic_cast<PullingSinkNode*>(host.get_node("sink_center_y"));
+  auto* sink_pos_1 = dynamic_cast<PullingSinkNode*>(host.get_node("sink_pos_1"));
+  auto* sink_quoted = dynamic_cast<PullingSinkNode*>(host.get_node("sink_quoted"));
+  auto* sink_flag = dynamic_cast<PullingSinkNode*>(host.get_node("sink_flag"));
+  auto* sink_missing = dynamic_cast<PullingSinkNode*>(host.get_node("sink_missing"));
+  expect(sink_center_y != nullptr, "center.y sink node was not created");
+  expect(sink_pos_1 != nullptr, "pos[1] sink node was not created");
+  expect(sink_quoted != nullptr, "quoted-key sink node was not created");
+  expect(sink_flag != nullptr, "flag sink node was not created");
+  expect(sink_missing != nullptr, "missing-path sink node was not created");
+  expect(sink_center_y->last_value == 0.72,
+         "center.y pick produced unexpected value: " + sink_center_y->last_value.dump());
+  expect(sink_pos_1->last_value == 20.0, "pos[1] pick produced unexpected value: " + sink_pos_1->last_value.dump());
+  expect(sink_quoted->last_value == 4.5,
+         "quoted key pick produced unexpected value: " + sink_quoted->last_value.dump());
+  expect(sink_flag->last_value == true, "bool pick produced unexpected value: " + sink_flag->last_value.dump());
+  expect(sink_missing->last_value == -1, "missing path pick did not use fallback: " + sink_missing->last_value.dump());
+
+  auto* source = dynamic_cast<ConstantNode*>(host.get_node("source"));
+  expect(source != nullptr, "source node was not created");
+  expect(source->last_ctx_id == 84, "source was not pulled with the latest data-pick exec context id");
 }
 
 void run_all_data_output_operators_are_computable_smoke() {
@@ -397,7 +482,7 @@ int main() {
   try {
     run_cpython_script_operator_smoke();
     run_lua_script_operator_smoke();
-    run_angelscript_operator_smoke();
+    run_data_pick_operator_smoke();
     run_all_data_output_operators_are_computable_smoke();
   } catch (const std::exception& exc) {
     std::cerr << exc.what() << "\n";

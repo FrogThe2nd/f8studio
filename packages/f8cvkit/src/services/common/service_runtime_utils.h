@@ -3,6 +3,7 @@
 #include <cerrno>
 #include <cctype>
 #include <cmath>
+#include <cstddef>
 #include <cstdlib>
 #include <cstdint>
 #include <limits>
@@ -13,6 +14,7 @@
 #include <nlohmann/json.hpp>
 
 #include "f8cppsdk/service_bus.h"
+#include "f8cppsdk/latest_video_frame_transport.h"
 
 namespace f8::cvkit::service_runtime {
 
@@ -31,6 +33,75 @@ struct CvProcessMetrics {
   std::uint64_t last_points_per_frame = 0;
   std::uint64_t last_vectors_per_frame = 0;
 };
+
+struct FrameBufferValidationResult {
+  bool ok = false;
+  std::size_t row_bytes = 0;
+  const char* reason = "unknown frame buffer validation failure";
+};
+
+inline FrameBufferValidationResult validate_frame_buffer(std::uint32_t actual_format,
+                                                         std::uint32_t width,
+                                                         std::uint32_t height,
+                                                         std::uint32_t pitch,
+                                                         std::size_t payload_size,
+                                                         std::uint32_t expected_format,
+                                                         std::size_t bytes_per_pixel) {
+  FrameBufferValidationResult result;
+  if (actual_format != expected_format) {
+    result.reason = "unexpected frame format";
+    return result;
+  }
+  if (width == 0 || height == 0 || pitch == 0) {
+    result.reason = "invalid frame dimensions";
+    return result;
+  }
+  if (width > static_cast<std::uint32_t>(std::numeric_limits<int>::max()) ||
+      height > static_cast<std::uint32_t>(std::numeric_limits<int>::max()) ||
+      pitch > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
+    result.reason = "frame dimensions exceed OpenCV limits";
+    return result;
+  }
+  if (bytes_per_pixel == 0) {
+    result.reason = "invalid expected bytes per pixel";
+    return result;
+  }
+
+  const std::size_t frame_width = static_cast<std::size_t>(width);
+  if (frame_width > std::numeric_limits<std::size_t>::max() / bytes_per_pixel) {
+    result.reason = "frame row byte count overflows";
+    return result;
+  }
+  const std::size_t minimum_row_bytes = frame_width * bytes_per_pixel;
+  const std::size_t row_bytes = static_cast<std::size_t>(pitch);
+  if (row_bytes < minimum_row_bytes) {
+    result.reason = "frame pitch is smaller than width * bytes_per_pixel";
+    return result;
+  }
+
+  const std::size_t frame_height = static_cast<std::size_t>(height);
+  if (frame_height > 0 && row_bytes > std::numeric_limits<std::size_t>::max() / frame_height) {
+    result.reason = "frame payload byte count overflows";
+    return result;
+  }
+  const std::size_t required_payload_bytes = row_bytes * frame_height;
+  if (payload_size < required_payload_bytes) {
+    result.reason = "frame payload is smaller than pitch * height";
+    return result;
+  }
+
+  result.ok = true;
+  result.row_bytes = row_bytes;
+  result.reason = "";
+  return result;
+}
+
+inline FrameBufferValidationResult validate_latest_video_frame(const f8::cppsdk::LatestVideoFrame& frame,
+                                                               std::uint32_t expected_format,
+                                                               std::size_t bytes_per_pixel) {
+  return validate_frame_buffer(frame.format, frame.width, frame.height, frame.pitch, frame.payload.size(),
+                               expected_format, bytes_per_pixel);
+}
 
 inline double latency_ms_from_timestamps(std::int64_t end_ts_ms, std::int64_t source_ts_ms) {
   if (end_ts_ms <= 0 || source_ts_ms <= 0 || end_ts_ms < source_ts_ms) {

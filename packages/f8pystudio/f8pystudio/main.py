@@ -7,6 +7,10 @@ from typing import cast
 
 from f8pysdk.bus import BusBackend
 from f8pysdk.service_bus.config import DEFAULT_ZENOH_SHM_POOL_BYTES
+from f8pysdk.service_runtime_tools.inventory.policy import (
+    DISABLED_SERVICE_CLASSES_ENV,
+    split_service_class_values,
+)
 from f8pystudio.bridge.runtime_config import PyStudioServiceBridgeConfig
 from f8pystudio.diagnostics.logging import configure_root_logging_from_env
 
@@ -56,6 +60,10 @@ def _split_endpoint_values(values: list[str] | tuple[str, ...]) -> tuple[str, ..
     return tuple(out)
 
 
+def _split_service_class_values(values: list[str] | tuple[str, ...]) -> tuple[str, ...]:
+    return split_service_class_values(values)
+
+
 def _env_tuple(default: tuple[str, ...], name: str) -> tuple[str, ...]:
     raw = str(os.environ.get(name, "") or "")
     if not raw.strip():
@@ -95,6 +103,13 @@ def _install_runtime_env(config: PyStudioServiceBridgeConfig) -> None:
     os.environ.pop("F8_ZENOH_CONNECT", None)
     os.environ.pop("F8_ZENOH_LISTEN", None)
     os.environ.pop("F8_ZENOH_SHM_POOL_BYTES", None)
+
+
+def _install_disabled_service_env(disabled_service_classes: tuple[str, ...]) -> None:
+    if disabled_service_classes:
+        os.environ[DISABLED_SERVICE_CLASSES_ENV] = os.pathsep.join(disabled_service_classes)
+        return
+    os.environ.pop(DISABLED_SERVICE_CLASSES_ENV, None)
 
 
 def _force_process_exit(exit_code: int) -> None:
@@ -154,6 +169,16 @@ def main(argv: list[str] | None = None, *, force_process_exit: bool = False) -> 
         default=_env_flag(True, "F8_KILL_MANAGED_SERVICES_ON_EXIT"),
         help="Stop managed services during PyStudio shutdown (env: F8_KILL_MANAGED_SERVICES_ON_EXIT).",
     )
+    parser.add_argument(
+        "--disable-service",
+        action="append",
+        default=list(_split_service_class_values((os.environ.get(DISABLED_SERVICE_CLASSES_ENV) or "",))),
+        metavar="SERVICE_CLASS",
+        help=(
+            "Skip service discovery/registration for a service class. Repeatable; comma-separated values are accepted "
+            f"(env: {DISABLED_SERVICE_CLASSES_ENV})."
+        ),
+    )
     args = parser.parse_args(argv)
 
     from f8pystudio.app.program import PyStudioProgram
@@ -163,6 +188,7 @@ def main(argv: list[str] | None = None, *, force_process_exit: bool = False) -> 
 
     config = _build_bridge_config(args)
     _install_runtime_env(config)
+    _install_disabled_service_env(_split_service_class_values(list(args.disable_service or [])))
     prog = PyStudioProgram(config)
     if args.describe:
         print(prog.describe_json_text())

@@ -387,22 +387,20 @@ void FlowMetricService::process_frame_once() {
   ++frame_counter_;
   last_frame_id_ = source_frame_id;
 
-  if (frame_format != f8::cppsdk::kVideoFormatFlow2F16 || frame_width == 0 || frame_height == 0 || frame_pitch == 0) {
-    ++monitor_fail_frames_;
-    publish_error_if_changed("unsupported flow frame format", "runtime", json::object());
+  const auto frame_validation =
+      service_runtime::validate_frame_buffer(frame_format, frame_width, frame_height, frame_pitch, flow_payload_.size(),
+                                             f8::cppsdk::kVideoFormatFlow2F16, 4u);
+  if (!frame_validation.ok) {
+    flow_u_.release();
+    flow_v_.release();
+    du_dx_.release();
+    du_dy_.release();
+    dv_dx_.release();
+    dv_dy_.release();
+    metric_output_.release();
     return;
   }
-  const std::size_t row_bytes = static_cast<std::size_t>(frame_pitch);
-  if (row_bytes < static_cast<std::size_t>(frame_width) * 4u) {
-    ++monitor_fail_frames_;
-    publish_error_if_changed("invalid flow frame pitch", "runtime", json::object());
-    return;
-  }
-  if (flow_payload_.size() < row_bytes * static_cast<std::size_t>(frame_height)) {
-    ++monitor_fail_frames_;
-    publish_error_if_changed("flow frame too small", "runtime", json::object());
-    return;
-  }
+  const std::size_t row_bytes = frame_validation.row_bytes;
 
   if ((frame_counter_ % static_cast<std::uint64_t>(std::max(1, compute_every_n_frames_))) != 0) {
     return;

@@ -8,6 +8,7 @@ add_library(f8cppengine_core STATIC
   src/cppengine_service_node.cpp
   src/core_operators.cpp
   src/data_expr_operator.cpp
+  src/data_pick_operator.cpp
   src/detrend_operator.cpp
   src/envelope_operator.cpp
   src/exec_sequence_operator.cpp
@@ -64,7 +65,6 @@ find_package(mexce REQUIRED)
 find_package(pybind11 REQUIRED)
 find_package(luajit REQUIRED)
 find_package(sol2 REQUIRED)
-find_package(Angelscript REQUIRED)
 
 if(WIN32)
   if(DEFINED PYTHON_EXECUTABLE AND NOT "${PYTHON_EXECUTABLE}" STREQUAL "")
@@ -82,7 +82,6 @@ target_link_libraries(f8cppengine_core
     pybind11::embed
     sol2::sol2
     luajit::luajit
-    Angelscript::angelscript
 )
 
 target_compile_definitions(f8cppengine_core PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)

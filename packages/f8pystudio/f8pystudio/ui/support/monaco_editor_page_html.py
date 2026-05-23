@@ -176,86 +176,9 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
             return false;
           }}
         }}
-        function _registerAngelScriptLanguage() {{
-          if (_languageRegistered('angelscript')) return;
-          monaco.languages.register({{ id: 'angelscript', extensions: ['.as', '.angelscript'], aliases: ['AngelScript', 'angelscript'] }});
-          monaco.languages.setLanguageConfiguration('angelscript', {{
-            comments: {{ lineComment: '//', blockComment: ['/*', '*/'] }},
-            brackets: [['{{', '}}'], ['[', ']'], ['(', ')']],
-            autoClosingPairs: [
-              {{ open: '{{', close: '}}' }},
-              {{ open: '[', close: ']' }},
-              {{ open: '(', close: ')' }},
-              {{ open: '"', close: '"', notIn: ['string'] }},
-              {{ open: "'", close: "'", notIn: ['string', 'comment'] }},
-            ],
-            surroundingPairs: [
-              {{ open: '{{', close: '}}' }},
-              {{ open: '[', close: ']' }},
-              {{ open: '(', close: ')' }},
-              {{ open: '"', close: '"' }},
-              {{ open: "'", close: "'" }},
-            ],
-          }});
-          monaco.languages.setMonarchTokensProvider('angelscript', {{
-            defaultToken: '',
-            tokenPostfix: '.as',
-            keywords: [
-              'and', 'auto', 'bool', 'break', 'case', 'cast', 'class', 'const', 'continue', 'default',
-              'do', 'double', 'else', 'enum', 'false', 'float', 'for', 'from', 'funcdef', 'if', 'import',
-              'in', 'inout', 'int', 'int8', 'int16', 'int32', 'int64', 'interface', 'is', 'mixin',
-              'namespace', 'not', 'null', 'or', 'out', 'private', 'protected', 'return', 'shared',
-              'string', 'switch', 'this', 'true', 'uint', 'uint8', 'uint16', 'uint32', 'uint64',
-              'void', 'while', 'xor',
-            ],
-            typeKeywords: ['bool', 'double', 'float', 'int', 'int64', 'string', 'uint', 'void'],
-            operators: [
-              '=', '>', '<', '!', '~', '?', ':', '==', '<=', '>=', '!=', '&&', '||', '++', '--',
-              '+', '-', '*', '/', '&', '|', '^', '%', '<<', '>>', '>>>', '+=', '-=', '*=', '/=',
-              '&=', '|=', '^=', '%=', '<<=', '>>=', '>>>=',
-            ],
-            symbols: /[=><!~?:&|+\\-*\\/\\^%]+/,
-            escapes: /\\\\(?:[abfnrtv\\"'0-9xXuU])/,
-            tokenizer: {{
-              root: [
-                [/[a-zA-Z_][\\w]*/, {{ cases: {{ '@keywords': 'keyword', '@typeKeywords': 'type', '@default': 'identifier' }} }}],
-                [/\\d*\\.\\d+([eE][\\-+]?\\d+)?/, 'number.float'],
-                [/0[xX][0-9a-fA-F]+/, 'number.hex'],
-                [/\\d+/, 'number'],
-                [/[{{}}\\[\\]()]/, '@brackets'],
-                [/[;,.]/, 'delimiter'],
-                [/\\/\\*/, 'comment', '@comment'],
-                [/\\/\\/.*$/, 'comment'],
-                [/@symbols/, {{ cases: {{ '@operators': 'operator', '@default': '' }} }}],
-                [/"([^"\\\\]|\\\\.)*$/, 'string.invalid'],
-                [/"/, 'string', '@string_double'],
-                [/'[^\\\\']'/, 'string'],
-              ],
-              comment: [
-                [/[^/*]+/, 'comment'],
-                [/\\*\\//, 'comment', '@pop'],
-                [/[/*]/, 'comment'],
-              ],
-              string_double: [
-                [/[^\\\\"]+/, 'string'],
-                [/@escapes/, 'string.escape'],
-                [/\\\\./, 'string.escape.invalid'],
-                [/"/, 'string', '@pop'],
-              ],
-            }},
-          }});
-        }}
         function _resolveEditorLanguage(language) {{
           const normalized = String(language || 'plaintext').trim().toLowerCase() || 'plaintext';
-          if (normalized === 'angelscript') {{
-            if (_languageRegistered('cpp')) return 'cpp';
-            _registerAngelScriptLanguage();
-            return _languageRegistered('angelscript') ? 'angelscript' : 'plaintext';
-          }}
           return _languageRegistered(normalized) ? normalized : 'plaintext';
-        }}
-        if (requestedLanguage === 'angelscript' && !_languageRegistered('cpp')) {{
-          _registerAngelScriptLanguage();
         }}
         const editorLanguage = _resolveEditorLanguage(requestedLanguage);
         window._f8_resolveEditorLanguage = _resolveEditorLanguage;
@@ -1225,7 +1148,7 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
           return window._f8_resolveEditorLanguage(String(init.language || 'plaintext'));
         }}
         const language = String(init.language || 'plaintext').trim().toLowerCase() || 'plaintext';
-        return language === 'angelscript' ? 'cpp' : language;
+        return language;
       }}
 
       function _f8_normalizeAiPanelWidth(value) {{

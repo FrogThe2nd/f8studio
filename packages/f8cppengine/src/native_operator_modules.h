@@ -8,6 +8,7 @@ void register_cppengine_service_node(f8::cppsdk::RuntimeNodeRegistry& registry);
 void register_tick_operator(f8::cppsdk::RuntimeNodeRegistry& registry);
 void register_range_map_operator(f8::cppsdk::RuntimeNodeRegistry& registry);
 void register_data_expr_operator(f8::cppsdk::RuntimeNodeRegistry& registry);
+void register_data_pick_operator(f8::cppsdk::RuntimeNodeRegistry& registry);
 void register_exec_sequence_operator(f8::cppsdk::RuntimeNodeRegistry& registry);
 void register_print_operator(f8::cppsdk::RuntimeNodeRegistry& registry);
 void register_phase_operator(f8::cppsdk::RuntimeNodeRegistry& registry);

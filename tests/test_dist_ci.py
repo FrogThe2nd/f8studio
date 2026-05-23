@@ -333,6 +333,28 @@ class DistCiDiscoveryTest(unittest.TestCase):
             detector_service_path.read_text(encoding="utf-8"),
         )
 
+    def test_copy_dist_config_copies_service_discovery_policy(self) -> None:
+        config_root = self.root / "config"
+        config_root.mkdir(parents=True, exist_ok=True)
+        policy_path = config_root / "service_discovery_policy.yml"
+        policy_path.write_text(
+            "schemaVersion: f8serviceDiscoveryPolicy/1\n"
+            "disabledServiceClasses:\n"
+            "  - f8.cppengine\n",
+            encoding="utf-8",
+        )
+        dist_dir = self.root / "dist"
+        dist_dir.mkdir(parents=True, exist_ok=True)
+
+        with mock.patch.object(self.module, "REPO_ROOT", self.root):
+            copied_root = self.module._copy_dist_config(dist_dir)
+
+        self.assertEqual(copied_root, dist_dir / "config")
+        self.assertEqual(
+            (dist_dir / "config" / "service_discovery_policy.yml").read_text(encoding="utf-8"),
+            policy_path.read_text(encoding="utf-8"),
+        )
+
 
 class DistCiCppBuildTest(unittest.TestCase):
     def setUp(self) -> None:
