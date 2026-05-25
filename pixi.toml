@@ -21,6 +21,12 @@ pip = ">=26.0.1,<27"
 numpy = ">=2.4.2, <3"
 opencv-contrib-python = ">=4.13.0.92, <5"
 
+[feature.debug.pypi-dependencies]
+scapy = ">=2.6.1,<3"
+
+[feature.debug.tasks]
+udp_pcap_replay = "python scripts/udp_pcap_replay.py"
+
 [feature.onnx.dependencies]
 cuda-version = "12.*"
 cuda-libraries = "12.*"
@@ -186,7 +192,7 @@ build_studio_launcher = "python scripts/build_studio_launcher.py"
 # `studio-runtime`), `pixi run <task>` without `-e` can resolve differently
 # depending on the active Pixi environment. Keep `service.yml` launch entries
 # explicit with `-e` for shared runtime tasks.
-default = { features = ["python", "sdk", "engine", "studio", "vision", "audio", "test"], solve-group = "default" }
+default = { features = ["python", "sdk", "engine", "studio", "vision", "audio", "test", "debug"], solve-group = "default" }
 studio-runtime = { features = ["python", "sdk", "engine", "studio", "vision", "audio", "launcher-runtime"], solve-group = "default" }
 onnx = { features = ["python", "sdk", "onnx", "vision", "launcher-runtime"], solve-group = "onnx" }
 mediapipe = { features = ["python", "sdk", "vision", "mediapipe", "launcher-runtime"], solve-group = "mediapipe" }
