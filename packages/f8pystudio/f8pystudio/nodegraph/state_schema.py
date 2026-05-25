@@ -137,11 +137,34 @@ def schema_type_any(schema: Any) -> str:
 def schema_enum_items(schema: Any) -> list[str]:
     if schema is None:
         return []
-    try:
-        values = list(schema.enum or [])
-    except AttributeError:
+    if isinstance(schema, dict):
+        values_raw = schema.get("enum")
+        if isinstance(values_raw, list):
+            return [str(item) for item in values_raw]
+        if schema.get("type") == "array":
+            items_raw = schema.get("items")
+            if isinstance(items_raw, dict):
+                item_values_raw = items_raw.get("enum")
+                if isinstance(item_values_raw, list):
+                    return [str(item) for item in item_values_raw]
         return []
-    return [str(item) for item in values]
+    if isinstance(schema, F8ArrayTypeSchema):
+        return schema_enum_items(schema.items)
+    if isinstance(
+        schema,
+        (
+            F8StringTypeSchema,
+            F8NumberTypeSchema,
+            F8IntegerTypeSchema,
+            F8BooleanTypeSchema,
+            F8NullTypeSchema,
+        ),
+    ):
+        values_raw = schema.enum
+        if isinstance(values_raw, list):
+            return [str(item) for item in values_raw]
+        return []
+    return []
 
 
 def schema_numeric_range(schema: Any) -> tuple[float | None, float | None]:
