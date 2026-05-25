@@ -1,10 +1,20 @@
-# Scene 06: VAM Modular Pose Pipeline
+# VAM (1): Male-Referenced Motion
 
 This scene is a design guide for the VAM pose pipeline in `PyStudio`. The graph
 uses explicit stages for pose resolution, relative pose output, axis extraction,
 normalization, signal shaping, and final TCode formatting.
 
 Recommended pipeline:
+
+```mermaid
+flowchart LR
+    Skel["Skeletons"] --> Resolver["Pose Resolver"]
+    Resolver --> Pose["Relative Pose(s)"]
+    Pose --> Axes["Axis Extraction"]
+    Axes --> Norm["Normalization"]
+    Norm --> Shape["Signal Shaping"]
+    Shape --> TCode["TCode"]
+```
 
 ```text
 Skeletons -> Pose Resolver -> Relative Pose(s) -> Axis Extraction -> Normalization -> Signal Shaping -> TCode
@@ -30,6 +40,21 @@ That keeps each stage small, replaceable, and easy to debug.
 
 The recommended graph shape is:
 
+```mermaid
+flowchart LR
+    UDP["UDP In"] --> Dec["Skeleton Decoder"]
+    Tick["Tick"] --> Resolver["VAM Pose Resolver"]
+    Dec --> Resolver
+    Resolver --> Hub["Patch Hub"]
+    Hub --> Viz["Debug / 3D Viz"]
+    Hub --> Axes["VAM Pose Axes"]
+    Axes --> Maps["Range Map x6"]
+    Maps --> Smooth["Smooth Filter x6"]
+    Smooth --> Limit["Rate Limiter x6"]
+    Limit --> TCode["TCode"]
+    TCode --> Out["Serial Out / UDP Out"]
+```
+
 ```text
 UDP In.packet -> Skeleton Decoder.packet
 Skeleton Decoder.skeletons -> VAM Pose Resolver.skeletons
@@ -54,6 +79,20 @@ debug, analysis, and output branches.
 ### Minimal V1 Graph
 
 For a first working scene:
+
+```mermaid
+flowchart LR
+    UDP["UDP In"] --> Dec["Skeleton Decoder"]
+    Dec --> Resolver["Python Script: VAM Pose Resolver"]
+    Tick["Tick"] --> Resolver
+    Resolver --> Axes["Python Script: VAM Pose Axes"]
+    Tick --> Axes
+    Axes --> Maps["Range Map x6"]
+    Maps --> Smooth["Smooth Filter x6"]
+    Smooth --> Limit["Rate Limiter x6"]
+    Limit --> TCode["TCode"]
+    TCode --> Serial["Serial Out"]
+```
 
 ```text
 UDP In -> Skeleton Decoder -> Python Script: VAM Pose Resolver
@@ -119,6 +158,15 @@ formatting stay outside the resolver.
 
 ### 1. Create The Ingest Nodes
 
+Ingest is the shared front door for all VAM skeleton branches:
+
+```mermaid
+flowchart LR
+    UDP["UDP In.packet"] --> Dec["Skeleton Decoder.packet"]
+    DecOut["Skeleton Decoder.skeletons"] --> Downstream["Pose Resolver branches"]
+    Tick["Tick.exec"] --> Downstream
+```
+
 Create these nodes:
 
 | Node | Required setup |
@@ -137,6 +185,20 @@ For a cached pull loop, drive downstream scripts from `Tick.exec`. The decoder
 will provide the latest skeleton cache when the script pulls `skeletons`.
 
 ### 2. Add `VAM Pose Resolver`
+
+The resolver turns the skeleton cache into explicit pose objects. It does not
+normalize, smooth, or output TCode.
+
+```mermaid
+flowchart LR
+    Dec["Skeleton Decoder.skeletons"] --> Resolver["VAM Pose Resolver"]
+    Tick["Tick.exec"] --> Resolver
+    Resolver --> Ref["referenceFrame"]
+    Resolver --> Target["targetWorldBone"]
+    Resolver --> RelA["targetInReference"]
+    Resolver --> RelB["targetInPlane"]
+    Resolver --> Status["status / debug"]
+```
 
 Create a `Python Script` node and rename it to `VAM Pose Resolver`.
 
@@ -1193,6 +1255,24 @@ diagnostic state fields when they exist on the node.
 
 ### 4. Add `VAM Pose Axes`
 
+The axes node is the boundary between pose geometry and ordinary signal
+processing:
+
+```mermaid
+flowchart LR
+    Ref["referenceFrame"] --> Axes["VAM Pose Axes"]
+    Target["targetWorldBone"] --> Axes
+    RelRef["targetInReference"] --> Axes
+    RelPlane["targetInPlane"] --> Axes
+    Tick["Tick.exec"] --> Axes
+    Axes --> L0["L0_geom"]
+    Axes --> L1["L1_m"]
+    Axes --> L2["L2_m"]
+    Axes --> R0["R0_deg"]
+    Axes --> R1["R1_deg"]
+    Axes --> R2["R2_deg"]
+```
+
 Create another `Python Script` node and rename it to `VAM Pose Axes`.
 
 Set its `inputMode` state to:
@@ -1472,6 +1552,24 @@ def onStop(ctx: "F8PyEngineContext") -> None:
 
 ### 5. Normalize Each Axis With Ordinary Nodes
 
+Each raw axis becomes its own normal graph lane:
+
+```mermaid
+flowchart LR
+    L0["L0_geom"] --> M0["Range Map L0"]
+    L1["L1_m"] --> M1["Range Map L1"]
+    L2["L2_m"] --> M2["Range Map L2"]
+    R0["R0_deg"] --> M3["Range Map R0"]
+    R1["R1_deg"] --> M4["Range Map R1"]
+    R2["R2_deg"] --> M5["Range Map R2"]
+    M0 --> N0["L0 0..1"]
+    M1 --> N1["L1 0..1"]
+    M2 --> N2["L2 0..1"]
+    M3 --> N3["R0 0..1"]
+    M4 --> N4["R1 0..1"]
+    M5 --> N5["R2 0..1"]
+```
+
 Use one `Range Map` per axis. Connect the raw axis outputs from `VAM Pose Axes`
 into these maps:
 
@@ -1492,6 +1590,15 @@ the output range, for example `0.15..0.85`.
 
 ### 6. Shape The Normalized Signals
 
+After normalization, every channel uses the same shaping pattern:
+
+```mermaid
+flowchart LR
+    Norm["Normalized 0..1 axis"] --> Smooth["Smooth Filter"]
+    Smooth --> Limit["Rate Limiter"]
+    Limit --> Cmd["Processed 0..1 command"]
+```
+
 For each axis, use this chain:
 
 ```text
@@ -1503,6 +1610,20 @@ axis and final command. Keep this shaping outside the scripts so graph authors
 can adjust it live.
 
 ### 7. Add TCode Output
+
+The final formatter only sees processed normalized command values:
+
+```mermaid
+flowchart LR
+    L0["L0 command"] --> TCode["TCode"]
+    L1["L1 command"] --> TCode
+    L2["L2 command"] --> TCode
+    R0["R0 command"] --> TCode
+    R1["R1 command"] --> TCode
+    R2["R2 command"] --> TCode
+    Tick["Tick.tickMs"] --> TCode
+    TCode --> Out["Serial Out / UDP Out"]
+```
 
 Create a `TCode` node and connect:
 

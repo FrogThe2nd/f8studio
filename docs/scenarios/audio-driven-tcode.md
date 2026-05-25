@@ -1,4 +1,4 @@
-# Scene 03: Audio Driven TCode
+# Audio Driven TCode
 
 ## Goal
 
@@ -32,5 +32,5 @@ Capture live audio, extract audio features, and transform signal energy into smo
 
 ## Image Placeholders
 
-- `docs/media/images/scenarios/scene-03-overview.png`
-- `docs/media/images/scenarios/scene-03-audio-features.png`
+- `docs/media/images/scenarios/audio-driven-tcode-overview.png`
+- `docs/media/images/scenarios/audio-driven-tcode-audio-features.png`

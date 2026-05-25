@@ -18,6 +18,6 @@ If you are evaluating the software, do **not** start with source build. The preb
 
 - Download and run the prebuilt Windows package
 - Open Studio without a full development environment
-- Load a predefined graph from the bundled scenario JSON files
+- Follow a graph guide from the scenario library
 - Try a graph before learning the full node catalog
 

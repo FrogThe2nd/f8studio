@@ -1,16 +1,34 @@
-# Scenarios
+# Graph Guide Library
 
-This section provides scenario guides with practical setup, key parameters, and validation checks.
+This section provides topic-based graph guides with practical setup, key
+parameters, validation checks, and copy-paste building blocks where useful.
 
-## Scene List
+The guides are grouped by domain instead of one global scene number. Each topic
+can grow its own learning path without forcing unrelated guides to take the next
+global slot.
 
-1. [Scene 01: CVKit Template Tracking](scene-01-cvkit_template_tracking.md)
-2. [Scene 02: GameMod Skeleton](scene-02-gamemod_skeleton.md)
-3. [Scene 03: Audio Driven TCode](scene-03-audio_driven.md)
-4. [Scene 04: Functional TCode Generation](scene-04-functional_tcode.md)
-5. [Scene 05: Lovense Bridge](scene-05-lovense_bridge.md)
+## VAM
 
-## Script Downloads
+These guides build a progressive VAM motion system. Start with one branch, then
+combine branches through the unified arbiter.
 
-1. [scene-02-gamemod_skeleton.json](scripts/scene-02-gamemod_skeleton.json)
-2. [scene-04-functional_tcode.json](scripts/scene-04-functional_tcode.json)
+1. [VAM (1): Male-Referenced Motion](vam-male-referenced-motion.md)
+2. [VAM (2): Female-Female Motion](vam-female-female-motion.md)
+3. [VAM (3): Self-Motion Fallback](vam-self-motion-fallback.md)
+4. [VAM (4): Unified Mode Arbiter](vam-unified-mode-arbiter.md)
+
+## Video Analysis
+
+1. [CVKit Template Tracking](cvkit-template-tracking.md)
+
+## Audio Analysis
+
+1. [Audio Driven TCode](audio-driven-tcode.md)
+
+## Programming
+
+1. [Functional TCode Generation](functional-tcode-generation.md)
+
+## Device Bridges
+
+1. [Lovense Bridge](lovense-bridge.md)

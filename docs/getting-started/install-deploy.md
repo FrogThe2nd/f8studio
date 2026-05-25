@@ -13,14 +13,13 @@ For most readers, the correct way to install F8Studio is to download the prebuil
 
 If your goal is simply to try F8Studio, stop here and continue to the sample-graph flow.
 
-## Open a Predefined Graph
+## Open a Graph Guide
 
-The fastest way to learn the product is to load one of the existing scenario JSON files:
+The fastest way to learn the product is to follow one of the graph guides:
 
-1. [Scene 01: CVKit Template Tracking](../scenarios/scene-01-cvkit_template_tracking.md)
-2. [Scene 02: GameMod Skeleton](../scenarios/scene-02-gamemod_skeleton.md)
-3. [Scene 03: Audio Driven TCode](../scenarios/scene-03-audio_driven.md)
-4. [Scene 04: Functional TCode Generation](../scenarios/scene-04-functional_tcode.md)
+1. [CVKit Template Tracking](../scenarios/cvkit-template-tracking.md)
+2. [Audio Driven TCode](../scenarios/audio-driven-tcode.md)
+3. [Functional TCode Generation](../scenarios/functional-tcode-generation.md)
 
 Then follow:
 

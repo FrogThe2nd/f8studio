@@ -1,4 +1,4 @@
-# Scene 01: CVKit Template Tracking
+# CVKit Template Tracking
 
 ## Goal
 
@@ -32,5 +32,5 @@ Use `IM Player + CVKit Template Match + CVKit Tracking` to keep a target locked 
 
 ## Image Placeholders
 
-- `docs/media/images/scenarios/scene-01-overview.png`
-- `docs/media/images/scenarios/scene-01-tracking.png`
+- `docs/media/images/scenarios/cvkit-template-tracking-overview.png`
+- `docs/media/images/scenarios/cvkit-template-tracking-tracking.png`

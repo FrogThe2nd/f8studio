@@ -1,4 +1,4 @@
-# Scene 05: Lovense Bridge
+# Lovense Bridge
 
 ## Goal
 

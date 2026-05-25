@@ -14,7 +14,7 @@ This repo-local plugin adds a capture workflow for `CVKit Template Match` sessio
 See also:
 
 - [CVKit Template Match service page](../modules/services/f8-cvkit-templatematch.md)
-- [Scene 01: CVKit Template Tracking](../scenarios/scene-01-cvkit_template_tracking.md)
+- [CVKit Template Tracking](../scenarios/cvkit-template-tracking.md)
 
 ## Plugin Loading Model
 

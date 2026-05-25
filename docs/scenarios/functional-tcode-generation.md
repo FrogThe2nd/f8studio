@@ -1,8 +1,4 @@
-# Scene 04: Functional TCode Generation
-
-## Script
-
-[Download JSON](scripts/scene-04-functional_tcode.json)
+# Functional TCode Generation
 
 ## Goal
 
@@ -18,7 +14,7 @@ Build multi-channel control signals from functional operators (`Phase`, `Tempest
 
 ## Steps
 
-1. Import the script and start `PyEngine`.
+1. Build the graph from the pipeline above and start `PyEngine`.
 2. Confirm timing link `Tick.tickMs -> TCode.intervalMs` (both `100` by default).
 3. Verify signal paths: `Phase -> Tempest -> Expr.x` and `Phase 1 -> Cosine -> Expr.y`.
 4. Review `Expr.code` (current: `x*(y*0.5+0.5)`) to confirm mixing behavior.
@@ -40,5 +36,5 @@ Build multi-channel control signals from functional operators (`Phase`, `Tempest
 
 ## Image Placeholders
 
-- `docs/media/images/scenarios/scene-04-overview.png`
-- `docs/media/images/scenarios/scene-04-waveforms.png`
+- `docs/media/images/scenarios/functional-tcode-generation-overview.png`
+- `docs/media/images/scenarios/functional-tcode-generation-waveforms.png`

@@ -33,8 +33,7 @@
 
 ## Related Scenarios
 
-- [Scene 01: CVKit Template Tracking](../scenarios/scene-01-cvkit_template_tracking.md)
-- [Scene 02: GameMod Skeleton](../scenarios/scene-02-gamemod_skeleton.md)
-- [Scene 03: Audio Driven TCode](../scenarios/scene-03-audio_driven.md)
-- [Scene 04: Functional TCode Generation](../scenarios/scene-04-functional_tcode.md)
+- [CVKit Template Tracking](../scenarios/cvkit-template-tracking.md)
+- [Audio Driven TCode](../scenarios/audio-driven-tcode.md)
+- [Functional TCode Generation](../scenarios/functional-tcode-generation.md)
 

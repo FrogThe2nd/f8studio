@@ -136,8 +136,7 @@ _None_
 
 #### Related Scenarios
 
-- [Scene 02: GameMod Skeleton](../../scenarios/scene-02-gamemod_skeleton.md)
-- [Scene 04: Functional TCode Generation](../../scenarios/scene-04-functional_tcode.md)
+- [Functional TCode Generation](../../scenarios/functional-tcode-generation.md)
 
 <a id="operator-f8-exec-sequence"></a>
 ### Sequence (`f8.exec_sequence`)
@@ -264,7 +263,7 @@ Cosine phase transform. Provide `phase` (0..1) from an upstream phase driver (e.
 
 #### Related Scenarios
 
-- [Scene 04: Functional TCode Generation](../../scenarios/scene-04-functional_tcode.md)
+- [Functional TCode Generation](../../scenarios/functional-tcode-generation.md)
 
 <a id="operator-f8-tempest"></a>
 ### Tempest (`f8.tempest`)
@@ -336,7 +335,7 @@ Tempest phase transform (phase-modulated cosine). Provide `phase` (0..1) from an
 
 #### Related Scenarios
 
-- [Scene 04: Functional TCode Generation](../../scenarios/scene-04-functional_tcode.md)
+- [Functional TCode Generation](../../scenarios/functional-tcode-generation.md)
 
 <a id="operator-f8-phase"></a>
 ### Phase (`f8.phase`)
@@ -401,7 +400,7 @@ Phase accumulator. Outputs normalized phase (0..1) and unwrapped phase turns.
 
 #### Related Scenarios
 
-- [Scene 04: Functional TCode Generation](../../scenarios/scene-04-functional_tcode.md)
+- [Functional TCode Generation](../../scenarios/functional-tcode-generation.md)
 
 <a id="operator-f8-print"></a>
 ### Print (`f8.print`)
@@ -622,7 +621,6 @@ Examples
 
 #### Related Scenarios
 
-- [Scene 02: GameMod Skeleton](../../scenarios/scene-02-gamemod_skeleton.md)
 
 <a id="operator-f8-smooth-filter"></a>
 ### Smooth Filter (`f8.smooth_filter`)
@@ -765,7 +763,6 @@ Clip input to [inMin,inMax] then remap to [outMin,outMax] with a curve.
 
 #### Related Scenarios
 
-- [Scene 02: GameMod Skeleton](../../scenarios/scene-02-gamemod_skeleton.md)
 
 <a id="operator-f8-rate-limiter"></a>
 ### Rate Limiter (`f8.rate_limiter`)
@@ -835,7 +832,6 @@ Limits the rate of change (and optionally acceleration) of an input signal.
 
 #### Related Scenarios
 
-- [Scene 02: GameMod Skeleton](../../scenarios/scene-02-gamemod_skeleton.md)
 
 <a id="operator-f8-serial-out"></a>
 ### Serial Out (`f8.serial_out`)
@@ -904,8 +900,7 @@ Writes incoming values to a serial port (pyserial).
 
 #### Related Scenarios
 
-- [Scene 02: GameMod Skeleton](../../scenarios/scene-02-gamemod_skeleton.md)
-- [Scene 04: Functional TCode Generation](../../scenarios/scene-04-functional_tcode.md)
+- [Functional TCode Generation](../../scenarios/functional-tcode-generation.md)
 
 <a id="operator-f8-udp-in"></a>
 ### UDP In (`f8.udp_in`)
@@ -980,7 +975,6 @@ _None_
 
 #### Related Scenarios
 
-- [Scene 02: GameMod Skeleton](../../scenarios/scene-02-gamemod_skeleton.md)
 
 <a id="operator-f8-skeleton-decoder"></a>
 ### Skeleton Decoder (`f8.skeleton_decoder`)
@@ -1051,7 +1045,6 @@ Decodes udp_in packet payloads into skeleton streams with chunk reassembly.
 
 #### Related Scenarios
 
-- [Scene 02: GameMod Skeleton](../../scenarios/scene-02-gamemod_skeleton.md)
 
 <a id="operator-f8-udp-out"></a>
 ### UDP Out (`f8.udp_out`)
@@ -1196,8 +1189,7 @@ Generates TCode v0.3 command strings from normalized axis values.
 
 #### Related Scenarios
 
-- [Scene 02: GameMod Skeleton](../../scenarios/scene-02-gamemod_skeleton.md)
-- [Scene 04: Functional TCode Generation](../../scenarios/scene-04-functional_tcode.md)
+- [Functional TCode Generation](../../scenarios/functional-tcode-generation.md)
 
 <a id="operator-f8-python-script"></a>
 ### Python Script (`f8.python_script`)
@@ -1325,7 +1317,6 @@ def onStart(ctx: 'F8PyEngineContext') -> None:
 
 #### Related Scenarios
 
-- [Scene 02: GameMod Skeleton](../../scenarios/scene-02-gamemod_skeleton.md)
 
 <a id="operator-f8-data-expr"></a>
 ### Data Expr (`f8.data_expr`)
@@ -3184,5 +3175,4 @@ _None_
 
 ## Related Scenarios
 
-- [Scene 02: GameMod Skeleton](../../scenarios/scene-02-gamemod_skeleton.md)
-- [Scene 04: Functional TCode Generation](../../scenarios/scene-04-functional_tcode.md)
+- [Functional TCode Generation](../../scenarios/functional-tcode-generation.md)
