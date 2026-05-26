@@ -44,7 +44,7 @@ forward = tangent x normal
 ```
 
 The contact branch should emit raw semantic axes. Normalization, smoothing,
-rate limiting, and TCode formatting remain normal graph nodes.
+rate limiting, and TCode formatting belong to the shared VAM output rack.
 
 ## Graph Overview
 
@@ -55,15 +55,10 @@ flowchart LR
     Dec --> Resolver
     Resolver --> Axes["VAM Contact Axes"]
     Tick --> Axes
-    Axes --> Norm0["Adaptive Normalize: distance"]
-    Axes --> Norm1["Adaptive Normalize: slide forward"]
-    Axes --> Norm2["Adaptive Normalize: slide right"]
-    Norm0 --> Shape0["Smooth / Rate Limit"]
-    Norm1 --> Shape1["Smooth / Rate Limit"]
-    Norm2 --> Shape2["Smooth / Rate Limit"]
-    Shape0 --> TCode["TCode"]
-    Shape1 --> TCode
-    Shape2 --> TCode
+    Axes --> Bus["contactRawAxisBus"]
+    Bus --> Router["VAM Raw Axis Router"]
+    Router --> Rack["Shared VAM Output Rack"]
+    Rack --> TCode["TCode"]
     TCode --> Out["Serial Out / UDP Out"]
 ```
 
@@ -80,13 +75,10 @@ VAM Contact Resolver.driverWorldBone -> VAM Contact Axes.driverWorldBone
 VAM Contact Resolver.driverInContact -> VAM Contact Axes.driverInContact
 Tick.exec -> VAM Contact Axes.exec
 
-VAM Contact Axes.L0_distance_m -> Adaptive Normalize.value
-VAM Contact Axes.L1_slideForward_m -> Adaptive Normalize.value
-VAM Contact Axes.L2_slideRight_m -> Adaptive Normalize.value
-
-Adaptive Normalize.norm01 -> Smooth Filter.value
-Smooth Filter.value -> Rate Limiter.value
-Rate Limiter.value -> TCode.L0/L1/L2
+VAM Contact Axes raw outputs -> contactRawAxisBus
+contactRawAxisBus -> VAM Raw Axis Router.contactRawAxes
+VAM Raw Axis Router.<axis>_raw -> Shared VAM Output Rack
+Shared VAM Output Rack -> TCode.L0/L1/L2
 ```
 
 ## Layer Contract
@@ -96,8 +88,8 @@ Rate Limiter.value -> TCode.L0/L1/L2
 | Ingest | UDP packet | skeleton cache | network and binary format |
 | Contact resolver | skeleton cache | receiver bone, driver bone, contact frame, relative pose | pair selection and frame construction |
 | Contact axes | contact pose objects | raw distance/slide axes | geometric projection and frame-to-frame deltas |
-| Normalization | raw axes | `0..1` values | adaptive min/max, inversion, user range |
-| Signal shaping | `0..1` values | processed `0..1` values | smoothing, rate limits, fallback |
+| Raw bus | raw distance/slide axes | `contactRawAxisBus` | branch-to-unified contract |
+| Shared output rack | routed raw axes | processed `0..1` values | adaptive/fixed normalization, output range, smoothing, rate limits, fallback |
 | Output | processed `0..1` values | TCode string | command packaging and transport |
 
 This separation matters. The resolver should not normalize values or build
@@ -1058,30 +1050,51 @@ def onStop(ctx: "F8PyEngineContext") -> None:
     ctx.log("VAM Contact Axes stopped")
 ```
 
-### 5. Normalize Contact Axes
+### 5. Pack The Contact Raw Axis Bus
 
-Contact mode has no shaft length. Use either fixed `Range Map` nodes or an
-adaptive normalizer. For the first graph:
+Contact mode has no shaft length. The branch should emit raw contact semantics
+and let the shared VAM output rack normalize them.
 
-| TCode axis | Raw source | Normalization |
-| --- | --- | --- |
-| `L0` | `L0_distance_m` | Invert distance: close -> high, far -> low. |
-| `L1` | `L1_slideForward_m` | Adaptive or fixed range around the observed forward slide. |
-| `L2` | `L2_slideRight_m` | Adaptive or fixed range around the observed side slide. |
-| optional vibration | `slideSpeed_mps` | Adaptive range or threshold/gate. |
+Recommended raw bus:
 
-For fixed ranges, start here:
+| Bus field | Source | Unit | Meaning |
+| --- | --- | --- | --- |
+| `L0` | `L0_distance_m` | `m` | Contact distance. The rack usually inverts this so close contact is high. |
+| `L1` | `L1_slideForward_m` | `m` | Forward/back slide in the contact frame. |
+| `L2` | `L2_slideRight_m` | `m` | Side slide in the contact frame. |
+| `R0` | optional | `deg` | Reserved for twist-like contact rotation. |
+| `R1` | optional | `deg` | Reserved for pitch-like contact rotation. |
+| `R2` | optional | `deg` | Reserved for roll-like contact rotation. |
 
-```text
-L0_distance_m: input 0.00..0.20, output 1..0
-L1_slideForward_m: input -0.15..0.15, output 0..1
-L2_slideRight_m: input -0.15..0.15, output 0..1
+Example bus:
+
+```python
+{
+    "valid": True,
+    "mode": "contact",
+    "confidence": confidence,
+    "L0": L0_distance_m,
+    "L1": L1_slideForward_m,
+    "L2": L2_slideRight_m,
+    "R0": 0.0,
+    "R1": 0.0,
+    "R2": 0.0,
+    "units": {
+        "L0": "m",
+        "L1": "m",
+        "L2": "m",
+        "R0": "deg",
+        "R1": "deg",
+        "R2": "deg",
+    },
+    "reason": reason,
+}
 ```
 
-If the scene scale or motion range changes often, use the adaptive normalizer
-below.
+The shared rack can use fixed `Range Map` nodes or the adaptive normalizer below
+to turn these raw values into `0..1` commands.
 
-### 6. Optional `Adaptive Range Normalizer`
+### 6. Optional `Adaptive Range Normalizer` For The Shared Rack
 
 Create one `Python Script` node per raw axis and rename it with the axis name,
 for example:
@@ -1278,27 +1291,28 @@ Recommended first settings:
 | slide right -> `L2` | `-0.15` | `0.15` | `false` | Centered sliding. |
 | slide speed -> optional vibration | `0.00` | `1.00` | `false` | Tune per scene. |
 
-### 7. Shape And Output
+### 7. Connect To The Shared Output Rack
 
-Use the same post-processing chain as VAM (1):
+Use the same rack as VAM (1), VAM (3), and VAM (4):
 
 ```mermaid
 flowchart LR
-    Raw["Contact raw axis"] --> Norm["Range Map or Adaptive Normalize"]
-    Norm --> Smooth["Smooth Filter"]
+    Bus["contactRawAxisBus"] --> Router["VAM Raw Axis Router"]
+    Router --> Norm["Axis Normalize"]
+    Norm --> Range["Output Range"]
+    Range --> Smooth["Smooth Filter"]
     Smooth --> Limit["Rate Limiter"]
     Limit --> TCode["TCode"]
 ```
 
-Studio wiring:
+Recommended first contact normalize profiles:
 
-```text
-Adaptive Normalize.norm01 -> Smooth Filter.value
-Smooth Filter.value -> Rate Limiter.value
-Rate Limiter.value -> TCode.L0
-```
-
-Repeat for `L1` and `L2`.
+| Axis | Method | Starting range | Notes |
+| --- | --- | --- | --- |
+| `L0` | fixed or adaptive | `0.00..0.20 m`, inverted | Close contact becomes high output. |
+| `L1` | fixed or adaptive | `-0.15..0.15 m` | Forward slide. |
+| `L2` | fixed or adaptive | `-0.15..0.15 m` | Side slide. |
+| optional vibration | adaptive or threshold | `0.00..1.00` | Tune from `slideSpeed_mps` in a separate lane. |
 
 ## Troubleshooting
 
@@ -1326,21 +1340,23 @@ the node, increase `padding`, lower `contractRate`, or temporarily use fixed
 
 ## How This Fits The Unified VAM Graph
 
-VAM (1) and VAM (2) should meet at the raw-axis layer:
+All VAM branches should meet at the raw-axis layer:
 
 ```mermaid
 flowchart TB
-    Shaft["VAM (1) Shaft Branch"] --> Router["Axis Router / Switch Mixer"]
-    Contact["VAM (2) Contact Branch"] --> Router
-    Self["Future Self-Motion Branch"] --> Router
-    Router --> Normalize["Normalize"]
-    Normalize --> Shape["Smooth / Rate Limit"]
-    Shape --> TCode["TCode"]
+    Shaft["VAM (1) Shaft Branch"] --> ShaftBus["shaftRawAxisBus"]
+    Contact["VAM (2) Contact Branch"] --> ContactBus["contactRawAxisBus"]
+    Self["VAM (3) Self-Motion Branch"] --> SelfBus["selfRawAxisBus"]
+    ShaftBus --> Router["VAM Raw Axis Router"]
+    ContactBus --> Router
+    SelfBus --> Router
+    Router --> Rack["Shared VAM Output Rack"]
+    Rack --> TCode["TCode"]
 ```
 
 The important rule:
 
 ```text
 Different branches may use different reference semantics, but they should emit
-compatible raw semantic axes before the shared output chain.
+compatible raw semantic axes before the shared output rack.
 ```

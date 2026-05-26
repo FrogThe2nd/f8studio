@@ -45,8 +45,9 @@ In other words:
 - the filter output is the low-frequency trajectory;
 - the `relative` output is the high-frequency residual expressed in filtered
   local space;
-- envelopes estimate lower and upper bounds;
-- normalized values are mapped, shaped, and sent to TCode.
+- the branch packs raw residual axes into `selfRawAxisBus`;
+- the shared output rack can use envelopes to estimate lower and upper bounds;
+- the rack maps, shapes, and sends final `0..1` commands to TCode.
 
 ## Recommended Graph
 
@@ -57,15 +58,10 @@ flowchart LR
     Tick["Tick"] --> Sel
     Sel --> Filter["Bone Filter"]
     Filter --> Axes["VAM Self Motion Axes"]
-    Axes --> Env0["Envelope L0"]
-    Axes --> Env1["Envelope L1"]
-    Axes --> Env2["Envelope L2"]
-    Axes --> EnvR["Envelope R*"]
-    Env0 --> Shape["Smooth / Rate Limit"]
-    Env1 --> Shape
-    Env2 --> Shape
-    EnvR --> Shape
-    Shape --> TCode["TCode"]
+    Axes --> Bus["selfRawAxisBus"]
+    Bus --> Router["VAM Raw Axis Router"]
+    Router --> Rack["Shared VAM Output Rack"]
+    Rack --> TCode["TCode"]
     TCode --> Out["Serial Out / UDP Out"]
 ```
 
@@ -78,17 +74,10 @@ Bone Selector.bone -> Bone Filter.bone
 Bone Filter.relative -> VAM Self Motion Axes.relativeBone
 Tick.exec -> VAM Self Motion Axes.exec
 
-VAM Self Motion Axes.L0_vertical_m -> Envelope.value
-VAM Self Motion Axes.L1_forward_m -> Envelope.value
-VAM Self Motion Axes.L2_side_m -> Envelope.value
-VAM Self Motion Axes.R0_yaw_deg -> Envelope.value
-VAM Self Motion Axes.R1_pitch_deg -> Envelope.value
-VAM Self Motion Axes.R2_roll_deg -> Envelope.value
-
-Envelope.normalized -> Range Map.value
-Range Map.value -> Smooth Filter.value
-Smooth Filter.value -> Rate Limiter.value
-Rate Limiter.value -> TCode.<axis>
+VAM Self Motion Axes raw outputs -> selfRawAxisBus
+selfRawAxisBus -> VAM Raw Axis Router.selfRawAxes
+VAM Raw Axis Router.<axis>_raw -> Shared VAM Output Rack
+Shared VAM Output Rack -> TCode.<axis>
 ```
 
 ## Layer Contract
@@ -99,8 +88,8 @@ Rate Limiter.value -> TCode.<axis>
 | Bone selection | skeleton | one bone | choosing the tracked body point |
 | Low/high split | one bone | filtered and relative bone | low-frequency baseline and high-frequency residual |
 | Self axes | relative bone | raw local motion axes | local position/rotation decomposition |
-| Envelope | raw axis | normalized `0..1` value | adaptive lower/upper range estimation |
-| Shaping | normalized axis | processed `0..1` command | smoothing, rate limiting, output range |
+| Raw bus | raw local motion axes | `selfRawAxisBus` | branch-to-unified contract |
+| Shared output rack | routed raw axes | processed `0..1` command | envelope/adaptive normalization, smoothing, rate limiting, output range |
 | Output | processed commands | TCode string | command packaging and transport |
 
 ## Tutorial: Build The Graph From Zero
@@ -344,7 +333,52 @@ def onStop(ctx: "F8PyEngineContext") -> None:
     ctx.log("VAM Self Motion Axes stopped")
 ```
 
-### 3. Add Envelopes For Adaptive Range Estimation
+### 3. Pack The Self Raw Axis Bus
+
+The self branch should emit raw local residual motion. It should not own the
+final TCode chain.
+
+Recommended raw bus:
+
+| Bus field | Source | Unit |
+| --- | --- | --- |
+| `L0` | `VAM Self Motion Axes.L0_vertical_m` | `m` |
+| `L1` | `VAM Self Motion Axes.L1_forward_m` | `m` |
+| `L2` | `VAM Self Motion Axes.L2_side_m` | `m` |
+| `R0` | `VAM Self Motion Axes.R0_yaw_deg` | `deg` |
+| `R1` | `VAM Self Motion Axes.R1_pitch_deg` | `deg` |
+| `R2` | `VAM Self Motion Axes.R2_roll_deg` | `deg` |
+
+Example bus:
+
+```python
+{
+    "valid": True,
+    "mode": "self",
+    "confidence": confidence,
+    "L0": L0_vertical_m,
+    "L1": L1_forward_m,
+    "L2": L2_side_m,
+    "R0": R0_yaw_deg,
+    "R1": R1_pitch_deg,
+    "R2": R2_roll_deg,
+    "units": {
+        "L0": "m",
+        "L1": "m",
+        "L2": "m",
+        "R0": "deg",
+        "R1": "deg",
+        "R2": "deg",
+    },
+    "reason": "self residual motion",
+}
+```
+
+### 4. Use Envelopes In The Shared Output Rack
+
+Envelope normalization is still useful for self-motion. The difference is that
+the envelope nodes belong to the shared rack's self-mode normalize profile, not
+to a private self-branch output chain.
 
 Add one `Envelope` node per axis. This matches the existing
 `D:\vam_dancing.json` design.
@@ -359,12 +393,12 @@ Recommended first settings:
 Wire:
 
 ```text
-VAM Self Motion Axes.L0_vertical_m -> Envelope L0.value
-VAM Self Motion Axes.L1_forward_m -> Envelope L1.value
-VAM Self Motion Axes.L2_side_m -> Envelope L2.value
-VAM Self Motion Axes.R0_yaw_deg -> Envelope R0.value
-VAM Self Motion Axes.R1_pitch_deg -> Envelope R1.value
-VAM Self Motion Axes.R2_roll_deg -> Envelope R2.value
+VAM Raw Axis Router.L0_raw -> Envelope L0.value
+VAM Raw Axis Router.L1_raw -> Envelope L1.value
+VAM Raw Axis Router.L2_raw -> Envelope L2.value
+VAM Raw Axis Router.R0_raw -> Envelope R0.value
+VAM Raw Axis Router.R1_raw -> Envelope R1.value
+VAM Raw Axis Router.R2_raw -> Envelope R2.value
 ```
 
 Then use:
@@ -376,13 +410,15 @@ Envelope.normalized -> Range Map.value
 `Envelope.normalized` is already `0..1`. Use `Range Map` after it for output
 range, inversion, or centering.
 
-### 4. Shape And Output
+### 5. Connect To The Shared Output Rack
 
-The post-processing chain is the same as VAM (1) and VAM (2):
+The post-processing shape is the same as the other VAM modes:
 
 ```mermaid
 flowchart LR
-    Env["Envelope.normalized"] --> Map["Range Map"]
+    Bus["selfRawAxisBus"] --> Router["VAM Raw Axis Router"]
+    Router --> Env["Envelope / Axis Normalize"]
+    Env --> Map["Output Range"]
     Map --> Smooth["Smooth Filter"]
     Smooth --> Limit["Rate Limiter"]
     Limit --> TCode["TCode"]
@@ -391,10 +427,12 @@ flowchart LR
 Start with:
 
 ```text
-Envelope.normalized -> Range Map.value
-Range Map.value -> Smooth Filter.value
-Smooth Filter.value -> Rate Limiter.value
-Rate Limiter.value -> TCode.<axis>
+VAM Raw Axis Router.<axis>_raw
+  -> Envelope.value
+  -> Range Map.value
+  -> Smooth Filter.value
+  -> Rate Limiter.value
+  -> TCode.<axis>
 ```
 
 For a conservative first output:

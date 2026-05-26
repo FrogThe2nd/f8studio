@@ -2,7 +2,8 @@
 
 This scene is a design guide for the VAM pose pipeline in `PyStudio`. The graph
 uses explicit stages for pose resolution, relative pose output, axis extraction,
-normalization, signal shaping, and final TCode formatting.
+raw axis bus output, shared normalization, signal shaping, and final TCode
+formatting.
 
 Recommended pipeline:
 
@@ -11,13 +12,13 @@ flowchart LR
     Skel["Skeletons"] --> Resolver["Pose Resolver"]
     Resolver --> Pose["Relative Pose(s)"]
     Pose --> Axes["Axis Extraction"]
-    Axes --> Norm["Normalization"]
-    Norm --> Shape["Signal Shaping"]
-    Shape --> TCode["TCode"]
+    Axes --> Bus["shaftRawAxisBus"]
+    Bus --> Rack["Shared VAM Output Rack"]
+    Rack --> TCode["TCode"]
 ```
 
 ```text
-Skeletons -> Pose Resolver -> Relative Pose(s) -> Axis Extraction -> Normalization -> Signal Shaping -> TCode
+Skeletons -> Pose Resolver -> Relative Pose(s) -> Axis Extraction -> shaftRawAxisBus -> Shared VAM Output Rack -> TCode
 ```
 
 The first script operator is `VAM Pose Resolver`. It analyzes streamed
@@ -30,8 +31,9 @@ The PyStudio graph uses these explicit roles:
 
 - `VAM Pose Resolver` resolves a reference frame and a target frame.
 - `VAM Pose Axes` or small `Data Expr` nodes project pose into semantic axes.
-- `Range Map`, `Smooth Filter`, `Rate Limiter`, `Switch Mixer`, and similar
-  nodes handle output policy.
+- `shaftRawAxisBus` carries raw semantic axes to the unified VAM graph.
+- The shared VAM output rack handles normalization, output range, smoothing,
+  rate limiting, overrides, and final device feel.
 - `TCode` assembles final TCode command strings.
 
 That keeps each stage small, replaceable, and easy to debug.
@@ -48,10 +50,10 @@ flowchart LR
     Resolver --> Hub["Patch Hub"]
     Hub --> Viz["Debug / 3D Viz"]
     Hub --> Axes["VAM Pose Axes"]
-    Axes --> Maps["Range Map x6"]
-    Maps --> Smooth["Smooth Filter x6"]
-    Smooth --> Limit["Rate Limiter x6"]
-    Limit --> TCode["TCode"]
+    Axes --> Bus["shaftRawAxisBus"]
+    Bus --> Router["VAM Raw Axis Router"]
+    Router --> Rack["Shared VAM Output Rack"]
+    Rack --> TCode["TCode"]
     TCode --> Out["Serial Out / UDP Out"]
 ```
 
@@ -68,9 +70,10 @@ VAM Pose Resolver.targetInPlane -> Patch Hub.targetInPlane
 Patch Hub.* -> optional Bone Filter / debug visualizers
 Patch Hub.* -> VAM Pose Axes or Data Expr scalar extractors
 
-Pose scalar outputs -> Range Map nodes
-Range Map outputs -> Smooth Filter / Rate Limiter / Switch Mixer
-Processed L0/L1/L2/R0/R1/R2 -> TCode -> Serial Out or UDP Out
+VAM Pose Axes raw outputs -> shaftRawAxisBus
+shaftRawAxisBus -> VAM Raw Axis Router
+VAM Raw Axis Router -> Shared VAM Output Rack
+Shared VAM Output Rack -> TCode -> Serial Out or UDP Out
 ```
 
 `Patch Hub` is optional, but useful once the same pose outputs feed several
@@ -87,17 +90,16 @@ flowchart LR
     Tick["Tick"] --> Resolver
     Resolver --> Axes["Python Script: VAM Pose Axes"]
     Tick --> Axes
-    Axes --> Maps["Range Map x6"]
-    Maps --> Smooth["Smooth Filter x6"]
-    Smooth --> Limit["Rate Limiter x6"]
-    Limit --> TCode["TCode"]
+    Axes --> Bus["shaftRawAxisBus"]
+    Bus --> Rack["Shared VAM Output Rack"]
+    Rack --> TCode["TCode"]
     TCode --> Serial["Serial Out"]
 ```
 
 ```text
 UDP In -> Skeleton Decoder -> Python Script: VAM Pose Resolver
 VAM Pose Resolver -> Python Script: VAM Pose Axes
-VAM Pose Axes -> Range Map x6 -> Smooth Filter x6 -> Rate Limiter x6 -> TCode -> Serial Out
+VAM Pose Axes -> shaftRawAxisBus -> Shared VAM Output Rack -> TCode -> Serial Out
 ```
 
 This keeps the custom Python limited to two explicit tasks:
@@ -119,7 +121,8 @@ Everything after that is regular graph signal processing.
 | `Python Script: VAM Pose Axes` | Optional small script for exact ToySerialController-style signed-angle math. This is separate from resolver selection logic. |
 | `Data Expr` | Good for simple scalar extraction such as `x["pos"][1]`, simple clamps, or offsets. Use a script once the formula stops being a small expression. |
 | `Quat To Euler` | Operator-friendly rotation decomposition for relative quaternions. Good for a v1 approximation or debugging. Use `VAM Pose Axes` for signed-angle mapping. |
-| `Range Map` | Converts raw meters, degrees, or signed normalized values into final `0..1` channel values. |
+| `VAM Raw Axis Router` | Routes one selected branch's raw semantic axes into the shared output rack. |
+| `Range Map` | In the shared rack, converts raw meters, degrees, or fractions into final `0..1` channel values. |
 | `Smooth Filter` | Replaces ToySerialController's global smoothing with per-channel smoothing. |
 | `Rate Limiter` | Adds per-channel slew and acceleration limits before device output. |
 | `Switch Mixer` | Handles manual override, fallback poses, or alternate mappings without changing the resolver. |
@@ -136,8 +139,8 @@ The graph is easier to reason about if every layer has a narrow contract.
 | Ingest | UDP packet | decoded skeleton cache | network and binary format |
 | Pose resolver | skeleton cache | reference frame, target world bone, relative pose bones | target selection and frame reconstruction |
 | Pose analysis | relative pose bones | raw semantic axes | geometry projection and rotation math |
-| Normalization | raw axes | `0..1` channels | user ranges, inversion, offsets |
-| Signal shaping | `0..1` channels | processed `0..1` channels | smoothing, rate limits, overrides, fallback |
+| Raw bus | raw semantic axes | `shaftRawAxisBus` | branch-to-unified contract |
+| Shared output rack | routed raw axes | processed `0..1` channels | normalization, output range, smoothing, rate limits, overrides |
 | Output | processed `0..1` channels | TCode string | command packaging and transport |
 
 The resolver should stay intentionally boring: no curves, no serial output, no
@@ -154,7 +157,7 @@ custom scripts are deliberately separated:
 
 Everything after that is normal graph processing. This is the important part:
 range tuning, smoothing, limits, overrides, collision gating, and final TCode
-formatting stay outside the resolver.
+formatting stay in the shared VAM output rack.
 
 ### 1. Create The Ingest Nodes
 
@@ -1550,95 +1553,86 @@ def onStop(ctx: "F8PyEngineContext") -> None:
     ctx.log("VAM Pose Axes stopped")
 ```
 
-### 5. Normalize Each Axis With Ordinary Nodes
+### 5. Pack The Shaft Raw Axis Bus
 
-Each raw axis becomes its own normal graph lane:
+For the standalone tutorial you can still inspect each raw axis directly, but
+do not build a private TCode chain inside the shaft branch. Pack the branch
+outputs into the shared VAM raw axis bus and let VAM (4)'s output rack own
+normalization, output range, smoothing, and rate limiting.
+
+Recommended raw bus:
 
 ```mermaid
 flowchart LR
-    L0["L0_geom"] --> M0["Range Map L0"]
-    L1["L1_m"] --> M1["Range Map L1"]
-    L2["L2_m"] --> M2["Range Map L2"]
-    R0["R0_deg"] --> M3["Range Map R0"]
-    R1["R1_deg"] --> M4["Range Map R1"]
-    R2["R2_deg"] --> M5["Range Map R2"]
-    M0 --> N0["L0 0..1"]
-    M1 --> N1["L1 0..1"]
-    M2 --> N2["L2 0..1"]
-    M3 --> N3["R0 0..1"]
-    M4 --> N4["R1 0..1"]
-    M5 --> N5["R2 0..1"]
+    Axes["VAM Pose Axes"] --> Bus["shaftRawAxisBus"]
+    Bus --> Router["VAM Raw Axis Router"]
+    Router --> Rack["Shared VAM Output Rack"]
+    Rack --> TCode["TCode"]
 ```
 
-Use one `Range Map` per axis. Connect the raw axis outputs from `VAM Pose Axes`
-into these maps:
+The compact bus fields should use raw semantic values:
 
-| Axis | Connect | Range Map input | Range Map output |
-| --- | --- | --- | --- |
-| `L0` | `VAM Pose Axes.L0_geom` | `0..1` | `0..1` |
-| `L1` | `VAM Pose Axes.L1_m` | `-0.15..0.15` | `0..1` |
-| `L2` | `VAM Pose Axes.L2_m` | `-0.15..0.15` | `0..1` |
-| `R0` | `VAM Pose Axes.R0_deg` | `-90..90` | `0..1` |
-| `R1` | `VAM Pose Axes.R1_deg` | `-30..30` | `0..1` |
-| `R2` | `VAM Pose Axes.R2_deg` | `-30..30` | `0..1` |
+| Bus field | Source | Unit |
+| --- | --- | --- |
+| `L0` | `VAM Pose Axes.L0_geom` | `fraction` |
+| `L1` | `VAM Pose Axes.L1_m` | `m` |
+| `L2` | `VAM Pose Axes.L2_m` | `m` |
+| `R0` | `VAM Pose Axes.R0_deg` | `deg` |
+| `R1` | `VAM Pose Axes.R1_deg` | `deg` |
+| `R2` | `VAM Pose Axes.R2_deg` | `deg` |
 
-This mirrors ToySerialController's default idea: `L1/L2` are centimeter-scale
-side/forward offsets, `R0` is twist, and `R1/R2` are smaller bend ranges.
+Example bus:
 
-To invert an axis, swap the `Range Map` output min/max. To reduce travel, narrow
-the output range, for example `0.15..0.85`.
+```python
+{
+    "valid": True,
+    "mode": "shaft",
+    "confidence": confidence,
+    "L0": L0_geom,
+    "L1": L1_m,
+    "L2": L2_m,
+    "R0": R0_deg,
+    "R1": R1_deg,
+    "R2": R2_deg,
+    "units": {
+        "L0": "fraction",
+        "L1": "m",
+        "L2": "m",
+        "R0": "deg",
+        "R1": "deg",
+        "R2": "deg",
+    },
+    "reason": reason,
+}
+```
 
-### 6. Shape The Normalized Signals
+### 6. Connect To The Shared Output Rack
 
-After normalization, every channel uses the same shaping pattern:
+Use the shared rack from VAM (4):
 
 ```mermaid
 flowchart LR
-    Norm["Normalized 0..1 axis"] --> Smooth["Smooth Filter"]
+    Bus["shaftRawAxisBus"] --> Router["VAM Raw Axis Router"]
+    Router --> Norm["Axis Normalize"]
+    Norm --> Range["Output Range"]
+    Range --> Smooth["Smooth Filter"]
     Smooth --> Limit["Rate Limiter"]
-    Limit --> Cmd["Processed 0..1 command"]
+    Limit --> TCode["TCode"]
 ```
 
-For each axis, use this chain:
+Recommended starting normalize profiles for shaft mode:
 
-```text
-Range Map.value -> Smooth Filter.value -> Rate Limiter.value -> TCode.<axis>
-```
+| Axis | Method | Starting input range | Output |
+| --- | --- | --- | --- |
+| `L0` | fixed `Range Map` | `0..1` | `0..1` |
+| `L1` | fixed `Range Map` | `-0.15..0.15 m` | `0..1` |
+| `L2` | fixed `Range Map` | `-0.15..0.15 m` | `0..1` |
+| `R0` | fixed `Range Map` | `-90..90 deg` | `0..1` |
+| `R1` | fixed `Range Map` | `-30..30 deg` | `0..1` |
+| `R2` | fixed `Range Map` | `-30..30 deg` | `0..1` |
 
-Start with gentle smoothing and rate limits, then tune by watching both the raw
-axis and final command. Keep this shaping outside the scripts so graph authors
-can adjust it live.
-
-### 7. Add TCode Output
-
-The final formatter only sees processed normalized command values:
-
-```mermaid
-flowchart LR
-    L0["L0 command"] --> TCode["TCode"]
-    L1["L1 command"] --> TCode
-    L2["L2 command"] --> TCode
-    R0["R0 command"] --> TCode
-    R1["R1 command"] --> TCode
-    R2["R2 command"] --> TCode
-    Tick["Tick.tickMs"] --> TCode
-    TCode --> Out["Serial Out / UDP Out"]
-```
-
-Create a `TCode` node and connect:
-
-```text
-L0 Rate Limiter.value -> TCode.L0
-L1 Rate Limiter.value -> TCode.L1
-L2 Rate Limiter.value -> TCode.L2
-R0 Rate Limiter.value -> TCode.R0
-R1 Rate Limiter.value -> TCode.R1
-R2 Rate Limiter.value -> TCode.R2
-Tick.tickMs -> TCode.intervalMs
-TCode.out -> Serial Out.text or UDP Out.text
-```
-
-Only normalized `0..1` command values should reach `TCode`.
+To invert an axis, swap output min/max in the rack. To reduce travel, narrow
+the rack's output range, for example `0.15..0.85`.
 
 ## Pose Resolver Script
 
@@ -2083,38 +2077,31 @@ with a tiny expression such as:
 max(0.0, min(1.0, x + offset))
 ```
 
-## Signal Shaping Before TCode
+## Shared Output Rack
 
-After normalization, treat `L0_norm`, `L1_norm`, and friends as regular
-signals. This layer owns per-axis tuning before final TCode output.
+The shaft branch should stop at raw semantic axes. The shared VAM output rack in
+VAM (4) owns:
 
-Recommended per-axis chain:
+- normalization from raw shaft/contact/self axes into `0..1`;
+- output range and inversion;
+- smoothing;
+- rate limiting;
+- final connection to `TCode`.
+
+Recommended per-axis chain inside the shared rack:
 
 ```text
-Range Map.value -> Smooth Filter.value -> Rate Limiter.value -> TCode.<axis>
+VAM Raw Axis Router.<axis>_raw
+  -> Axis Normalize
+  -> Output Range
+  -> Smooth Filter
+  -> Rate Limiter
+  -> TCode.<axis>
 ```
 
-Useful variants:
-
-- Put `Smooth Filter` before `Range Map` when you want to smooth raw meters or
-  angles.
-- Put `Smooth Filter` after `Range Map` when you want device-space smoothing.
-- Put `Rate Limiter` after all user mixing so the final command cannot jump.
-- Use `Switch Mixer` after normalization for manual overrides or fallback.
-- Use `Silence Detector` on `status.valid`, raw axes, or normalized axes to
-  hold the last valid value when tracking drops.
-
-This is also the right place for future features:
-
-- dead zones
-- nonlinear curves
-- per-axis output ceilings
-- per-axis inversion
-- hysteresis around auto target changes
-- collision hold/release behavior
-- blend between auto and manual mappings
-
-Keep these features in the signal-shaping layer.
+Keep dead zones, nonlinear curves, output ceilings, manual overrides, and
+collision hold/release behavior in this shared rack. That gives users one place
+to tune output feel across shaft, contact, and self-motion modes.
 
 ## Collision And Proximity
 
@@ -2137,43 +2124,14 @@ collision/proximity gating = disabled
 
 Add it later as a separate branch once pose tracking is visually correct.
 
-## TCode Output
-
-Only feed `TCode` normalized values in `0..1`.
-
-Suggested naming:
-
-- `L0_geom`: geometry-derived, before final mapping.
-- `L0_norm`: mapped to `0..1`.
-- `L0_cmd`: final post-processed value connected to `TCode.L0`.
-
-Example:
-
-```text
-VAM Pose Axes.L0_geom
-  -> Range Map L0.value
-  -> Smooth Filter L0.value
-  -> Rate Limiter L0.value
-  -> TCode.L0
-```
-
-The same pattern applies to `L1`, `L2`, `R0`, `R1`, and `R2`.
-
-`TCode.intervalMs` should be driven by the same cadence as the pose graph. For
-example:
-
-```text
-Tick.tickMs -> TCode.intervalMs
-```
-
 ## Graph-First Script Boundary
 
 Keep Python scripts focused and explicit:
 
 - `VAM Pose Resolver` selects actors and emits relative pose objects.
 - `VAM Pose Axes` converts relative pose objects into raw semantic axes.
-- `Range Map`, `Smooth Filter`, `Rate Limiter`, `Switch Mixer`, and `TCode`
-  own shaping and output behavior.
+- `VAM Raw Axis Router` and the shared output rack own shaping and output
+  behavior.
 
 This keeps the graph inspectable:
 

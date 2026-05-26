@@ -1,6 +1,6 @@
 # VAM (4): Unified Mode Arbiter
 
-This scene combines the three VAM branches:
+This tutorial combines the three VAM branches:
 
 - VAM (1) shaft branch: male/dildo reference to target.
 - VAM (2) contact branch: female-female surface contact.
@@ -8,7 +8,14 @@ This scene combines the three VAM branches:
 
 The unified graph should not force all branches to share one reference model.
 They do not mean the same thing. Instead, each branch owns its own geometry and
-then emits a compatible axis bus.
+emits a compatible raw axis bus.
+
+The key rule is:
+
+```text
+branch owns geometry
+shared output rack owns feel
+```
 
 ## Unified Graph
 
@@ -18,29 +25,34 @@ flowchart TB
     Skel --> Contact["VAM (2) Contact Branch"]
     Skel --> Self["VAM (3) Self-Motion Branch"]
 
-    Shaft --> ShaftBus["shaftAxisBus"]
-    Contact --> ContactBus["contactAxisBus"]
-    Self --> SelfBus["selfAxisBus"]
+    Shaft --> ShaftRaw["shaftRawAxisBus"]
+    Contact --> ContactRaw["contactRawAxisBus"]
+    Self --> SelfRaw["selfRawAxisBus"]
 
     Shaft --> Arb["VAM Mode Arbiter"]
     Contact --> Arb
     Self --> Arb
     User["User Mode Control"] --> Arb
 
-    Arb --> Router["VAM Axis Router"]
-    ShaftBus --> Router
-    ContactBus --> Router
-    SelfBus --> Router
+    Arb --> Router["VAM Raw Axis Router"]
+    ShaftRaw --> Router
+    ContactRaw --> Router
+    SelfRaw --> Router
 
-    Router --> Normalize["Shared Normalize / Shape"]
-    Normalize --> TCode["TCode"]
+    Router --> Rack["Shared VAM Output Rack"]
+    Rack --> TCode["TCode"]
+    TCode --> Out["Serial Out / UDP Out"]
 ```
 
 The important contract is:
 
 ```text
-branch-specific geometry -> branch-specific raw axes -> common axis bus
+branch-specific geometry -> branch-specific raw axes -> routed raw axis bus -> shared conditioning rack -> TCode
 ```
+
+Do not let the three branches write directly to the same TCode node. Let exactly
+one branch pass through the raw router, then apply normalization, output range,
+smoothing, and rate limiting in one shared place.
 
 ## Mode Strategy
 
@@ -84,28 +96,55 @@ Suggested first confidence meanings:
 The `self` branch is the fallback. It should usually win only when `shaft` and
 `contact` are invalid or low confidence.
 
-## Common Axis Bus
+## Raw Axis Bus
 
-Before the router, convert each branch to this shape:
+Before the router, convert each branch to a raw semantic bus. The bus values are
+not final device commands and should not be clamped to `0..1` yet.
+
+Recommended compact shape:
 
 ```json
 {
   "valid": true,
   "mode": "shaft",
   "confidence": 0.82,
-  "L0": 0.51,
-  "L1": 0.42,
-  "L2": 0.58,
-  "R0": 0.50,
-  "R1": 0.50,
-  "R2": 0.50,
-  "reason": "..."
+  "L0": 0.52,
+  "L1": -0.04,
+  "L2": 0.02,
+  "R0": 12.0,
+  "R1": -8.0,
+  "R2": 0.0,
+  "units": {
+    "L0": "fraction",
+    "L1": "m",
+    "L2": "m",
+    "R0": "deg",
+    "R1": "deg",
+    "R2": "deg"
+  },
+  "reason": "shaft target locked"
 }
 ```
 
-The values should already be normalized `0..1` if you want a single shared
-TCode output chain. If you prefer branch-specific normalization, keep it inside
-each branch and route only normalized values.
+Nested shape is also acceptable if a branch wants richer metadata:
+
+```json
+{
+  "valid": true,
+  "mode": "contact",
+  "confidence": 0.71,
+  "axes": {
+    "L0": {"value": 0.08, "unit": "m", "semantic": "contact_distance"},
+    "L1": {"value": -0.03, "unit": "m", "semantic": "slide_forward"},
+    "L2": {"value": 0.01, "unit": "m", "semantic": "slide_right"}
+  },
+  "reason": "contact pair locked"
+}
+```
+
+The shared output rack decides how each raw value becomes a normalized command.
+This keeps the branch tutorials focused on geometry and gives the user one
+consistent place to tune output feel.
 
 ## `VAM Mode Arbiter`
 
@@ -121,9 +160,9 @@ Add data input ports:
 
 | Port | Purpose |
 | --- | --- |
-| `shaftStatus` | VAM (1) status or axis bus. |
-| `contactStatus` | VAM (2) status or axis bus. |
-| `selfStatus` | VAM (3) status or axis bus. |
+| `shaftStatus` | VAM (1) status or raw axis bus. |
+| `contactStatus` | VAM (2) status or raw axis bus. |
+| `selfStatus` | VAM (3) status or raw axis bus. |
 
 Add data output ports:
 
@@ -321,9 +360,9 @@ def onStop(ctx: "F8PyEngineContext") -> None:
     ctx.log("VAM Mode Arbiter stopped")
 ```
 
-## `VAM Axis Router`
+## `VAM Raw Axis Router`
 
-Create another `Python Script` node named `VAM Axis Router`.
+Create another `Python Script` node named `VAM Raw Axis Router`.
 
 Set `inputMode` to:
 
@@ -336,21 +375,21 @@ Add data input ports:
 | Port | Purpose |
 | --- | --- |
 | `selectedMode` | From `VAM Mode Arbiter.selectedMode`. |
-| `shaftAxes` | Normalized axis bus from VAM (1). |
-| `contactAxes` | Normalized axis bus from VAM (2). |
-| `selfAxes` | Normalized axis bus from VAM (3). |
+| `shaftRawAxes` | Raw axis bus from VAM (1). |
+| `contactRawAxes` | Raw axis bus from VAM (2). |
+| `selfRawAxes` | Raw axis bus from VAM (3). |
 
 Add data output ports:
 
 | Port | Purpose |
 | --- | --- |
-| `L0` | Routed normalized axis. |
-| `L1` | Routed normalized axis. |
-| `L2` | Routed normalized axis. |
-| `R0` | Routed normalized axis. |
-| `R1` | Routed normalized axis. |
-| `R2` | Routed normalized axis. |
-| `axes` | Combined routed object. |
+| `L0_raw` | Routed raw L0 value. |
+| `L1_raw` | Routed raw L1 value. |
+| `L2_raw` | Routed raw L2 value. |
+| `R0_raw` | Routed raw R0 value. |
+| `R1_raw` | Routed raw R1 value. |
+| `R2_raw` | Routed raw R2 value. |
+| `rawAxes` | Combined routed raw axis object. |
 | `status` | Routing status. |
 
 Paste this script:
@@ -370,13 +409,13 @@ def _number(value: Any, default: float) -> float:
     if isinstance(value, bool) or value is None:
         return default
     if isinstance(value, (int, float)):
-        return max(0.0, min(1.0, float(value)))
+        return float(value)
     if isinstance(value, str):
         text = value.strip()
         if not text:
             return default
         try:
-            return max(0.0, min(1.0, float(text)))
+            return float(text)
         except ValueError:
             return default
     return default
@@ -390,12 +429,43 @@ def _axis_bus(value: Any) -> dict[str, Any]:
 
 def _select_bus(inputs: dict[str, Any], mode: str) -> tuple[dict[str, Any], str]:
     if mode == "shaft":
-        return _axis_bus(inputs.get("shaftAxes")), "shaft"
+        return _axis_bus(inputs.get("shaftRawAxes")), "shaft"
     if mode == "contact":
-        return _axis_bus(inputs.get("contactAxes")), "contact"
+        return _axis_bus(inputs.get("contactRawAxes")), "contact"
     if mode == "self":
-        return _axis_bus(inputs.get("selfAxes")), "self"
+        return _axis_bus(inputs.get("selfRawAxes")), "self"
     return {}, "neutral"
+
+
+def _nested_axis_value(bus: dict[str, Any], axis: str) -> float | None:
+    axes = bus.get("axes")
+    if not isinstance(axes, dict):
+        return None
+    axis_payload = axes.get(axis)
+    if isinstance(axis_payload, dict):
+        return _number(axis_payload.get("value"), 0.0)
+    if axis_payload is not None:
+        return _number(axis_payload, 0.0)
+    return None
+
+
+def _axis_value(bus: dict[str, Any], axis: str) -> float:
+    nested = _nested_axis_value(bus, axis)
+    if nested is not None:
+        return nested
+    return _number(bus.get(axis), 0.0)
+
+
+def _axis_unit(bus: dict[str, Any], axis: str) -> str:
+    units = bus.get("units")
+    if isinstance(units, dict):
+        return str(units.get(axis) or "")
+    axes = bus.get("axes")
+    if isinstance(axes, dict):
+        axis_payload = axes.get(axis)
+        if isinstance(axis_payload, dict):
+            return str(axis_payload.get("unit") or "")
+    return ""
 
 
 def _run_router(ctx: "F8PyEngineContext", inputs: dict[str, Any]) -> dict[str, Any]:
@@ -404,19 +474,28 @@ def _run_router(ctx: "F8PyEngineContext", inputs: dict[str, Any]) -> dict[str, A
     mode = str(mode_raw or "neutral").strip().lower()
     bus, selected = _select_bus(inputs, mode)
     valid = bool(bus.get("valid") is True)
-    axes: dict[str, Any] = {"valid": valid, "mode": selected, "reason": str(bus.get("reason", ""))}
+    raw_axes: dict[str, Any] = {
+        "valid": valid,
+        "mode": selected,
+        "confidence": _number(bus.get("confidence"), 0.0),
+        "reason": str(bus.get("reason") or ""),
+        "units": {},
+    }
+    units = raw_axes["units"]
     outputs: dict[str, Any] = {}
-    for axis in AXES:
-        value = _number(bus.get(axis), 0.5)
-        axes[axis] = value
-        outputs[axis] = value
-    outputs["axes"] = axes
-    outputs["status"] = {"valid": valid, "selectedMode": selected, "reason": axes["reason"]}
+    if isinstance(units, dict):
+        for axis in AXES:
+            value = _axis_value(bus, axis)
+            raw_axes[axis] = value
+            units[axis] = _axis_unit(bus, axis)
+            outputs[f"{axis}_raw"] = value
+    outputs["rawAxes"] = raw_axes
+    outputs["status"] = {"valid": valid, "selectedMode": selected, "reason": raw_axes["reason"]}
     return outputs
 
 
 def onStart(ctx: "F8PyEngineContext") -> None:
-    ctx.log("VAM Axis Router started")
+    ctx.log("VAM Raw Axis Router started")
 
 
 def onMsg(ctx: "F8PyEngineContext", inputs: "F8Inputs") -> dict[str, Any]:
@@ -430,38 +509,107 @@ def onExec(ctx: "F8PyEngineContext", exec_in: str, inputs: "F8Inputs") -> dict[s
 
 
 def onStop(ctx: "F8PyEngineContext") -> None:
-    ctx.log("VAM Axis Router stopped")
+    ctx.log("VAM Raw Axis Router stopped")
 ```
 
-## Building Axis Buses
+## Shared VAM Output Rack
 
-Each branch can use a small `Data Expr` or Python Script to pack normalized
-outputs into the common bus. The shape should be:
+The shared rack is where the user controls range, inversion, smoothing, and
+rate. Every VAM mode should pass through this same shape.
+
+```mermaid
+flowchart LR
+    Raw["VAM Raw Axis Router.<axis>_raw"] --> Norm["Axis Normalize"]
+    Norm --> Range["Output Range / Invert"]
+    Range --> Smooth["Smooth Filter"]
+    Smooth --> Limit["Rate Limiter"]
+    Limit --> TCode["TCode.<axis>"]
+```
+
+Use one lane per TCode axis:
+
+```text
+VAM Raw Axis Router.L0_raw -> Axis Normalize L0.value
+Axis Normalize L0.norm01 -> Range Map L0.value
+Range Map L0.value -> Smooth Filter L0.value
+Smooth Filter L0.value -> Rate Limiter L0.value
+Rate Limiter L0.value -> TCode.L0
+```
+
+`Axis Normalize` can be implemented with ordinary `Range Map` nodes at first.
+For adaptive scenes, use `Envelope` or the adaptive normalizer from VAM (2) as
+the normalize step. The important part is that all of these choices live in the
+same rack, not hidden inside each branch.
+
+Recommended first profiles:
+
+| Mode | Axis | Normalize method | Starting range | Notes |
+| --- | --- | --- | --- | --- |
+| `shaft` | `L0` | fixed `Range Map` | `0..1` | Shaft fraction or penetration geometry. |
+| `shaft` | `L1/L2` | fixed `Range Map` | `-0.15..0.15 m` | Side/forward offsets. |
+| `shaft` | `R0` | fixed `Range Map` | `-90..90 deg` | Twist. |
+| `shaft` | `R1/R2` | fixed `Range Map` | `-30..30 deg` | Bend. |
+| `contact` | `L0` | adaptive or fixed | `0.00..0.20 m`, inverted | Close contact becomes high output. |
+| `contact` | `L1/L2` | adaptive or fixed | `-0.15..0.15 m` | Sliding axes. |
+| `self` | `L*` | envelope/adaptive | scene dependent | Residual local motion. |
+| `self` | `R*` | envelope/adaptive | scene dependent | Residual local rotation. |
+
+After normalization, `Range Map` is still useful as an output trim:
+
+| User control | Where to apply |
+| --- | --- |
+| Output ceiling/floor | `Range Map.outMin/outMax` after normalization. |
+| Axis inversion | Swap output min/max or enable invert in the normalizer. |
+| Dead zone | `Data Expr` or small script between normalize and output range. |
+| Smoothing | `Smooth Filter` after output range for device-space smoothing. |
+| Speed limit | `Rate Limiter` after all mixing and overrides. |
+
+Only the final post-processed `0..1` command values should reach `TCode`.
+
+## Building Raw Axis Buses
+
+Each branch can use a small `Data Expr` or Python Script to pack raw outputs
+into the common bus. The compact shape should be:
 
 ```python
 {
     "valid": True,
     "mode": "self",
     "confidence": confidence,
-    "L0": L0,
-    "L1": L1,
-    "L2": L2,
-    "R0": R0,
-    "R1": R1,
-    "R2": R2,
+    "L0": L0_raw,
+    "L1": L1_raw,
+    "L2": L2_raw,
+    "R0": R0_raw,
+    "R1": R1_raw,
+    "R2": R2_raw,
+    "units": {
+        "L0": "m",
+        "L1": "m",
+        "L2": "m",
+        "R0": "deg",
+        "R1": "deg",
+        "R2": "deg",
+    },
     "reason": "self fallback active",
 }
 ```
 
-Keep the bus values normalized `0..1`. This makes the router boring and keeps
-branch-specific normalization inside each branch.
+Keep these values raw and semantic. Do not apply final device output range,
+smoothing, or rate limiting before the router.
 
 ## Recommended Rollout
 
 1. Build VAM (1), VAM (2), and VAM (3) independently.
-2. Add the arbiter in `assist` mode and observe `suggestedMode`.
-3. Add the axis router, still using `manual` or `assist`.
-4. Enable `auto` only after the confidence values look stable.
+2. Pack each branch into a raw axis bus.
+3. Add the arbiter in `assist` mode and observe `suggestedMode`.
+4. Add the raw axis router, still using `manual` or `assist`.
+5. Build one shared output rack and connect it to TCode.
+6. Enable `auto` only after the confidence values look stable.
 
-Do not let three branches write directly to the same TCode node. Let exactly one
-branch pass through the router.
+This gives graph authors a stable mental model:
+
+```text
+VAM branch = recognize motion
+Shared rack = tune feel
+TCode = emit device command
+```
