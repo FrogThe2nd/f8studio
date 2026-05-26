@@ -188,6 +188,8 @@ class EditorSessionState:
     session_key: EditorSessionKey | None = None
     dirty: bool = False
     close_on_save: bool = True
+    save_handler: Callable[[str], bool | None] | None = None
+    target_exists_provider: Callable[[], bool] | None = None
     assist_context: EditorAssistContext | None = None
     assist_context_provider: Callable[[], EditorAssistContext | None] | None = None
 
@@ -301,6 +303,8 @@ class EditorSessionController(QtCore.QObject):
         code: str,
         language: str,
         session_key: EditorSessionKey | None = None,
+        save_handler: Callable[[str], bool | None] | None = None,
+        target_exists_provider: Callable[[], bool] | None = None,
         assist_context: EditorAssistContext | None = None,
         assist_context_provider: Callable[[], EditorAssistContext | None] | None = None,
         close_on_save: bool = True,
@@ -320,6 +324,8 @@ class EditorSessionController(QtCore.QObject):
             language=effective_language,
             session_key=session_key,
             close_on_save=bool(close_on_save),
+            save_handler=save_handler,
+            target_exists_provider=target_exists_provider,
             assist_context=resolved_context,
             assist_context_provider=assist_context_provider,
         )
@@ -379,6 +385,22 @@ class EditorSessionController(QtCore.QObject):
     def assist_context_provider(self) -> Callable[[], EditorAssistContext | None] | None:
         return self._state.assist_context_provider
 
+    def set_save_handler(self, save_handler: Callable[[str], bool | None] | None) -> None:
+        self._state = replace(self._state, save_handler=save_handler)
+
+    def set_target_exists_provider(self, provider: Callable[[], bool] | None) -> None:
+        self._state = replace(self._state, target_exists_provider=provider)
+
+    def target_exists(self) -> bool:
+        provider = self._state.target_exists_provider
+        if provider is None:
+            return True
+        try:
+            return bool(provider())
+        except Exception:
+            logger.exception("Failed to check editor save target")
+            return False
+
     def set_close_on_save(self, close_on_save: bool) -> None:
         self._state = replace(self._state, close_on_save=bool(close_on_save))
 
@@ -389,11 +411,23 @@ class EditorSessionController(QtCore.QObject):
         self._state = replace(self._state, dirty=next_dirty)
         self.dirty_changed.emit(next_dirty)
 
-    def save_code(self, code: str) -> None:
+    def save_code(self, code: str) -> bool:
         text = str(code or "")
+        save_handler = self._state.save_handler
+        if save_handler is not None:
+            try:
+                saved = save_handler(text)
+            except Exception:
+                logger.exception("Editor save handler failed")
+                self.set_dirty(True)
+                return False
+            if saved is False:
+                self.set_dirty(True)
+                return False
         self._state = replace(self._state, code=text, dirty=False)
         self.dirty_changed.emit(False)
         self.code_saved.emit(text)
+        return True
 
     def request_close(self) -> None:
         self.close_requested.emit()

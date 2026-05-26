@@ -47,7 +47,7 @@ from ...ui.components.wave import (
 from ...editor_assist.protocol import editor_assist_context_for_field
 from ...editor_assist.workspace import EditorAssistContext
 from ...nodegraph.state_pool_resolver import resolve_pool_items
-from ...nodegraph.node_text_fields import get_node_text, resolve_node, set_node_text, studio_session_key
+from ...nodegraph.node_text_fields import node_text_editor_binding, resolve_node
 from ...nodegraph.ui_state_mutations import set_state_inline_expanded, state_inline_expanded
 from .node_item_core import StateFieldInfo, state_field_info
 from .proxy_widget_utils import dispose_detached_proxy_widget
@@ -585,28 +585,18 @@ def build_state_inline_control(
         except (AttributeError, RuntimeError, TypeError):
             warning_parent = viewer
 
-    def _get_persisted_code_value() -> str:
-        if graph is None or not node_id:
-            current = _get_node_value()
-            return "" if current is None else str(current)
-        text = get_node_text(graph, node_id, name)
-        if text:
-            return text
+    text_binding = node_text_editor_binding(graph, node_id, name, warning_parent=warning_parent)
+
+    def _get_fallback_code_value() -> str:
         current = _get_node_value()
         return "" if current is None else str(current)
 
-    def _set_persisted_code_value(updated: str) -> None:
-        if graph is None or not node_id:
-            _set_node_value(updated, push_undo=True)
-            return
-        set_node_text(
-            graph,
-            node_id,
-            name,
-            updated,
-            push_undo=True,
-            warning_parent=warning_parent,
-        )
+    def _set_fallback_code_value(updated: str) -> bool:
+        _set_node_value(updated, push_undo=True)
+        return node_item._backend_node() is not None
+
+    def _fallback_code_target_exists() -> bool:
+        return node_item._backend_node() is not None
 
     binding = build_inline_control_binding(
         spec=spec,
@@ -617,8 +607,9 @@ def build_state_inline_control(
         property_value_getter=_get_node_property,
         pool_resolver=lambda pool_field: _pool_items(pool_field),
         code_title=f"{node_item.name} - {spec.label}",
-        code_value_getter=_get_persisted_code_value,
-        code_value_setter=_set_persisted_code_value,
+        code_value_getter=text_binding.value_getter if text_binding is not None else _get_fallback_code_value,
+        code_value_setter=text_binding.value_setter if text_binding is not None else _set_fallback_code_value,
+        code_target_exists_provider=text_binding.target_exists if text_binding is not None else _fallback_code_target_exists,
         assist_context=_editor_assist_context(
             graph,
             node_id=node_id,
@@ -633,7 +624,7 @@ def build_state_inline_control(
             ui_control=ui_raw,
             language=parsed_ui.ui_language or "plaintext",
         ),
-        editor_session_key=studio_session_key(graph, node_id, name) if graph is not None and node_id else None,
+        editor_session_key=text_binding.session_key if text_binding is not None else None,
         style_applier=_common_style,
         text_palette_applier=_apply_text_palette,
         tooltip_filter_installer=_install_global_tooltip_filter,

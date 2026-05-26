@@ -261,7 +261,8 @@ def build_inline_control_binding(
     pool_resolver: Callable[[str], list[str]],
     code_title: str,
     code_value_getter: Callable[[], str] | None,
-    code_value_setter: Callable[[str], None] | None,
+    code_value_setter: Callable[[str], bool | None] | None,
+    code_target_exists_provider: Callable[[], bool] | None,
     assist_context: EditorAssistContext | None,
     assist_context_provider: Callable[[], EditorAssistContext | None] | None,
     editor_session_key: EditorSessionKey | None,
@@ -326,6 +327,7 @@ def build_inline_control_binding(
         widget.set_editor_session_key(editor_session_key)
         widget.set_persisted_value_getter(code_value_getter)
         widget.set_persisted_value_setter(code_value_setter)
+        widget.set_persisted_target_exists_provider(code_target_exists_provider)
         if spec.field_tooltip:
             widget.setToolTip(spec.field_tooltip)
             if tooltip_filter_installer is not None:

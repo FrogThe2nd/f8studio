@@ -8,6 +8,7 @@ from f8pystudio.editor_assist.session import EditorSessionKey
 from f8pystudio.ui.support import monaco_editor_host as monaco_host_module
 from f8pystudio.ui.support.monaco_editor_host import MonacoEditorHostDialog, open_code_editor_window
 from f8pystudio.ui.support.monaco_editor_page import MonacoEditorPageConfig, build_monaco_editor_html
+from f8pystudio.ui.support.qt_lifecycle import qt_object_is_valid
 from f8pystudio.ui.components.state_editors import F8CodeButtonEditor
 
 
@@ -41,12 +42,12 @@ class _FakeEditorWidget(QtWidgets.QWidget):
     def shutdown(self) -> None:
         self._controller.shutdown()
 
-    def save_current(self, *, close_after: bool) -> str:
+    def save_current(self, *, close_after: bool) -> bool:
         self._saved_close_after.append(bool(close_after))
-        self._controller.save_code(self._controller.code())
-        if close_after:
+        saved = self._controller.save_code(self._controller.code())
+        if close_after and saved:
             self.accept_requested.emit()
-        return self._controller.code()
+        return saved
 
 
 def test_open_code_editor_window_reuses_existing_tab_for_same_session_key(monkeypatch) -> None:
@@ -189,8 +190,11 @@ def test_code_button_widget_calls_persisted_setter_even_if_widget_destroyed(monk
 
     widget_ref = weakref.ref(widget)
     widget.deleteLater()
-    widget = None
+    deleted_widget = widget
     QtWidgets.QApplication.processEvents()
+    QtCore.QCoreApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+    assert qt_object_is_valid(deleted_widget) is False
+    widget = None
 
     editor_widget.controller().save_code("updated\n")
     assert saved == ["updated\n"]
@@ -278,6 +282,71 @@ def test_open_code_editor_window_replaces_clean_session_when_language_changes(mo
     assert editor_after is not editor_before
     assert editor_after.controller().language() == "python"
     assert editor_after.controller().code() == "print('x')\n"
+    host.close()
+
+
+def test_failed_save_keeps_editor_dirty_and_tab_open(monkeypatch) -> None:
+    _ensure_app()
+    monaco_host_module._HOST_DIALOGS.clear()
+    monkeypatch.setattr(
+        MonacoEditorHostDialog,
+        "_create_editor_widget",
+        lambda self, controller: _FakeEditorWidget(controller, self),
+    )
+
+    session_key = EditorSessionKey.studio_node(graph_id="graph:missing", node_id="nodeA", field_name="code")
+    host = open_code_editor_window(
+        None,
+        title="Node A",
+        code="print('a')\n",
+        language="python",
+        on_saved=lambda _code: False,
+        session_key=session_key,
+    )
+    editor_widget = host._sessions[session_key.as_id()]
+    editor_widget.controller().set_dirty(True)
+
+    assert editor_widget.save_current(close_after=False) is False
+    assert editor_widget.controller().dirty() is True
+    assert session_key.as_id() in host._sessions
+    editor_widget.controller().set_dirty(False)
+    host.close()
+
+
+def test_close_deleted_target_prompts_and_keeps_tab_when_user_declines(monkeypatch) -> None:
+    _ensure_app()
+    monaco_host_module._HOST_DIALOGS.clear()
+    monkeypatch.setattr(
+        MonacoEditorHostDialog,
+        "_create_editor_widget",
+        lambda self, controller: _FakeEditorWidget(controller, self),
+    )
+    answers: list[str] = []
+
+    def _decline_deleted_close(parent, title=None):
+        _ = parent
+        answers.append(str(title or ""))
+        return QtWidgets.QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(monaco_host_module, "_ask_close_deleted_target", _decline_deleted_close)
+
+    session_key = EditorSessionKey.studio_node(graph_id="graph:deleted", node_id="nodeA", field_name="code")
+    host = open_code_editor_window(
+        None,
+        title="Node A",
+        code="print('a')\n",
+        language="python",
+        on_saved=lambda _code: True,
+        target_exists_provider=lambda: False,
+        session_key=session_key,
+    )
+    editor_widget = host._sessions[session_key.as_id()]
+
+    assert host._close_editor_widget(editor_widget, interactive=True) is False
+    assert answers == ["Node A"]
+    assert session_key.as_id() in host._sessions
+    assert host._tabs.count() == 1
+    editor_widget.controller().set_target_exists_provider(lambda: True)
     host.close()
 
 

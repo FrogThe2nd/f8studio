@@ -33,6 +33,7 @@ def _build_inline_binding(
         code_title="Node - Value",
         code_value_getter=None,
         code_value_setter=None,
+        code_target_exists_provider=None,
         assist_context=None,
         assist_context_provider=None,
         editor_session_key=None,

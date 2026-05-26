@@ -17,6 +17,7 @@ from qtpy import QtCore, QtGui, QtWidgets
 
 from ...editor_assist.session import EditorSessionKey
 from ...editor_assist.workspace import EditorAssistContext
+from ...ui.support.qt_lifecycle import qt_object_is_valid
 from ...ui.support.ui_notifications import show_warning
 from ...ui.support.ui_icons import StudioIcon, icon_for
 from .controls import F8Dial, F8ImageB64Editor, F8MultiSelect, F8OptionCombo, F8Switch, F8ValueBar
@@ -42,7 +43,8 @@ class F8CodeButtonEditor(QtWidgets.QWidget):
         self._assist_context: EditorAssistContext | None = None
         self._assist_context_provider: Callable[[], EditorAssistContext | None] | None = None
         self._persisted_value_getter: Callable[[], str] | None = None
-        self._persisted_value_setter: Callable[[str], None] | None = None
+        self._persisted_value_setter: Callable[[str], bool | None] | None = None
+        self._persisted_target_exists_provider: Callable[[], bool] | None = None
         self._editor_session_key: EditorSessionKey | None = None
         self._editor_window: QtWidgets.QDialog | None = None
 
@@ -77,8 +79,11 @@ class F8CodeButtonEditor(QtWidgets.QWidget):
     def set_persisted_value_getter(self, getter: Callable[[], str] | None) -> None:
         self._persisted_value_getter = getter
 
-    def set_persisted_value_setter(self, setter: Callable[[str], None] | None) -> None:
+    def set_persisted_value_setter(self, setter: Callable[[str], bool | None] | None) -> None:
         self._persisted_value_setter = setter
+
+    def set_persisted_target_exists_provider(self, provider: Callable[[], bool] | None) -> None:
+        self._persisted_target_exists_provider = provider
 
     def set_editor_session_key(self, session_key: EditorSessionKey | None) -> None:
         self._editor_session_key = session_key
@@ -113,20 +118,34 @@ class F8CodeButtonEditor(QtWidgets.QWidget):
         widget_ref = weakref.ref(self)
         prop_name = self.get_name()
         persisted_value_setter = self._persisted_value_setter
+        persisted_target_exists_provider = self._persisted_target_exists_provider
 
-        def _on_saved(updated: str) -> None:
+        def _on_saved(updated: str) -> bool:
             updated_text = str(updated or "")
             if persisted_value_setter is not None:
                 try:
-                    persisted_value_setter(updated_text)
+                    saved = persisted_value_setter(updated_text)
                 except Exception:
                     logger.exception("Failed to persist code for property '%s'", prop_name)
+                    return False
+                if saved is False:
+                    return False
 
             widget = widget_ref()
-            if widget is None:
-                return
+            if widget is None or not qt_object_is_valid(widget):
+                return True
             widget.set_value(updated_text)
             widget.value_changed.emit(widget.get_name(), updated_text)
+            return True
+
+        def _target_exists() -> bool:
+            if persisted_target_exists_provider is None:
+                return True
+            try:
+                return bool(persisted_target_exists_provider())
+            except Exception:
+                logger.exception("Failed to check persisted code target for property '%s'", prop_name)
+                return False
 
         dlg = open_code_editor_window(
             self,
@@ -134,6 +153,7 @@ class F8CodeButtonEditor(QtWidgets.QWidget):
             code=initial_code,
             language=self._language,
             on_saved=_on_saved,
+            target_exists_provider=_target_exists,
             assist_context=self._assist_context,
             assist_context_provider=self._assist_context_provider,
             session_key=self._editor_session_key,

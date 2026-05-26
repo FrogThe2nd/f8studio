@@ -6,6 +6,7 @@ from typing import Callable
 
 from qtpy import QtWidgets
 
+from ...editor_assist.session import EditorSessionKey
 from ...editor_assist.workspace import EditorAssistContext
 from .monaco_editor_page_html import MonacoEditorPageConfig, build_monaco_editor_html
 
@@ -44,9 +45,11 @@ def open_code_editor_window(
     title: str,
     code: str,
     language: str,
-    on_saved: Callable[[str], None],
+    on_saved: Callable[[str], bool | None],
+    target_exists_provider: Callable[[], bool] | None = None,
     assist_context: EditorAssistContext | None = None,
     assist_context_provider: Callable[[], EditorAssistContext | None] | None = None,
+    session_key: EditorSessionKey | None = None,
 ) -> QtWidgets.QDialog:
     from .monaco_editor_host import open_code_editor_window as open_hosted_code_editor_window
 
@@ -56,6 +59,8 @@ def open_code_editor_window(
         code=code,
         language=language,
         on_saved=on_saved,
+        target_exists_provider=target_exists_provider,
         assist_context=assist_context,
         assist_context_provider=assist_context_provider,
+        session_key=session_key,
     )

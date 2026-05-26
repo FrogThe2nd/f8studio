@@ -34,11 +34,12 @@ class MonacoEditorWidgetLike(Protocol):
     def controller(self) -> EditorSessionController: ...
     def is_dirty(self) -> bool: ...
     def shutdown(self) -> None: ...
-    def save_current(self, *, close_after: bool) -> str: ...
+    def save_current(self, *, close_after: bool) -> bool: ...
     def deleteLater(self) -> None: ...
 
 
-SavedCodeHandler: TypeAlias = Callable[[str], None]
+SaveCodeHandler: TypeAlias = Callable[[str], bool | None]
+TargetExistsProvider: TypeAlias = Callable[[], bool]
 
 
 def _ask_save_before_close(
@@ -57,6 +58,24 @@ def _ask_save_before_close(
         | QtWidgets.QMessageBox.StandardButton.No
         | QtWidgets.QMessageBox.StandardButton.Cancel,
         QtWidgets.QMessageBox.StandardButton.Yes,
+    )
+
+
+def _ask_close_deleted_target(
+    parent: QtWidgets.QWidget,
+    *,
+    title: str | None = None,
+) -> QtWidgets.QMessageBox.StandardButton:
+    subject = f"'{title}'" if title else "This editor"
+    return QtWidgets.QMessageBox.question(
+        parent,
+        "Node Deleted",
+        (
+            f"{subject} is no longer connected to a node because the node was deleted.\n\n"
+            "The code cannot be saved. Close this editor anyway?"
+        ),
+        QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+        QtWidgets.QMessageBox.StandardButton.No,
     )
 
 
@@ -122,7 +141,8 @@ class MonacoEditorHostDialog(QtWidgets.QDialog):
         title: str,
         code: str,
         language: str,
-        on_saved: SavedCodeHandler,
+        on_saved: SaveCodeHandler,
+        target_exists_provider: TargetExistsProvider | None,
         assist_context: EditorAssistContext | None,
         assist_context_provider: Callable[[], EditorAssistContext | None] | None,
     ) -> bool:
@@ -139,6 +159,8 @@ class MonacoEditorHostDialog(QtWidgets.QDialog):
             requested_language = "python"
 
         controller = editor_widget.controller()
+        controller.set_save_handler(on_saved)
+        controller.set_target_exists_provider(target_exists_provider)
         requested_title = str(title or "Edit Code")
         needs_replace = (
             controller.title() != requested_title
@@ -157,12 +179,13 @@ class MonacoEditorHostDialog(QtWidgets.QDialog):
             code=code,
             language=requested_language,
             session_key=session_key,
+            save_handler=on_saved,
+            target_exists_provider=target_exists_provider,
             assist_context=resolved_context,
             assist_context_provider=assist_context_provider,
             close_on_save=False,
             parent=self,
         )
-        replacement.code_saved.connect(on_saved)  # type: ignore[arg-type]
         replacement_widget = self._create_editor_widget(replacement)
         replacement.dirty_changed.connect(
             lambda _dirty, current_controller=replacement: self._update_tab_title(current_controller)
@@ -188,10 +211,9 @@ class MonacoEditorHostDialog(QtWidgets.QDialog):
         self._sessions[session_key.as_id()] = replacement_widget
         return True
 
-    def add_session(self, controller: EditorSessionController, on_saved: SavedCodeHandler) -> MonacoEditorWidgetLike:
+    def add_session(self, controller: EditorSessionController) -> MonacoEditorWidgetLike:
         controller.setParent(self)
         editor_widget = self._create_editor_widget(controller)
-        controller.code_saved.connect(on_saved)  # type: ignore[arg-type]
         controller.dirty_changed.connect(
             lambda _dirty, current_controller=controller: self._update_tab_title(current_controller)
         )
@@ -238,12 +260,23 @@ class MonacoEditorHostDialog(QtWidgets.QDialog):
 
     def _close_editor_widget(self, editor_widget: MonacoEditorWidgetLike, *, interactive: bool) -> bool:
         controller = editor_widget.controller()
+        target_exists = controller.target_exists()
+        if interactive and not target_exists:
+            answer = _ask_close_deleted_target(self, title=controller.title())
+            if answer != QtWidgets.QMessageBox.StandardButton.Yes:
+                return False
         if interactive and editor_widget.is_dirty():
             answer = _ask_save_before_close(self, title=controller.title())
             if answer == QtWidgets.QMessageBox.StandardButton.Cancel:
                 return False
             if answer == QtWidgets.QMessageBox.StandardButton.Yes:
-                editor_widget.save_current(close_after=False)
+                if not editor_widget.save_current(close_after=False):
+                    return False
+                target_exists = controller.target_exists()
+                if not target_exists:
+                    answer = _ask_close_deleted_target(self, title=controller.title())
+                    if answer != QtWidgets.QMessageBox.StandardButton.Yes:
+                        return False
 
         session_key = controller.session_key()
         if session_key is not None:
@@ -335,7 +368,8 @@ def open_code_editor_window(
     title: str,
     code: str,
     language: str,
-    on_saved: SavedCodeHandler,
+    on_saved: SaveCodeHandler,
+    target_exists_provider: TargetExistsProvider | None = None,
     assist_context: EditorAssistContext | None = None,
     assist_context_provider: Callable[[], EditorAssistContext | None] | None = None,
     session_key: EditorSessionKey | None = None,
@@ -347,6 +381,7 @@ def open_code_editor_window(
         code=code,
         language=language,
         on_saved=on_saved,
+        target_exists_provider=target_exists_provider,
         assist_context=assist_context,
         assist_context_provider=assist_context_provider,
     ):
@@ -365,6 +400,8 @@ def open_code_editor_window(
         code=code,
         language=language,
         session_key=session_key,
+        save_handler=on_saved,
+        target_exists_provider=target_exists_provider,
         assist_context=assist_context,
         assist_context_provider=assist_context_provider,
         close_on_save=False,
@@ -372,7 +409,7 @@ def open_code_editor_window(
     warn_text = python_assist_warning(controller.assist_context())
     if controller.language().lower() == "python" and warn_text:
         show_warning(parent, "Python Assist Warning", warn_text)
-    host.add_session(controller, on_saved)
+    host.add_session(controller)
 
     if parent is not None and not host.isVisible():
         try:

@@ -8,7 +8,8 @@ def qt_runtime_error_is_object_deleted(exc: RuntimeError) -> bool:
     Return True when a PySide/PyQt RuntimeError indicates the wrapped C++ Qt
     object has already been destroyed.
     """
-    return "already deleted" in str(exc).lower()
+    message = str(exc).lower()
+    return "already deleted" in message or "signal source has been deleted" in message
 
 
 def qt_object_is_valid(obj: QtCore.QObject | None) -> bool:

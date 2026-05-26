@@ -20,7 +20,7 @@ from f8pysdk.specs import (
 
 from ....nodegraph.node_base import F8StudioBaseNode
 from ....nodegraph.node_graph import F8StudioGraph
-from ....nodegraph.node_text_fields import get_node_text, set_node_text, studio_session_key
+from ....nodegraph.node_text_fields import node_text_editor_binding
 from ....nodegraph.state_schema import (
     effective_state_fields as _effective_state_fields,
     state_field_access as _state_field_access,
@@ -174,23 +174,12 @@ class NodePropertyEditorBuildMixin(NodePropertyEditorTabsMixin):
         graph = node.graph
         node_id = str(node.id or "").strip()
         warning_parent = host.window() if host.window() is not None else host
-        widget.set_persisted_value_getter(
-            lambda current_graph=graph, current_node_id=node_id, current_prop=prop_name: get_node_text(
-                current_graph,
-                current_node_id,
-                current_prop,
-            )
-        )
-        widget.set_persisted_value_setter(
-            lambda updated, current_graph=graph, current_node_id=node_id, current_prop=prop_name, current_parent=warning_parent: set_node_text(
-                current_graph,
-                current_node_id,
-                current_prop,
-                str(updated or ""),
-                push_undo=True,
-                warning_parent=current_parent,
-            )
-        )
+        text_binding = node_text_editor_binding(graph, node_id, prop_name, warning_parent=warning_parent)
+        if text_binding is not None:
+            widget.set_persisted_value_getter(text_binding.value_getter)
+            widget.set_persisted_value_setter(text_binding.value_setter)
+            widget.set_persisted_target_exists_provider(text_binding.target_exists)
+            widget.set_editor_session_key(text_binding.session_key)
         widget.set_editor_assist_context(
             build_editor_assist_context(
                 graph,
@@ -207,7 +196,6 @@ class NodePropertyEditorBuildMixin(NodePropertyEditorTabsMixin):
                 language=current_lang,
             )
         )
-        widget.set_editor_session_key(studio_session_key(graph, node_id, prop_name))
         return widget
 
     @staticmethod
@@ -504,7 +492,7 @@ class NodePropertyEditorBuildMixin(NodePropertyEditorTabsMixin):
         reserved_tabs = {"Node", "Port", "Command"}
         for tab_name in sorted(tab_mapping.keys()):
             if tab_name in reserved_tabs:
-                print('tab name "{}" is reserved by the "NodePropWidget" ' "please use a different tab name.")
+                logger.warning("Property tab name '%s' is reserved by NodePropertyEditor; skipping tab.", tab_name)
                 continue
             host.add_tab(tab_name)
         widget_factory = NodePropertyWidgetFactory()

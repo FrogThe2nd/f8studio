@@ -167,23 +167,25 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
     def shutdown(self) -> None:
         self._controller.shutdown()
 
-    def save_current(self, *, close_after: bool) -> str:
+    def save_current(self, *, close_after: bool) -> bool:
         page = self._view.page()
         if page is None:
             code = self._controller.code()
-            self._controller.save_code(code)
-            if close_after:
+            saved = self._controller.save_code(code)
+            if close_after and saved:
                 self.accept_requested.emit()
-            return code
+            return saved
         code = self._read_code_from_page()
-        self._controller.save_code(code)
+        saved = self._controller.save_code(code)
+        if not saved:
+            return False
         try:
             page.runJavaScript("window._f8_markSaved && window._f8_markSaved();")
         except (AttributeError, RuntimeError, TypeError):
             pass
         if close_after:
             self.accept_requested.emit()
-        return code
+        return True
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # type: ignore[override]
         super().resizeEvent(event)
@@ -361,7 +363,9 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
             return
         answer = _ask_save_before_close(self, title=self.windowTitle())
         if answer == QtWidgets.QMessageBox.StandardButton.Yes:
-            self._editor_widget.save_current(close_after=True)
+            if self._editor_widget.save_current(close_after=True):
+                event.ignore()
+                return
             event.ignore()
             return
         if answer == QtWidgets.QMessageBox.StandardButton.No:

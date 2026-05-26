@@ -8,8 +8,8 @@ from NodeGraphQt.custom_widgets.properties_bin.node_property_factory import Node
 
 from .state_builders import StateControlSpec, build_panel_control_binding, set_control_read_only
 from ...editor_assist.protocol import editor_assist_context_for_field
-from ...editor_assist.session import EditorSessionKey
 from ...editor_assist.workspace import EditorAssistContext
+from ...nodegraph.node_text_fields import node_text_editor_binding
 from ...nodegraph.state_pool_resolver import build_node_pool_resolver, parse_multiselect_pool, parse_select_pool
 from ...nodegraph.state_schema import (
     effective_state_fields,
@@ -21,6 +21,7 @@ from ...nodegraph.state_schema import (
     state_field_schema,
     state_field_ui_control,
 )
+from ...ui.components.state_editors import F8CodeButtonEditor
 from ...ui.support.ui_control import parse_ui_control
 
 
@@ -63,23 +64,13 @@ def _editor_assist_context_for_field(node: Any, prop_name: str, language: str) -
     return editor_assist_context_for_field(spec, field_kind="state", field_key=field_name, language=lang, node=node)
 
 
-
-def _editor_session_key_for_node(node: Any, prop_name: str) -> EditorSessionKey | None:
-    field_name = str(prop_name or "").strip()
-    if not field_name:
-        return None
+def _node_graph_and_id(node: Any) -> tuple[Any | None, str]:
     try:
         graph = node.graph
         node_id = str(node.id or "").strip()
     except AttributeError:
-        return None
-    if graph is None or not node_id:
-        return None
-    return EditorSessionKey.studio_node(
-        graph_id=f"graph:{id(graph)}",
-        node_id=node_id,
-        field_name=field_name,
-    )
+        return None, ""
+    return graph, node_id
 
 
 
@@ -147,8 +138,16 @@ def _build_state_panel_control(context: ControlBuildContext) -> Any:
             current_prop,
             current_lang,
         ),
-        editor_session_key=_editor_session_key_for_node(node, prop_name),
+        editor_session_key=None,
     )
+    if isinstance(binding.widget, F8CodeButtonEditor):
+        graph, node_id = _node_graph_and_id(node)
+        text_binding = node_text_editor_binding(graph, node_id, prop_name)
+        if text_binding is not None:
+            binding.widget.set_persisted_value_getter(text_binding.value_getter)
+            binding.widget.set_persisted_value_setter(text_binding.value_setter)
+            binding.widget.set_persisted_target_exists_provider(text_binding.target_exists)
+            binding.widget.set_editor_session_key(text_binding.session_key)
     if binding.refresh_options is not None and context.register_option_pool_dependent is not None:
         if multiselect_pool_field:
             context.register_option_pool_dependent(multiselect_pool_field, binding.widget)

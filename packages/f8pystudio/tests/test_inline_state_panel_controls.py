@@ -233,6 +233,41 @@ class _FakePropertyNode:
         return [self._field]
 
 
+class _FakePropertyGraph:
+    def __init__(self, node: "_FakeGraphPropertyNode") -> None:
+        self.node = node
+
+    def get_node_by_id(self, node_id: str) -> "_FakeGraphPropertyNode | None":
+        if str(node_id or "") == self.node.id:
+            return self.node
+        return None
+
+
+class _FakeGraphPropertyNode(_FakePropertyNode):
+    def __init__(self, field: F8StateSpec, *, node_id: str = "nodeA", code: str = "") -> None:
+        super().__init__(field)
+        self.id = node_id
+        self.graph = _FakePropertyGraph(self)
+        self._props: dict[str, Any] = {str(field.name or ""): code}
+        self.writes: list[tuple[str, Any, bool]] = []
+
+    def name(self) -> str:
+        return "nodeA"
+
+    def get_property(self, name: str) -> Any:
+        key = str(name or "")
+        if key not in self._props:
+            raise KeyError(key)
+        return self._props[key]
+
+    def set_property(self, name: str, value: Any, *, push_undo: bool = True) -> None:
+        key = str(name or "")
+        if key not in self._props:
+            raise KeyError(key)
+        self._props[key] = value
+        self.writes.append((key, value, push_undo))
+
+
 class _EnsureStateBackendNode:
     def __init__(self, fields: list[F8StateSpec], props: dict[str, Any] | None = None) -> None:
         self._fields = list(fields)
@@ -632,6 +667,35 @@ def test_build_state_panel_control_dial_disables_non_numeric_schema() -> None:
     assert dial is not None
     assert not dial.isEnabled()
     assert "integer or number" in str(dial.toolTip() or "")
+
+
+def test_build_state_panel_control_code_save_persists_by_graph_node_id_after_widget_deleted() -> None:
+    _ensure_app()
+    field = F8StateSpec(
+        name="code",
+        label="Code",
+        valueSchema=string_schema(default="print('old')\n"),
+        access=F8StateAccess.rw,
+        uiControl="code[python]",
+    )
+    node = _FakeGraphPropertyNode(field, code="print('old')\n")
+    widget = build_state_panel_control(
+        node=node,
+        prop_name="code",
+        widget_type=1,
+        widget_factory=NodePropertyWidgetFactory(),
+    )
+
+    assert isinstance(widget, F8CodeButtonEditor)
+    persisted_value_setter = widget._persisted_value_setter
+    assert persisted_value_setter is not None
+    widget.deleteLater()
+    QtWidgets.QApplication.processEvents()
+    QtCore.QCoreApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+
+    assert persisted_value_setter("print('updated')\n") is True
+    assert node.get_property("code") == "print('updated')\n"
+    assert node.writes == [("code", "print('updated')\n", True)]
 
 
 def test_build_state_panel_control_wrapline_python_skips_editor_assist_lookup(monkeypatch) -> None:

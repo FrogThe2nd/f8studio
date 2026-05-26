@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from dataclasses import dataclass
+from typing import Callable, Protocol
 
 from qtpy import QtWidgets
 
@@ -11,7 +12,25 @@ from ..ui.support.ui_notifications import show_warning
 logger = logging.getLogger(__name__)
 
 
-def studio_session_key(graph: Any, node_id: str, field_name: str) -> EditorSessionKey | None:
+class NodeTextPropertyNode(Protocol):
+    def get_property(self, name: str) -> object: ...
+
+    def set_property(self, name: str, value: object, *, push_undo: bool = True) -> None: ...
+
+
+class NodeTextGraph(Protocol):
+    def get_node_by_id(self, node_id: str) -> NodeTextPropertyNode | None: ...
+
+
+@dataclass(frozen=True)
+class NodeTextEditorBinding:
+    value_getter: Callable[[], str]
+    value_setter: Callable[[str], bool]
+    target_exists: Callable[[], bool]
+    session_key: EditorSessionKey
+
+
+def studio_session_key(graph: NodeTextGraph | None, node_id: str, field_name: str) -> EditorSessionKey | None:
     if graph is None:
         return None
     node_id_s = str(node_id or "").strip()
@@ -25,26 +44,26 @@ def studio_session_key(graph: Any, node_id: str, field_name: str) -> EditorSessi
     )
 
 
-def resolve_node(graph: Any, node_id: str) -> Any | None:
+def resolve_node(graph: NodeTextGraph | None, node_id: str) -> NodeTextPropertyNode | None:
     if graph is None:
         return None
     nid = str(node_id or "").strip()
     if not nid:
         return None
     try:
-        return graph.get_node_by_id(nid)  # type: ignore[attr-defined]
+        return graph.get_node_by_id(nid)
     except Exception:
         logger.exception("graph.get_node_by_id failed nodeId=%s", nid)
         return None
 
 
-def get_node_text(graph: Any, node_id: str, field_name: str) -> str:
+def get_node_text(graph: NodeTextGraph | None, node_id: str, field_name: str) -> str:
     node = resolve_node(graph, node_id)
     key = str(field_name or "").strip()
     if node is None or not key:
         return ""
     try:
-        value = node.get_property(key)  # type: ignore[attr-defined]
+        value = node.get_property(key)
     except KeyError:
         return ""
     except Exception:
@@ -53,15 +72,30 @@ def get_node_text(graph: Any, node_id: str, field_name: str) -> str:
     return "" if value is None else str(value)
 
 
+def node_text_target_exists(graph: NodeTextGraph | None, node_id: str, field_name: str) -> bool:
+    node = resolve_node(graph, node_id)
+    key = str(field_name or "").strip()
+    if node is None or not key:
+        return False
+    try:
+        _ = node.get_property(key)
+    except KeyError:
+        return False
+    except Exception:
+        logger.exception("node.get_property failed while checking text target nodeId=%s field=%s", str(node_id or ""), key)
+        return False
+    return True
+
+
 def set_node_text(
-    graph: Any,
+    graph: NodeTextGraph | None,
     node_id: str,
     field_name: str,
     text: str,
     *,
     push_undo: bool = True,
     warning_parent: QtWidgets.QWidget | None = None,
-) -> None:
+) -> bool:
     nid = str(node_id or "").strip()
     key = str(field_name or "").strip()
     node = resolve_node(graph, nid)
@@ -71,17 +105,17 @@ def set_node_text(
             "Code Save Failed",
             f"Target node/field not found.\nnodeId={nid}\nfield={key}",
         )
-        return
+        return False
 
     try:
-        _ = node.get_property(key)  # type: ignore[attr-defined]
+        _ = node.get_property(key)
     except KeyError:
         show_warning(
             warning_parent,
             "Code Save Failed",
             f"Target field does not exist on node.\nnodeId={nid}\nfield={key}",
         )
-        return
+        return False
     except Exception as exc:
         logger.exception("node.get_property failed before set nodeId=%s field=%s", nid, key)
         show_warning(
@@ -89,14 +123,11 @@ def set_node_text(
             "Code Save Failed",
             f"Failed to validate save target.\nnodeId={nid}\nfield={key}\nerror={type(exc).__name__}: {exc}",
         )
-        return
+        return False
 
     value = str(text or "")
     try:
-        try:
-            node.set_property(key, value, push_undo=bool(push_undo))  # type: ignore[attr-defined]
-        except TypeError:
-            node.set_property(key, value)  # type: ignore[attr-defined]
+        node.set_property(key, value, push_undo=bool(push_undo))
     except Exception as exc:
         logger.exception("node.set_property failed nodeId=%s field=%s", nid, key)
         show_warning(
@@ -104,3 +135,32 @@ def set_node_text(
             "Code Save Failed",
             f"Failed to write code to node.\nnodeId={nid}\nfield={key}\nerror={type(exc).__name__}: {exc}",
         )
+        return False
+    return True
+
+
+def node_text_editor_binding(
+    graph: NodeTextGraph | None,
+    node_id: str,
+    field_name: str,
+    *,
+    warning_parent: QtWidgets.QWidget | None = None,
+) -> NodeTextEditorBinding | None:
+    session_key = studio_session_key(graph, node_id, field_name)
+    if session_key is None:
+        return None
+    nid = str(node_id or "").strip()
+    key = str(field_name or "").strip()
+    return NodeTextEditorBinding(
+        value_getter=lambda: get_node_text(graph, nid, key),
+        value_setter=lambda text: set_node_text(
+            graph,
+            nid,
+            key,
+            str(text or ""),
+            push_undo=True,
+            warning_parent=warning_parent,
+        ),
+        target_exists=lambda: node_text_target_exists(graph, nid, key),
+        session_key=session_key,
+    )
