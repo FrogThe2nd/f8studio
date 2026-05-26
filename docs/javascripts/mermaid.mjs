@@ -15,17 +15,14 @@ window.mermaid = mermaid;
 
 function captureMermaidSources(root) {
   const scope = root instanceof Element ? root : document;
-  const blocks = Array.from(scope.querySelectorAll("pre.mermaid"));
+  const blocks = Array.from(scope.querySelectorAll(".mermaid"));
   for (const block of blocks) {
     const existing = String(block.getAttribute("data-f8-mermaid-source") || "");
     if (existing) {
       continue;
     }
     const code = block.querySelector("code");
-    if (!code) {
-      continue;
-    }
-    const src = String(code.textContent || "").trim();
+    const src = String((code ? code.textContent : block.textContent) || "").trim();
     if (!src) {
       continue;
     }
@@ -33,11 +30,41 @@ function captureMermaidSources(root) {
   }
 }
 
+function normalizeMermaidBlocks(root) {
+  const scope = root instanceof Element ? root : document;
+  const blocks = Array.from(scope.querySelectorAll("pre.mermaid"));
+  for (const block of blocks) {
+    if (!(block instanceof HTMLElement)) {
+      continue;
+    }
+    const code = block.querySelector("code");
+    const src = String((code ? code.textContent : block.textContent) || "").trim();
+    if (!src) {
+      continue;
+    }
+    const replacement = document.createElement("div");
+    replacement.className = "mermaid";
+    replacement.setAttribute("data-f8-mermaid-source", src);
+    replacement.textContent = src;
+    block.replaceWith(replacement);
+  }
+}
+
 function scheduleMermaidRender(root) {
   const scope = root instanceof Element ? root : document;
+  normalizeMermaidBlocks(scope);
   captureMermaidSources(scope);
   try {
-    mermaid.run({ querySelector: "pre.mermaid" });
+    const result = mermaid.run({ querySelector: ".mermaid" });
+    if (result && typeof result.catch === "function") {
+      result
+        .then(() => {
+          window.dispatchEvent(new CustomEvent("f8:mermaid-rendered"));
+        })
+        .catch((err) => {
+        console.warn("Mermaid render failed", err);
+        });
+    }
   } catch (_err) {
     // Best-effort: rendering is handled elsewhere if Mermaid cannot run here.
   }

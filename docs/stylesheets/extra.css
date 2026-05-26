@@ -87,7 +87,15 @@ body, .md-container, .md-main, .md-footer {
 
 /* Mermaid Adjustments */
 .md-typeset .mermaid {
+  position: relative;
+  min-height: 3rem;
+  margin: 1rem 0;
+  padding: 0.75rem;
   overflow: auto;
+  border: 1px solid var(--f8-glass-border);
+  border-radius: 0.4rem;
+  box-shadow: var(--f8-shadow);
+  background: rgba(125, 125, 125, 0.035);
 }
 
 .md-typeset .mermaid[data-processed="true"] {
@@ -100,6 +108,29 @@ body, .md-container, .md-main, .md-footer {
   max-width: none;
 }
 
+.f8-mermaid-open {
+  position: sticky;
+  top: 0.35rem;
+  left: 100%;
+  z-index: 2;
+  appearance: none;
+  border: 1px solid rgba(125, 125, 125, 0.24);
+  background: var(--md-default-bg-color, #ffffff);
+  color: var(--md-default-fg-color, #111111);
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.2;
+  cursor: zoom-in;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.16);
+}
+
+.f8-mermaid-open:hover {
+  background: var(--md-accent-fg-color, #526cfe);
+  color: var(--md-accent-bg-color, #ffffff);
+}
+
 .f8-mermaid-lightbox-open {
   overflow: hidden;
 }
@@ -109,7 +140,7 @@ body, .md-container, .md-main, .md-footer {
   inset: 0;
   display: none;
   z-index: 9999;
-  padding: 1rem;
+  padding: 0.75rem;
   background: rgba(0, 0, 0, 0.65);
 }
 
@@ -122,8 +153,8 @@ body, .md-container, .md-main, .md-footer {
 .f8-mermaid-lightbox__panel {
   display: flex;
   flex-direction: column;
-  width: min(1400px, 100%);
-  max-height: min(92vh, 100%);
+  width: min(1800px, 98vw);
+  height: min(1100px, 96vh);
   background: var(--md-default-bg-color, #ffffff);
   color: var(--md-default-fg-color, #111111);
   border-radius: 0.3rem;
@@ -135,6 +166,7 @@ body, .md-container, .md-main, .md-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 1rem;
   padding: 0.6rem 0.75rem;
   border-bottom: 1px solid rgba(0, 0, 0, 0.12);
 }
@@ -145,28 +177,48 @@ body, .md-container, .md-main, .md-footer {
   opacity: 0.9;
 }
 
-.f8-mermaid-lightbox__close {
+.f8-mermaid-lightbox__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.f8-mermaid-lightbox__button {
   appearance: none;
-  border: 0;
-  background: transparent;
+  border: 1px solid rgba(125, 125, 125, 0.26);
+  background: rgba(125, 125, 125, 0.06);
   color: inherit;
   padding: 0.25rem 0.5rem;
   border-radius: 0.2rem;
   cursor: pointer;
+  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1.2;
 }
 
-.f8-mermaid-lightbox__close:hover {
+.f8-mermaid-lightbox__button:hover {
   background: rgba(0, 0, 0, 0.06);
 }
 
+.f8-mermaid-lightbox__zoom {
+  min-width: 3rem;
+  text-align: center;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.84;
+}
+
 .f8-mermaid-lightbox__body {
-  padding: 0.5rem;
+  flex: 1;
+  min-height: 0;
+  padding: 0.75rem;
   overflow: auto;
 }
 
 .f8-mermaid-lightbox__body svg {
   display: block;
-  height: auto;
   max-width: none;
+  max-height: none;
+  transform-origin: 0 0;
 }
 

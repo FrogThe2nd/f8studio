@@ -1,4 +1,12 @@
 const LIGHTBOX_ID = "f8-mermaid-lightbox";
+const MIN_SCALE = 0.35;
+const MAX_SCALE = 8;
+const SCALE_STEP = 1.25;
+
+let activeSvg = null;
+let activeBaseWidth = 0;
+let activeBaseHeight = 0;
+let activeScale = 1;
 
 function ensureLightbox() {
   const existing = document.getElementById(LIGHTBOX_ID);
@@ -23,21 +31,65 @@ function ensureLightbox() {
   title.className = "f8-mermaid-lightbox__title";
   title.textContent = "Mermaid diagram";
 
+  const toolbar = document.createElement("div");
+  toolbar.className = "f8-mermaid-lightbox__toolbar";
+
+  const zoomOutBtn = document.createElement("button");
+  zoomOutBtn.className = "f8-mermaid-lightbox__button";
+  zoomOutBtn.type = "button";
+  zoomOutBtn.setAttribute("data-f8-mermaid-action", "zoom-out");
+  zoomOutBtn.textContent = "-";
+
+  const zoomLabel = document.createElement("span");
+  zoomLabel.className = "f8-mermaid-lightbox__zoom";
+  zoomLabel.textContent = "100%";
+
+  const zoomInBtn = document.createElement("button");
+  zoomInBtn.className = "f8-mermaid-lightbox__button";
+  zoomInBtn.type = "button";
+  zoomInBtn.setAttribute("data-f8-mermaid-action", "zoom-in");
+  zoomInBtn.textContent = "+";
+
+  const resetBtn = document.createElement("button");
+  resetBtn.className = "f8-mermaid-lightbox__button";
+  resetBtn.type = "button";
+  resetBtn.setAttribute("data-f8-mermaid-action", "reset");
+  resetBtn.textContent = "Reset";
+
   const closeBtn = document.createElement("button");
-  closeBtn.className = "f8-mermaid-lightbox__close";
+  closeBtn.className = "f8-mermaid-lightbox__button f8-mermaid-lightbox__close";
   closeBtn.type = "button";
   closeBtn.textContent = "Close";
 
   const body = document.createElement("div");
   body.className = "f8-mermaid-lightbox__body";
 
+  toolbar.appendChild(zoomOutBtn);
+  toolbar.appendChild(zoomLabel);
+  toolbar.appendChild(zoomInBtn);
+  toolbar.appendChild(resetBtn);
+  toolbar.appendChild(closeBtn);
   header.appendChild(title);
-  header.appendChild(closeBtn);
+  header.appendChild(toolbar);
   panel.appendChild(header);
   panel.appendChild(body);
   overlay.appendChild(panel);
 
   closeBtn.addEventListener("click", () => closeLightbox(overlay));
+  toolbar.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    const action = target.getAttribute("data-f8-mermaid-action");
+    if (action === "zoom-in") {
+      setScale(activeScale * SCALE_STEP);
+    } else if (action === "zoom-out") {
+      setScale(activeScale / SCALE_STEP);
+    } else if (action === "reset") {
+      setScale(1);
+    }
+  });
   overlay.addEventListener("click", (event) => {
     if (event.target === overlay) {
       closeLightbox(overlay);
@@ -65,6 +117,10 @@ function closeLightbox(overlay) {
   if (body instanceof HTMLDivElement) {
     body.replaceChildren();
   }
+  activeSvg = null;
+  activeBaseWidth = 0;
+  activeBaseHeight = 0;
+  activeScale = 1;
   setScrollLocked(false);
 }
 
@@ -127,6 +183,80 @@ async function renderMermaidSvg(source) {
   }
 }
 
+function parseSvgLength(value) {
+  const text = String(value || "").trim();
+  if (!text) {
+    return 0;
+  }
+  const match = text.match(/^([0-9]+(?:\.[0-9]+)?)/);
+  if (!match) {
+    return 0;
+  }
+  return Number(match[1]) || 0;
+}
+
+function readSvgSize(svg) {
+  const viewBox = svg.getAttribute("viewBox");
+  if (viewBox) {
+    const parts = viewBox.split(/\s+/).map((part) => Number(part));
+    if (parts.length >= 4 && parts[2] > 0 && parts[3] > 0) {
+      return { width: parts[2], height: parts[3] };
+    }
+  }
+
+  const attrWidth = parseSvgLength(svg.getAttribute("width"));
+  const attrHeight = parseSvgLength(svg.getAttribute("height"));
+  if (attrWidth > 0 && attrHeight > 0) {
+    return { width: attrWidth, height: attrHeight };
+  }
+
+  const rect = svg.getBoundingClientRect();
+  return {
+    width: Math.max(600, rect.width || 0),
+    height: Math.max(360, rect.height || 0),
+  };
+}
+
+function updateZoomLabel() {
+  const overlay = document.getElementById(LIGHTBOX_ID);
+  if (!(overlay instanceof HTMLDivElement)) {
+    return;
+  }
+  const label = overlay.querySelector(".f8-mermaid-lightbox__zoom");
+  if (label instanceof HTMLSpanElement) {
+    label.textContent = `${Math.round(activeScale * 100)}%`;
+  }
+}
+
+function applySvgScale() {
+  if (!(activeSvg instanceof SVGElement)) {
+    return;
+  }
+  activeSvg.style.maxWidth = "none";
+  activeSvg.style.maxHeight = "none";
+  activeSvg.style.width = `${Math.max(1, activeBaseWidth * activeScale)}px`;
+  activeSvg.style.height = `${Math.max(1, activeBaseHeight * activeScale)}px`;
+  updateZoomLabel();
+}
+
+function setScale(scale) {
+  activeScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale));
+  applySvgScale();
+}
+
+function fitInitialScale(body, svg) {
+  const size = readSvgSize(svg);
+  activeSvg = svg;
+  activeBaseWidth = size.width;
+  activeBaseHeight = size.height;
+
+  const availableWidth = Math.max(320, body.clientWidth - 24);
+  const availableHeight = Math.max(240, body.clientHeight - 24);
+  const fitScale = Math.min(1, availableWidth / activeBaseWidth, availableHeight / activeBaseHeight);
+  activeScale = Math.max(MIN_SCALE, Math.min(1, fitScale || 1));
+  applySvgScale();
+}
+
 async function openLightboxFromMermaid(container) {
   const overlay = ensureLightbox();
   const body = overlay.querySelector(".f8-mermaid-lightbox__body");
@@ -146,11 +276,76 @@ async function openLightboxFromMermaid(container) {
   body.innerHTML = svgHtml;
   overlay.classList.add("f8-mermaid-lightbox--open");
   setScrollLocked(true);
+  const svg = body.querySelector("svg");
+  if (svg instanceof SVGElement) {
+    fitInitialScale(body, svg);
+  }
 
   const closeBtn = overlay.querySelector(".f8-mermaid-lightbox__close");
   if (closeBtn instanceof HTMLButtonElement) {
     closeBtn.focus();
   }
+}
+
+function enhanceMermaidContainer(container) {
+  if (container.getAttribute("data-f8-mermaid-enhanced") === "true" && container.querySelector(".f8-mermaid-open")) {
+    return;
+  }
+  container.setAttribute("data-f8-mermaid-enhanced", "true");
+  container.setAttribute("title", "Click to enlarge Mermaid diagram");
+
+  const button = document.createElement("button");
+  button.className = "f8-mermaid-open";
+  button.type = "button";
+  button.textContent = "Expand";
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    void openLightboxFromMermaid(container);
+  });
+  container.appendChild(button);
+}
+
+function enhanceMermaidBlocks(root) {
+  const scope = root instanceof Element ? root : document;
+  const containers = Array.from(scope.querySelectorAll(".mermaid"));
+  for (const container of containers) {
+    if (container instanceof Element) {
+      enhanceMermaidContainer(container);
+    }
+  }
+}
+
+function scheduleEnhance(root) {
+  window.setTimeout(() => enhanceMermaidBlocks(root), 0);
+  window.setTimeout(() => enhanceMermaidBlocks(root), 250);
+  window.setTimeout(() => enhanceMermaidBlocks(root), 1000);
+}
+
+function observeMermaidBlocks() {
+  if (typeof MutationObserver !== "function") {
+    return;
+  }
+  const observer = new MutationObserver((records) => {
+    for (const record of records) {
+      if (record.type !== "childList") {
+        continue;
+      }
+      for (const node of record.addedNodes) {
+        if (node instanceof Element) {
+          const parentMermaid = node.closest(".mermaid");
+          if (node.matches(".mermaid") || node.querySelector(".mermaid") || parentMermaid) {
+            scheduleEnhance(node);
+            if (parentMermaid) {
+              scheduleEnhance(parentMermaid);
+            }
+            return;
+          }
+        }
+      }
+    }
+  });
+  observer.observe(document.documentElement, { childList: true, subtree: true });
 }
 
 function shouldIgnoreClick(eventTarget, container) {
@@ -196,3 +391,20 @@ document.addEventListener("keydown", (event) => {
   closeLightbox(overlay);
 });
 
+if (window.document$ && typeof window.document$.subscribe === "function") {
+  window.document$.subscribe((evt) => {
+    scheduleEnhance(evt);
+  });
+} else if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", () => {
+    scheduleEnhance(document);
+  });
+} else {
+  scheduleEnhance(document);
+}
+
+observeMermaidBlocks();
+
+window.addEventListener("f8:mermaid-rendered", () => {
+  scheduleEnhance(document);
+});
