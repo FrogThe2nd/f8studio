@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import logging
 import os
 import platform
 import queue
@@ -21,6 +22,14 @@ from .models import (
 WM_HOTKEY = 0x0312
 WM_APP = 0x8000
 WM_F8_HOTKEY_CONTROL = WM_APP + 1
+_REPEATING_ERROR_LOG_INTERVAL_S = 2.0
+logger = logging.getLogger(__name__)
+
+_WIN32_WORKER_COMMAND_ERRORS = (GlobalHotkeyRegistrationError, OSError, RuntimeError, TypeError, ValueError)
+_WIN32_UNREGISTER_ERRORS = (AttributeError, OSError, RuntimeError, TypeError, ValueError)
+_X11_CALLBACK_ERRORS = (LookupError, OSError, RuntimeError, TypeError, ValueError)
+_X11_DISPLAY_ERRORS = (AttributeError, OSError, RuntimeError, TypeError, ValueError)
+_X11_EVENT_ERRORS = (AttributeError, OSError, RuntimeError, TypeError, ValueError)
 
 
 class GlobalHotkeyBackend(Protocol):
@@ -215,7 +224,7 @@ class _Win32HotkeyThread:
                     should_stop = True
                 else:
                     raise GlobalHotkeyRegistrationError(f"Unsupported hotkey worker command: {command.kind!r}")
-            except BaseException as exc:
+            except _WIN32_WORKER_COMMAND_ERRORS as exc:
                 error = exc
             if command.error_queue is not None:
                 command.error_queue.put_nowait(error)
@@ -243,8 +252,8 @@ class _Win32HotkeyThread:
         for hotkey_id in list(self._id_to_binding.keys()):
             try:
                 self._apis.UnregisterHotKey(None, int(hotkey_id))
-            except (AttributeError, TypeError, ValueError):
-                continue
+            except _WIN32_UNREGISTER_ERRORS as exc:
+                logger.exception("Win32 global hotkey unregister failed hotkey_id=%s", hotkey_id, exc_info=exc)
         self._id_to_binding.clear()
         self._binding_to_id.clear()
 
@@ -428,6 +437,7 @@ class X11GlobalHotkeyBackend:
         self._event_bindings: dict[tuple[int, int], str] = {}
         self._stop_event = threading.Event()
         self._listener_thread: threading.Thread | None = None
+        self._last_error_log_by_key: dict[str, float] = {}
         self._ignored_modifier_masks = self._build_ignored_modifier_masks()
         if start_listener:
             self._listener_thread = threading.Thread(target=self._event_loop, name="f8pystudio-x11-hotkeys", daemon=True)
@@ -470,14 +480,22 @@ class X11GlobalHotkeyBackend:
             for keycode_value, modifiers_value in grabs:
                 try:
                     self._root.ungrab_key(keycode_value, modifiers_value)
-                except Exception:
+                except _X11_DISPLAY_ERRORS as exc:
+                    self._log_error_deduped(
+                        "x11_ungrab",
+                        "X11 global hotkey ungrab failed binding=%s keycode=%s modifiers=%s",
+                        binding_id,
+                        keycode_value,
+                        modifiers_value,
+                        exc=exc,
+                    )
                     continue
                 self._event_bindings.pop((keycode_value, modifiers_value), None)
             self._binding_grabs.pop(binding_id, None)
         try:
             self._display.sync()
-        except Exception:
-            pass
+        except _X11_DISPLAY_ERRORS as exc:
+            self._log_error_deduped("x11_sync", "X11 global hotkey sync failed during unregister", exc=exc)
 
     def close(self) -> None:
         self._stop_event.set()
@@ -486,8 +504,8 @@ class X11GlobalHotkeyBackend:
             self._listener_thread.join(timeout=0.2)
         try:
             self._display.close()
-        except Exception:
-            pass
+        except _X11_DISPLAY_ERRORS as exc:
+            self._log_error_deduped("x11_close", "X11 global hotkey display close failed", exc=exc)
 
     def _event_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -496,9 +514,10 @@ class X11GlobalHotkeyBackend:
                     time.sleep(0.01)
                     continue
                 event = self._display.next_event()
-            except Exception:
+            except _X11_EVENT_ERRORS as exc:
                 if self._stop_event.is_set():
                     return
+                self._log_error_deduped("x11_event_read", "X11 global hotkey event read failed", exc=exc)
                 time.sleep(0.05)
                 continue
             try:
@@ -510,7 +529,8 @@ class X11GlobalHotkeyBackend:
                 binding_id = self._event_bindings.get((keycode, state))
                 if binding_id:
                     self._activation_callback(binding_id)
-            except Exception:
+            except _X11_CALLBACK_ERRORS as exc:
+                self._log_error_deduped("x11_event_dispatch", "X11 global hotkey event dispatch failed", exc=exc)
                 continue
 
     def _build_ignored_modifier_masks(self) -> tuple[int, ...]:
@@ -529,7 +549,13 @@ class X11GlobalHotkeyBackend:
             return 0
         try:
             modifier_map = self._display.get_modifier_mapping()
-        except Exception:
+        except _X11_DISPLAY_ERRORS as exc:
+            self._log_error_deduped(
+                "x11_modifier_mapping",
+                "X11 global hotkey modifier mapping lookup failed keysym=%s",
+                keysym_name,
+                exc=exc,
+            )
             return 0
         masks = [
             int(self._x.ShiftMask),
@@ -547,6 +573,14 @@ class X11GlobalHotkeyBackend:
                     if 0 <= index < len(masks):
                         return masks[index]
         return 0
+
+    def _log_error_deduped(self, key: str, message: str, *args: object, exc: BaseException) -> None:
+        now_s = time.monotonic()
+        last_s = float(self._last_error_log_by_key.get(key) or 0.0)
+        if (now_s - last_s) < _REPEATING_ERROR_LOG_INTERVAL_S:
+            return
+        self._last_error_log_by_key[key] = now_s
+        logger.exception(message, *args, exc_info=exc)
 
 
 def create_global_hotkey_backend(

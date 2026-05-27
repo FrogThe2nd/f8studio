@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -155,12 +156,15 @@ class _FakeRoot:
     def __init__(self) -> None:
         self.grab_calls: list[tuple[int, int]] = []
         self.ungrab_calls: list[tuple[int, int]] = []
+        self.fail_ungrab = False
 
     def grab_key(self, keycode: int, modifiers: int, owner_events: bool, pointer_mode: int, keyboard_mode: int) -> None:
         _ = (owner_events, pointer_mode, keyboard_mode)
         self.grab_calls.append((int(keycode), int(modifiers)))
 
     def ungrab_key(self, keycode: int, modifiers: int) -> None:
+        if self.fail_ungrab:
+            raise RuntimeError("ungrab failed")
         self.ungrab_calls.append((int(keycode), int(modifiers)))
 
 
@@ -169,6 +173,10 @@ class _FakeDisplay:
         self.root = _FakeRoot()
         self.closed = False
         self.sync_calls = 0
+        self.fail_sync = False
+        self.fail_close = False
+        self.pending_error: BaseException | None = None
+        self.next_events: queue.Queue[object] = queue.Queue()
         self._keysym_to_keycode = {42: 12, 77: 99}
 
     def screen(self) -> Any:
@@ -181,12 +189,21 @@ class _FakeDisplay:
         return [[], [], [], [], [99], [], [], []]
 
     def sync(self) -> None:
+        if self.fail_sync:
+            raise RuntimeError("sync failed")
         self.sync_calls += 1
 
     def pending_events(self) -> int:
-        return 0
+        if self.pending_error is not None:
+            raise self.pending_error
+        return self.next_events.qsize()
+
+    def next_event(self) -> object:
+        return self.next_events.get_nowait()
 
     def close(self) -> None:
+        if self.fail_close:
+            raise RuntimeError("close failed")
         self.closed = True
 
 
@@ -676,6 +693,97 @@ def test_x11_backend_registers_and_unregisters_modifier_variants() -> None:
     assert {modifiers for _keycode, modifiers in display.root.ungrab_calls} == expected_modifiers
     backend.close()
     assert display.closed is True
+
+
+def test_x11_backend_logs_unregister_sync_and_close_failures(caplog: pytest.LogCaptureFixture) -> None:
+    display = _FakeDisplay()
+    backend = X11GlobalHotkeyBackend(
+        activation_callback=lambda binding_id: None,
+        display_factory=lambda: display,
+        x_module=_FakeX,
+        xk_module=_FakeXK,
+        error_module=SimpleNamespace(BadAccess=_FakeBadAccess),
+        start_listener=False,
+    )
+    binding = GlobalHotkeyBinding(
+        binding_id="nodeA:trigger",
+        node_id="nodeA",
+        node_label="Node A",
+        field_name="trigger",
+        control_label="Trigger",
+        hotkey_text="Ctrl+Alt+P",
+        hotkey_spec=parse_global_hotkey("Ctrl+Alt+P"),
+        numeric_type="integer",
+    )
+    backend.register_hotkey(binding)
+    display.root.fail_ungrab = True
+    display.fail_sync = True
+    display.fail_close = True
+
+    caplog.set_level("ERROR", logger="f8pystudio.global_hotkeys.backend")
+    backend.close()
+
+    assert "X11 global hotkey ungrab failed" in caplog.text
+    assert "X11 global hotkey sync failed during unregister" in caplog.text
+    assert "X11 global hotkey display close failed" in caplog.text
+
+
+def test_x11_event_dispatch_failure_is_logged_and_listener_continues(caplog: pytest.LogCaptureFixture) -> None:
+    display = _FakeDisplay()
+    display.next_events.put(SimpleNamespace(type=_FakeX.KeyPress, detail=12, state=_FakeX.ControlMask | _FakeX.Mod1Mask))
+    backend_ref: list[X11GlobalHotkeyBackend] = []
+
+    def _fail_activation(binding_id: str) -> None:
+        backend_ref[0]._stop_event.set()
+        raise RuntimeError(f"dispatch failed: {binding_id}")
+
+    backend = X11GlobalHotkeyBackend(
+        activation_callback=_fail_activation,
+        display_factory=lambda: display,
+        x_module=_FakeX,
+        xk_module=_FakeXK,
+        error_module=SimpleNamespace(BadAccess=_FakeBadAccess),
+        start_listener=False,
+    )
+    backend_ref.append(backend)
+    binding = GlobalHotkeyBinding(
+        binding_id="nodeA:trigger",
+        node_id="nodeA",
+        node_label="Node A",
+        field_name="trigger",
+        control_label="Trigger",
+        hotkey_text="Ctrl+Alt+P",
+        hotkey_spec=parse_global_hotkey("Ctrl+Alt+P"),
+        numeric_type="integer",
+    )
+    backend.register_hotkey(binding)
+
+    caplog.set_level("ERROR", logger="f8pystudio.global_hotkeys.backend")
+    backend._event_loop()
+
+    assert "X11 global hotkey event dispatch failed" in caplog.text
+    backend.close()
+
+
+def test_x11_event_read_failure_is_logged_and_listener_continues(caplog: pytest.LogCaptureFixture) -> None:
+    display = _FakeDisplay()
+    display.pending_error = RuntimeError("pending failed")
+    caplog.set_level("ERROR", logger="f8pystudio.global_hotkeys.backend")
+    backend = X11GlobalHotkeyBackend(
+        activation_callback=lambda binding_id: None,
+        display_factory=lambda: display,
+        x_module=_FakeX,
+        xk_module=_FakeXK,
+        error_module=SimpleNamespace(BadAccess=_FakeBadAccess),
+        start_listener=True,
+    )
+
+    deadline = time.monotonic() + 1.0
+    while "X11 global hotkey event read failed" not in caplog.text and time.monotonic() < deadline:
+        time.sleep(0.01)
+    backend.close()
+
+    assert "X11 global hotkey event read failed" in caplog.text
 
 
 def test_controller_discovers_valid_button_bindings_and_triggers_increment() -> None:
