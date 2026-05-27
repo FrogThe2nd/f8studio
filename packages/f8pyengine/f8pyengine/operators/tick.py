@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 from typing import Any
 
@@ -25,6 +26,7 @@ from f8pysdk.executors.exec_flow import EntrypointContext
 from ..constants import SERVICE_CLASS
 
 OPERATOR_CLASS = "f8.tick"
+logger = logging.getLogger(__name__)
 
 
 class TickRuntimeNode(OperatorNode, EntrypointNode):
@@ -88,7 +90,8 @@ class TickRuntimeNode(OperatorNode, EntrypointNode):
                 winmm.timeBeginPeriod(1)
             else:
                 winmm.timeEndPeriod(1)
-        except Exception:
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Windows timer resolution request failed enabled=%s", enabled, exc_info=exc)
             return
 
     async def start_entrypoint(self, ctx: EntrypointContext) -> None:

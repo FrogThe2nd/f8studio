@@ -48,10 +48,7 @@ class PrintRuntimeNode(OperatorNode):
             v = value
             if self._strip:
                 if isinstance(v, (bytes, bytearray)):
-                    try:
-                        v = bytes(v).decode("utf-8", errors="replace")
-                    except Exception:
-                        pass
+                    v = bytes(v).decode("utf-8", errors="replace")
                 if isinstance(v, str):
                     v = v.strip()
             print(f"[{self.node_id}] value={v}")
@@ -60,10 +57,7 @@ class PrintRuntimeNode(OperatorNode):
         v = await self.pull("value", ctx_id=exec_id)
         if self._strip:
             if isinstance(v, (bytes, bytearray)):
-                try:
-                    v = bytes(v).decode("utf-8", errors="replace")
-                except Exception:
-                    pass
+                v = bytes(v).decode("utf-8", errors="replace")
             if isinstance(v, str):
                 v = v.strip()
         print(f"[{self.node_id}] exec={exec_id} value={v}")
