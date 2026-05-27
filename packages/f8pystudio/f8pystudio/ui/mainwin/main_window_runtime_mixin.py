@@ -22,6 +22,8 @@ if TYPE_CHECKING:
     from f8pystudio.bridge.studio_bridge import PyStudioServiceBridge
 
 logger = logging.getLogger(__name__)
+_BRIDGE_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
+_NODEGRAPH_VIEW_ERRORS = (AttributeError, KeyError, RuntimeError, TypeError, ValueError)
 
 
 class MainWindowRuntimeMixin:
@@ -41,7 +43,7 @@ class MainWindowRuntimeMixin:
         service_name = ""
         try:
             resolved_service_name = self._bridge.get_service_class(service_id)
-        except Exception:
+        except _BRIDGE_ERRORS:
             logger.exception("Failed to resolve service class for output stream: %s", service_id)
         else:
             service_name = str(resolved_service_name or "").strip()
@@ -93,17 +95,15 @@ class MainWindowRuntimeMixin:
 
     @QtCore.Slot()
     def _on_deploy_action(self) -> None:
-        try:
-            compiled = compile_runtime_graphs_from_studio(self.studio_graph)
-        except ValueError as exc:
-            msg = str(exc or "").strip() or "deploy blocked by invalid graph"
-            self._log_dock.append("studio", f"[deploy][blocked] {msg}\n")
-            show_warning(self, "Deploy blocked", msg)
-            return
-        except Exception as exc:
-            self._log_dock.append("studio", f"[deploy][error] {exc}\n")
-            self._log_dock.report_exception("studio", "deploy compile failed", exc)
-            show_warning(self, "Deploy failed", str(exc))
+        compiled = self._compile_runtime_graphs_for_action(
+            blocked_fallback_message="deploy blocked by invalid graph",
+            blocked_log_prefix="[deploy][blocked]",
+            error_log_prefix="[deploy][error]",
+            report_context="deploy compile failed",
+            warning_blocked_title="Deploy blocked",
+            warning_error_title="Deploy failed",
+        )
+        if compiled is None:
             return
 
         self._append_compile_warnings(compiled)
@@ -134,7 +134,7 @@ class MainWindowRuntimeMixin:
             return
         try:
             node = self.studio_graph.get_node_by_id(target_node_id)
-        except Exception:
+        except _NODEGRAPH_VIEW_ERRORS:
             logger.exception("Failed to resolve node while focusing: %s", target_node_id)
             return
         if node is None:
@@ -143,12 +143,12 @@ class MainWindowRuntimeMixin:
         try:
             for existing in list(self.studio_graph.selected_nodes() or []):
                 existing.set_property("selected", False, push_undo=False)
-        except Exception:
+        except _NODEGRAPH_VIEW_ERRORS:
             logger.exception("Failed to clear selection while focusing hotkey row nodeId=%s", target_node_id)
 
         try:
             node.set_property("selected", True, push_undo=False)
-        except Exception:
+        except _NODEGRAPH_VIEW_ERRORS:
             logger.exception("Failed to select hotkey row nodeId=%s", target_node_id)
 
         self._prop_editor.set_node(node)
@@ -157,7 +157,7 @@ class MainWindowRuntimeMixin:
             return
         try:
             viewer.centerOn(node.view)
-        except Exception:
+        except _NODEGRAPH_VIEW_ERRORS:
             logger.exception("Failed to center focused hotkey row nodeId=%s", target_node_id)
 
     @QtCore.Slot()
@@ -212,7 +212,7 @@ class MainWindowRuntimeMixin:
             return
         try:
             node = self.studio_graph.get_node_by_id(node_id)
-        except Exception:
+        except _NODEGRAPH_VIEW_ERRORS:
             logger.exception("Failed to resolve node for ui command: %s", node_id)
             return
         if node is None or not isinstance(node, UiCommandApplier):
@@ -235,15 +235,15 @@ class MainWindowRuntimeMixin:
 
     @QtCore.Slot()
     def _on_studio_runtime_sync_timeout(self) -> None:
-        try:
-            compiled = compile_runtime_graphs_from_studio(self.studio_graph)
-        except ValueError as exc:
-            msg = str(exc or "").strip() or "studio runtime sync blocked by invalid graph"
-            self._log_dock.append("studio", f"[studio][sync][blocked] {msg}\n")
-            return
-        except Exception as exc:
-            self._log_dock.append("studio", f"[studio][sync][error] {exc}\n")
-            self._log_dock.report_exception("studio", "studio runtime sync compile failed", exc)
+        compiled = self._compile_runtime_graphs_for_action(
+            blocked_fallback_message="studio runtime sync blocked by invalid graph",
+            blocked_log_prefix="[studio][sync][blocked]",
+            error_log_prefix="[studio][sync][error]",
+            report_context="studio runtime sync compile failed",
+            warning_blocked_title=None,
+            warning_error_title=None,
+        )
+        if compiled is None:
             return
 
         try:
@@ -251,6 +251,31 @@ class MainWindowRuntimeMixin:
             self._bridge.sync_studio_runtime(compiled)
         except Exception as exc:
             self._log_dock.report_exception("studio", "studio runtime sync failed", exc)
+
+    def _compile_runtime_graphs_for_action(
+        self,
+        *,
+        blocked_fallback_message: str,
+        blocked_log_prefix: str,
+        error_log_prefix: str,
+        report_context: str,
+        warning_blocked_title: str | None,
+        warning_error_title: str | None,
+    ) -> CompiledRuntimeGraphs | None:
+        try:
+            return compile_runtime_graphs_from_studio(self.studio_graph)
+        except ValueError as exc:
+            msg = str(exc or "").strip() or str(blocked_fallback_message)
+            self._log_dock.append("studio", f"{blocked_log_prefix} {msg}\n")
+            if warning_blocked_title is not None:
+                show_warning(self, warning_blocked_title, msg)
+            return None
+        except _NODEGRAPH_VIEW_ERRORS as exc:
+            self._log_dock.append("studio", f"{error_log_prefix} {exc}\n")
+            self._log_dock.report_exception("studio", report_context, exc)
+            if warning_error_title is not None:
+                show_warning(self, warning_error_title, str(exc))
+            return None
 
     def _apply_auto_deploy(
         self,

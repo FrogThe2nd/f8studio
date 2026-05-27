@@ -92,6 +92,7 @@ class _FakeMain:
     _on_auto_deploy_timeout = F8StudioMainWin._on_auto_deploy_timeout
     _on_studio_runtime_sync_timeout = F8StudioMainWin._on_studio_runtime_sync_timeout
     _apply_auto_deploy = F8StudioMainWin._apply_auto_deploy
+    _compile_runtime_graphs_for_action = F8StudioMainWin._compile_runtime_graphs_for_action
     _append_compile_warnings = F8StudioMainWin._append_compile_warnings
     _mark_auto_deploy_observed = F8StudioMainWin._mark_auto_deploy_observed
     _deploy_fingerprint_from_compiled = F8StudioMainWin._deploy_fingerprint_from_compiled
