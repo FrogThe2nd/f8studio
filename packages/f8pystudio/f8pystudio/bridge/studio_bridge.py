@@ -63,6 +63,14 @@ from .deploy_state_controller import DeployStateControllerMixin
 logger = logging.getLogger(__name__)
 STARTUP_GATE_TIMEOUT_S = 6.0
 RUNGRAPH_ENDPOINT_READY_TIMEOUT_S = 15.0
+_QT_SIGNAL_ERRORS = (RuntimeError, TypeError)
+_ASYNC_SUBMIT_ERRORS = (RuntimeError, TypeError)
+_FUTURE_RESULT_ERRORS = (
+    concurrent.futures.CancelledError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
 
 
 class PyStudioServiceBridge(
@@ -222,32 +230,43 @@ class PyStudioServiceBridge(
     def _emit_log_line(self, line: str) -> None:
         try:
             self.log.emit(str(line))
-        except Exception:
+        except _QT_SIGNAL_ERRORS:
             logger.exception("bridge.log.emit failed")
 
     def _report_exception(self, context: str, exc: BaseException) -> None:
+        context_text = str(context or "").strip()
         report_exception(
             self._emit_log_line,
-            context=str(context or "").strip(),
+            context=context_text,
             exc=exc,
             log_once=self._exception_log_once,
         )
         try:
-            logger.error("%s", str(context or "").strip(), exc_info=exc)
-        except Exception:
-            # Logging must never crash the bridge.
-            pass
+            logger.error("%s", context_text, exc_info=exc)
+        except (OSError, RuntimeError, TypeError, ValueError) as log_exc:
+            fallback = logging.lastResort
+            if fallback is not None:
+                record = logger.makeRecord(
+                    logger.name,
+                    logging.ERROR,
+                    __file__,
+                    0,
+                    "failed to write bridge exception log context=%s log_error=%r original_error=%r",
+                    (context_text, log_exc, exc),
+                    None,
+                )
+                fallback.handle(record)
 
     def _emit_remote_command_response_safe(self, req_id: str, result: object, err: object) -> None:
         try:
             self._remote_command_response.emit(str(req_id), result, err)
-        except RuntimeError as exc:
+        except _QT_SIGNAL_ERRORS as exc:
             self._report_exception("emit remote command response failed", exc)
 
     def _emit_service_process_state_safe(self, service_id: str, running: bool) -> None:
         try:
             self.service_process_state.emit(str(service_id), bool(running))
-        except RuntimeError as exc:
+        except _QT_SIGNAL_ERRORS as exc:
             self._report_exception(f"emit service process state failed serviceId={service_id}", exc)
 
     def _submit_async(self, coro: Any, *, context: str) -> bool:
@@ -265,7 +284,9 @@ class PyStudioServiceBridge(
                 return False
             self._report_exception(context, exc)
             return False
-        except Exception as exc:
+        except TypeError as exc:
+            if asyncio.iscoroutine(coro):
+                coro.close()
             self._report_exception(context, exc)
             return False
 
@@ -281,7 +302,7 @@ class PyStudioServiceBridge(
             return future
         try:
             future = self._async.submit(self._run_startup_sequence_async())
-        except Exception as exc:
+        except _ASYNC_SUBMIT_ERRORS as exc:
             self._report_exception("submit startup wait failed", exc)
             return None
         self._startup_future = future
@@ -322,7 +343,7 @@ class PyStudioServiceBridge(
         except concurrent.futures.TimeoutError:
             self._emit_log_line(timeout_log_line)
             return False, None
-        except Exception as exc:
+        except _FUTURE_RESULT_ERRORS as exc:
             self._report_exception(error_context, exc)
             return True, None
 
@@ -427,7 +448,7 @@ class PyStudioServiceBridge(
                     fut.result(timeout=5)
                 except concurrent.futures.TimeoutError:
                     self._emit_log_line("bridge stop timeout; continue shutdown")
-            except Exception as exc:
+            except _ASYNC_SUBMIT_ERRORS as exc:
                 self._report_exception("submit stop failed", exc)
             self._async.stop()
             self._async_started = False

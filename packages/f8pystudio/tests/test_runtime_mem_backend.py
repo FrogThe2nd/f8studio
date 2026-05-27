@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from f8pysdk.codec import encode_obj
 from f8pysdk.testing import InMemoryTransport
@@ -47,6 +48,70 @@ def test_studio_bridge_uses_longer_rungraph_endpoint_ready_timeout_for_cold_star
         bridge._process_actions.close()
 
     assert config.endpoint_ready_timeout_s == RUNGRAPH_ENDPOINT_READY_TIMEOUT_S
+
+
+def test_bridge_emit_log_line_reports_signal_failures(caplog) -> None:
+    class _FailingSignal:
+        def emit(self, _line: str) -> None:
+            raise RuntimeError("signal closed")
+
+    bridge = PyStudioServiceBridge(PyStudioServiceBridgeConfig(bus_backend="mem"))
+    bridge.log = _FailingSignal()  # type: ignore[assignment]
+
+    bridge._emit_log_line("hello")
+
+    assert "bridge.log.emit failed" in caplog.text
+    bridge._process_actions.close()
+
+
+def test_bridge_submit_async_reports_non_coroutine_submission() -> None:
+    bridge = PyStudioServiceBridge(PyStudioServiceBridgeConfig(bus_backend="mem"))
+    reported: list[str] = []
+    bridge._ensure_async_runtime_started()
+
+    def _report_exception(context: str, exc: BaseException) -> None:
+        reported.append(f"{context}:{type(exc).__name__}")
+
+    bridge._report_exception = _report_exception  # type: ignore[method-assign]
+
+    try:
+        submitted = bridge._submit_async(object(), context="submit object")
+    finally:
+        bridge.stop()
+
+    assert submitted is False
+    assert reported == ["submit object:TypeError"]
+
+
+def test_bridge_report_exception_uses_last_resort_when_logger_fails(monkeypatch) -> None:
+    class _FailingLogger:
+        name = "f8pystudio.bridge.studio_bridge"
+
+        def error(self, *_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("logger failed")
+
+        def makeRecord(self, *args: object, **kwargs: object) -> logging.LogRecord:  # noqa: N802
+            return logging.getLogger("fallback-record").makeRecord(*args, **kwargs)
+
+    class _CapturingHandler(logging.Handler):
+        def __init__(self) -> None:
+            super().__init__(logging.ERROR)
+            self.records: list[logging.LogRecord] = []
+
+        def emit(self, record: logging.LogRecord) -> None:
+            self.records.append(record)
+
+    handler = _CapturingHandler()
+    bridge = PyStudioServiceBridge(PyStudioServiceBridgeConfig(bus_backend="mem"))
+    bridge.log.connect(lambda _line: None)
+    monkeypatch.setattr("f8pystudio.bridge.studio_bridge.logger", _FailingLogger())
+    monkeypatch.setattr(logging, "lastResort", handler)
+
+    bridge._report_exception("context", RuntimeError("boom"))
+
+    assert len(handler.records) == 1
+    assert "failed to write bridge exception log" in handler.records[0].getMessage()
+    bridge._process_actions.close()
 
 
 def test_runtime_rungraph_gateway_reuses_mem_transport_until_close() -> None:
