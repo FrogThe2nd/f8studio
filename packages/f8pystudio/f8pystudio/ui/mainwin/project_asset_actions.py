@@ -5,7 +5,10 @@ import logging
 from pathlib import Path
 from typing import Callable, Protocol
 
+import msgspec
+from NodeGraphQt.errors import NodeCreationError
 from qtpy import QtCore, QtWidgets
+from sqlalchemy.exc import SQLAlchemyError
 
 from f8pysdk.codec import dump_json
 
@@ -34,6 +37,38 @@ from ..support.ui_notifications import show_info
 logger = logging.getLogger(__name__)
 
 MessageDialogFn = Callable[[QtWidgets.QWidget, str, str], None]
+
+_PROJECT_STORAGE_ACTION_ERRORS = (
+    KeyError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    msgspec.DecodeError,
+    msgspec.ValidationError,
+    SQLAlchemyError,
+)
+_PROJECT_GRAPH_ACTION_ERRORS = (
+    KeyError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    NodeCreationError,
+    msgspec.DecodeError,
+    msgspec.ValidationError,
+)
+_COMPONENT_DRAFT_ACTION_ERRORS = (
+    KeyError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    msgspec.DecodeError,
+    msgspec.ValidationError,
+    SQLAlchemyError,
+)
+_PROJECT_SESSION_ACTION_ERRORS = (*_PROJECT_STORAGE_ACTION_ERRORS, *_PROJECT_GRAPH_ACTION_ERRORS)
 
 
 class ProjectAssetLogDockLike(Protocol):
@@ -98,7 +133,7 @@ def auto_load_project(*, studio_graph: ProjectAssetGraphLike, log_dock: ProjectA
             return
         studio_graph.load_session_payload(project.content)
         logger.info("Loaded project from %s", project.projectId)
-    except Exception as exc:
+    except _PROJECT_SESSION_ACTION_ERRORS as exc:
         log_dock.report_exception("studio", "session auto-load failed", exc)
         logger.exception("Auto-load session failed")
 
@@ -116,7 +151,7 @@ def auto_save_project(
         saved = ProjectStorageService().save_last_project(content=studio_graph.serialize_session())
         logger.info("Saved project to %s", saved.projectId)
         return True
-    except Exception as exc:
+    except _PROJECT_SESSION_ACTION_ERRORS as exc:
         log_dock.report_exception("studio", "session auto-save failed", exc)
         logger.exception("Auto-save session failed")
         return False
@@ -209,7 +244,7 @@ def open_project_dialog(
         service.set_current_project_id(record.projectId)
         log_dock.append("studio", f"[project] loaded: {record.name} ({record.projectId})\n")
         return str(start_dir or ""), True
-    except Exception as exc:
+    except _PROJECT_SESSION_ACTION_ERRORS as exc:
         _report_action_exception(
             parent=parent,
             log_dock=log_dock,
@@ -251,7 +286,7 @@ def _restore_project_history_from_picker(
         log_dock.append("studio", f"[project] loaded restored history: {restored.name} ({restored.projectId})\n")
         loaded_from_history.append(True)
         dialog.accept()
-    except Exception as exc:
+    except _PROJECT_GRAPH_ACTION_ERRORS as exc:
         _report_action_exception(
             parent=parent,
             log_dock=log_dock,
@@ -294,7 +329,7 @@ def _delete_project_from_picker(
         log_dock.append("studio", f"[project] deleted: {record.name} ({record.projectId})\n")
         show_info_message(parent, "Project deleted", f"Deleted project:\n{record.name}")
         dialog.replace_projects(projects=service.list_projects(), current_project_id=service.current_project_id())
-    except Exception as exc:
+    except _PROJECT_STORAGE_ACTION_ERRORS as exc:
         _report_action_exception(
             parent=parent,
             log_dock=log_dock,
@@ -348,7 +383,7 @@ def import_project_json_as_dialog(
         resolved_dir = str(Path(selected_path).resolve().parent)
         log_dock.append("studio", f"[project][import] imported: {record.name} ({record.projectId})\n")
         return resolved_dir, True
-    except Exception as exc:
+    except _PROJECT_SESSION_ACTION_ERRORS as exc:
         _report_action_exception(
             parent=parent,
             log_dock=log_dock,
@@ -391,7 +426,7 @@ def save_project_as_dialog(
         )
         log_dock.append("studio", f"[project] saved: {record.name} ({record.projectId})\n")
         return str(start_dir or ""), True
-    except Exception as exc:
+    except _PROJECT_SESSION_ACTION_ERRORS as exc:
         _report_action_exception(
             parent=parent,
             log_dock=log_dock,
@@ -426,7 +461,7 @@ def export_project_json_as_dialog(
     save_path = selected_path if selected_path.lower().endswith(".json") else selected_path + ".json"
     try:
         payload = studio_graph.serialize_session()
-    except Exception as exc:
+    except _PROJECT_GRAPH_ACTION_ERRORS as exc:
         _report_action_exception(
             parent=parent,
             log_dock=log_dock,
@@ -479,7 +514,7 @@ def export_publish_json_dialog(
     save_path = selected_path if selected_path.lower().endswith(".json") else selected_path + ".json"
     try:
         payload = studio_graph.serialize_publish_session()
-    except Exception as exc:
+    except _PROJECT_GRAPH_ACTION_ERRORS as exc:
         _report_action_exception(
             parent=parent,
             log_dock=log_dock,
@@ -604,7 +639,7 @@ def save_component_as_dialog(
         from ..support.ui_notifications import show_info
         show_info(parent, f"Component {action_text}", f"{action_text} component:\n{record.name}")
         return True
-    except Exception as exc:
+    except _COMPONENT_DRAFT_ACTION_ERRORS as exc:
         _report_action_exception(
             parent=parent,
             log_dock=log_dock,
@@ -657,7 +692,7 @@ def show_project_history_dialog(
             f"[project] loaded restored history: {restored.name} ({restored.projectId})\n",
         )
         return True
-    except Exception as exc:
+    except _PROJECT_GRAPH_ACTION_ERRORS as exc:
         _report_action_exception(
             parent=parent,
             log_dock=log_dock,
@@ -742,7 +777,7 @@ def _show_project_history_for_project(
                     "Project version deleted",
                     f"Deleted project version v{selected_version_number}.",
                 )
-            except Exception as exc:
+            except _PROJECT_STORAGE_ACTION_ERRORS as exc:
                 _report_action_exception(
                     parent=parent,
                     log_dock=log_dock,
@@ -769,7 +804,7 @@ def _show_project_history_for_project(
                 f"Restored project version v{selected_version_number} as the latest version.",
             )
             return restored
-        except Exception as exc:
+        except _PROJECT_STORAGE_ACTION_ERRORS as exc:
             _report_action_exception(
                 parent=parent,
                 log_dock=log_dock,
@@ -803,7 +838,7 @@ def insert_graph_json_dialog(
 
     try:
         request = studio_graph.prepare_insert_graph_from_file(selected_path)
-    except Exception as exc:
+    except _PROJECT_GRAPH_ACTION_ERRORS as exc:
         _report_action_exception(
             parent=parent,
             log_dock=log_dock,
