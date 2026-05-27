@@ -13,6 +13,11 @@ from f8pysdk.f8_naming import ensure_token
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
 from .process_lifecycle import StartServiceRequest, StopServiceRequest
 from .rungraph_deploy_flow import pick_compiled
+from .service_availability import (
+    ServiceStatusReuseCode,
+    evaluate_service_status_reuse,
+    service_status_identity_valid,
+)
 from .service_liveliness import format_runtime_instances
 from .service_endpoint_client import request_service_status, request_service_terminate, request_set_service_active
 from f8pystudio.bridge.process_manager import ServiceProcessConfig
@@ -348,11 +353,7 @@ class ServiceLifecycleControllerMixin:
             instances.add(runtime_instance_id)
 
     def _identity_status_valid(self, status: dict[str, Any]) -> bool:
-        if not bool(status.get("identityValid")):
-            return False
-        service_class = str(status.get("serviceClass") or "").strip()
-        runtime_instance_id = str(status.get("runtimeInstanceId") or "").strip()
-        return bool(service_class and runtime_instance_id)
+        return service_status_identity_valid(status)
 
     async def _live_runtime_instances(self, service_id: str) -> set[str] | None:
         sid = ensure_token(str(service_id), label="service_id")
@@ -562,8 +563,10 @@ class ServiceLifecycleControllerMixin:
                     f"running={local_class} desired={desired_class}"
                 )
                 return False
-            status = await self._request_service_status_async(sid, timeout_s=0.75, attempts=6, retry_sleep_s=0.25)
-            if not isinstance(status, dict):
+            status_raw = await self._request_service_status_async(sid, timeout_s=0.75, attempts=6, retry_sleep_s=0.25)
+            status = status_raw if isinstance(status_raw, dict) else None
+            evaluation = evaluate_service_status_reuse(status, desired_service_class=desired_class)
+            if evaluation.code is ServiceStatusReuseCode.UNREACHABLE:
                 self._emit_log_line(
                     f"deploy blocked serviceId={sid}: local service status unreachable "
                     f"localRunning=True liveInstances={format_runtime_instances(instances)} "
@@ -571,16 +574,15 @@ class ServiceLifecycleControllerMixin:
                 )
                 self._cache_service_alive(sid, True)
                 return False
-            if not self._identity_status_valid(status):
+            if evaluation.code is ServiceStatusReuseCode.OLD_PROTOCOL:
                 self._emit_log_line(
                     f"deploy blocked serviceId={sid}: status endpoint uses old protocol without identity"
                 )
                 return False
-            running_class = str(status.get("serviceClass") or "").strip()
-            if running_class and running_class != desired_class:
+            if evaluation.code is ServiceStatusReuseCode.SERVICE_CLASS_MISMATCH:
                 self._emit_log_line(
                     f"deploy blocked serviceId={sid}: serviceClass collision "
-                    f"running={running_class} desired={desired_class}"
+                    f"running={evaluation.running_service_class} desired={desired_class}"
                 )
                 return False
             self._cache_service_alive(sid, True)
@@ -597,8 +599,10 @@ class ServiceLifecycleControllerMixin:
             return False
 
         if len(instances) == 1:
-            status = await self._request_service_status_async(sid, timeout_s=0.75, attempts=6, retry_sleep_s=0.25)
-            if status is None:
+            status_raw = await self._request_service_status_async(sid, timeout_s=0.75, attempts=6, retry_sleep_s=0.25)
+            status = status_raw if isinstance(status_raw, dict) else None
+            evaluation = evaluate_service_status_reuse(status, desired_service_class=desired_class)
+            if evaluation.code is ServiceStatusReuseCode.UNREACHABLE:
                 if self._try_cleanup_untracked_local_processes(sid):
                     return self._start_service_process_local(service_id=sid, service_class=desired_class)
                 self._emit_log_line(
@@ -608,20 +612,19 @@ class ServiceLifecycleControllerMixin:
                 )
                 self._cache_service_alive(sid, True)
                 return False
-            if not self._identity_status_valid(status):
+            if evaluation.code is ServiceStatusReuseCode.OLD_PROTOCOL:
                 if self._try_cleanup_untracked_local_processes(sid):
                     return self._start_service_process_local(service_id=sid, service_class=desired_class)
                 self._emit_log_line(
                     f"deploy blocked serviceId={sid}: status endpoint uses old protocol without identity"
                 )
                 return False
-            running_class = str(status.get("serviceClass") or "").strip()
-            if running_class != desired_class:
+            if evaluation.code is ServiceStatusReuseCode.SERVICE_CLASS_MISMATCH:
                 if self._try_cleanup_untracked_local_processes(sid):
                     return self._start_service_process_local(service_id=sid, service_class=desired_class)
                 self._emit_log_line(
                     f"deploy blocked serviceId={sid}: serviceClass collision "
-                    f"running={running_class or '<empty>'} desired={desired_class}"
+                    f"running={evaluation.running_service_class or '<empty>'} desired={desired_class}"
                 )
                 return False
             self._cache_service_alive(sid, True)

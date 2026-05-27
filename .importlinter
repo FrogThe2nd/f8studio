@@ -26,3 +26,16 @@ forbidden_modules =
     f8pystudio.operators
     f8pystudio.render_nodes
     f8pystudio.app
+
+[importlinter:contract:bridge-service-availability-boundary]
+name = bridge.service_availability remains a pure service availability helper
+type = forbidden
+source_modules =
+    f8pystudio.bridge.service_availability
+forbidden_modules =
+    f8pystudio.assets
+    f8pystudio.nodegraph
+    f8pystudio.ui
+    f8pystudio.operators
+    f8pystudio.render_nodes
+    f8pystudio.app

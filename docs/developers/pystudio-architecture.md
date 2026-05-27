@@ -31,6 +31,14 @@ Rungraph apply evidence is similarly isolated in `bridge.rungraph_deploy_evidenc
 
 `bridge.rungraph_deployer` owns transport, retained watchers, endpoint probing, and retry timing. It should delegate status-payload interpretation to the evidence helper instead of growing another inline state machine.
 
+Service availability decisions should keep remote status interpretation in `bridge.service_availability`:
+
+- Convert status endpoint payloads into explicit identity objects.
+- Decide whether a live/local service can be reused.
+- Distinguish unreachable status, old identity protocol, and service-class mismatch.
+
+`bridge.service_lifecycle_controller` still owns process cleanup, launch, cache updates, and user-visible logs. It should ask the availability helper what the status means instead of duplicating protocol checks in each branch.
+
 ## Recommended Refactoring Direction
 
 Prefer small explicit modules with typed data objects over wide mixins with implicit attributes:
