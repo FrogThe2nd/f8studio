@@ -34,6 +34,12 @@ try:
 except ModuleNotFoundError:
     np = None  # type: ignore[assignment]
 
+_DESTRUCTOR_CLEANUP_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
+_HOOK_AWAITABLE_SCHEDULE_ERRORS = (RuntimeError, TypeError, ValueError)
+_MONITOR_REPORT_ERRORS = (LookupError, OSError, RuntimeError, TypeError, ValueError)
+_SCRIPT_OUTPUT_ERRORS = (LookupError, OSError, RuntimeError, TypeError, ValueError)
+_VIDEO_TRANSPORT_ERRORS = (BufferError, LookupError, OSError, RuntimeError, TypeError, ValueError)
+
 
 DEFAULT_CODE = (
     "# Hooks template (uncomment what you need):\n"
@@ -352,11 +358,11 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         if self._started and not self._closing:
             try:
                 self._invoke_sync(self._hook_on_stop, self._hook_on_stop_is_async, "onStop")
-            except Exception as exc:
+            except _DESTRUCTOR_CLEANUP_ERRORS as exc:
                 logger.error("[%s:pyscript] __del__ onStop failed", self.node_id, exc_info=exc)
         try:
             self._shutdown_video_subscriptions_sync()
-        except Exception as exc:
+        except _DESTRUCTOR_CLEANUP_ERRORS as exc:
             logger.error("[%s:pyscript] __del__ video cleanup failed", self.node_id, exc_info=exc)
 
     def attach(self, bus: Any) -> None:
@@ -420,6 +426,8 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
     def _compact_rows(raw: bytes, *, width: int, height: int, pitch: int, row_bytes: int) -> bytes | None:
         if width <= 0 or height <= 0 or pitch < row_bytes or row_bytes <= 0:
             return None
+        if len(raw) < (pitch * height):
+            return None
         if pitch == row_bytes:
             return raw
         compact = bytearray(row_bytes * height)
@@ -446,12 +454,9 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
                 return {"kind": "bgra32", "shape": [height, width, 4], "data": None}
             data = None
             if np is not None:
-                try:
-                    arr = np.frombuffer(compact, dtype=np.uint8)
-                    if int(arr.size) == (height * width * 4):
-                        data = arr.reshape(height, width, 4)
-                except Exception as exc:
-                    logger.warning("[%s:pyscript] decode bgra failed", self.node_id, exc_info=exc)
+                arr = np.frombuffer(compact, dtype=np.uint8)
+                if int(arr.size) == (height * width * 4):
+                    data = arr.reshape(height, width, 4)
             return {"kind": "bgra32", "shape": [height, width, 4], "data": data}
 
         if fmt == VIDEO_FORMAT_FLOW2_F16:
@@ -461,12 +466,9 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
                 return {"kind": "flow2_f16", "shape": [height, width, 2], "data": None}
             data = None
             if np is not None:
-                try:
-                    arr = np.frombuffer(compact, dtype="<f2")
-                    if int(arr.size) == (height * width * 2):
-                        data = arr.reshape(height, width, 2)
-                except Exception as exc:
-                    logger.warning("[%s:pyscript] decode flow failed", self.node_id, exc_info=exc)
+                arr = np.frombuffer(compact, dtype="<f2")
+                if int(arr.size) == (height * width * 2):
+                    data = arr.reshape(height, width, 2)
             return {"kind": "flow2_f16", "shape": [height, width, 2], "data": data}
 
         return None
@@ -511,7 +513,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
                     severity="error",
                     fingerprint=f"pyscript:{stage}:{type(exc).__name__}:{exc}",
                 )
-            except Exception as set_exc:
+            except _MONITOR_REPORT_ERRORS as set_exc:
                 logger.error("[%s:pyscript] report monitor error failed", self.node_id, exc_info=set_exc)
 
         loop.create_task(_report_monitor_error(), name=f"pyscript:reportError:{self.node_id}")
@@ -742,6 +744,30 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         self._hook_on_data_maybe_awaitable = bool(self._hook_on_data is not None and not self._hook_on_data_is_async)
         self._hook_on_tick_maybe_awaitable = bool(self._hook_on_tick is not None and not self._hook_on_tick_is_async)
 
+    def _close_unscheduled_hook_awaitable(self, stage: str, result: Any) -> None:
+        if not inspect.iscoroutine(result):
+            return
+        try:
+            result.close()
+        except RuntimeError as exc:
+            self._set_error(f"{stage}:schedule", exc)
+
+    def _schedule_sync_hook_awaitable(self, stage: str, result: Any) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError as exc:
+            self._close_unscheduled_hook_awaitable(stage, result)
+            self._set_error(f"{stage}:schedule", exc)
+            return
+        try:
+            task = asyncio.ensure_future(result, loop=loop)
+        except _HOOK_AWAITABLE_SCHEDULE_ERRORS as exc:
+            self._close_unscheduled_hook_awaitable(stage, result)
+            self._set_error(f"{stage}:schedule", exc)
+            return
+        if isinstance(task, asyncio.Task):
+            task.set_name(f"pyscript:{stage}:{self.node_id}")
+
     def _compile_and_start(self) -> None:
         if self._started:
             self._invoke_sync(self._hook_on_stop, self._hook_on_stop_is_async, "onStop")
@@ -789,23 +815,13 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         try:
             invoke_ctx = self._build_invoke_ctx()
             if hook_is_async:
-                try:
-                    loop = asyncio.get_running_loop()
-                except RuntimeError as exc:
-                    self._set_error(stage, exc)
-                    return None
                 coroutine = hook(invoke_ctx, *args)
-                loop.create_task(coroutine, name=f"pyscript:{stage}:{self.node_id}")
+                self._schedule_sync_hook_awaitable(stage, coroutine)
                 return None
 
             result = hook(invoke_ctx, *args)
             if inspect.isawaitable(result):
-                try:
-                    loop = asyncio.get_running_loop()
-                except RuntimeError as exc:
-                    self._set_error(stage, exc)
-                    return None
-                loop.create_task(result, name=f"pyscript:{stage}:{self.node_id}")
+                self._schedule_sync_hook_awaitable(stage, result)
                 return None
             return result
         except Exception as exc:
@@ -865,8 +881,9 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         for out_port, out_value in outputs.items():
             try:
                 await self.emit(str(out_port), out_value)
-            except Exception as exc:
-                self._log_error_deduped("emit_output", f"emit failed port={out_port}", exc)
+            except _SCRIPT_OUTPUT_ERRORS as exc:
+                self._set_error(f"result:emit:{out_port}", exc)
+                return
 
     def _unsubscribe_video_latest_sync(self, key: str) -> bool:
         sub = self._video_subscriptions.pop(str(key), None)
@@ -908,7 +925,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             return
         try:
             reader.close()
-        except Exception as exc:
+        except _VIDEO_TRANSPORT_ERRORS as exc:
             self._log_error_deduped(
                 f"video_reader_close:{sub.key}",
                 f"video reader close failed key={sub.key}",
@@ -939,7 +956,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
                 if sub.reader is None:
                     try:
                         sub.reader = self._open_video_sub_reader(sub)
-                    except Exception as exc:
+                    except _VIDEO_TRANSPORT_ERRORS as exc:
                         sub.error_count += 1
                         self._log_error_deduped(
                             f"video_open:{sub.key}",
@@ -988,7 +1005,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
                         frame.release()
                 except asyncio.CancelledError:
                     raise
-                except Exception as exc:
+                except _VIDEO_TRANSPORT_ERRORS as exc:
                     sub.error_count += 1
                     self._log_error_deduped(
                         f"video_read:{sub.key}",

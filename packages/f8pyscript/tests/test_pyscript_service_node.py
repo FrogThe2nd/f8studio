@@ -594,6 +594,30 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out_value.get("name"), "Hips")
         self.assertEqual(out_value.get("position"), [3, 4, 5])
 
+    async def test_emit_outputs_reports_emit_failure(self) -> None:
+        class FailingEmitPythonScriptServiceNode(PythonScriptServiceNode):
+            async def emit(
+                self,
+                port: str,
+                value: object,
+                *,
+                ts_ms: int | None = None,
+                ctx_id: str | int | None = None,
+            ) -> None:
+                del port, value, ts_ms, ctx_id
+                raise RuntimeError("emit failed")
+
+        node = FailingEmitPythonScriptServiceNode(
+            node_id="svcA",
+            node=_service_node(code=""),
+            initial_state={"code": "def onStart(ctx):\n    pass\n"},
+        )
+        await node._emit_outputs({"outputs": {"out": 123}})
+
+        self.assertIsNotNone(node._last_error)
+        self.assertIn("result:emit:out", str(node._last_error))
+        self.assertIn("emit failed", str(node._last_error))
+
     async def test_hook_async_flags_and_invoke_context_reuse(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
