@@ -13,6 +13,7 @@ from f8pysdk.f8_naming import ensure_token
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
 from .process_lifecycle import StartServiceRequest, StopServiceRequest
 from .rungraph_deploy_flow import pick_compiled
+from .service_liveliness import format_runtime_instances
 from .service_endpoint_client import request_service_status, request_service_terminate, request_set_service_active
 from f8pystudio.bridge.process_manager import ServiceProcessConfig
 from f8pystudio.nodegraph.runtime_compiler import CompiledRuntimeGraphs
@@ -66,13 +67,6 @@ class ServiceLifecycleControllerMixin:
             f"zenohConfig={config_path} zenohConnect={connect} zenohListen={listen} "
             f"zenohShmPoolBytes={self._runtime_zenoh_shm_pool_bytes()}"
         )
-
-    def _format_runtime_instances(self, instances: set[str] | None) -> str:
-        if instances is None:
-            return "<unknown>"
-        if not instances:
-            return "<none>"
-        return ",".join(sorted(instances))
 
     async def _ensure_requester(self) -> Any | None:
         return None
@@ -572,7 +566,7 @@ class ServiceLifecycleControllerMixin:
             if not isinstance(status, dict):
                 self._emit_log_line(
                     f"deploy blocked serviceId={sid}: local service status unreachable "
-                    f"localRunning=True liveInstances={self._format_runtime_instances(instances)} "
+                    f"localRunning=True liveInstances={format_runtime_instances(instances)} "
                     f"({self._runtime_deploy_diagnostics()})"
                 )
                 self._cache_service_alive(sid, True)
@@ -609,7 +603,7 @@ class ServiceLifecycleControllerMixin:
                     return self._start_service_process_local(service_id=sid, service_class=desired_class)
                 self._emit_log_line(
                     f"deploy blocked serviceId={sid}: live service status unreachable "
-                    f"localRunning=False liveInstances={self._format_runtime_instances(instances)} "
+                    f"localRunning=False liveInstances={format_runtime_instances(instances)} "
                     f"({self._runtime_deploy_diagnostics()})"
                 )
                 self._cache_service_alive(sid, True)

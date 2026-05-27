@@ -1,0 +1,15 @@
+[importlinter]
+root_package = f8pystudio
+
+[importlinter:contract:bridge-service-liveliness-boundary]
+name = bridge.service_liveliness remains a pure runtime identity helper
+type = forbidden
+source_modules =
+    f8pystudio.bridge.service_liveliness
+forbidden_modules =
+    f8pystudio.assets
+    f8pystudio.nodegraph
+    f8pystudio.ui
+    f8pystudio.operators
+    f8pystudio.render_nodes
+    f8pystudio.app

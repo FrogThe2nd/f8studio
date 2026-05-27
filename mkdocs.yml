@@ -31,6 +31,7 @@ nav:
       - Overview: developers/index.md
       - Build from Source: developers/build-from-source.md
       - Service Development: developers/service-development.md
+      - PyStudio Architecture: developers/pystudio-architecture.md
       - PyStudio Plugin Development: developers/pystudio-plugin-development.md
       - Docs Tooling: developers/docs-tooling.md
   - Scenarios:

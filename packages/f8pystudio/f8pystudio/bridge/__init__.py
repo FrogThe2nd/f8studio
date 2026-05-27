@@ -29,6 +29,16 @@ from .process_manager import (
 )
 from .remote_state_sync import ApplyWatchTargetsRequest, RemoteStateGateway, RemoteStateGatewayAdapter
 from .remote_state_watcher import RemoteStateWatcher, WatchTarget
+from .service_liveliness import (
+    ServiceLivelinessIdentity,
+    ServiceLivelinessQueryResult,
+    ZENOH_SERVICE_LIVELINESS_PREFIX,
+    format_runtime_instances,
+    is_zenoh_liveliness_reply_channel_drained,
+    query_service_liveliness_instances_sync,
+    service_id_from_zenoh_liveliness_key,
+    service_liveliness_identity_from_zenoh_key,
+)
 from .runtime_session_controller import RuntimeSessionControllerMixin
 from .service_lifecycle_controller import ServiceLifecycleControllerMixin
 from .deploy_state_controller import DeployStateControllerMixin
@@ -92,6 +102,8 @@ __all__ = [
     "RuntimeRungraphGateway",
     "RuntimeSessionControllerMixin",
     "ServiceLifecycleControllerMixin",
+    "ServiceLivelinessIdentity",
+    "ServiceLivelinessQueryResult",
     "ServiceProcessConfig",
     "ServiceProcessManager",
     "ServiceProcessMatch",
@@ -106,6 +118,7 @@ __all__ = [
     "StopServiceResult",
     "STARTUP_GATE_TIMEOUT_S",
     "WatchTarget",
+    "ZENOH_SERVICE_LIVELINESS_PREFIX",
     "build_local_state_field_index",
     "build_remote_watch_targets",
     "build_studio_runtime_graph",
@@ -114,7 +127,12 @@ __all__ = [
     "collect_managed_service_inventory",
     "dedupe_fields",
     "find_service_processes_by_service_id",
+    "format_runtime_instances",
+    "is_zenoh_liveliness_reply_channel_drained",
     "terminate_service_processes_by_service_id",
+    "query_service_liveliness_instances_sync",
+    "service_id_from_zenoh_liveliness_key",
+    "service_liveliness_identity_from_zenoh_key",
     "message_data_bytes",
     "request_service_status",
     "request_service_terminate",

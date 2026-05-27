@@ -61,6 +61,7 @@ pytest = ">=8.4.2,<9"
 
 [feature.test.pypi-dependencies]
 ruff = ">=0.12.0,<0.13"
+import-linter = ">=2.11,<3"
 
 [feature.test.tasks]
 pytest = "python -m pytest"
@@ -71,6 +72,7 @@ pytest_studio = "python -m pytest -q packages/f8pystudio/tests"
 lint = "ruff check packages/f8proclauncher/f8proclauncher packages/f8pystudio/f8pystudio/global_hotkeys packages/f8pymppose/f8pymppose packages/f8pyscript/f8pyscript packages/f8pyaudiofeat/f8pyaudiofeat packages/f8pydl/f8pydl packages/f8pystudio_ext_viz_tcode/f8pystudio_ext_viz_tcode packages/f8pystudio_ext_template_match/f8pystudio_ext_template_match packages/f8pysdk/f8pysdk packages/f8pyengine/f8pyengine"
 typecheck = "basedpyright -p pyrightconfig.json"
 quality_exceptions = "python packages/f8pystudio/tools/quality/except_metrics.py packages --exclude-glob '**/tests/**' --max-broad 844 --max-silent 40"
+lint_imports = "lint-imports"
 
 [feature.audio.pypi-dependencies]
 librosa = ">=0.11.0, <0.12"

@@ -7,11 +7,13 @@ from types import SimpleNamespace
 
 from f8pystudio.bridge.runtime_lifecycle import SINGLETON_GUARD_DIALOG_MESSAGE
 from f8pysdk import zenoh_shutdown
-from f8pystudio.bridge.runtime_session_controller import (
+from f8pystudio.bridge.service_liveliness import (
     ServiceLivelinessIdentity,
+    service_liveliness_identity_from_zenoh_key,
+    service_id_from_zenoh_liveliness_key,
+)
+from f8pystudio.bridge.runtime_session_controller import (
     RuntimeSessionControllerMixin,
-    _service_liveliness_identity_from_zenoh_key,
-    _service_id_from_zenoh_liveliness_key,
 )
 
 
@@ -259,18 +261,18 @@ def test_start_after_preflight_refreshes_last_compiled_studio_runtime(monkeypatc
 
 
 def test_zenoh_liveliness_key_extracts_service_id() -> None:
-    assert _service_id_from_zenoh_liveliness_key("f8/live/svc/engine/instances/inst1") == "engine"
-    assert _service_id_from_zenoh_liveliness_key("/f8/live/svc/detector/instances/inst2/") == "detector"
-    assert _service_id_from_zenoh_liveliness_key("f8/live/studio/studio") is None
-    assert _service_id_from_zenoh_liveliness_key("f8/live/svc/") is None
-    assert _service_id_from_zenoh_liveliness_key("f8/live/svc/bad/path") is None
+    assert service_id_from_zenoh_liveliness_key("f8/live/svc/engine/instances/inst1") == "engine"
+    assert service_id_from_zenoh_liveliness_key("/f8/live/svc/detector/instances/inst2/") == "detector"
+    assert service_id_from_zenoh_liveliness_key("f8/live/studio/studio") is None
+    assert service_id_from_zenoh_liveliness_key("f8/live/svc/") is None
+    assert service_id_from_zenoh_liveliness_key("f8/live/svc/bad/path") is None
 
 
 def test_zenoh_liveliness_key_extracts_instance_identity() -> None:
-    assert _service_liveliness_identity_from_zenoh_key("f8/live/svc/engine/instances/inst1") == (
+    assert service_liveliness_identity_from_zenoh_key("f8/live/svc/engine/instances/inst1") == (
         ServiceLivelinessIdentity(service_id="engine", runtime_instance_id="inst1")
     )
-    assert _service_liveliness_identity_from_zenoh_key("f8/live/svc/engine") is None
+    assert service_liveliness_identity_from_zenoh_key("f8/live/svc/engine") is None
 
 
 def test_runtime_session_returns_block_message_when_singleton_detected(monkeypatch) -> None:

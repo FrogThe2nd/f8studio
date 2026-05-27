@@ -10,6 +10,13 @@ from f8pysdk.codec import decode_obj, dump_json
 from f8pysdk.zenoh_naming import zenoh_studio_liveliness_key
 from f8pysdk.zenoh_shutdown import close_zenoh_session_best_effort
 
+from .service_liveliness import (
+    ServiceLivelinessQueryResult,
+    ZENOH_SERVICE_LIVELINESS_PREFIX,
+    is_zenoh_liveliness_reply_channel_drained,
+    query_service_liveliness_instances_sync,
+    service_liveliness_identity_from_zenoh_key,
+)
 from .runtime_lifecycle import (
     SINGLETON_GUARD_DIALOG_MESSAGE,
 )
@@ -22,78 +29,6 @@ from f8pystudio.contracts.ui_commands import UiCommand
 from f8pystudio.studio_specs.registry import shared_pystudio_registry
 
 _MONITOR_UI_EMIT_INTERVAL_S = 1.0
-_ZENOH_SERVICE_LIVELINESS_PREFIX = "f8/live/svc/"
-
-
-@dataclass(frozen=True)
-class ServiceLivelinessIdentity:
-    service_id: str
-    runtime_instance_id: str
-
-
-@dataclass(frozen=True)
-class ServiceLivelinessQueryResult:
-    instances: set[str]
-    query_ok: bool
-    error: BaseException | None = None
-
-
-def _is_zenoh_liveliness_reply_channel_drained(exc: BaseException) -> bool:
-    return "channel is empty and closed" in str(exc).strip().lower()
-
-
-def _service_liveliness_identity_from_zenoh_key(key: str) -> ServiceLivelinessIdentity | None:
-    parts = [part for part in str(key or "").strip("/").split("/") if part]
-    if len(parts) != 6:
-        return None
-    if parts[0] != "f8" or parts[1] != "live" or parts[2] != "svc" or parts[4] != "instances":
-        return None
-    service_id = parts[3]
-    runtime_instance_id = parts[5]
-    if not service_id or not runtime_instance_id:
-        return None
-    return ServiceLivelinessIdentity(service_id=service_id, runtime_instance_id=runtime_instance_id)
-
-
-def _service_id_from_zenoh_liveliness_key(key: str) -> str | None:
-    identity = _service_liveliness_identity_from_zenoh_key(key)
-    if identity is None:
-        return None
-    return identity.service_id
-
-
-def _query_service_liveliness_instances_sync(
-    *,
-    zenoh_module: Any,
-    session: Any,
-    service_id: str,
-    timeout_s: float,
-) -> ServiceLivelinessQueryResult:
-    sid = str(service_id or "").strip()
-    instances: set[str] = set()
-    key_expr = f"{_ZENOH_SERVICE_LIVELINESS_PREFIX}{sid}/instances/**"
-    try:
-        replies = session.liveliness().get(key_expr, timeout=float(timeout_s))
-        deadline = time.monotonic() + max(0.02, float(timeout_s)) + 0.05
-        while time.monotonic() < deadline:
-            try:
-                reply = replies.try_recv()
-            except zenoh_module.ZError as exc:
-                if _is_zenoh_liveliness_reply_channel_drained(exc):
-                    break
-                raise
-            if reply is None:
-                time.sleep(0.01)
-                continue
-            sample = reply.ok
-            if sample is None:
-                continue
-            identity = _service_liveliness_identity_from_zenoh_key(str(sample.key_expr))
-            if identity is not None and identity.service_id == sid:
-                instances.add(identity.runtime_instance_id)
-        return ServiceLivelinessQueryResult(instances=instances, query_ok=True)
-    except Exception as exc:
-        return ServiceLivelinessQueryResult(instances=set(), query_ok=False, error=exc)
 
 
 @dataclass(frozen=True)
@@ -316,7 +251,7 @@ class RuntimeSessionControllerMixin:
                 try:
                     reply = replies.try_recv()
                 except zenoh.ZError as exc:  # type: ignore[attr-defined]
-                    if _is_zenoh_liveliness_reply_channel_drained(exc):
+                    if is_zenoh_liveliness_reply_channel_drained(exc):
                         break
                     raise
                 if reply is None:
@@ -366,7 +301,7 @@ class RuntimeSessionControllerMixin:
 
         def _on_sample(sample: Any) -> None:
             try:
-                identity = _service_liveliness_identity_from_zenoh_key(str(sample.key_expr))
+                identity = service_liveliness_identity_from_zenoh_key(str(sample.key_expr))
                 if identity is None:
                     return
                 if sample.kind == zenoh.SampleKind.PUT:
@@ -389,7 +324,7 @@ class RuntimeSessionControllerMixin:
 
         try:
             self._zenoh_service_liveliness_sub = session.liveliness().declare_subscriber(
-                f"{_ZENOH_SERVICE_LIVELINESS_PREFIX}**",
+                f"{ZENOH_SERVICE_LIVELINESS_PREFIX}**",
                 _on_sample,
                 history=True,
             )
@@ -456,7 +391,7 @@ class RuntimeSessionControllerMixin:
         result: ServiceLivelinessQueryResult | None = None
         try:
             result = await asyncio.to_thread(
-                _query_service_liveliness_instances_sync,
+                query_service_liveliness_instances_sync,
                 zenoh_module=zenoh,
                 session=session,
                 service_id=sid,
