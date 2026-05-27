@@ -657,6 +657,34 @@ def test_state_field_dialog_conflicting_hotkey_disables_commit_controls() -> Non
     assert dialog._buttons.button(QtWidgets.QDialogButtonBox.Ok).isEnabled() is False
 
 
+def test_state_field_dialog_rejects_invalid_hotkey_with_warning(monkeypatch) -> None:
+    _ensure_app()
+    warnings: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "f8pystudio.ui.dialogs.node_spec_edit_dialogs.show_warning",
+        lambda _parent, title, message: warnings.append((str(title), str(message))),
+    )
+    dialog = npw._F8EditStateFieldDialog(
+        None,
+        title="State",
+        field=F8StateSpec(
+            name="trigger",
+            valueSchema=integer_schema(default=0),
+            access=F8StateAccess.rw,
+            uiControl="button",
+        ),
+        global_hotkey="",
+    )
+    accepted: list[int] = []
+    dialog.accepted.connect(lambda: accepted.append(1))  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(dialog._global_hotkey, "value", lambda: "Ctrl+Alt+Unsupported")
+    dialog.accept()
+
+    assert accepted == []
+    assert warnings == [("Invalid global hotkey", "Unsupported hotkey token: 'Unsupported'")]
+
+
 def test_x11_backend_registers_and_unregisters_modifier_variants() -> None:
     display = _FakeDisplay()
     backend = X11GlobalHotkeyBackend(

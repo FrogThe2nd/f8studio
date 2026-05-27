@@ -47,6 +47,14 @@ class _FakeSchemaDialog:
         return self._schema
 
 
+class _FailingAcceptedSchemaDialog(_FakeSchemaDialog):
+    def exec_(self) -> int:
+        return QtWidgets.QDialog.Accepted
+
+    def schema(self) -> Any:
+        raise ValueError("schema decode failed")
+
+
 class _FakePortNode:
     def __init__(self, spec: F8ServiceSpec, *, missing_locked: bool) -> None:
         self.spec = spec
@@ -200,6 +208,36 @@ def test_edit_schema_dialogs_pass_read_only_when_ui_only(monkeypatch) -> None:
     )
     cmd_param._edit_schema()
     assert _FakeSchemaDialog.last_read_only is True
+
+
+def test_edit_schema_dialogs_show_warning_when_schema_read_fails(monkeypatch) -> None:
+    _ensure_app()
+    warnings: list[tuple[str, str]] = []
+    monkeypatch.setattr(node_spec_edit_dialogs, "SchemaBuilderDialog", _FailingAcceptedSchemaDialog)
+    monkeypatch.setattr(
+        node_spec_edit_dialogs,
+        "show_warning",
+        lambda _parent, title, message: warnings.append((str(title), str(message))),
+    )
+
+    data_port = npw._F8EditDataPortDialog(
+        None,
+        title="Data",
+        port=F8DataPortSpec(name="in", valueSchema=schema_from_json_obj({"type": "any"})),
+    )
+    data_port._edit_schema()
+
+    state_field = npw._F8EditStateFieldDialog(
+        None,
+        title="State",
+        field=F8StateSpec(name="x", valueSchema=schema_from_json_obj({"type": "number"}), access=F8StateAccess.rw),
+    )
+    state_field._edit_schema()
+
+    assert warnings == [
+        ("Invalid schema", "schema decode failed"),
+        ("Invalid schema", "schema decode failed"),
+    ]
 
 
 def test_open_state_field_editor_allows_missing_locked_read_only_dialog(monkeypatch) -> None:

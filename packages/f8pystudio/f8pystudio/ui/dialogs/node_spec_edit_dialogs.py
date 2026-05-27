@@ -18,6 +18,7 @@ from f8pysdk.specs import (
 from f8pysdk.codec import copy_model
 from qtpy import QtCore, QtGui, QtWidgets
 
+from ...global_hotkeys.models import GlobalHotkeyParseError
 from ...global_hotkeys.parser import parse_global_hotkey
 from ...nodegraph.state_schema import schema_enum_items as _schema_enum_items
 from ...nodegraph.state_schema import schema_type_any as _schema_type
@@ -25,9 +26,33 @@ from .schema_builder_dialog import SchemaBuilderDialog, schema_from_json_obj
 from ...ui.support.ui_control import parse_ui_control
 
 _GLOBAL_HOTKEY_UI_CONTROLS = {"button", "select", "dropdown", "dropbox", "combo", "combobox"}
+_SCHEMA_DIALOG_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
+_MODEL_COPY_ERRORS = (AttributeError, TypeError, ValueError)
+_STATE_FIELD_READ_ERRORS = (AttributeError, TypeError, ValueError)
 from ...ui.support.ui_icons import StudioIcon, icon_for
 from ...ui.support.ui_notifications import show_warning
 from ...ui.support.studio_theme import label_qss, studio_dark_theme
+
+
+def _state_field_schema_or_any(field: F8StateSpec) -> Any:
+    try:
+        return field.valueSchema or schema_from_json_obj({"type": "any"})
+    except _STATE_FIELD_READ_ERRORS:
+        return schema_from_json_obj({"type": "any"})
+
+
+def _state_field_access_or_default(field: F8StateSpec) -> F8StateAccess:
+    try:
+        return F8StateAccess(field.access)
+    except (TypeError, ValueError):
+        return F8StateAccess.rw
+
+
+def _state_field_access_text(field: F8StateSpec) -> str:
+    try:
+        return str(F8StateAccess(field.access).value)
+    except (TypeError, ValueError):
+        return F8StateAccess.rw.value
 
 
 class _F8HotkeySequenceEdit(QtWidgets.QKeySequenceEdit):
@@ -159,7 +184,7 @@ class _F8GlobalHotkeyEdit(QtWidgets.QWidget):
             return True
         try:
             parse_global_hotkey(text)
-        except Exception:
+        except GlobalHotkeyParseError:
             return False
         return True
 
@@ -173,7 +198,7 @@ class _F8GlobalHotkeyEdit(QtWidgets.QWidget):
             return
         try:
             normalized = parse_global_hotkey(text).display_text
-        except Exception:
+        except GlobalHotkeyParseError:
             self._refresh_status()
             return
         self.set_value(normalized)
@@ -384,7 +409,7 @@ class _F8EditDataPortDialog(QtWidgets.QDialog):
             return
         try:
             self._schema = dlg.schema()
-        except Exception as e:
+        except _SCHEMA_DIALOG_ERRORS as e:
             show_warning(self, "Invalid schema", str(e))
             return
         self._refresh_schema_summary()
@@ -410,7 +435,7 @@ class _F8EditDataPortDialog(QtWidgets.QDialog):
         port = copy_model(self._base_port, update=updates)
         try:
             return copy_model(port, update={"showOnNode": bool(show_on_node)})
-        except Exception:
+        except _MODEL_COPY_ERRORS:
             return port
 
 
@@ -432,18 +457,12 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
     ):
         super().__init__(parent)
         self.setWindowTitle(title)
-        try:
-            self._schema = field.valueSchema or schema_from_json_obj({"type": "any"})
-        except Exception:
-            self._schema = schema_from_json_obj({"type": "any"})
+        self._schema = _state_field_schema_or_any(field)
         self._ui_only = bool(ui_only)
         self._lock_identity_fields = bool(lock_identity_fields)
         self._read_only = bool(read_only)
         self._original_name = str(field.name or "")
-        try:
-            self._original_access = F8StateAccess(field.access)
-        except (TypeError, ValueError):
-            self._original_access = F8StateAccess.rw
+        self._original_access = _state_field_access_or_default(field)
         self._original_required = bool(field.required)
         self._original_schema = self._schema
         self._redact_on_publish = field.redactOnPublish
@@ -460,10 +479,7 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
 
         self._access = QtWidgets.QComboBox(self)
         self._access.addItems([e.value for e in F8StateAccess])
-        try:
-            self._access.setCurrentText(str(field.access.value))
-        except Exception:
-            self._access.setCurrentText("rw")
+        self._access.setCurrentText(_state_field_access_text(field))
 
         self._required = QtWidgets.QCheckBox(self)
         self._required.setChecked(bool(field.required))
@@ -569,7 +585,7 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
             return
         try:
             self._schema = dlg.schema()
-        except Exception as e:
+        except _SCHEMA_DIALOG_ERRORS as e:
             show_warning(self, "Invalid schema", str(e))
             return
         self._refresh_schema_summary()
@@ -643,7 +659,7 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
         if hotkey:
             try:
                 parse_global_hotkey(hotkey)
-            except Exception as exc:
+            except GlobalHotkeyParseError as exc:
                 show_warning(self, "Invalid global hotkey", str(exc))
                 return
             conflicts = self._global_hotkey.conflicts()
