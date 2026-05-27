@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import sys
 import unittest
@@ -12,6 +13,7 @@ if ROOT not in sys.path:
 from f8pysdk.codec import decode_obj  # noqa: E402
 from f8pysdk.codec import encode_obj  # noqa: E402
 from f8pysdk.rungraph_fingerprint import build_rungraph_deploy_fingerprint  # noqa: E402
+from f8pysdk.service_bus.workflow.rungraph import apply_rungraph  # noqa: E402
 from f8pysdk.service_runtime_tools.deploy.readiness import (  # noqa: E402
     rungraph_deploy_request_status_key,
     rungraph_deploy_status_key,
@@ -84,6 +86,25 @@ class RungraphApplyTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(RuntimeError):
             await bus.set_rungraph(graph)
+
+    async def test_apply_rungraph_validation_failure_logs_traceback(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svc")
+        service_node = F8RuntimeNode(
+            nodeId="",
+            serviceId="svc",
+            serviceClass="svc",
+            operatorClass="Op",
+            stateFields=[],
+        )
+        graph = F8RuntimeGraph(graphId="g-validation-log", revision="r1", nodes=[service_node], edges=[])
+
+        with self.assertLogs("f8pysdk.service_bus.workflow.rungraph", level=logging.ERROR) as captured:
+            ok = await apply_rungraph(bus, graph)
+
+        self.assertFalse(ok)
+        self.assertTrue(any(record.exc_info is not None for record in captured.records))
+        self.assertTrue(any("rungraph rejected by validation" in record.getMessage() for record in captured.records))
 
     async def test_submit_rungraph_publishes_retained_applied_status(self) -> None:
         harness = ServiceBusHarness()

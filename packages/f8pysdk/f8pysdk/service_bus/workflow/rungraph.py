@@ -217,6 +217,7 @@ async def apply_rungraph(bus: "ServiceBus", graph: F8RuntimeGraph) -> bool:
             bus,
             "rungraph_validate_failed",
             f"rungraph rejected by validation: {type(exc).__name__}: {exc}",
+            exc,
         )
         return False
 
@@ -482,8 +483,14 @@ async def initial_sync_intra_state_edges(bus: "ServiceBus", graph: F8RuntimeGrap
                         if to_state.value == from_val:
                             queue.append((to_key, to_state.value))
                             continue
-                    except (TypeError, ValueError):
-                        pass
+                    except (TypeError, ValueError) as exc:
+                        log.debug(
+                            "state-edge init target compare failed service_id=%s node_id=%s field=%s",
+                            bus.service_id,
+                            to_key[0],
+                            to_key[1],
+                            exc_info=exc,
+                        )
 
                 try:
                     await publish_state(
@@ -509,7 +516,14 @@ async def initial_sync_intra_state_edges(bus: "ServiceBus", graph: F8RuntimeGrap
                 try:
                     cached = bus.state_store.cache_entry(node_id=to_key[0], field=to_key[1])
                     next_val = cached[0] if cached is not None else from_val
-                except (TypeError, ValueError):
+                except (TypeError, ValueError) as exc:
+                    log.debug(
+                        "state-edge init cache read failed service_id=%s node_id=%s field=%s",
+                        bus.service_id,
+                        to_key[0],
+                        to_key[1],
+                        exc_info=exc,
+                    )
                     next_val = from_val
                 queue.append((to_key, next_val))
 
