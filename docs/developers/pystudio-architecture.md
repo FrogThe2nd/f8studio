@@ -9,7 +9,7 @@ PyStudio is intentionally split across UI, graph authoring, local runtime orches
 - `f8pystudio.ui`: Qt widgets, main-window composition, dialogs, editor controls, and user-facing notifications.
 - `f8pystudio.monitoring`: monitor snapshots, alert rows, and service table projections.
 - `f8pystudio.assets`: component/variant/project persistence, sync, and catalog UI.
-- `f8pystudio.diagnostics`: process logging, uncaught exception hooks, Qt message logging, and exception formatting.
+- `f8pystudio.diagnostics`: process logging, uncaught exception hooks, and exception formatting. Qt message logging is installed from `f8pystudio.ui.support.qt_message_logging` at the application entrypoint so the diagnostics core stays UI-independent.
 
 ## Runtime Bridge Rules
 

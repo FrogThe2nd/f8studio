@@ -11,9 +11,10 @@ from f8pystudio.diagnostics.process_logging import (
     FILE_HANDLER_NAME,
     configure_process_file_logging,
     default_process_log_dir,
-    install_qt_message_logging,
     install_uncaught_exception_logging,
 )
+from f8pystudio.ui.support import qt_message_logging
+from f8pystudio.ui.support.qt_message_logging import install_qt_message_logging
 
 
 def test_resolve_env_log_level_prefers_explicit_name() -> None:
@@ -213,21 +214,20 @@ def test_install_uncaught_exception_logging_installs_hooks() -> None:
 
 def test_install_qt_message_logging_writes_qt_warnings_to_file(tmp_path: Path) -> None:
     from qtpy import QtCore
-    from f8pystudio.diagnostics import process_logging
 
     root_logger = logging.getLogger()
     original_level = root_logger.level
     original_handlers = list(root_logger.handlers)
-    original_previous_qt_handler = process_logging._PREVIOUS_QT_MESSAGE_HANDLER
-    original_qt_installed = process_logging._QT_MESSAGE_HANDLER_INSTALLED
+    original_previous_qt_handler = qt_message_logging._PREVIOUS_QT_MESSAGE_HANDLER
+    original_qt_installed = qt_message_logging._QT_MESSAGE_HANDLER_INSTALLED
 
     try:
         for existing_handler in list(root_logger.handlers):
             root_logger.removeHandler(existing_handler)
         root_logger.setLevel(logging.DEBUG)
         configure_process_file_logging(log_dir=tmp_path)
-        process_logging._PREVIOUS_QT_MESSAGE_HANDLER = None
-        process_logging._QT_MESSAGE_HANDLER_INSTALLED = False
+        qt_message_logging._PREVIOUS_QT_MESSAGE_HANDLER = None
+        qt_message_logging._QT_MESSAGE_HANDLER_INSTALLED = False
 
         install_qt_message_logging()
         QtCore.qWarning("f8 test qt warning")
@@ -238,8 +238,8 @@ def test_install_qt_message_logging_writes_qt_warnings_to_file(tmp_path: Path) -
         assert "Qt message: f8 test qt warning" in log_text
     finally:
         QtCore.qInstallMessageHandler(original_previous_qt_handler)
-        process_logging._PREVIOUS_QT_MESSAGE_HANDLER = original_previous_qt_handler
-        process_logging._QT_MESSAGE_HANDLER_INSTALLED = original_qt_installed
+        qt_message_logging._PREVIOUS_QT_MESSAGE_HANDLER = original_previous_qt_handler
+        qt_message_logging._QT_MESSAGE_HANDLER_INSTALLED = original_qt_installed
         for existing_handler in list(root_logger.handlers):
             root_logger.removeHandler(existing_handler)
             existing_handler.close()
@@ -250,7 +250,7 @@ def test_install_qt_message_logging_writes_qt_warnings_to_file(tmp_path: Path) -
 
 def test_qt_message_level_maps_qt_enum_values() -> None:
     from qtpy import QtCore
-    from f8pystudio.diagnostics.process_logging import _qt_message_level
+    from f8pystudio.ui.support.qt_message_logging import _qt_message_level
 
     assert _qt_message_level(QtCore.QtMsgType.QtDebugMsg) == logging.DEBUG
     assert _qt_message_level(QtCore.QtMsgType.QtInfoMsg) == logging.INFO

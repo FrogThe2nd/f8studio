@@ -25,12 +25,7 @@ def _iter_group_entrypoints(*, group: str) -> list[importlib.metadata.EntryPoint
         return list(cached)
 
     all_eps = importlib.metadata.entry_points()
-    if hasattr(all_eps, "select"):
-        selected = list(all_eps.select(group=group))
-    elif isinstance(all_eps, dict):
-        selected = list(all_eps.get(group, ()))
-    else:
-        selected = []
+    selected = list(all_eps.select(group=group))
     ordered = tuple(sorted(selected, key=lambda ep: (str(ep.name), str(ep.value))))
     _ENTRYPOINT_CACHE[group] = ordered
     return list(ordered)
@@ -45,11 +40,6 @@ def _coerce_manifest(obj: object) -> StudioPluginManifest:
         return obj
     if isinstance(obj, StudioPlugin):
         return obj.manifest()
-    manifest_attr = getattr(obj, "manifest", None)
-    if callable(manifest_attr):
-        out = manifest_attr()
-        if isinstance(out, StudioPluginManifest):
-            return out
     raise TypeError("entrypoint object must be StudioPluginManifest or StudioPlugin")
 
 

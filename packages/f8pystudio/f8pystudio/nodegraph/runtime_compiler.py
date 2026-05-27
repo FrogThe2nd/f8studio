@@ -88,7 +88,7 @@ def _port_name(port: Any) -> str:
     """
     try:
         return str(port.name() or "")
-    except Exception:
+    except (AttributeError, RuntimeError, TypeError, ValueError):
         return ""
 
 
@@ -98,7 +98,7 @@ def _node_name(node: Any) -> str:
     """
     try:
         return str(node.name() or "")
-    except Exception:
+    except (AttributeError, RuntimeError, TypeError, ValueError):
         return ""
 
 
@@ -109,7 +109,7 @@ def _runtime_node_id(node: Any) -> str:
 def _runtime_service_id(node: Any) -> str:
     try:
         spec = node.spec
-    except Exception:
+    except (AttributeError, RuntimeError, TypeError):
         spec = None
     # Containers represent service instances themselves: their id is the serviceId.
     if isinstance(spec, F8ServiceSpec):
@@ -458,7 +458,7 @@ def compile_global_runtime_graph(
         service_id = _runtime_service_id(node)
         try:
             spec = node.spec
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError):
             spec = None
         if not isinstance(spec, F8ServiceSpec):
             return
@@ -484,7 +484,7 @@ def compile_global_runtime_graph(
             isinstance(n.spec, F8OperatorSpec) and str(n.spec.serviceClass or "") == STUDIO_SERVICE_CLASS
             for n in operators
         )
-    except Exception:
+    except (AttributeError, RuntimeError, TypeError):
         has_studio_ops = False
     if has_studio_ops and STUDIO_SERVICE_ID not in runtime_services:
         runtime_services[STUDIO_SERVICE_ID] = F8RuntimeService(
@@ -505,7 +505,7 @@ def compile_global_runtime_graph(
     for n in port_nodes:
         try:
             spec = n.spec
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError):
             spec = None
         if isinstance(spec, F8OperatorSpec):
             kind_map[n] = "operator"
@@ -709,7 +709,7 @@ def compile_runtime_graphs_from_studio(studio_graph: Any) -> CompiledRuntimeGrap
     def _is_disabled(n: Any) -> bool:
         try:
             return bool(n.view.disabled)
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError):
             return False
 
     all_graph_nodes = list(studio_graph.all_nodes() or [])
@@ -719,7 +719,7 @@ def compile_runtime_graphs_from_studio(studio_graph: Any) -> CompiledRuntimeGrap
         missing_type = ""
         try:
             node_id = str(node.id or "").strip()
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError):
             node_id = ""
         try:
             model = node.model
@@ -727,7 +727,7 @@ def compile_runtime_graphs_from_studio(studio_graph: Any) -> CompiledRuntimeGrap
             if bool(f8_sys.get("missingLocked")):
                 missing_type = str(f8_sys.get("missingType") or "").strip()
                 missing_locked_nodes.append((node_id, missing_type))
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError):
             continue
     if missing_locked_nodes:
         formatted = ", ".join(
@@ -739,7 +739,7 @@ def compile_runtime_graphs_from_studio(studio_graph: Any) -> CompiledRuntimeGrap
     try:
         is_container_node = studio_graph._is_container_node
         is_operator_node = studio_graph._is_operator_node
-    except Exception as exc:
+    except (AttributeError, RuntimeError, TypeError) as exc:
         raise TypeError("studio_graph must be an F8StudioGraph (missing type predicates).") from exc
     try:
         repaired = int(studio_graph.repair_stale_port_connection_refs())

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Protocol, TypeAlias, TypeGuard
+from typing import Protocol, TypeAlias, runtime_checkable
 
 from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
 
@@ -8,21 +8,20 @@ from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
 SpecTemplate: TypeAlias = F8OperatorSpec | F8ServiceSpec
 
 
+@runtime_checkable
 class SupportsSpecTemplate(Protocol):
-    SPEC_TEMPLATE: SpecTemplate
-
-
-def _has_typed_spec_template(obj: object) -> TypeGuard[SupportsSpecTemplate]:
-    if not hasattr(obj, "SPEC_TEMPLATE"):
-        return False
-    spec = getattr(obj, "SPEC_TEMPLATE")
-    return isinstance(spec, (F8OperatorSpec, F8ServiceSpec))
+    SPEC_TEMPLATE: object
 
 
 def typed_spec_template_or_none(node_cls: object) -> SpecTemplate | None:
-    if not _has_typed_spec_template(node_cls):
+    if not isinstance(node_cls, type):
         return None
-    return node_cls.SPEC_TEMPLATE
+    if not isinstance(node_cls, SupportsSpecTemplate):
+        return None
+    spec = node_cls.SPEC_TEMPLATE
+    if not isinstance(spec, (F8OperatorSpec, F8ServiceSpec)):
+        return None
+    return spec
 
 
 def is_hidden_spec_node_class(node_cls: object) -> bool:

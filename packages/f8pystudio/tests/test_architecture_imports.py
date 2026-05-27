@@ -106,6 +106,18 @@ def test_lightweight_core_packages_avoid_runtime_qt_imports() -> None:
             ), str(path)
 
 
+def test_diagnostics_core_stays_independent_from_ui_packages() -> None:
+    forbidden_prefixes = ("f8pystudio.ui", "qtpy", "PySide6", "PyQt6", "PyQt5")
+    diagnostics_root = PACKAGE_ROOT / "diagnostics"
+    for path in _python_files(diagnostics_root):
+        imports = _import_targets(path)
+        assert not any(
+            target == prefix or target.startswith(prefix + ".")
+            for target in imports
+            for prefix in forbidden_prefixes
+        ), str(path)
+
+
 def test_assets_domain_core_only_uses_nodegraph_session_schema() -> None:
     allowed_nodegraph_targets = {
         "f8pystudio.nodegraph.session_payload_sanitizer",
@@ -175,6 +187,20 @@ def test_assets_forbid_private_chain_shortcuts_and_dynamic_attribute_probing() -
         "hasattr(",
     )
     for path in _python_files(ASSETS_ROOT):
+        source = path.read_text(encoding="utf-8")
+        assert all(pattern not in source for pattern in forbidden_patterns), str(path)
+
+
+def test_plugin_and_spec_visibility_boundaries_avoid_dynamic_attribute_probing() -> None:
+    forbidden_patterns = (
+        "getattr(",
+        "setattr(",
+        "hasattr(",
+    )
+    for path in (
+        PACKAGE_ROOT / "plugins" / "loader.py",
+        PACKAGE_ROOT / "nodegraph" / "spec_visibility.py",
+    ):
         source = path.read_text(encoding="utf-8")
         assert all(pattern not in source for pattern in forbidden_patterns), str(path)
 

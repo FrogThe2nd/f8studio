@@ -3,19 +3,21 @@ from __future__ import annotations
 from f8pysdk.codec import copy_model, dump_json, validate_as
 import copy
 import json
-from typing import Any
+from typing import Any, TypeVar
 
 from NodeGraphQt import BaseNode
 from NodeGraphQt.nodes.base_node import NodeBaseWidget
 from NodeGraphQt.errors import NodeWidgetError
 from NodeGraphQt.qgraphics.node_backdrop import BackdropNodeItem
 
-from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
+from f8pysdk.specs import F8Command, F8DataPortSpec, F8OperatorSpec, F8ServiceSpec, F8StateSpec
 from f8pysdk.specs import coerce_spec_payload
 from .ui_override_mutations import apply_named_order, get_list_order_override
 
 from .node_model import F8StudioNodeModel
 from .layers import extract_node_layer_ids_from_ui_state, set_node_layer_ids_in_ui_state
+
+_NamedSpecItem = TypeVar("_NamedSpecItem", F8DataPortSpec, F8StateSpec, F8Command)
 
 
 class F8StudioBaseNode(BaseNode):
@@ -143,16 +145,25 @@ class F8StudioBaseNode(BaseNode):
         self.set_ui_state(set_node_layer_ids_in_ui_state(self.ui_state(), layer_ids=layer_ids))
 
     @staticmethod
-    def _named_items_in_order(items: list[Any], *, order: list[str]) -> list[Any]:
+    def _named_spec_item_name(item: F8DataPortSpec | F8StateSpec | F8Command) -> str:
+        return str(item.name or "").strip()
+
+    @classmethod
+    def _named_items_in_order(
+        cls,
+        items: list[_NamedSpecItem],
+        *,
+        order: list[str],
+    ) -> list[_NamedSpecItem]:
         if not items:
             return []
         ordered_names = apply_named_order(
-            base_names=[str(getattr(item, "name", "") or "").strip() for item in items],
+            base_names=[cls._named_spec_item_name(item) for item in items],
             override_names=order,
         )
-        items_by_name: dict[str, Any] = {}
+        items_by_name: dict[str, _NamedSpecItem] = {}
         for item in items:
-            name = str(getattr(item, "name", "") or "").strip()
+            name = cls._named_spec_item_name(item)
             if not name or name in items_by_name:
                 continue
             items_by_name[name] = item
@@ -166,16 +177,16 @@ class F8StudioBaseNode(BaseNode):
         key = "execInPorts" if bool(is_in) else "execOutPorts"
         return apply_named_order(base_names=base_names, override_names=get_list_order_override(self, key=key))
 
-    def ordered_data_port_specs(self, *, is_in: bool) -> list[Any]:
+    def ordered_data_port_specs(self, *, is_in: bool) -> list[F8DataPortSpec]:
         spec = self.spec
         ports = list(spec.dataInPorts or []) if bool(is_in) else list(spec.dataOutPorts or [])
         key = "dataInPorts" if bool(is_in) else "dataOutPorts"
         return self._named_items_in_order(ports, order=get_list_order_override(self, key=key))
 
-    def ordered_state_field_specs(self) -> list[Any]:
+    def ordered_state_field_specs(self) -> list[F8StateSpec]:
         return self._named_items_in_order(list(self.effective_state_fields() or []), order=get_list_order_override(self, key="stateFields"))
 
-    def ordered_command_specs(self) -> list[Any]:
+    def ordered_command_specs(self) -> list[F8Command]:
         return self._named_items_in_order(list(self.effective_commands() or []), order=get_list_order_override(self, key="commands"))
 
     def effective_state_fields(self):

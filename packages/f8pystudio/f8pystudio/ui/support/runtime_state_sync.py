@@ -25,7 +25,7 @@ class RuntimeStateSyncController:
         _ = ts_ms
         try:
             node = self._studio_graph.get_node_by_id(str(node_id))
-        except Exception:
+        except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
             node = None
         if node is None:
             return
@@ -33,14 +33,14 @@ class RuntimeStateSyncController:
         try:
             if field not in node.model.properties and field not in node.model.custom_properties:
                 return
-        except Exception:
+        except (AttributeError, KeyError, RuntimeError, TypeError):
             return
 
         self._applying_runtime_state = True
         try:
             try:
                 node.set_property(field, value, push_undo=False)
-            except Exception:
+            except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
                 return
             editor = self._property_editor_for_node(node=node)
             self._refresh_inline_option_pools_if_needed(node=node, field=field)
@@ -54,21 +54,21 @@ class RuntimeStateSyncController:
 
         try:
             spec = node.spec
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError):
             spec = None
         if not isinstance(spec, (F8OperatorSpec, F8ServiceSpec)):
             return
 
         try:
             state_names = {str(s.name or "") for s in (spec.stateFields or [])}
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             state_names = set()
         if str(name) not in state_names:
             return
 
         try:
             node_id = str(node.id or "")
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError):
             node_id = ""
         if not node_id:
             return
@@ -83,7 +83,7 @@ class RuntimeStateSyncController:
         else:
             try:
                 service_id = str(node.svcId or "")
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError, ValueError):
                 service_id = ""
         if not service_id:
             return

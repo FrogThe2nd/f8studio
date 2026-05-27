@@ -66,7 +66,7 @@ def test_fast_tab_search_debounces_non_empty_queries() -> None:
     widget.set_nodes({f"Node {index:03d}": [f"svc.category.node_{index:03d}"] for index in range(90)})
 
     widget.line_edit.setText("n")
-    QtWidgets.QApplication.processEvents()
+    assert widget._search_debounce_timer.isActive()
     assert widget._searched_actions == []
 
     widget.line_edit.setText("node")
