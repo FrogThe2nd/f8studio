@@ -215,6 +215,35 @@ class _ApplyingOnlyGatewayTransportStub(_GatewayTransportStub):
         )
 
 
+class _AppliedMismatchedFingerprintTransportStub(_GatewayTransportStub):
+    async def _publish_apply_evidence(self, req_id: str) -> None:
+        await asyncio.sleep(0)
+        request_payload = self.request_payloads[-1]
+        request_meta = request_payload.get("meta")
+        assert isinstance(request_meta, dict)
+        target_fingerprint = str(request_meta.get("targetFingerprint") or "")
+        await self.retained_put(
+            rungraph_deploy_request_status_key("svc1", req_id),
+            encode_obj(
+                {
+                    "schemaVersion": "f8.rungraphDeployStatus/2",
+                    "serviceId": "svc1",
+                    "reqId": req_id,
+                    "graphId": "g1",
+                    "revision": "r1",
+                    "phase": "applied",
+                    "ok": True,
+                    "source": "test",
+                    "errorMessage": "",
+                    "ts": 1,
+                    "targetFingerprint": target_fingerprint,
+                    "appliedFingerprint": "different-fingerprint",
+                    "runtimeInstanceId": "inst_svc1",
+                }
+            ),
+        )
+
+
 class _NoEvidenceGatewayTransportStub(_GatewayTransportStub):
     async def _publish_apply_evidence(self, req_id: str) -> None:
         _ = req_id
@@ -532,6 +561,29 @@ def test_gateway_reports_last_rungraph_apply_phase_on_timeout() -> None:
         assert result.success is False
         assert "last phase=applying" in result.error_message
         assert "f8/svc/svc1/status/rungraph/requests/" in result.error_message
+
+    asyncio.run(_run())
+
+
+def test_gateway_reports_applied_fingerprint_mismatch_on_timeout() -> None:
+    async def _run() -> None:
+        transport = _AppliedMismatchedFingerprintTransportStub()
+        transport.retained["f8/svc/svc1/status/ready"] = encode_obj(_ready_payload())
+        graph = F8RuntimeGraph(
+            graphId="g1",
+            revision="r1",
+            nodes=[F8RuntimeNode(nodeId="svc1", serviceId="svc1", serviceClass="svc.a", operatorClass=None)],
+            edges=[],
+        )
+        gateway = RuntimeRungraphGateway(RungraphDeployConfig(apply_timeout_s=0.01))
+        gateway._transport = transport
+
+        result = await gateway.deploy_runtime_graph(_DeployRequest(service_id="svc1", graph=graph, source="test"))
+
+        assert result.success is False
+        assert "reported applied but fingerprint mismatched" in result.error_message
+        assert "target=" in result.error_message
+        assert "applied=different-finge" in result.error_message
 
     asyncio.run(_run())
 

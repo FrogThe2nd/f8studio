@@ -200,10 +200,12 @@ class RuntimeRungraphGateway:
         fut: asyncio.Future[RungraphDeployResult] = loop.create_future()
         failed_message = ""
         last_phase = ""
+        last_target_fingerprint = ""
+        last_applied_fingerprint = ""
         last_status_key = rungraph_deploy_request_status_key(service_id, req_id)
 
         async def _on_evidence(key: str, value: bytes) -> None:
-            nonlocal failed_message, last_phase
+            nonlocal failed_message, last_phase, last_target_fingerprint, last_applied_fingerprint
             if fut.done():
                 return
             if key.endswith("/config/rungraph"):
@@ -220,6 +222,8 @@ class RuntimeRungraphGateway:
                 phase = str(payload.get("phase") or "").strip()
                 if payload_req_id == req_id and phase:
                     last_phase = phase
+                    last_target_fingerprint = str(payload.get("targetFingerprint") or "").strip()
+                    last_applied_fingerprint = str(payload.get("appliedFingerprint") or "").strip()
             matched, error = self._status_payload_matches_target(
                 payload,
                 req_id=req_id,
@@ -262,6 +266,18 @@ class RuntimeRungraphGateway:
                 if remaining <= 0:
                     if failed_message:
                         return RungraphDeployResult(service_id=service_id, success=False, error_message=failed_message)
+                    if last_phase == "applied" and last_applied_fingerprint:
+                        target_short = (last_target_fingerprint or target_fingerprint)[:16]
+                        applied_short = last_applied_fingerprint[:16]
+                        return RungraphDeployResult(
+                            service_id=service_id,
+                            success=False,
+                            error_message=(
+                                f"rungraph apply reported applied but fingerprint mismatched within "
+                                f"{float(self.config.apply_timeout_s):g}s "
+                                f"(target={target_short}, applied={applied_short}, key={last_status_key})"
+                            ),
+                        )
                     if last_phase:
                         return RungraphDeployResult(
                             service_id=service_id,

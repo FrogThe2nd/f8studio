@@ -500,8 +500,9 @@ void TemplateMatchService::detect_once() {
       return;
     }
 
-    const auto frame_validation =
-        service_runtime::validate_latest_video_frame(frame_meta, f8::cppsdk::kVideoFormatBgra32, 4u);
+    const auto frame_validation = service_runtime::validate_frame_buffer(
+        frame_meta.format, frame_meta.width, frame_meta.height, frame_meta.pitch, frame_bgra_.size(),
+        f8::cppsdk::kVideoFormatBgra32, 4u);
     if (!frame_validation.ok) {
       has_last_detection_ = false;
       frame_gray_.release();

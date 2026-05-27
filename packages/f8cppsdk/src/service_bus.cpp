@@ -1812,7 +1812,11 @@ bool ServiceBus::on_set_rungraph(const json& graph_obj, const json& meta, std::s
     if (!error_code.empty()) {
       return false;
     }
-    rungraph_fingerprint_ = build_rungraph_deploy_fingerprint(persisted);
+    std::string target_fingerprint;
+    if (meta.is_object() && meta.contains("targetFingerprint") && meta["targetFingerprint"].is_string()) {
+      target_fingerprint = trim_copy(meta["targetFingerprint"].get<std::string>());
+    }
+    rungraph_fingerprint_ = target_fingerprint.empty() ? build_rungraph_deploy_fingerprint(persisted) : target_fingerprint;
     rungraph_graph_id_ = persisted.value("graphId", "");
     rungraph_revision_ = persisted.value("revision", "");
     const auto bytes = encode_json(persisted);

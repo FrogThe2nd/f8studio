@@ -125,9 +125,15 @@ def _normalize_data_port_spec(spec: Any, cache: dict[int, Any]) -> dict[str, Any
         "name": str(spec.name),
         "valueSchema": _normalize_cached_payload(spec.valueSchema, cache),
     }
+    if not _is_unset(spec.payload):
+        payload["payload"] = _normalize_cached_payload(spec.payload, cache)
+    if not _is_unset(spec.stream):
+        payload["stream"] = _normalize_cached_payload(spec.stream, cache)
     _put_optional_payload(payload, "description", spec.description)
     _put_optional_payload(payload, "required", spec.required)
     _put_optional_payload(payload, "showOnNode", spec.showOnNode)
+    _put_optional_payload(payload, "payloadKind", spec.payloadKind)
+    _put_optional_payload(payload, "delivery", spec.delivery)
     cache[cache_key] = payload
     return payload
 
@@ -149,6 +155,8 @@ def _normalize_state_spec(spec: Any, cache: dict[int, Any]) -> dict[str, Any]:
     _put_optional_payload(payload, "label", spec.label)
     _put_optional_payload(payload, "description", spec.description)
     _put_optional_payload(payload, "required", spec.required)
+    if not _is_unset(spec.editPolicy):
+        payload["editPolicy"] = _normalize_cached_payload(spec.editPolicy, cache)
     _put_optional_payload(payload, "uiControl", spec.uiControl)
     _put_optional_payload(payload, "showOnNode", spec.showOnNode)
     _put_optional_payload(payload, "redactOnPublish", spec.redactOnPublish)

@@ -37,7 +37,8 @@ namespace fs = std::filesystem;
 
 constexpr std::int64_t kModelDownloadRetryCooldownMs = 30000;
 constexpr long kModelDownloadTimeoutSeconds = 300;
-constexpr std::int64_t kInitVideoReadErrorDelayMs = 1000;
+constexpr std::int64_t kInitVideoReadLogDelayMs = 1000;
+constexpr std::int64_t kInitVideoReadErrorDelayMs = 15000;
 constexpr std::int64_t kInitVideoReadLogIntervalMs = 5000;
 constexpr std::chrono::milliseconds kInitVideoReadTimeout{100};
 
@@ -664,6 +665,10 @@ bool TrackingService::start() {
   init_video_wait_started_ms_ = 0;
   init_video_wait_last_log_ms_ = 0;
   init_video_wait_misses_ = 0;
+  init_box_messages_seen_ = 0;
+  init_box_no_candidate_messages_ = 0;
+  init_video_wait_error_generation_ = 0;
+  init_video_wait_error_active_ = false;
 
   tracker_.release();
   bbox_ = cv::Rect();
@@ -844,10 +849,17 @@ void TrackingService::on_data(const std::string& node_id, const std::string& por
   if (stop_tracking_cooldown_until_ms_.load(std::memory_order_acquire) > f8::cppsdk::now_ms()) {
     return;
   }
+  ++init_box_messages_seen_;
   std::vector<TrackingInitCandidate> candidates;
   collect_bbox_candidates(value, candidates, 0);
-  if (candidates.empty())
+  if (candidates.empty()) {
+    ++init_box_no_candidate_messages_;
+    if (init_box_no_candidate_messages_ == 1 || (init_box_no_candidate_messages_ % 300u) == 0u) {
+      spdlog::debug("cvkit_tracking initBox had no bbox candidate serviceId={} seen={} noCandidate={}",
+                    cfg_.service_id, init_box_messages_seen_, init_box_no_candidate_messages_);
+    }
     return;
+  }
 
   {
     std::lock_guard<std::mutex> lock(tracking_mu_);
@@ -911,6 +923,7 @@ void TrackingService::stop_tracking_internal(const json& meta) {
   ++pending_init_box_generation_;
   last_processed_frame_ts_ms_ = 0;
   next_tracking_due_ts_ms_ = 0.0;
+  init_video_wait_error_active_ = false;
   set_tracking(false, meta);
 }
 
@@ -1000,6 +1013,7 @@ bool TrackingService::ensure_zenoh_video_open() {
   next_tracking_due_ts_ms_ = 0.0;
   tracking_frame_width_ = 0;
   tracking_frame_height_ = 0;
+  init_video_wait_error_active_ = false;
   publish_error_if_changed("", "runtime", json::object());
   return true;
 }
@@ -1060,9 +1074,10 @@ void TrackingService::apply_init_box_if_any() {
       init_video_wait_started_ms_ = now;
       init_video_wait_last_log_ms_ = 0;
       init_video_wait_misses_ = 0;
+      ++init_video_wait_error_generation_;
     }
     ++init_video_wait_misses_;
-    if ((now - init_video_wait_started_ms_) >= kInitVideoReadErrorDelayMs) {
+    if ((now - init_video_wait_started_ms_) >= kInitVideoReadLogDelayMs) {
       const bool should_log = init_video_wait_last_log_ms_ <= 0 ||
                               (now - init_video_wait_last_log_ms_) >= kInitVideoReadLogIntervalMs;
       if (should_log) {
@@ -1071,15 +1086,36 @@ void TrackingService::apply_init_box_if_any() {
                       cfg_.service_id, now - init_video_wait_started_ms_, init_video_wait_misses_);
       }
     }
+    if ((now - init_video_wait_started_ms_) >= kInitVideoReadErrorDelayMs) {
+      if (!init_video_wait_error_active_) {
+        init_video_wait_error_active_ = true;
+        publish_error_if_changed(
+            "initBox received but no video frame arrived on tracker video input; check the video->tracker.video edge "
+            "and payloadKind=video_frame",
+            "runtime",
+            json::object({{"waitMs", now - init_video_wait_started_ms_},
+                          {"misses", init_video_wait_misses_},
+                          {"generation", init_video_wait_error_generation_}}));
+      }
+    }
     return;
   }
   init_video_wait_started_ms_ = 0;
   init_video_wait_last_log_ms_ = 0;
   init_video_wait_misses_ = 0;
+  init_video_wait_error_active_ = false;
 
-  const auto frame_validation =
-      service_runtime::validate_latest_video_frame(frame_meta, f8::cppsdk::kVideoFormatBgra32, 4u);
+  const auto frame_validation = service_runtime::validate_frame_buffer(
+      frame_meta.format, frame_meta.width, frame_meta.height, frame_meta.pitch, frame_bgra_.size(),
+      f8::cppsdk::kVideoFormatBgra32, 4u);
   if (!frame_validation.ok) {
+    publish_error_if_changed(std::string("video frame cannot initialize tracker: ") + frame_validation.reason,
+                             "runtime",
+                             json::object({{"format", frame_meta.format},
+                                           {"width", frame_meta.width},
+                                           {"height", frame_meta.height},
+                                           {"pitch", frame_meta.pitch},
+                                           {"payloadBytes", frame_bgra_.size()}}));
     return;
   }
   const std::size_t row_bytes = frame_validation.row_bytes;
@@ -1225,9 +1261,17 @@ void TrackingService::process_frame_once() {
     next_tracking_due_ts_ms_ = 0.0;
   }
 
-  const auto frame_validation =
-      service_runtime::validate_latest_video_frame(frame_meta, f8::cppsdk::kVideoFormatBgra32, 4u);
+  const auto frame_validation = service_runtime::validate_frame_buffer(
+      frame_meta.format, frame_meta.width, frame_meta.height, frame_meta.pitch, frame_bgra_.size(),
+      f8::cppsdk::kVideoFormatBgra32, 4u);
   if (!frame_validation.ok) {
+    publish_error_if_changed(std::string("video frame cannot update tracker: ") + frame_validation.reason,
+                             "runtime",
+                             json::object({{"format", frame_meta.format},
+                                           {"width", frame_meta.width},
+                                           {"height", frame_meta.height},
+                                           {"pitch", frame_meta.pitch},
+                                           {"payloadBytes", frame_bgra_.size()}}));
     return;
   }
   const std::size_t row_bytes = frame_validation.row_bytes;
