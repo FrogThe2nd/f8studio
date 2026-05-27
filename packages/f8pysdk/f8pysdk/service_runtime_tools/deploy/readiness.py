@@ -199,6 +199,7 @@ async def wait_rungraph_deploy_status(
     graph_id: str = "",
     revision: str = "",
     target_fingerprint: str = "",
+    expected_runtime_instance_id: str = "",
     timeout_s: float = 15.0,
 ) -> RungraphDeployStatus:
     """
@@ -214,6 +215,7 @@ async def wait_rungraph_deploy_status(
     graph_id_s = str(graph_id or "").strip()
     revision_s = str(revision or "").strip()
     target_fingerprint_s = str(target_fingerprint or "").strip()
+    expected_runtime_instance_id_s = str(expected_runtime_instance_id or "").strip()
     key = rungraph_deploy_request_status_key(service_id_s, req_id_s)
     last_status: RungraphDeployStatus | None = None
 
@@ -232,7 +234,11 @@ async def wait_rungraph_deploy_status(
             return None
         if target_fingerprint_s and status.target_fingerprint and status.target_fingerprint != target_fingerprint_s:
             return None
-        if target_fingerprint_s and status.applied_fingerprint and status.applied_fingerprint != target_fingerprint_s:
+        if target_fingerprint_s and not status.target_fingerprint:
+            return None
+        if target_fingerprint_s and status.applied_fingerprint != target_fingerprint_s:
+            return None
+        if expected_runtime_instance_id_s and status.runtime_instance_id != expected_runtime_instance_id_s:
             return None
         last_status = status
         if status.phase not in ("applied", "failed"):

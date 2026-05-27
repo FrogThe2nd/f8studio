@@ -10,10 +10,12 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from f8pysdk.codec import decode_obj  # noqa: E402
+from f8pysdk.codec import encode_obj  # noqa: E402
 from f8pysdk.rungraph_fingerprint import build_rungraph_deploy_fingerprint  # noqa: E402
 from f8pysdk.service_runtime_tools.deploy.readiness import (  # noqa: E402
     rungraph_deploy_request_status_key,
     rungraph_deploy_status_key,
+    RungraphDeployStatusTimeout,
     wait_rungraph_deploy_status,
 )
 from f8pysdk.specs import (  # noqa: E402
@@ -294,6 +296,72 @@ class RungraphApplyTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(status.phase, "applied")
         self.assertEqual(hook.count, 2)
+
+    async def test_wait_rungraph_deploy_status_requires_expected_runtime_instance(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svc")
+        payload = {
+            "schemaVersion": "f8.rungraphDeployStatus/2",
+            "serviceId": "svc",
+            "reqId": "req-wrong-runtime",
+            "graphId": "g-runtime",
+            "revision": "r1",
+            "phase": "applied",
+            "ok": True,
+            "source": "test",
+            "errorMessage": "",
+            "ts": 1,
+            "targetFingerprint": "fp-runtime",
+            "appliedFingerprint": "fp-runtime",
+            "runtimeInstanceId": "old_inst",
+        }
+        await bus._transport.retained_put(
+            rungraph_deploy_request_status_key("svc", "req-wrong-runtime"),
+            encode_obj(payload),
+        )
+
+        with self.assertRaises(RungraphDeployStatusTimeout):
+            await wait_rungraph_deploy_status(
+                bus._transport,
+                service_id="svc",
+                req_id="req-wrong-runtime",
+                target_fingerprint="fp-runtime",
+                expected_runtime_instance_id="new_inst",
+                timeout_s=0.01,
+            )
+
+    async def test_wait_rungraph_deploy_status_requires_applied_fingerprint_when_target_given(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svc")
+        payload = {
+            "schemaVersion": "f8.rungraphDeployStatus/2",
+            "serviceId": "svc",
+            "reqId": "req-missing-applied",
+            "graphId": "g-runtime",
+            "revision": "r1",
+            "phase": "applied",
+            "ok": True,
+            "source": "test",
+            "errorMessage": "",
+            "ts": 1,
+            "targetFingerprint": "fp-runtime",
+            "appliedFingerprint": "",
+            "runtimeInstanceId": bus.runtime_instance_id,
+        }
+        await bus._transport.retained_put(
+            rungraph_deploy_request_status_key("svc", "req-missing-applied"),
+            encode_obj(payload),
+        )
+
+        with self.assertRaises(RungraphDeployStatusTimeout):
+            await wait_rungraph_deploy_status(
+                bus._transport,
+                service_id="svc",
+                req_id="req-missing-applied",
+                target_fingerprint="fp-runtime",
+                expected_runtime_instance_id=bus.runtime_instance_id,
+                timeout_s=0.01,
+            )
 
     async def test_submit_rungraph_rejects_req_id_reuse_with_different_target(self) -> None:
         harness = ServiceBusHarness()
