@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable
 
 from qtpy import QtCore, QtWidgets
@@ -9,6 +10,10 @@ from ..ui.support.studio_theme import service_process_toolbar_qss
 from ..ui.support.ui_icons import StudioIcon, icon_for
 
 from .service_bridge_protocol import ServiceBridge
+
+
+logger = logging.getLogger(__name__)
+_QT_WIDGET_ERRORS = (AttributeError, RuntimeError, TypeError)
 
 
 class ServiceProcessToolbar(QtWidgets.QWidget):
@@ -34,6 +39,7 @@ class ServiceProcessToolbar(QtWidgets.QWidget):
         self._get_node = get_node
         self._get_service_class = get_service_class
         self._get_compiled_graphs = get_compiled_graphs
+        self._debug_once_keys: set[str] = set()
 
         self._btn_disable = QtWidgets.QToolButton(self)
         self._btn_toggle = QtWidgets.QToolButton(self)  # start/pause (active)
@@ -106,6 +112,65 @@ class ServiceProcessToolbar(QtWidgets.QWidget):
 
         self.refresh()
 
+    def _debug_once(self, key: str, message: str, *args: object, exc: BaseException) -> None:
+        if key in self._debug_once_keys:
+            return
+        self._debug_once_keys.add(key)
+        logger.debug(message, *args, exc_info=exc)
+
+    def _set_process_buttons_enabled(
+        self,
+        *,
+        disable: bool,
+        toggle: bool,
+        stop: bool,
+        sync: bool,
+        restart: bool,
+        toggle_tooltip: str | None = None,
+    ) -> None:
+        try:
+            self._btn_disable.setEnabled(bool(disable))
+            self._btn_toggle.setEnabled(bool(toggle))
+            self._btn_stop.setEnabled(bool(stop))
+            self._btn_sync.setEnabled(bool(sync))
+            self._btn_restart.setEnabled(bool(restart))
+            if toggle_tooltip is not None:
+                self._btn_toggle.setToolTip(str(toggle_tooltip))
+        except _QT_WIDGET_ERRORS as exc:
+            self._debug_once(
+                "set_button_enabled_failed",
+                "Service toolbar failed to update button enabled states service_id=%s",
+                self._service_id,
+                exc=exc,
+            )
+
+    def _set_disabled_button_state(self, disabled: bool) -> None:
+        try:
+            self._btn_disable.setEnabled(True)
+            self._btn_disable.setIcon(self._enable_icon if disabled else self._disable_icon)
+            self._btn_disable.setToolTip("Enable node" if disabled else "Disable node (skip in rungraph + do not auto-start)")
+        except _QT_WIDGET_ERRORS as exc:
+            self._debug_once(
+                "set_disable_button_failed",
+                "Service toolbar failed to update disable button state service_id=%s",
+                self._service_id,
+                exc=exc,
+            )
+
+    def _set_disabled_process_tooltips(self) -> None:
+        try:
+            self._btn_toggle.setToolTip("Disabled")
+            self._btn_stop.setToolTip("Disabled")
+            self._btn_sync.setToolTip("Disabled")
+            self._btn_restart.setToolTip("Disabled")
+        except _QT_WIDGET_ERRORS as exc:
+            self._debug_once(
+                "set_disabled_tooltips_failed",
+                "Service toolbar failed to update disabled process tooltips service_id=%s",
+                self._service_id,
+                exc=exc,
+            )
+
     def set_service_id(self, service_id: str) -> None:
         self._service_id = str(service_id or "").strip()
         self.refresh()
@@ -114,13 +179,15 @@ class ServiceProcessToolbar(QtWidgets.QWidget):
         try:
             b = self._get_bridge()
             return b if b is not None else None
-        except Exception:
+        except Exception as exc:
+            self._debug_once("get_bridge_failed", "Service toolbar bridge provider failed service_id=%s", self._service_id, exc=exc)
             return None
 
     def _node(self) -> Any | None:
         try:
             return self._get_node() if self._get_node is not None else None
-        except Exception:
+        except Exception as exc:
+            self._debug_once("get_node_failed", "Service toolbar node provider failed service_id=%s", self._service_id, exc=exc)
             return None
 
     def _node_item(self) -> Any | None:
@@ -131,13 +198,15 @@ class ServiceProcessToolbar(QtWidgets.QWidget):
         """
         try:
             proxy = self.graphicsProxyWidget()
-        except Exception:
+        except _QT_WIDGET_ERRORS as exc:
+            self._debug_once("graphics_proxy_failed", "Service toolbar graphics proxy lookup failed service_id=%s", self._service_id, exc=exc)
             proxy = None
         if proxy is None:
             return None
         try:
             return proxy.parentItem()
-        except Exception:
+        except _QT_WIDGET_ERRORS as exc:
+            self._debug_once("proxy_parent_failed", "Service toolbar proxy parent lookup failed service_id=%s", self._service_id, exc=exc)
             return None
 
     def _is_node_disabled(self) -> bool:
@@ -145,19 +214,19 @@ class ServiceProcessToolbar(QtWidgets.QWidget):
         if n is not None:
             try:
                 return bool(n.disabled())
-            except (AttributeError, RuntimeError, TypeError):
-                pass
+            except _QT_WIDGET_ERRORS as exc:
+                self._debug_once("node_disabled_method_failed", "Service toolbar failed to read node.disabled() service_id=%s", self._service_id, exc=exc)
             try:
                 return bool(n.view.disabled)
-            except (AttributeError, RuntimeError, TypeError):
-                pass
+            except _QT_WIDGET_ERRORS as exc:
+                self._debug_once("node_view_disabled_failed", "Service toolbar failed to read node view disabled state service_id=%s", self._service_id, exc=exc)
         # Fallback: use the view item directly.
         item = self._node_item()
         if item is not None:
             try:
                 return bool(item.disabled)
-            except (AttributeError, RuntimeError, TypeError):
-                pass
+            except _QT_WIDGET_ERRORS as exc:
+                self._debug_once("item_disabled_failed", "Service toolbar failed to read item disabled state service_id=%s", self._service_id, exc=exc)
         return False
 
     def _set_node_disabled(self, disabled: bool) -> None:
@@ -166,20 +235,21 @@ class ServiceProcessToolbar(QtWidgets.QWidget):
             try:
                 n.set_disabled(bool(disabled))
                 return
-            except (AttributeError, RuntimeError, TypeError):
-                pass
+            except _QT_WIDGET_ERRORS as exc:
+                self._debug_once("node_set_disabled_failed", "Service toolbar failed to call node.set_disabled service_id=%s", self._service_id, exc=exc)
             # Prefer setting backend node state (persists in session); also try the view.
             try:
                 n.view.disabled = bool(disabled)
-            except (AttributeError, RuntimeError, TypeError):
-                pass
+            except _QT_WIDGET_ERRORS as exc:
+                self._debug_once("node_view_set_disabled_failed", "Service toolbar failed to set node view disabled state service_id=%s", self._service_id, exc=exc)
         # Fallback: disable the view item directly (local-only).
         item = self._node_item()
         if item is None:
             return
         try:
             item.disabled = bool(disabled)
-        except (AttributeError, RuntimeError, TypeError):
+        except _QT_WIDGET_ERRORS as exc:
+            self._debug_once("item_set_disabled_failed", "Service toolbar failed to set item disabled state service_id=%s", self._service_id, exc=exc)
             return
 
     def _is_running(self) -> bool:
@@ -188,19 +258,22 @@ class ServiceProcessToolbar(QtWidgets.QWidget):
             return False
         try:
             return bool(bridge.is_service_running(self._service_id))
-        except Exception:
+        except Exception as exc:
+            self._debug_once("is_running_failed", "Service toolbar failed to read running state service_id=%s", self._service_id, exc=exc)
             return False
 
     def _service_class(self) -> str:
         try:
             return str(self._get_service_class() or "") if self._get_service_class is not None else ""
-        except Exception:
+        except Exception as exc:
+            self._debug_once("get_service_class_failed", "Service toolbar service-class provider failed service_id=%s", self._service_id, exc=exc)
             return ""
 
     def _compiled_graphs(self) -> Any | None:
         try:
             return self._get_compiled_graphs() if self._get_compiled_graphs is not None else None
-        except Exception:
+        except Exception as exc:
+            self._debug_once("get_compiled_graphs_failed", "Service toolbar compiled-graphs provider failed service_id=%s", self._service_id, exc=exc)
             return None
 
     @QtCore.Slot()
@@ -208,14 +281,7 @@ class ServiceProcessToolbar(QtWidgets.QWidget):
         sid = str(self._service_id or "").strip()
         enabled = bool(sid) and sid != STUDIO_SERVICE_ID
         if not enabled:
-            try:
-                self._btn_disable.setEnabled(False)
-                self._btn_toggle.setEnabled(False)
-                self._btn_stop.setEnabled(False)
-                self._btn_sync.setEnabled(False)
-                self._btn_restart.setEnabled(False)
-            except (AttributeError, RuntimeError, TypeError):
-                pass
+            self._set_process_buttons_enabled(disable=False, toggle=False, stop=False, sync=False, restart=False)
             return
 
         # During node creation / graph reload, the toolbar widget can exist briefly
@@ -226,85 +292,70 @@ class ServiceProcessToolbar(QtWidgets.QWidget):
             try:
                 if item.scene() is None:
                     # Not in scene yet (or being removed). Keep polling.
-                    self._btn_disable.setEnabled(True)
-                    self._btn_toggle.setEnabled(False)
-                    self._btn_stop.setEnabled(False)
-                    self._btn_sync.setEnabled(False)
-                    self._btn_restart.setEnabled(False)
-                    self._btn_toggle.setToolTip("Start service (initializing)")
+                    self._set_process_buttons_enabled(
+                        disable=True,
+                        toggle=False,
+                        stop=False,
+                        sync=False,
+                        restart=False,
+                        toggle_tooltip="Start service (initializing)",
+                    )
                     return
-            except (AttributeError, RuntimeError, TypeError):
-                pass
+            except _QT_WIDGET_ERRORS as exc:
+                self._debug_once("node_scene_check_failed", "Service toolbar scene check failed service_id=%s", sid, exc=exc)
         if self._node() is None and item is None:
             # Backend graph/node not ready yet (or node was deleted). Keep polling;
             # if the widget is truly orphaned it will be deleted with its proxy.
-            try:
-                self._btn_disable.setEnabled(False)
-                self._btn_toggle.setEnabled(False)
-                self._btn_stop.setEnabled(False)
-                self._btn_sync.setEnabled(False)
-                self._btn_restart.setEnabled(False)
-                self._btn_toggle.setToolTip("Start service (node not ready)")
-            except (AttributeError, RuntimeError, TypeError):
-                pass
+            self._set_process_buttons_enabled(
+                disable=False,
+                toggle=False,
+                stop=False,
+                sync=False,
+                restart=False,
+                toggle_tooltip="Start service (node not ready)",
+            )
             return
 
         # Disable button works even without a bridge connection.
-        try:
-            self._btn_disable.setEnabled(True)
-        except (AttributeError, RuntimeError, TypeError):
-            pass
-
         disabled = self._is_node_disabled()
-        try:
-            # Show current state: when disabled -> show "enable" check icon; else show "ban".
-            self._btn_disable.setIcon(self._enable_icon if disabled else self._disable_icon)
-            self._btn_disable.setToolTip("Enable node" if disabled else "Disable node (skip in rungraph + do not auto-start)")
-        except (AttributeError, RuntimeError, TypeError):
-            pass
+        # Show current state: when disabled -> show "enable" check icon; else show "ban".
+        self._set_disabled_button_state(disabled)
 
         # When disabled, lock out process controls regardless of bridge availability.
         if disabled:
-            try:
-                self._btn_toggle.setEnabled(False)
-                self._btn_stop.setEnabled(False)
-                self._btn_sync.setEnabled(False)
-                self._btn_restart.setEnabled(False)
-                self._btn_toggle.setToolTip("Disabled")
-                self._btn_stop.setToolTip("Disabled")
-                self._btn_sync.setToolTip("Disabled")
-                self._btn_restart.setToolTip("Disabled")
-            except (AttributeError, RuntimeError, TypeError):
-                pass
+            self._set_process_buttons_enabled(disable=True, toggle=False, stop=False, sync=False, restart=False)
+            self._set_disabled_process_tooltips()
             return
 
         bridge = self._bridge()
 
         # If bridge isn't available yet, keep the process buttons visible but disabled.
         if bridge is None:
-            try:
-                self._btn_toggle.setEnabled(False)
-                self._btn_stop.setEnabled(False)
-                self._btn_sync.setEnabled(False)
-                self._btn_restart.setEnabled(False)
-                self._btn_toggle.setToolTip("Start service (bridge not ready)")
-            except (AttributeError, RuntimeError, TypeError):
-                pass
+            self._set_process_buttons_enabled(
+                disable=True,
+                toggle=False,
+                stop=False,
+                sync=False,
+                restart=False,
+                toggle_tooltip="Start service (bridge not ready)",
+            )
             return
 
         try:
             bridge.request_service_status(sid)
-        except (AttributeError, RuntimeError, TypeError):
-            pass
+        except _QT_WIDGET_ERRORS as exc:
+            self._debug_once("request_status_failed", "Service toolbar status request failed service_id=%s", sid, exc=exc)
         try:
             running = bool(bridge.is_service_running(self._service_id))
-        except Exception:
+        except Exception as exc:
+            self._debug_once("refresh_running_failed", "Service toolbar failed to refresh running state service_id=%s", sid, exc=exc)
             running = False
         active = None
         if running:
             try:
                 active = bridge.get_cached_service_active(sid)
-            except Exception:
+            except Exception as exc:
+                self._debug_once("refresh_active_failed", "Service toolbar failed to refresh active state service_id=%s", sid, exc=exc)
                 active = None
 
         if not running:
@@ -340,8 +391,8 @@ class ServiceProcessToolbar(QtWidgets.QWidget):
         self._set_node_disabled(bool(nxt))
         try:
             self.refresh()
-        except (AttributeError, RuntimeError, TypeError):
-            pass
+        except _QT_WIDGET_ERRORS as exc:
+            self._debug_once("refresh_after_disable_failed", "Service toolbar refresh after disable failed service_id=%s", self._service_id, exc=exc)
 
     def _on_toggle_clicked(self) -> None:
         bridge = self._bridge()
@@ -362,7 +413,8 @@ class ServiceProcessToolbar(QtWidgets.QWidget):
             active = None
             try:
                 active = bridge.get_cached_service_active(sid)
-            except (AttributeError, RuntimeError, TypeError):
+            except _QT_WIDGET_ERRORS as exc:
+                self._debug_once("toggle_active_failed", "Service toolbar failed to read active state during toggle service_id=%s", sid, exc=exc)
                 active = None
             if active is False:
                 bridge.set_service_active(sid, True)
