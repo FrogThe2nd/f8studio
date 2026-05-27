@@ -6,8 +6,8 @@ import hashlib
 import ipaddress
 import json
 import logging
-import traceback
 from collections import deque
+from collections.abc import Coroutine
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qsl
@@ -77,6 +77,16 @@ _MAX_WS_FRAME_BYTES = 64 * 1024
 _MAX_WS_BUFFER_BYTES = 256 * 1024
 _WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 _RAW_LOG_MAX_CHARS = 4000
+_BACKGROUND_TASK_SCHEDULE_ERRORS = (RuntimeError, TypeError, ValueError)
+_PORT_PARSE_ERRORS = (TypeError, ValueError)
+_SERVER_START_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
+_SERVER_STOP_ERRORS = (OSError, RuntimeError)
+_STATE_PUBLISH_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
+_STREAM_READ_ERRORS = (OSError, RuntimeError, asyncio.IncompleteReadError)
+_CLIENT_REQUEST_ERRORS = (OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError)
+_CLIENT_WRITE_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
+_EXEC_EMIT_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
+_TASK_STOP_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
 
 
 @dataclass(frozen=True)
@@ -416,18 +426,18 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
         super().attach(bus)
         bus_like = bus if isinstance(bus, NodeBus) else None
         if bus_like is not None:
-            try:
-                if not bool(bus_like.active):
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(self._stop_server(), name=f"lovense_mock_server:deactivate:{self.node_id}")
-                    return
-            except Exception:
-                pass
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(self._ensure_server(), name=f"lovense_mock_server:start:{self.node_id}")
-        except Exception:
-            pass
+            if not bool(bus_like.active):
+                self._schedule_background_task(
+                    self._stop_server(),
+                    name=f"lovense_mock_server:deactivate:{self.node_id}",
+                    context="schedule inactive attach stop",
+                )
+                return
+        self._schedule_background_task(
+            self._ensure_server(),
+            name=f"lovense_mock_server:start:{self.node_id}",
+            context="schedule attach start",
+        )
 
     async def close(self) -> None:
         await self.stop_entrypoint()
@@ -490,7 +500,9 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
         if name == "port":
             try:
                 port = int(unwrap_json_value(value))
-            except Exception:
+            except _PORT_PARSE_ERRORS as exc:
+                self._set_error(f"invalid port: {value}")
+                logger.debug("[%s:lovense_mock_server] invalid port state update", self.node_id, exc_info=exc)
                 return
             if port != self._cfg.port:
                 self._cfg = _ServerConfig(bind_address=self._cfg.bind_address, port=port)
@@ -545,10 +557,7 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
                     start_serving=True,
                 )
                 self._set_error(None)
-            except OSError as exc:
-                self._set_error(f"listen failed {cfg.bind_address}:{cfg.port}: {exc}")
-                self._server = None
-            except Exception as exc:
+            except _SERVER_START_ERRORS as exc:
                 self._set_error(f"listen failed {cfg.bind_address}:{cfg.port}: {exc}")
                 self._server = None
 
@@ -577,8 +586,8 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
         try:
             server.close()
             await server.wait_closed()
-        except Exception:
-            pass
+        except _SERVER_STOP_ERRORS as exc:
+            logger.exception("[%s:lovense_mock_server] server stop failed", self.node_id, exc_info=exc)
         await self._safe_set_state("listening", False)
 
     def _set_error(self, msg: str | None) -> None:
@@ -597,7 +606,7 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
     async def _safe_set_state(self, field: str, value: Any) -> None:
         try:
             await self.set_state(field, value)
-        except Exception as exc:
+        except _STATE_PUBLISH_ERRORS as exc:
             logger.exception("[%s:lovense_mock_server] failed to publish state: %s", self.node_id, field, exc_info=exc)
 
     async def _safe_write_event(self, entry: dict[str, Any]) -> dict[str, Any] | None:
@@ -637,12 +646,34 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
             return
         try:
             loop = asyncio.get_running_loop()
-        except RuntimeError:
+        except RuntimeError as exc:
+            logger.debug("[%s:lovense_mock_server] emit exec requested without running loop", self.node_id, exc_info=exc)
             return
         self._emit_task = loop.create_task(
             self._emit_exec_loop(),
             name=f"lovense_mock_server:emit_exec:{self.node_id}",
         )
+
+    def _schedule_background_task(
+        self,
+        coro: Coroutine[Any, Any, None],
+        *,
+        name: str,
+        context: str,
+    ) -> bool:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError as exc:
+            coro.close()
+            logger.debug("[%s:lovense_mock_server] %s failed: no running loop", self.node_id, context, exc_info=exc)
+            return False
+        try:
+            loop.create_task(coro, name=name)
+        except _BACKGROUND_TASK_SCHEDULE_ERRORS as exc:
+            coro.close()
+            logger.exception("[%s:lovense_mock_server] %s failed", self.node_id, context, exc_info=exc)
+            return False
+        return True
 
     async def _emit_exec_loop(self) -> None:
         try:
@@ -658,7 +689,7 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
                     continue
                 try:
                     await ctx.emit_exec("event", exec_id=exec_id)
-                except Exception as exc:
+                except _EXEC_EMIT_ERRORS as exc:
                     logger.exception("[%s:lovense_mock_server] emit exec failed", self.node_id, exc_info=exc)
         except asyncio.CancelledError:
             raise
@@ -677,7 +708,7 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
             await task
         except asyncio.CancelledError:
             return
-        except Exception as exc:
+        except _TASK_STOP_ERRORS as exc:
             logger.exception("[%s:lovense_mock_server] stop emit task failed", self.node_id, exc_info=exc)
 
     async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -687,7 +718,7 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
                 keep = await self._handle_one_request(reader, writer)
                 if not keep:
                     break
-        except Exception as exc:
+        except _CLIENT_REQUEST_ERRORS as exc:
             logger.exception("[%s:lovense_mock_server] client request handling failed", self.node_id, exc_info=exc)
             try:
                 await self._write_json(
@@ -696,7 +727,7 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
                     obj=_build_error_response(code=500, message="server_error"),
                     keep_alive=False,
                 )
-            except Exception as write_exc:
+            except _CLIENT_WRITE_ERRORS as write_exc:
                 logger.exception(
                     "[%s:lovense_mock_server] failed to write server_error response",
                     self.node_id,
@@ -706,7 +737,7 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
             try:
                 writer.close()
                 await writer.wait_closed()
-            except Exception as close_exc:
+            except _CLIENT_WRITE_ERRORS as close_exc:
                 logger.exception("[%s:lovense_mock_server] failed to close client writer", self.node_id, exc_info=close_exc)
 
     async def _handle_one_request(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> bool:
@@ -808,7 +839,7 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
         )
         try:
             raw_payload = _parse_body_text(body_text, content_type)
-        except Exception as exc:
+        except json.JSONDecodeError as exc:
             ts_ms = int(now_ms())
             entry = {
                 "tsMs": ts_ms,
@@ -1149,15 +1180,9 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
         return None
 
     def _peer(self, writer: asyncio.StreamWriter) -> str:
-        try:
-            peer = writer.get_extra_info("peername")
-        except Exception:
-            peer = None
+        peer = writer.get_extra_info("peername")
         if isinstance(peer, tuple) and peer:
-            try:
-                return str(peer[0])
-            except Exception:
-                return ""
+            return str(peer[0])
         return ""
 
     def _pick_headers(self, headers: dict[str, str]) -> dict[str, Any]:
@@ -1180,8 +1205,8 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
             # Drain whatever was consumed so we can respond and close cleanly.
             try:
                 _ = await reader.read(int(limit))
-            except Exception:
-                pass
+            except _STREAM_READ_ERRORS as exc:
+                logger.debug("[%s:lovense_mock_server] header overrun drain failed", self.node_id, exc_info=exc)
             return b"__header_overrun__"
         except asyncio.IncompleteReadError as exc:
             data = bytes(exc.partial or b"")
@@ -1197,7 +1222,7 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
         if "content-length" in headers:
             try:
                 content_length = int(headers["content-length"])
-            except Exception:
+            except _PORT_PARSE_ERRORS:
                 content_length = None
         if content_length is not None:
             if content_length < 0 or content_length > _MAX_BODY_BYTES:
@@ -1217,7 +1242,7 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
                 try:
                     size_str = line.decode("ascii", errors="ignore").split(";", 1)[0].strip()
                     size = int(size_str, 16)
-                except Exception:
+                except _PORT_PARSE_ERRORS:
                     break
                 if size == 0:
                     _ = await reader.readline()
@@ -1237,7 +1262,8 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
                 chunk = await asyncio.wait_for(reader.read(4096), timeout=0.05)
             except asyncio.TimeoutError:
                 break
-            except Exception:
+            except _STREAM_READ_ERRORS as exc:
+                logger.debug("[%s:lovense_mock_server] request body read failed", self.node_id, exc_info=exc)
                 break
             if not chunk:
                 break
@@ -1302,7 +1328,8 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
                 text = payload.decode("utf-8", errors="replace")
                 try:
                     msg = json.loads(text)
-                except Exception:
+                except json.JSONDecodeError as exc:
+                    logger.debug("[%s:lovense_mock_server] ignoring invalid websocket JSON message", self.node_id, exc_info=exc)
                     continue
                 if not isinstance(msg, dict):
                     continue
@@ -1444,7 +1471,7 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
     def _coerce_port_or_default(self, value: Any, *, default: int) -> int:
         try:
             v = int(value)
-        except Exception:
+        except _PORT_PARSE_ERRORS:
             return int(default)
         if v < 1:
             return int(default)
