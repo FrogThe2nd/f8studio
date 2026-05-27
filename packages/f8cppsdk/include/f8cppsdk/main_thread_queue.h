@@ -2,9 +2,12 @@
 
 #include <cstddef>
 #include <deque>
+#include <exception>
 #include <functional>
 #include <mutex>
 #include <utility>
+
+#include <spdlog/spdlog.h>
 
 namespace f8::cppsdk {
 
@@ -44,7 +47,10 @@ class MainThreadQueue final {
       local.pop_front();
       try {
         t();
+      } catch (const std::exception& exc) {
+        spdlog::warn("main-thread task failed: {}", exc.what());
       } catch (...) {
+        spdlog::warn("main-thread task failed: unknown error");
       }
       ++ran;
     }

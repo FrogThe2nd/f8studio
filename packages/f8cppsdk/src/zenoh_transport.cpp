@@ -8,6 +8,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
+#include <memory>
 #include <optional>
 #include <cstdint>
 #include <string>
@@ -231,7 +232,7 @@ class ZenohTransport::Impl final {
       zenoh_internal::apply_shared_memory_config(zenoh_config, config_.zenoh_shm_pool_bytes, service_id_);
       zenoh_internal::apply_timestamping_config(zenoh_config, service_id_);
 
-      auto session = std::make_unique<zenoh::Session>(zenoh::Session::open(std::move(zenoh_config)));
+      auto session = std::make_shared<zenoh::Session>(zenoh::Session::open(std::move(zenoh_config)));
       session_ = std::move(session);
       if (config_.announce_service_liveliness) {
         const std::string runtime_instance_id = ensure_token(config_.runtime_instance_id, "runtime_instance_id");
@@ -263,12 +264,14 @@ class ZenohTransport::Impl final {
 
   bool publish(const std::string& key, const RuntimeBytes& payload) {
 #if F8_WITH_ZENOH
+    std::shared_ptr<zenoh::Session> session;
     try {
-      std::lock_guard<std::mutex> lock(mu_);
-      if (!session_) {
-        return false;
+      {
+        std::lock_guard<std::mutex> lock(mu_);
+        session = session_;
       }
-      session_->put(zenoh::KeyExpr(trim_runtime_string(key)), bytes_to_payload(payload), realtime_drop_options());
+      if (!session) return false;
+      session->put(zenoh::KeyExpr(trim_runtime_string(key)), bytes_to_payload(payload), realtime_drop_options());
       return true;
     } catch (const std::exception& exc) {
       spdlog::error("zenoh publish failed key={}: {}", key, exc.what());
@@ -286,12 +289,14 @@ class ZenohTransport::Impl final {
 
   std::unique_ptr<RuntimeSubscription> subscribe(const std::string& key_expr, RuntimeMessageHandler handler) {
 #if F8_WITH_ZENOH
-    std::lock_guard<std::mutex> lock(mu_);
-    if (!session_) {
-      return nullptr;
+    std::shared_ptr<zenoh::Session> session;
+    {
+      std::lock_guard<std::mutex> lock(mu_);
+      session = session_;
     }
+    if (!session) return nullptr;
     try {
-      auto subscriber = session_->declare_subscriber(
+      auto subscriber = session->declare_subscriber(
           zenoh::KeyExpr(trim_runtime_string(key_expr)),
           [handler = std::move(handler)](zenoh::Sample& sample) {
             try {
@@ -349,40 +354,42 @@ class ZenohTransport::Impl final {
           break;
         }
 
+        std::shared_ptr<zenoh::Session> session;
         {
           std::lock_guard<std::mutex> lock(mu_);
-          if (!session_) {
-            return std::nullopt;
-          }
-          session_->get(
-              zenoh::KeyExpr(query_key),
-              "",
-              [state](zenoh::Reply& reply) {
-                {
-                  std::lock_guard<std::mutex> state_lock(state->mu);
-                  state->done = true;
-                  state->ok = reply.is_ok();
-                  if (reply.is_ok()) {
-                    state->reply = payload_to_bytes(reply.get_ok().get_payload());
-                  } else {
-                    state->error = reply_error_to_string(reply);
-                  }
-                }
-                state->cv.notify_all();
-              },
-              [state, kNoReplyError]() {
-                {
-                  std::lock_guard<std::mutex> state_lock(state->mu);
-                  if (!state->done) {
-                    state->done = true;
-                    state->ok = false;
-                    state->error = kNoReplyError;
-                  }
-                }
-                state->cv.notify_all();
-              },
-              query_get_options(payload, remaining));
+          session = session_;
         }
+        if (!session) {
+          return std::nullopt;
+        }
+        session->get(
+            zenoh::KeyExpr(query_key),
+            "",
+            [state](zenoh::Reply& reply) {
+              {
+                std::lock_guard<std::mutex> state_lock(state->mu);
+                state->done = true;
+                state->ok = reply.is_ok();
+                if (reply.is_ok()) {
+                  state->reply = payload_to_bytes(reply.get_ok().get_payload());
+                } else {
+                  state->error = reply_error_to_string(reply);
+                }
+              }
+              state->cv.notify_all();
+            },
+            [state, kNoReplyError]() {
+              {
+                std::lock_guard<std::mutex> state_lock(state->mu);
+                if (!state->done) {
+                  state->done = true;
+                  state->ok = false;
+                  state->error = kNoReplyError;
+                }
+              }
+              state->cv.notify_all();
+            },
+            query_get_options(payload, remaining));
 
         bool done = false;
         bool ok = false;
@@ -429,12 +436,14 @@ class ZenohTransport::Impl final {
 
   std::unique_ptr<RuntimeSubscription> serve(const std::string& key, RuntimeRequestHandler handler) {
 #if F8_WITH_ZENOH
-    std::lock_guard<std::mutex> lock(mu_);
-    if (!session_) {
-      return nullptr;
+    std::shared_ptr<zenoh::Session> session;
+    {
+      std::lock_guard<std::mutex> lock(mu_);
+      session = session_;
     }
+    if (!session) return nullptr;
     try {
-      auto queryable = session_->declare_queryable(
+      auto queryable = session->declare_queryable(
           zenoh::KeyExpr(trim_runtime_string(key)),
           [key, handler = std::move(handler)](zenoh::Query& query) {
             try {
@@ -479,21 +488,36 @@ class ZenohTransport::Impl final {
 #if F8_WITH_ZENOH
     const std::string normalized_key = trim_runtime_string(key);
     try {
-      std::lock_guard<std::mutex> lock(mu_);
-      if (!session_) {
-        return false;
+      std::shared_ptr<zenoh::Session> session;
+      std::shared_ptr<zenoh::ext::AdvancedPublisher> publisher;
+      {
+        std::lock_guard<std::mutex> lock(mu_);
+        if (!session_) {
+          return false;
+        }
+        retained_[normalized_key] = payload;
+        session = session_;
+        const auto publisher_it = retained_state_publishers_.find(normalized_key);
+        if (publisher_it != retained_state_publishers_.end()) {
+          publisher = publisher_it->second;
+        }
       }
-      retained_[normalized_key] = payload;
-      auto publisher_it = retained_state_publishers_.find(normalized_key);
-      if (publisher_it == retained_state_publishers_.end()) {
-        zenoh::ext::SessionExt ext(*session_);
-        auto publisher = ext.declare_advanced_publisher(zenoh::KeyExpr(normalized_key), retained_state_publisher_options());
-        publisher_it = retained_state_publishers_
-                           .emplace(normalized_key, std::make_unique<zenoh::ext::AdvancedPublisher>(std::move(publisher)))
-                           .first;
+
+      if (!publisher) {
+        zenoh::ext::SessionExt ext(*session);
+        auto declared = ext.declare_advanced_publisher(zenoh::KeyExpr(normalized_key), retained_state_publisher_options());
+        auto new_publisher = std::make_shared<zenoh::ext::AdvancedPublisher>(std::move(declared));
         std::this_thread::sleep_for(kSubscriptionSettle);
+        {
+          std::lock_guard<std::mutex> lock(mu_);
+          auto publisher_it = retained_state_publishers_.find(normalized_key);
+          if (publisher_it == retained_state_publishers_.end()) {
+            publisher_it = retained_state_publishers_.emplace(normalized_key, new_publisher).first;
+          }
+          publisher = publisher_it->second;
+        }
       }
-      publisher_it->second->put(bytes_to_payload(payload));
+      publisher->put(bytes_to_payload(payload));
       return true;
     } catch (const std::exception& exc) {
       spdlog::error("zenoh retained_put failed key={}: {}", key, exc.what());
@@ -522,12 +546,14 @@ class ZenohTransport::Impl final {
   std::unique_ptr<RuntimeSubscription> retained_watch(const std::string& key_expr,
                                                       RuntimeRetainedWatchHandler handler) {
 #if F8_WITH_ZENOH
-    std::lock_guard<std::mutex> lock(mu_);
-    if (!session_) {
-      return nullptr;
+    std::shared_ptr<zenoh::Session> session;
+    {
+      std::lock_guard<std::mutex> lock(mu_);
+      session = session_;
     }
+    if (!session) return nullptr;
     try {
-      zenoh::ext::SessionExt ext(*session_);
+      zenoh::ext::SessionExt ext(*session);
       auto subscriber = ext.declare_advanced_subscriber(
           zenoh::KeyExpr(trim_runtime_string(key_expr)),
           [handler = std::move(handler)](const zenoh::Sample& sample) {
@@ -590,9 +616,9 @@ class ZenohTransport::Impl final {
   std::string service_id_;
   std::unordered_map<std::string, RuntimeBytes> retained_;
 #if F8_WITH_ZENOH
-  std::unique_ptr<zenoh::Session> session_;
+  std::shared_ptr<zenoh::Session> session_;
   std::optional<zenoh::LivelinessToken> liveliness_token_;
-  std::unordered_map<std::string, std::unique_ptr<zenoh::ext::AdvancedPublisher>> retained_state_publishers_;
+  std::unordered_map<std::string, std::shared_ptr<zenoh::ext::AdvancedPublisher>> retained_state_publishers_;
 #endif
 };
 

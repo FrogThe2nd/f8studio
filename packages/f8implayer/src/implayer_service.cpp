@@ -1616,10 +1616,9 @@ bool ImPlayerService::on_set_state(const std::string& node_id, const std::string
 
 bool ImPlayerService::on_set_rungraph(const nlohmann::json& graph_obj, const nlohmann::json& meta,
                                       std::string& error_code, std::string& error_message) {
-  // Apply rungraph-provided service node `stateValues` (studio node properties).
-  //
-  // Studio deploys graphs via the `set_rungraph` endpoint; for python runtimes, the ServiceHost reconciles
-  // `stateValues` into KV. This C++ service implements the same behavior for a single service node.
+  // ServiceBus has already reconciled rungraph `stateValues` into retained state and queued
+  // local state delivery onto the service main thread. Keep this hook lightweight so deploy
+  // finalization cannot block on mpv/SDL/player work.
   error_code.clear();
   error_message.clear();
 
@@ -1664,12 +1663,12 @@ bool ImPlayerService::on_set_rungraph(const nlohmann::json& graph_obj, const nlo
     meta2["graphId"] = graph_obj.value("graphId", "");
 
     const auto& values = service_node["stateValues"];
+    bool has_deferred_state = false;
     for (auto it = values.begin(); it != values.end(); ++it) {
       const std::string field = it.key();
       if (field.empty())
         continue;
 
-      // Only apply writable fields from rungraph (never seed runtime-owned ro fields).
       if (field != "active" && field != "mediaUrl" && field != "volume" && field != "videoOutputMaxWidth" &&
           field != "videoOutputMaxHeight" && field != "videoOutputMaxFps" && field != "authMode" &&
           field != "authBrowser") {
@@ -1681,16 +1680,12 @@ bool ImPlayerService::on_set_rungraph(const nlohmann::json& graph_obj, const nlo
         }
         continue;
       }
-
-      std::string ec;
-      std::string em;
-      // Best-effort apply: ignore invalid values rather than rejecting the deploy.
-      (void)on_set_state(cfg_.service_id, field, it.value(), meta2, ec, em);
+      has_deferred_state = true;
     }
 
-    // Ensure the KV bucket has a full snapshot quickly (reduces monitor "miss" spam).
-    publish_static_state();
-    publish_dynamic_state();
+    if (has_deferred_state && bus_) {
+      bus_->post_main_thread([this]() { publish_rungraph_reconcile_snapshot(); });
+    }
   } catch (const std::exception& exc) {
     spdlog::warn("implayer set_rungraph state reconcile failed serviceId={}: {}", cfg_.service_id, exc.what());
   } catch (...) {
@@ -1699,6 +1694,11 @@ bool ImPlayerService::on_set_rungraph(const nlohmann::json& graph_obj, const nlo
   }
 
   return true;
+}
+
+void ImPlayerService::publish_rungraph_reconcile_snapshot() {
+  publish_static_state();
+  publish_dynamic_state();
 }
 
 bool ImPlayerService::on_command(const std::string& call, const nlohmann::json& args, const nlohmann::json& meta,

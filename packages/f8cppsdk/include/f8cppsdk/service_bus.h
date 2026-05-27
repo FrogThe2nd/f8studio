@@ -125,6 +125,7 @@ class ServiceBus final : public ServiceControlHandler {
 
   // Pump tasks that must run on the service main/tick thread.
   std::size_t drain_main_thread(std::size_t max_tasks = 0);
+  void post_main_thread(MainThreadQueue::Task task);
 
   // Apply lifecycle locally and persist to KV (best-effort).
   void set_active_local(bool active, const json& meta, const std::string& source = "cmd");

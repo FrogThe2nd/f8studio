@@ -86,6 +86,7 @@ class ImPlayerService final : public f8::cppsdk::LifecycleNode,
                        std::string& error_message) override;
   bool on_command(const std::string& call, const nlohmann::json& args, const nlohmann::json& meta,
                   nlohmann::json& result, std::string& error_code, std::string& error_message) override;
+  void publish_rungraph_reconcile_snapshot();
   void publish_static_state();
   void publish_dynamic_state();
   PlaybackIntent playback_intent() const;

@@ -729,6 +729,10 @@ std::size_t ServiceBus::drain_main_thread(std::size_t max_tasks) {
   return main_thread_.drain(max_tasks);
 }
 
+void ServiceBus::post_main_thread(MainThreadQueue::Task task) {
+  main_thread_.post(std::move(task));
+}
+
 void ServiceBus::handle_data_payload(const std::string& key, const RuntimeBytes& bytes) {
   json payload = json::object();
   if (!decode_json(bytes.data(), bytes.size(), payload)) {
@@ -882,7 +886,7 @@ void ServiceBus::handle_peer_state_payload(const std::string& peer, const std::s
 void ServiceBus::apply_data_routes_from_rungraph(const json& graph_obj) {
   auto new_routes = parse_cross_service_data_routes(graph_obj, cfg_.service_id);
 
-  std::lock_guard<std::mutex> lock(data_mu_);
+  std::vector<std::unique_ptr<RuntimeSubscription>> removed_subscriptions;
 
   // Build new routing snapshot + input buffers.
   auto next_snapshot = std::make_shared<_DataRoutingSnapshot>();
@@ -931,31 +935,46 @@ void ServiceBus::apply_data_routes_from_rungraph(const json& graph_obj) {
     }
   }
 
-  // Unsubscribe removed keys.
-  for (auto it = runtime_data_subs_.begin(); it != runtime_data_subs_.end();) {
-    if (next_snapshot->by_key.find(it->first) != next_snapshot->by_key.end()) {
-      ++it;
-      continue;
+  {
+    std::lock_guard<std::mutex> lock(data_mu_);
+
+    // Unsubscribe removed keys. Stop them after releasing data_mu_ so callbacks
+    // cannot deadlock while trying to publish into the same service bus.
+    for (auto it = runtime_data_subs_.begin(); it != runtime_data_subs_.end();) {
+      if (next_snapshot->by_key.find(it->first) != next_snapshot->by_key.end()) {
+        ++it;
+        continue;
+      }
+      removed_subscriptions.push_back(std::move(it->second));
+      it = runtime_data_subs_.erase(it);
     }
+
+    data_inputs_ = std::move(next_inputs);
+    data_input_stream_keys_ = std::move(next_stream_keys);
+    std::shared_ptr<const _DataRoutingSnapshot> next_snapshot_const = next_snapshot;
+    std::atomic_store(&data_routes_snapshot_, std::move(next_snapshot_const));
+  }
+
+  for (auto& sub : removed_subscriptions) {
     try {
-      if (it->second) {
-        it->second->stop();
+      if (sub) {
+        sub->stop();
       }
     } catch (const std::exception& exc) {
-      spdlog::warn("runtime data unsubscribe failed serviceId={} key={}: {}", cfg_.service_id, it->first,
-                   exc.what());
+      spdlog::warn("runtime data unsubscribe failed serviceId={}: {}", cfg_.service_id, exc.what());
     } catch (...) {
-      spdlog::warn("runtime data unsubscribe failed serviceId={} key={}: unknown error", cfg_.service_id,
-                   it->first);
+      spdlog::warn("runtime data unsubscribe failed serviceId={}: unknown error", cfg_.service_id);
     }
-    it = runtime_data_subs_.erase(it);
   }
 
   // Subscribe new keys.
   for (const auto& route_entry : next_snapshot->by_key) {
     const std::string& key = route_entry.first;
-    if (runtime_data_subs_.find(key) != runtime_data_subs_.end()) {
-      continue;
+    {
+      std::lock_guard<std::mutex> lock(data_mu_);
+      if (runtime_data_subs_.find(key) != runtime_data_subs_.end()) {
+        continue;
+      }
     }
     if (!runtime_transport_) {
       spdlog::warn("runtime data subscription skipped without transport serviceId={} key={}", cfg_.service_id,
@@ -966,16 +985,22 @@ void ServiceBus::apply_data_routes_from_rungraph(const json& graph_obj) {
       handle_data_payload(msg.key, msg.payload);
     });
     if (sub && sub->valid()) {
-      runtime_data_subs_.emplace(key, std::move(sub));
+      std::unique_ptr<RuntimeSubscription> duplicate_sub;
+      {
+        std::lock_guard<std::mutex> lock(data_mu_);
+        const auto [it, inserted] = runtime_data_subs_.try_emplace(key, std::move(sub));
+        if (!inserted) {
+          duplicate_sub = std::move(sub);
+        }
+        (void)it;
+      }
+      if (duplicate_sub) {
+        duplicate_sub->stop();
+      }
     } else {
       spdlog::warn("runtime data subscription failed serviceId={} key={}", cfg_.service_id, key);
     }
   }
-
-  data_inputs_ = std::move(next_inputs);
-  data_input_stream_keys_ = std::move(next_stream_keys);
-  std::shared_ptr<const _DataRoutingSnapshot> next_snapshot_const = next_snapshot;
-  std::atomic_store(&data_routes_snapshot_, std::move(next_snapshot_const));
 }
 
 bool ServiceBus::start() {
@@ -1266,45 +1291,49 @@ void ServiceBus::stop() {
   stop_runtime_control_endpoints();
   stop_rungraph_apply_worker();
 
+  std::vector<std::unique_ptr<RuntimeSubscription>> peer_state_subs_to_stop;
   {
     std::lock_guard<std::mutex> lock(state_mu_);
     for (auto& sub_entry : peer_state_subs_by_service_id_) {
-      try {
-        if (sub_entry.second) {
-          sub_entry.second->stop();
-        }
-      } catch (const std::exception& exc) {
-        spdlog::warn("peer state subscription stop failed serviceId={} peer={}: {}", cfg_.service_id, sub_entry.first,
-                     exc.what());
-      } catch (...) {
-        spdlog::warn("peer state subscription stop failed serviceId={} peer={}: unknown error", cfg_.service_id,
-                     sub_entry.first);
-      }
+      peer_state_subs_to_stop.push_back(std::move(sub_entry.second));
     }
     peer_state_subs_by_service_id_.clear();
     cross_state_in_.clear();
     cross_state_targets_.clear();
   }
+  for (auto& sub : peer_state_subs_to_stop) {
+    try {
+      if (sub) {
+        sub->stop();
+      }
+    } catch (const std::exception& exc) {
+      spdlog::warn("peer state subscription stop failed serviceId={}: {}", cfg_.service_id, exc.what());
+    } catch (...) {
+      spdlog::warn("peer state subscription stop failed serviceId={}: unknown error", cfg_.service_id);
+    }
+  }
 
+  std::vector<std::unique_ptr<RuntimeSubscription>> runtime_data_subs_to_stop;
   {
     std::lock_guard<std::mutex> lock(data_mu_);
     for (auto& sub_entry : runtime_data_subs_) {
-      try {
-        if (sub_entry.second) {
-          sub_entry.second->stop();
-        }
-      } catch (const std::exception& exc) {
-        spdlog::warn("runtime data subscription stop failed serviceId={} key={}: {}", cfg_.service_id, sub_entry.first,
-                     exc.what());
-      } catch (...) {
-        spdlog::warn("runtime data subscription stop failed serviceId={} key={}: unknown error", cfg_.service_id,
-                     sub_entry.first);
-      }
+      runtime_data_subs_to_stop.push_back(std::move(sub_entry.second));
     }
     runtime_data_subs_.clear();
     data_inputs_.clear();
     data_input_stream_keys_.clear();
     std::atomic_store(&data_routes_snapshot_, std::shared_ptr<const _DataRoutingSnapshot>{});
+  }
+  for (auto& sub : runtime_data_subs_to_stop) {
+    try {
+      if (sub) {
+        sub->stop();
+      }
+    } catch (const std::exception& exc) {
+      spdlog::warn("runtime data subscription stop failed serviceId={}: {}", cfg_.service_id, exc.what());
+    } catch (...) {
+      spdlog::warn("runtime data subscription stop failed serviceId={}: unknown error", cfg_.service_id);
+    }
   }
   {
     std::lock_guard<std::mutex> lock(state_mu_);
@@ -1987,36 +2016,56 @@ void ServiceBus::run_rungraph_apply_worker(json graph_obj, json meta, std::strin
   publish_rungraph_deploy_status_for_aliases(graph_obj, aliases, "accepted", source, target_fingerprint);
   publish_rungraph_deploy_status_for_aliases(graph_obj, aliases, "applying", source, target_fingerprint);
 
-  std::string error_code;
-  std::string error_message;
-  const bool ok = on_set_rungraph(graph_obj, meta, error_code, error_message);
-  if (!ok) {
-    const std::string message = error_message.empty() ? error_code : error_message;
-    {
-      std::lock_guard<std::mutex> lock(rungraph_apply_mu_);
-      const auto it = rungraph_inflight_aliases_.find(target_fingerprint);
-      if (it != rungraph_inflight_aliases_.end()) {
-        aliases.assign(it->second.begin(), it->second.end());
-        rungraph_inflight_aliases_.erase(it);
-      }
-    }
-    publish_rungraph_deploy_status_for_aliases(graph_obj, aliases, "failed", source, target_fingerprint, "", message);
-    spdlog::error("rungraph async apply failed serviceId={} fingerprint={} code={} message={}", cfg_.service_id,
-                  target_fingerprint.substr(0, 16),
-                  error_code, error_message);
-    return;
-  }
-  const std::string applied_fingerprint = rungraph_fingerprint_.empty() ? target_fingerprint : rungraph_fingerprint_;
-  {
+  auto collect_and_clear_aliases = [this, &target_fingerprint]() {
+    std::vector<std::string> out;
     std::lock_guard<std::mutex> lock(rungraph_apply_mu_);
     const auto it = rungraph_inflight_aliases_.find(target_fingerprint);
     if (it != rungraph_inflight_aliases_.end()) {
-      aliases.assign(it->second.begin(), it->second.end());
+      out.assign(it->second.begin(), it->second.end());
       rungraph_inflight_aliases_.erase(it);
     }
+    return out;
+  };
+
+  std::string error_code;
+  std::string error_message;
+  const auto apply_started = std::chrono::steady_clock::now();
+  spdlog::info("rungraph async apply begin serviceId={} fingerprint={} aliases={}", cfg_.service_id,
+               target_fingerprint.substr(0, 16), aliases.size());
+
+  bool ok = false;
+  try {
+    ok = on_set_rungraph(graph_obj, meta, error_code, error_message);
+  } catch (const std::exception& exc) {
+    ok = false;
+    error_code = "INTERNAL_ERROR";
+    error_message = std::string("on_set_rungraph threw: ") + exc.what();
+    spdlog::error("rungraph async apply threw serviceId={} fingerprint={}: {}", cfg_.service_id,
+                  target_fingerprint.substr(0, 16), exc.what());
+  } catch (...) {
+    ok = false;
+    error_code = "INTERNAL_ERROR";
+    error_message = "on_set_rungraph threw unknown error";
+    spdlog::error("rungraph async apply threw serviceId={} fingerprint={}: unknown error", cfg_.service_id,
+                  target_fingerprint.substr(0, 16));
   }
+  const double elapsed_ms =
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - apply_started).count();
+  if (!ok) {
+    const std::string message = error_message.empty() ? error_code : error_message;
+    aliases = collect_and_clear_aliases();
+    publish_rungraph_deploy_status_for_aliases(graph_obj, aliases, "failed", source, target_fingerprint, "", message);
+    monitor_record_error("RUNGRAPH_APPLY_FAILED", message);
+    spdlog::error("rungraph async apply failed serviceId={} fingerprint={} elapsedMs={:.1f} code={} message={}",
+                  cfg_.service_id, target_fingerprint.substr(0, 16), elapsed_ms, error_code, error_message);
+    return;
+  }
+  const std::string applied_fingerprint = rungraph_fingerprint_.empty() ? target_fingerprint : rungraph_fingerprint_;
+  aliases = collect_and_clear_aliases();
   publish_rungraph_deploy_status_for_aliases(graph_obj, aliases, "applied", source, target_fingerprint,
                                              applied_fingerprint);
+  spdlog::info("rungraph async apply applied serviceId={} fingerprint={} elapsedMs={:.1f}", cfg_.service_id,
+               target_fingerprint.substr(0, 16), elapsed_ms);
 }
 
 void ServiceBus::publish_rungraph_deploy_status(const json& graph_obj, const std::string& req_id,
@@ -2566,6 +2615,7 @@ void ServiceBus::apply_rungraph_local(const json& graph_obj, std::string& error_
     want_peers.insert(remote_state_key.peer_service_id);
   }
 
+  std::vector<std::unique_ptr<RuntimeSubscription>> removed_peer_subscriptions;
   {
     std::lock_guard<std::mutex> lock(state_mu_);
     for (auto it = peer_state_subs_by_service_id_.begin(); it != peer_state_subs_by_service_id_.end();) {
@@ -2573,18 +2623,19 @@ void ServiceBus::apply_rungraph_local(const json& graph_obj, std::string& error_
         ++it;
         continue;
       }
-      try {
-        if (it->second) {
-          it->second->stop();
-        }
-      } catch (const std::exception& exc) {
-        spdlog::warn("peer state subscription stop failed serviceId={} peer={}: {}", cfg_.service_id, it->first,
-                     exc.what());
-      } catch (...) {
-        spdlog::warn("peer state subscription stop failed serviceId={} peer={}: unknown error", cfg_.service_id,
-                     it->first);
-      }
+      removed_peer_subscriptions.push_back(std::move(it->second));
       it = peer_state_subs_by_service_id_.erase(it);
+    }
+  }
+  for (auto& sub : removed_peer_subscriptions) {
+    try {
+      if (sub) {
+        sub->stop();
+      }
+    } catch (const std::exception& exc) {
+      spdlog::warn("peer state subscription stop failed serviceId={}: {}", cfg_.service_id, exc.what());
+    } catch (...) {
+      spdlog::warn("peer state subscription stop failed serviceId={}: unknown error", cfg_.service_id);
     }
   }
 
@@ -2882,8 +2933,12 @@ void ServiceBus::deliver_state_local(const std::string& node_id, const std::stri
       if (!n) continue;
       try {
         n->on_state(node_id, field, value, ts_ms, meta);
+      } catch (const std::exception& exc) {
+        spdlog::warn("state callback failed serviceId={} nodeId={} field={}: {}", cfg_.service_id, node_id, field,
+                     exc.what());
       } catch (...) {
-        continue;
+        spdlog::warn("state callback failed serviceId={} nodeId={} field={}: unknown error", cfg_.service_id, node_id,
+                     field);
       }
     }
   }
