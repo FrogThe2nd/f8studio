@@ -205,6 +205,20 @@ def test_plugin_and_spec_visibility_boundaries_avoid_dynamic_attribute_probing()
         assert all(pattern not in source for pattern in forbidden_patterns), str(path)
 
 
+def test_command_ui_modules_avoid_dynamic_attribute_probing() -> None:
+    forbidden_patterns = (
+        "getattr(",
+        "setattr(",
+        "hasattr(",
+    )
+    for path in (
+        PACKAGE_ROOT / "nodegraph" / "items" / "inline_command_panel.py",
+        PACKAGE_ROOT / "ui" / "widgets" / "node_property_panel" / "commands.py",
+    ):
+        source = path.read_text(encoding="utf-8")
+        assert all(pattern not in source for pattern in forbidden_patterns), str(path)
+
+
 def test_assets_public_exports_remain_stable() -> None:
     import f8pystudio.assets as assets
 

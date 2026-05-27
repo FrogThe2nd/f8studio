@@ -49,6 +49,107 @@ from .containers import _F8SpecListSection, _icon_from_style, _set_icon
 
 logger = logging.getLogger(__name__)
 _CommandSpec = F8ServiceSpec | F8OperatorSpec
+_COMMAND_SPEC_ERRORS = (AttributeError, TypeError, ValueError)
+_NODE_ACCESS_ERRORS = (AttributeError, RuntimeError, TypeError)
+_NODE_VALUE_ACCESS_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
+_SCHEMA_ERRORS = (AttributeError, TypeError, ValueError, msgspec.DecodeError, msgspec.ValidationError)
+
+
+def _node_id(node: Any) -> str:
+    try:
+        return str(node.id or "").strip()
+    except _NODE_VALUE_ACCESS_ERRORS:
+        return ""
+
+
+def _node_spec(node: Any) -> _CommandSpec | None:
+    try:
+        spec = node.spec
+    except _NODE_ACCESS_ERRORS:
+        return None
+    if isinstance(spec, (F8ServiceSpec, F8OperatorSpec)):
+        return spec
+    return None
+
+
+def _node_service_id(node: Any) -> str:
+    spec = _node_spec(node)
+    if isinstance(spec, F8OperatorSpec):
+        try:
+            return str(node.svcId or "").strip()
+        except _NODE_VALUE_ACCESS_ERRORS:
+            return ""
+    return _node_id(node)
+
+
+def _command_name(command: Any) -> str:
+    try:
+        return str(command.name or "").strip()
+    except _COMMAND_SPEC_ERRORS:
+        return ""
+
+
+def _command_description(command: Any) -> str:
+    try:
+        return str(command.description or "").strip()
+    except _COMMAND_SPEC_ERRORS:
+        return ""
+
+
+def _command_required(command: Any) -> bool:
+    try:
+        return bool(command.required)
+    except _COMMAND_SPEC_ERRORS:
+        return False
+
+
+def _command_show_on_node(command: Any) -> bool:
+    try:
+        return bool(command.showOnNode)
+    except _COMMAND_SPEC_ERRORS:
+        return False
+
+
+def _command_params(command: Any) -> list[Any]:
+    try:
+        return list(command.params or [])
+    except _COMMAND_SPEC_ERRORS:
+        return []
+
+
+def _param_name(param: Any) -> str:
+    try:
+        return str(param.name or "").strip()
+    except _COMMAND_SPEC_ERRORS:
+        return ""
+
+
+def _param_required(param: Any) -> bool:
+    try:
+        return bool(param.required)
+    except _COMMAND_SPEC_ERRORS:
+        return False
+
+
+def _param_ui_control(param: Any) -> str:
+    try:
+        return str(param.uiControl or "").strip()
+    except _COMMAND_SPEC_ERRORS:
+        return ""
+
+
+def _param_schema(param: Any) -> Any:
+    try:
+        return param.valueSchema
+    except _COMMAND_SPEC_ERRORS:
+        return None
+
+
+def _param_description(param: Any) -> str:
+    try:
+        return str(param.description or "").strip()
+    except _COMMAND_SPEC_ERRORS:
+        return ""
 
 
 class _F8EditCommandParamDialog(QtWidgets.QDialog):
@@ -66,7 +167,7 @@ class _F8EditCommandParamDialog(QtWidgets.QDialog):
         self.setWindowTitle(title)
         try:
             self._schema = param.valueSchema or schema_from_json_obj_loose({"type": "any"})
-        except Exception:
+        except _SCHEMA_ERRORS:
             self._schema = schema_from_json_obj_loose({"type": "any"})
         self._ui_only = bool(ui_only)
         self._lock_identity_fields = bool(lock_identity_fields)
@@ -133,7 +234,7 @@ class _F8EditCommandParamDialog(QtWidgets.QDialog):
             return
         try:
             self._schema = dlg.schema()
-        except Exception as e:
+        except _SCHEMA_ERRORS as e:
             show_warning(self, "Invalid schema", str(e))
             return
         self._refresh_schema_summary()
@@ -456,27 +557,15 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
     def _bridge(self) -> Any | None:
         try:
             g = self._node.graph
-        except Exception:
+        except _NODE_ACCESS_ERRORS:
             return None
         try:
             return g.service_bridge
-        except Exception:
+        except _NODE_ACCESS_ERRORS:
             return None
 
     def _service_id(self) -> str:
-        try:
-            spec = self._node.spec
-        except Exception:
-            spec = None
-        if isinstance(spec, F8OperatorSpec):
-            try:
-                return str(self._node.svcId or "").strip()
-            except Exception:
-                return ""
-        try:
-            return str(self._node.id or "").strip()
-        except Exception:
-            return ""
+        return _node_service_id(self._node)
 
     @staticmethod
     def _editable_commands(spec: _CommandSpec) -> bool:
@@ -491,7 +580,7 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
         try:
             bridge.service_process_state.connect(self._on_bridge_service_process_state)  # type: ignore[attr-defined]
             self._bridge_proc_hooked = True
-        except Exception:
+        except _NODE_ACCESS_ERRORS:
             self._bridge_proc_hooked = False
 
     def _is_service_running(self) -> bool:
@@ -501,7 +590,7 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
             return False
         try:
             return bool(bridge.is_service_running(sid))
-        except Exception:
+        except _NODE_VALUE_ACCESS_ERRORS:
             return False
 
     @QtCore.Slot(str, bool)
@@ -524,10 +613,7 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
         self._missing_locked, _ = node_missing_lock_info(self._node)
         self._sec.clear()
         self._cmd_rows = {}
-        try:
-            spec = self._node.spec
-        except Exception:
-            spec = None
+        spec = _node_spec(self._node)
         if not isinstance(spec, (F8ServiceSpec, F8OperatorSpec)):
             self._sec.set_add_visible(False)
             return
@@ -540,27 +626,15 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
         running = self._is_service_running()
         try:
             cmds = list(self._node.effective_commands() or [])
-        except Exception:
+        except _NODE_VALUE_ACCESS_ERRORS:
             cmds = list(spec.commands or [])
         for c in cmds:
-            try:
-                name = str(c.name or "")
-            except Exception:
-                name = ""
+            name = _command_name(c)
             if not name:
                 continue
-            try:
-                desc = str(c.description or "")
-            except Exception:
-                desc = ""
-            try:
-                show_on_node = bool(c.showOnNode)
-            except Exception:
-                show_on_node = False
-            try:
-                required = bool(c.required)
-            except Exception:
-                required = False
+            desc = _command_description(c)
+            show_on_node = _command_show_on_node(c)
+            required = _command_required(c)
             row = _F8CommandRow(
                 name=name,
                 description=desc,
@@ -587,15 +661,12 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
     def _command_base_order(self, spec: _CommandSpec | None = None) -> list[str]:
         current_spec = spec
         if current_spec is None:
-            try:
-                current_spec = self._node.spec
-            except Exception:
-                current_spec = None
+            current_spec = _node_spec(self._node)
         if not isinstance(current_spec, (F8ServiceSpec, F8OperatorSpec)):
             return []
         ordered: list[str] = []
         for command in list(current_spec.commands or []):
-            name = str(command.name or "").strip()
+            name = _command_name(command)
             if name:
                 ordered.append(name)
         return ordered
@@ -623,11 +694,11 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
             row.set_show_on_node(bool(show_on_node))
 
     def _prompt_command_args(self, cmd: F8Command) -> dict[str, Any] | None:
-        params = list(cmd.params or [])
+        params = _command_params(cmd)
         if not params:
             return {}
         dlg = QtWidgets.QDialog(self)
-        dlg.setWindowTitle(str(cmd.name or "Command"))
+        dlg.setWindowTitle(_command_name(cmd) or "Command")
         form = QtWidgets.QFormLayout()
         form.setContentsMargins(12, 12, 12, 12)
         form.setSpacing(8)
@@ -636,22 +707,26 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
         widgets: dict[str, QtWidgets.QWidget] = {}
 
         for p in params:
-            pname = str(p.name or "").strip()
+            pname = _param_name(p)
             if not pname:
                 continue
-            required = bool(p.required)
-            ui = str(p.uiControl or "").strip().lower()
-            schema = p.valueSchema
+            required = _param_required(p)
+            ui = _param_ui_control(p).lower()
+            schema = _param_schema(p)
             t = _schema_type(schema) if schema is not None else ""
             enum_items = _schema_enum_items(schema) if schema is not None else []
             lo, hi = _schema_numeric_range(schema) if schema is not None else (None, None)
-            if t in {"string", "number", "integer", "boolean", "null", "object", "array", "any"}:
-                default_value = schema_default(schema)
-            else:
+            try:
+                default_value = (
+                    schema_default(schema)
+                    if t in {"string", "number", "integer", "boolean", "null", "object", "array", "any"}
+                    else None
+                )
+            except _COMMAND_SPEC_ERRORS:
                 default_value = None
 
             label = f"{pname} *" if required else pname
-            tooltip = str(p.description or "").strip()
+            tooltip = _param_description(p)
 
             if enum_items or ui in {"select", "dropdown", "dropbox", "combo", "combobox"}:
                 combo = F8OptionCombo()
@@ -709,11 +784,14 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
             args: dict[str, Any] = {}
             missing: list[str] = []
             for p in params:
-                pname = str(p.name or "").strip()
+                pname = _param_name(p)
                 if not pname or pname not in editors:
                     continue
-                required = bool(p.required)
-                v = editors[pname]()
+                required = _param_required(p)
+                try:
+                    v = editors[pname]()
+                except (RuntimeError, TypeError, ValueError):
+                    v = None
                 if isinstance(v, str) and v.strip() == "":
                     v = None
                 if required and v is None:
@@ -729,18 +807,12 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
     def _invoke_command(self, name: str) -> None:
         if self._missing_locked or self._inspect_mode:
             return
-        try:
-            spec = self._node.spec
-        except Exception:
-            spec = None
+        spec = _node_spec(self._node)
         if not isinstance(spec, (F8ServiceSpec, F8OperatorSpec)):
             return
         cmd = None
         for c in list(spec.commands or []):
-            try:
-                cname = str(c.name or "").strip()
-            except (AttributeError, TypeError):
-                continue
+            cname = _command_name(c)
             if cname == str(name or "").strip():
                 cmd = c
                 break
@@ -756,26 +828,21 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
             parent = None
             try:
                 parent = self.window()
-            except Exception:
+            except _NODE_ACCESS_ERRORS:
                 parent = None
             try:
                 if bool(self._node.handle_command_ui(cmd, parent=parent, source=CommandUiSource.PROPERTIES_BIN)):
                     return
             except Exception:
-                node_id = ""
-                try:
-                    node_id = str(self._node.id or "").strip()
-                except Exception:
-                    node_id = ""
-                logger.exception("handle_command_ui failed command=%s nodeId=%s", name, node_id)
+                logger.exception("handle_command_ui failed command=%s nodeId=%s", name, _node_id(self._node))
 
         bridge = self._bridge()
         sid = self._service_id()
         if bridge is None or not sid:
             return
-        node_id = str(getattr(self._node, "id", "") or "").strip() or str(sid)
+        node_id = _node_id(self._node) or str(sid)
         args = {}
-        params = list(cmd.params or [])
+        params = _command_params(cmd)
         if params:
             args = self._prompt_command_args(cmd)
             if args is None:
@@ -790,15 +857,13 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
                 command_state_payload(args),
             )
         except Exception as e:
+            logger.exception("set_remote_state failed serviceId=%s nodeId=%s command=%s", sid, node_id, name)
             show_warning(self, "Command failed", str(e))
 
     def _add_command(self) -> None:
         if self._missing_locked or self._inspect_mode:
             return
-        try:
-            spec = self._node.spec
-        except Exception:
-            spec = None
+        spec = _node_spec(self._node)
         if not isinstance(spec, (F8ServiceSpec, F8OperatorSpec)):
             return
         if not _policy_can_add(spec, "commands"):
@@ -824,10 +889,7 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
         self._load()
 
     def _edit_command(self, name: str) -> None:
-        try:
-            spec = self._node.spec
-        except Exception:
-            spec = None
+        spec = _node_spec(self._node)
         if not isinstance(spec, (F8ServiceSpec, F8OperatorSpec)):
             return
         read_only = bool(self._missing_locked or self._inspect_mode)
@@ -835,10 +897,7 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
         cmds = list(spec.commands or [])
         idx = -1
         for i, c in enumerate(cmds):
-            try:
-                cname = str(c.name or "").strip()
-            except (AttributeError, TypeError):
-                continue
+            cname = _command_name(c)
             if cname == str(name or "").strip():
                 idx = i
                 break
@@ -850,12 +909,9 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
         if not can_edit_existing:
             try:
                 for c in list(self._node.effective_commands() or []):
-                    try:
-                        if str(c.name or "").strip() == str(name or "").strip():
-                            init_cmd = c
-                            break
-                    except (AttributeError, TypeError):
-                        continue
+                    if _command_name(c) == str(name or "").strip():
+                        init_cmd = c
+                        break
             except (AttributeError, RuntimeError, TypeError):
                 logger.exception("Failed to read effective commands for non-editable command dialog")
         dlg = _F8EditCommandDialog(
@@ -888,7 +944,7 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
             if self._on_apply:
                 self._on_apply()
         elif not read_only:
-            self._apply_command_ui_override(str(init_cmd.name or ""), bool(edited.showOnNode))
+            self._apply_command_ui_override(_command_name(init_cmd), _command_show_on_node(edited))
         self._load()
 
     def _apply_command_ui_override(self, name: str, show_on_node: bool) -> None:
@@ -896,10 +952,7 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
         if not n:
             return
         node = self._node
-        try:
-            spec = node.spec
-        except Exception:
-            spec = None
+        spec = _node_spec(node)
         base_show = _base_command_show_on_node(spec, name=n)
         _set_command_show_on_node_override(
             node, name=n, show_on_node=bool(show_on_node), base_show_on_node=bool(base_show)
@@ -910,17 +963,14 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
         if not n:
             return False
         for c in list(spec.commands or []):
-            if str(c.name or "").strip() == n:
-                return bool(c.required)
+            if _command_name(c) == n:
+                return _command_required(c)
         return False
 
     def _delete_command(self, name: str) -> None:
         if self._missing_locked or self._inspect_mode:
             return
-        try:
-            spec = self._node.spec
-        except Exception:
-            spec = None
+        spec = _node_spec(self._node)
         if not isinstance(spec, (F8ServiceSpec, F8OperatorSpec)):
             return
         if not _policy_can_delete(spec, "commands"):
