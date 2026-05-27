@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+import logging
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, TypeVar
 
 from qtpy import QtWidgets
 
@@ -28,8 +31,57 @@ if TYPE_CHECKING:
 else:
     _VariantCatalogSyncFlowsMixinBase = object
 
+logger = logging.getLogger(__name__)
+_VariantSyncResult = TypeVar("_VariantSyncResult")
+
+
+@dataclass(frozen=True)
+class _VariantPublishResult:
+    entry: F8VariantEntry
+    created_replacement: bool = False
+
 
 class VariantCatalogSyncFlowsMixin(_VariantCatalogSyncFlowsMixinBase):
+    def _run_variant_sync_action(
+        self,
+        *,
+        failure_title: str,
+        action: Callable[[], _VariantSyncResult],
+    ) -> _VariantSyncResult | None:
+        try:
+            return action()
+        except Exception as exc:
+            logger.exception("variant catalog sync action failed title=%s", failure_title, exc_info=exc)
+            show_warning(self, failure_title, str(exc))
+            return None
+
+    def _run_publish_action_allowing_replacement(
+        self,
+        *,
+        draft_entry: F8VariantEntry,
+        target_asset_id: str,
+        preferred_visibility: F8VariantVisibility | None,
+        action: Callable[[], F8VariantEntry],
+    ) -> _VariantPublishResult | None:
+        try:
+            return _VariantPublishResult(entry=action())
+        except F8VariantRemoteRequestError as exc:
+            if self._is_missing_variant_request_error(exc):
+                replacement = self._create_replacement_variant_if_confirmed(
+                    draft_entry=draft_entry,
+                    missing_variant_id=target_asset_id,
+                    preferred_visibility=preferred_visibility,
+                )
+                if replacement is None:
+                    return None
+                return _VariantPublishResult(entry=replacement, created_replacement=True)
+            show_warning(self, "Publish failed", str(exc))
+            return None
+        except Exception as exc:
+            logger.exception("variant publish action failed target=%s", target_asset_id, exc_info=exc)
+            show_warning(self, "Publish failed", str(exc))
+            return None
+
     @staticmethod
     def _variant_publish_change_flags(
         *,
@@ -61,6 +113,127 @@ class VariantCatalogSyncFlowsMixin(_VariantCatalogSyncFlowsMixinBase):
     @staticmethod
     def _is_missing_variant_request_error(exc: Exception) -> bool:
         return isinstance(exc, F8VariantRemoteRequestError) and exc.status_code == 404
+
+    def _create_replacement_variant_if_confirmed(
+        self,
+        *,
+        draft_entry: F8VariantEntry,
+        missing_variant_id: str,
+        preferred_visibility: F8VariantVisibility | None = None,
+    ) -> F8VariantEntry | None:
+        if not self._confirm_create_replacement_variant(
+            draft_entry=draft_entry,
+            missing_variant_id=missing_variant_id,
+        ):
+            return None
+        return self._create_remote_variant_for_draft(
+            draft_entry,
+            preferred_visibility=preferred_visibility,
+        )
+
+    def _load_publish_target_remote_entry(
+        self,
+        *,
+        draft_entry: F8VariantEntry,
+        target_asset_id: str,
+    ) -> _VariantPublishResult | None:
+        remote_entry = self._remote_entry_for_variant_id(target_asset_id)
+        if remote_entry is not None:
+            return _VariantPublishResult(entry=remote_entry)
+        try:
+            return _VariantPublishResult(entry=self._sync_client.get_variant(target_asset_id))
+        except F8VariantRemoteRequestError as exc:
+            if self._is_missing_variant_request_error(exc):
+                replacement = self._create_replacement_variant_if_confirmed(
+                    draft_entry=draft_entry,
+                    missing_variant_id=target_asset_id,
+                )
+                if replacement is None:
+                    return None
+                return _VariantPublishResult(entry=replacement, created_replacement=True)
+            show_warning(self, "Publish failed", str(exc))
+            return None
+        except Exception as exc:
+            logger.exception("failed to load publish target variant target=%s", target_asset_id, exc_info=exc)
+            show_warning(self, "Publish failed", str(exc))
+            return None
+
+    def _ensure_publish_target_cached(
+        self,
+        *,
+        draft_entry: F8VariantEntry,
+        remote_entry: F8VariantEntry,
+        target_asset_id: str,
+    ) -> _VariantPublishResult | None:
+        if variant_entry_has_cached_content(remote_entry):
+            return _VariantPublishResult(entry=remote_entry)
+        try:
+            return _VariantPublishResult(entry=self._sync_client.cache_variant_content(target_asset_id))
+        except F8VariantRemoteRequestError as exc:
+            if self._is_missing_variant_request_error(exc):
+                replacement = self._create_replacement_variant_if_confirmed(
+                    draft_entry=draft_entry,
+                    missing_variant_id=target_asset_id,
+                    preferred_visibility=remote_entry.visibility,
+                )
+                if replacement is None:
+                    return None
+                return _VariantPublishResult(entry=replacement, created_replacement=True)
+            show_warning(self, "Publish failed", str(exc))
+            return None
+        except Exception as exc:
+            logger.exception("failed to cache publish target variant target=%s", target_asset_id, exc_info=exc)
+            show_warning(self, "Publish failed", str(exc))
+            return None
+
+    def _publish_existing_remote_variant_draft(
+        self,
+        *,
+        draft_entry: F8VariantEntry,
+        remote_entry: F8VariantEntry,
+        target_asset_id: str,
+        has_structural_changes: bool,
+        has_metadata_changes: bool,
+    ) -> _VariantPublishResult | None:
+        if not has_structural_changes and has_metadata_changes:
+            return self._run_publish_action_allowing_replacement(
+                draft_entry=draft_entry,
+                target_asset_id=target_asset_id,
+                preferred_visibility=remote_entry.visibility,
+                action=lambda: self._sync_client.patch_variant_meta(
+                    target_asset_id,
+                    name=str(draft_entry.record.name),
+                    description=str(draft_entry.record.description),
+                    tags=[str(tag) for tag in list(draft_entry.record.tags or [])],
+                ),
+            )
+
+        change_summary = self._request_publish_version_notes(variant_name=str(draft_entry.record.name))
+        if change_summary is None:
+            return None
+        upload_record = validate_as(
+            F8VariantRecord,
+            {
+                **dump_json(draft_entry.record, mode="json"),
+                "variantId": target_asset_id,
+            },
+        )
+        return self._run_publish_action_allowing_replacement(
+            draft_entry=draft_entry,
+            target_asset_id=target_asset_id,
+            preferred_visibility=remote_entry.visibility,
+            action=lambda: self._sync_client.update_variant(
+                F8VariantEntry(
+                    record=upload_record,
+                    source=remote_entry.source,
+                    visibility=remote_entry.visibility,
+                    remoteVersionNumber=remote_entry.remoteVersionNumber,
+                    installed=True,
+                    hasCachedContent=True,
+                ),
+                change_summary=change_summary,
+            ),
+        )
 
     def _confirm_create_replacement_variant(
         self,
@@ -113,8 +286,9 @@ class VariantCatalogSyncFlowsMixin(_VariantCatalogSyncFlowsMixinBase):
             if visibility == F8VariantVisibility.private
             else F8VariantSourceKind.remote_public
         )
-        try:
-            published = self._sync_client.create_variant(
+        published = self._run_variant_sync_action(
+            failure_title="Publish failed",
+            action=lambda: self._sync_client.create_variant(
                 F8VariantEntry(
                     record=upload_record,
                     source=source,
@@ -123,9 +297,9 @@ class VariantCatalogSyncFlowsMixin(_VariantCatalogSyncFlowsMixinBase):
                     hasCachedContent=True,
                 ),
                 change_summary=change_summary,
-            )
-        except Exception as exc:
-            show_warning(self, "Publish failed", str(exc))
+            ),
+        )
+        if published is None:
             return None
         _ = self._save_variant_draft(
             record=draft_entry.record,
@@ -143,10 +317,11 @@ class VariantCatalogSyncFlowsMixin(_VariantCatalogSyncFlowsMixinBase):
         remote_entry = self._selected_remote_entry()
         if remote_entry is None:
             return None
-        try:
-            installed = self._sync_client.install_variant(str(remote_entry.record.variantId))
-        except Exception as exc:
-            show_warning(self, "Load failed", str(exc))
+        installed = self._run_variant_sync_action(
+            failure_title="Load failed",
+            action=lambda: self._sync_client.install_variant(str(remote_entry.record.variantId)),
+        )
+        if installed is None:
             return None
         self._rebuild_browser_after_installed_state_changed(
             preserve_variant_id=str(installed.record.variantId)
@@ -196,10 +371,11 @@ class VariantCatalogSyncFlowsMixin(_VariantCatalogSyncFlowsMixinBase):
         remote_entry = self._selected_remote_entry()
         if remote_entry is None:
             return None
-        try:
-            updated = self._sync_client.install_variant(str(remote_entry.record.variantId))
-        except Exception as exc:
-            show_warning(self, "Pull failed", str(exc))
+        updated = self._run_variant_sync_action(
+            failure_title="Pull failed",
+            action=lambda: self._sync_client.install_variant(str(remote_entry.record.variantId)),
+        )
+        if updated is None:
             return None
         self._rebuild_browser_after_installed_state_changed(
             preserve_variant_id=str(updated.record.variantId)
@@ -234,17 +410,28 @@ class VariantCatalogSyncFlowsMixin(_VariantCatalogSyncFlowsMixinBase):
             return
         if not self._ensure_logged_in():
             return
-        try:
-            if selected_entry.subscribed:
-                updated = self._sync_client.unsubscribe_variant(str(selected_entry.record.variantId))
-                show_info(self, "Unsubscribed", f"Removed subscription:\n{updated.record.name}")
-            else:
-                updated = self._sync_client.subscribe_variant(str(selected_entry.record.variantId))
-                loaded = self._sync_client.install_variant(str(updated.record.variantId))
-                show_info(self, "Subscribed", f"Subscribed and loaded variant:\n{loaded.record.name}")
-        except Exception as exc:
-            show_warning(self, "Subscription failed", str(exc))
-            return
+        if selected_entry.subscribed:
+            updated = self._run_variant_sync_action(
+                failure_title="Subscription failed",
+                action=lambda: self._sync_client.unsubscribe_variant(str(selected_entry.record.variantId)),
+            )
+            if updated is None:
+                return
+            show_info(self, "Unsubscribed", f"Removed subscription:\n{updated.record.name}")
+        else:
+            updated = self._run_variant_sync_action(
+                failure_title="Subscription failed",
+                action=lambda: self._sync_client.subscribe_variant(str(selected_entry.record.variantId)),
+            )
+            if updated is None:
+                return
+            loaded = self._run_variant_sync_action(
+                failure_title="Subscription failed",
+                action=lambda: self._sync_client.install_variant(str(updated.record.variantId)),
+            )
+            if loaded is None:
+                return
+            show_info(self, "Subscribed", f"Subscribed and loaded variant:\n{loaded.record.name}")
         self._rebuild_browser_after_remote_scope_state_changed(
             preserve_variant_id=str(updated.record.variantId)
         )
@@ -253,10 +440,11 @@ class VariantCatalogSyncFlowsMixin(_VariantCatalogSyncFlowsMixinBase):
         selected_entry = self._selected_entry()
         if selected_entry is None or not self._is_owned_remote_entry(selected_entry):
             return
-        try:
-            selected_entry = self._sync_client.get_variant(str(selected_entry.record.variantId))
-        except Exception as exc:
-            show_warning(self, "Load failed", str(exc))
+        selected_entry = self._run_variant_sync_action(
+            failure_title="Load failed",
+            action=lambda: self._sync_client.get_variant(str(selected_entry.record.variantId)),
+        )
+        if selected_entry is None:
             return
         next_visibility = F8VariantVisibility.public
         prompt = "Make this remote variant public?"
@@ -271,14 +459,15 @@ class VariantCatalogSyncFlowsMixin(_VariantCatalogSyncFlowsMixinBase):
         )
         if answer != QtWidgets.QMessageBox.StandardButton.Yes:
             return
-        try:
-            self._sync_client.update_variant_visibility(
+        updated = self._run_variant_sync_action(
+            failure_title="Visibility update failed",
+            action=lambda: self._sync_client.update_variant_visibility(
                 str(selected_entry.record.variantId),
                 visibility=next_visibility,
                 version_number=selected_entry.remoteVersionNumber,
-            )
-        except Exception as exc:
-            show_warning(self, "Visibility update failed", str(exc))
+            ),
+        )
+        if updated is None:
             return
         self._rebuild_browser_after_remote_asset_changed(
             preserve_variant_id=str(selected_entry.record.variantId)
@@ -302,38 +491,25 @@ class VariantCatalogSyncFlowsMixin(_VariantCatalogSyncFlowsMixinBase):
     def _publish_variant_draft(self, draft_entry: F8VariantEntry) -> F8VariantEntry | None:
         target_asset_id = None if draft_entry.draftOriginAssetId is None else str(draft_entry.draftOriginAssetId).strip() or None
         if target_asset_id:
-            remote_entry = self._remote_entry_for_variant_id(target_asset_id)
-            if remote_entry is None:
-                try:
-                    remote_entry = self._sync_client.get_variant(target_asset_id)
-                except F8VariantRemoteRequestError as exc:
-                    if self._is_missing_variant_request_error(exc) and self._confirm_create_replacement_variant(
-                        draft_entry=draft_entry,
-                        missing_variant_id=target_asset_id,
-                    ):
-                        return self._create_remote_variant_for_draft(draft_entry)
-                    show_warning(self, "Publish failed", str(exc))
-                    return None
-                except Exception as exc:
-                    show_warning(self, "Publish failed", str(exc))
-                    return None
-            if not variant_entry_has_cached_content(remote_entry):
-                try:
-                    remote_entry = self._sync_client.cache_variant_content(target_asset_id)
-                except F8VariantRemoteRequestError as exc:
-                    if self._is_missing_variant_request_error(exc) and self._confirm_create_replacement_variant(
-                        draft_entry=draft_entry,
-                        missing_variant_id=target_asset_id,
-                    ):
-                        return self._create_remote_variant_for_draft(
-                            draft_entry,
-                            preferred_visibility=remote_entry.visibility,
-                        )
-                    show_warning(self, "Publish failed", str(exc))
-                    return None
-                except Exception as exc:
-                    show_warning(self, "Publish failed", str(exc))
-                    return None
+            remote_result = self._load_publish_target_remote_entry(
+                draft_entry=draft_entry,
+                target_asset_id=target_asset_id,
+            )
+            if remote_result is None:
+                return None
+            if remote_result.created_replacement:
+                return remote_result.entry
+            remote_entry = remote_result.entry
+            cached_result = self._ensure_publish_target_cached(
+                draft_entry=draft_entry,
+                remote_entry=remote_entry,
+                target_asset_id=target_asset_id,
+            )
+            if cached_result is None:
+                return None
+            if cached_result.created_replacement:
+                return cached_result.entry
+            remote_entry = cached_result.entry
             has_structural_changes, has_metadata_changes = self._variant_publish_change_flags(
                 remote_entry=remote_entry,
                 draft_entry=draft_entry,
@@ -341,50 +517,18 @@ class VariantCatalogSyncFlowsMixin(_VariantCatalogSyncFlowsMixinBase):
             if not has_structural_changes and not has_metadata_changes:
                 show_info(self, "No changes", f"No changes to publish for:\n{draft_entry.record.name}")
                 return None
-            try:
-                if not has_structural_changes and has_metadata_changes:
-                    published = self._sync_client.patch_variant_meta(
-                        target_asset_id,
-                        name=str(draft_entry.record.name),
-                        description=str(draft_entry.record.description),
-                        tags=[str(tag) for tag in list(draft_entry.record.tags or [])],
-                    )
-                else:
-                    change_summary = self._request_publish_version_notes(variant_name=str(draft_entry.record.name))
-                    if change_summary is None:
-                        return None
-                    upload_record = validate_as(
-                        F8VariantRecord,
-                        {
-                            **dump_json(draft_entry.record, mode="json"),
-                            "variantId": target_asset_id,
-                        },
-                    )
-                    published = self._sync_client.update_variant(
-                        F8VariantEntry(
-                            record=upload_record,
-                            source=remote_entry.source,
-                            visibility=remote_entry.visibility,
-                            remoteVersionNumber=remote_entry.remoteVersionNumber,
-                            installed=True,
-                            hasCachedContent=True,
-                        ),
-                        change_summary=change_summary,
-                    )
-            except F8VariantRemoteRequestError as exc:
-                if self._is_missing_variant_request_error(exc) and self._confirm_create_replacement_variant(
-                    draft_entry=draft_entry,
-                    missing_variant_id=target_asset_id,
-                ):
-                    return self._create_remote_variant_for_draft(
-                        draft_entry,
-                        preferred_visibility=remote_entry.visibility,
-                    )
-                show_warning(self, "Publish failed", str(exc))
+            publish_result = self._publish_existing_remote_variant_draft(
+                draft_entry=draft_entry,
+                remote_entry=remote_entry,
+                target_asset_id=target_asset_id,
+                has_structural_changes=has_structural_changes,
+                has_metadata_changes=has_metadata_changes,
+            )
+            if publish_result is None:
                 return None
-            except Exception as exc:
-                show_warning(self, "Publish failed", str(exc))
-                return None
+            if publish_result.created_replacement:
+                return publish_result.entry
+            published = publish_result.entry
             _ = self._save_variant_draft(
                 record=draft_entry.record,
                 origin_kind=draft_entry.draftOriginKind,
