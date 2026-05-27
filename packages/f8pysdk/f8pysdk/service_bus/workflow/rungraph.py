@@ -53,6 +53,10 @@ def _is_unset(value: object) -> bool:
     return isinstance(value, msgspec.UnsetType)
 
 
+def _is_service_node_operator(operator_class: object) -> bool:
+    return operator_class is None or _is_unset(operator_class)
+
+
 def _port_payload_kind_text(port: F8DataPortSpec) -> str:
     return data_port_payload_kind(port).value
 
@@ -149,6 +153,55 @@ def _log_rungraph_error_once(bus: "ServiceBus", key: str, message: str, exc: Bas
     log.error("rungraph_apply[%s] %s", bus.service_id, message, exc_info=exc)
 
 
+async def _read_state_for_rungraph_or_none(
+    bus: "ServiceBus",
+    node_id: str,
+    field: str,
+    *,
+    error_key: str,
+    error_message: str,
+) -> StateRead | None:
+    try:
+        return await bus.get_state(node_id, field)
+    except Exception as exc:
+        log_error_once(bus, key=error_key, message=error_message, exc=exc)
+        return None
+
+
+async def _publish_state_for_rungraph_or_false(
+    bus: "ServiceBus",
+    node_id: str,
+    field: str,
+    value: Any,
+    *,
+    error_key: str,
+    error_message: str,
+    origin: StateWriteOrigin,
+    source: StateWriteSource,
+    ts_ms: int | None = None,
+    meta: dict[str, Any] | None = None,
+    deliver_local: bool = True,
+    options: StatePublishOptions | None = None,
+) -> bool:
+    try:
+        await publish_state(
+            bus,
+            node_id,
+            field,
+            value,
+            origin=origin,
+            source=source,
+            ts_ms=ts_ms,
+            meta=meta,
+            deliver_local=deliver_local,
+            options=options,
+        )
+    except Exception as exc:
+        log_error_once(bus, key=error_key, message=error_message, exc=exc)
+        return False
+    return True
+
+
 def _should_apply_rungraph_state_value(
     existing: StateRead | None,
     value: Any,
@@ -223,9 +276,7 @@ async def apply_rungraph(bus: "ServiceBus", graph: F8RuntimeGraph) -> bool:
 
     # Service/container nodes use `nodeId == serviceId`.
     for n in list(graph.nodes or []):
-        operator_class = n.operatorClass
-        is_service_node = operator_class is None or isinstance(operator_class, msgspec.UnsetType)
-        if is_service_node and str(n.nodeId) != str(n.serviceId):
+        if _is_service_node_operator(n.operatorClass) and str(n.nodeId) != str(n.serviceId):
             _log_rungraph_error_once(bus, "rungraph_invalid_service_node", "service node requires nodeId == serviceId")
             return False
 
@@ -307,16 +358,13 @@ async def apply_rungraph_state_values(bus: "ServiceBus", graph: F8RuntimeGraph) 
             # already have a newer/equal value (by timestamp). This prevents rungraph
             # deploys from clobbering user/runtime updates.
             if rungraph_ts > 0:
-                try:
-                    st = await bus.get_state(node_id, field)
-                except Exception as exc:
-                    log_error_once(
-                        bus,
-                        key=f"rungraph_state_reconcile_read_failed:{node_id}:{field}",
-                        message=f"failed to read existing state during rungraph reconcile for {node_id}.{field}",
-                        exc=exc,
-                    )
-                    st = None
+                st = await _read_state_for_rungraph_or_none(
+                    bus,
+                    node_id,
+                    field,
+                    error_key=f"rungraph_state_reconcile_read_failed:{node_id}:{field}",
+                    error_message=f"failed to read existing state during rungraph reconcile for {node_id}.{field}",
+                )
                 if not _should_apply_rungraph_state_value(
                     st,
                     unwrapped,
@@ -327,25 +375,19 @@ async def apply_rungraph_state_values(bus: "ServiceBus", graph: F8RuntimeGraph) 
                 ):
                     return
 
-            try:
-                await publish_state(
-                    bus,
-                    node_id,
-                    field,
-                    unwrapped,
-                    origin=StateWriteOrigin.rungraph,
-                    source=StateWriteSource.rungraph,
-                    ts_ms=(int(rungraph_ts) if rungraph_ts > 0 else None),
-                    meta=build_rungraph_reconcile_meta(),
-                    options=StatePublishOptions(fanout_intra_state_edges=False),
-                )
-            except Exception as exc:
-                log_error_once(
-                    bus,
-                    key=f"rungraph_state_seed_failed:{node_id}:{field}",
-                    message=f"failed to seed rungraph state for {node_id}.{field}",
-                    exc=exc,
-                )
+            await _publish_state_for_rungraph_or_false(
+                bus,
+                node_id,
+                field,
+                unwrapped,
+                origin=StateWriteOrigin.rungraph,
+                source=StateWriteSource.rungraph,
+                ts_ms=(int(rungraph_ts) if rungraph_ts > 0 else None),
+                meta=build_rungraph_reconcile_meta(),
+                options=StatePublishOptions(fanout_intra_state_edges=False),
+                error_key=f"rungraph_state_seed_failed:{node_id}:{field}",
+                error_message=f"failed to seed rungraph state for {node_id}.{field}",
+            )
 
     for n in list(graph.nodes or []):
         if str(n.serviceId) != bus.service_id:
@@ -440,15 +482,14 @@ async def initial_sync_intra_state_edges(bus: "ServiceBus", graph: F8RuntimeGrap
     # Propagate only from roots that have an actual value in KV/cache.
     visited: set[tuple[str, str]] = set()
     for root in list(roots):
-        try:
-            root_state = await bus.get_state(root[0], root[1])
-        except Exception as exc:
-            log_error_once(
-                bus,
-                key=f"state_edge_init_root_read_failed:{root[0]}:{root[1]}",
-                message=f"state-edge init failed to read root {root[0]}.{root[1]}",
-                exc=exc,
-            )
+        root_state = await _read_state_for_rungraph_or_none(
+            bus,
+            root[0],
+            root[1],
+            error_key=f"state_edge_init_root_read_failed:{root[0]}:{root[1]}",
+            error_message=f"state-edge init failed to read root {root[0]}.{root[1]}",
+        )
+        if root_state is None:
             continue
         if not root_state.found:
             continue
@@ -467,16 +508,13 @@ async def initial_sync_intra_state_edges(bus: "ServiceBus", graph: F8RuntimeGrap
                     # Cycle: don't spin.
                     continue
 
-                try:
-                    to_state = await bus.get_state(to_key[0], to_key[1])
-                except Exception as exc:
-                    log_error_once(
-                        bus,
-                        key=f"state_edge_init_target_read_failed:{to_key[0]}:{to_key[1]}",
-                        message=f"state-edge init failed to read target {to_key[0]}.{to_key[1]}",
-                        exc=exc,
-                    )
-                    to_state = None
+                to_state = await _read_state_for_rungraph_or_none(
+                    bus,
+                    to_key[0],
+                    to_key[1],
+                    error_key=f"state_edge_init_target_read_failed:{to_key[0]}:{to_key[1]}",
+                    error_message=f"state-edge init failed to read target {to_key[0]}.{to_key[1]}",
+                )
 
                 if to_state is not None and to_state.found:
                     try:
@@ -492,24 +530,19 @@ async def initial_sync_intra_state_edges(bus: "ServiceBus", graph: F8RuntimeGrap
                             exc_info=exc,
                         )
 
-                try:
-                    await publish_state(
-                        bus,
-                        to_key[0],
-                        to_key[1],
-                        from_val,
-                        ts_ms=ts0,
-                        origin=StateWriteOrigin.external,
-                        source=StateWriteSource.state_edge_intra_init,
-                        meta=build_intra_state_route_meta(from_node_id=from_key[0], from_field=from_key[1]),
-                    )
-                except Exception as exc:
-                    log_error_once(
-                        bus,
-                        key=f"state_edge_init_publish_failed:{to_key[0]}:{to_key[1]}",
-                        message=f"state-edge init failed to publish {to_key[0]}.{to_key[1]}",
-                        exc=exc,
-                    )
+                published = await _publish_state_for_rungraph_or_false(
+                    bus,
+                    to_key[0],
+                    to_key[1],
+                    from_val,
+                    ts_ms=ts0,
+                    origin=StateWriteOrigin.external,
+                    source=StateWriteSource.state_edge_intra_init,
+                    meta=build_intra_state_route_meta(from_node_id=from_key[0], from_field=from_key[1]),
+                    error_key=f"state_edge_init_publish_failed:{to_key[0]}:{to_key[1]}",
+                    error_message=f"state-edge init failed to publish {to_key[0]}.{to_key[1]}",
+                )
+                if not published:
                     continue
 
                 # Continue propagation using the post-validation cached value if available.
@@ -539,41 +572,39 @@ async def seed_builtin_identity_state(bus: "ServiceBus", graph: F8RuntimeGraph) 
         node_id = str(n.nodeId or "").strip()
         if not node_id:
             continue
-        try:
-            if bus.state_store.access_for(node_id=node_id, field="svcId") is not None:
-                await publish_state(
-                    bus,
-                    node_id,
-                    "svcId",
-                    str(n.serviceId or bus.service_id),
-                    origin=StateWriteOrigin.system,
-                    source=StateWriteSource.system,
-                    ts_ms=ts,
-                    meta=build_builtin_identity_state_meta(),
-                    deliver_local=False,
-                )
-            operator_class = n.operatorClass
-            is_service_node = operator_class is None or isinstance(operator_class, msgspec.UnsetType)
-            if not is_service_node and bus.state_store.access_for(node_id=node_id, field="operatorId") is not None:
-                await publish_state(
-                    bus,
-                    node_id,
-                    "operatorId",
-                    str(n.nodeId or node_id),
-                    origin=StateWriteOrigin.system,
-                    source=StateWriteSource.system,
-                    ts_ms=ts,
-                    meta=build_builtin_identity_state_meta(),
-                    deliver_local=False,
-                )
-        except Exception as exc:
-            log_error_once(
+        if bus.state_store.access_for(node_id=node_id, field="svcId") is not None:
+            published_svc_id = await _publish_state_for_rungraph_or_false(
                 bus,
-                key=f"seed_builtin_identity_state_failed:{node_id}",
-                message=f"failed to seed builtin identity state for node {node_id}",
-                exc=exc,
+                node_id,
+                "svcId",
+                str(n.serviceId or bus.service_id),
+                origin=StateWriteOrigin.system,
+                source=StateWriteSource.system,
+                ts_ms=ts,
+                meta=build_builtin_identity_state_meta(),
+                deliver_local=False,
+                error_key=f"seed_builtin_identity_state_failed:{node_id}",
+                error_message=f"failed to seed builtin identity state for node {node_id}",
             )
-            continue
+            if not published_svc_id:
+                continue
+        if (
+            not _is_service_node_operator(n.operatorClass)
+            and bus.state_store.access_for(node_id=node_id, field="operatorId") is not None
+        ):
+            await _publish_state_for_rungraph_or_false(
+                bus,
+                node_id,
+                "operatorId",
+                str(n.nodeId or node_id),
+                origin=StateWriteOrigin.system,
+                source=StateWriteSource.system,
+                ts_ms=ts,
+                meta=build_builtin_identity_state_meta(),
+                deliver_local=False,
+                error_key=f"seed_builtin_identity_state_failed:{node_id}",
+                error_message=f"failed to seed builtin identity state for node {node_id}",
+            )
 
 
 async def validate_rungraph_or_raise(bus: "ServiceBus", graph: F8RuntimeGraph) -> None:
