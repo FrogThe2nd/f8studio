@@ -25,6 +25,10 @@ from ..support.json_text_editor import attach_json_enhancements
 from ..support.monaco_editor_host import open_code_editor_window
 
 logger = logging.getLogger(__name__)
+_QT_COMPAT_ERRORS = (AttributeError, RuntimeError, TypeError)
+_QT_EVENT_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
+_NUMERIC_CONVERSION_ERRORS = (TypeError, ValueError)
+_MIME_INSERT_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
 
 
 class F8CodeButtonEditor(QtWidgets.QWidget):
@@ -103,7 +107,8 @@ class F8CodeButtonEditor(QtWidgets.QWidget):
                 self._editor_window.raise_()
                 self._editor_window.activateWindow()
                 return
-            except Exception:
+            except _QT_COMPAT_ERRORS as exc:
+                logger.debug("Discarding invalid code editor window for property '%s'", self.get_name(), exc_info=exc)
                 self._editor_window = None
 
         initial_code = self.get_value()
@@ -188,8 +193,8 @@ class F8InlineCodeEditor(QtWidgets.QPlainTextEdit):
         try:
             font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
             self.setFont(font)
-        except (AttributeError, RuntimeError, TypeError):
-            pass
+        except _QT_COMPAT_ERRORS as exc:
+            logger.debug("Failed to apply fixed-width font to inline code editor", exc_info=exc)
         self.setMinimumHeight(44)
         self.setMaximumHeight(96)
 
@@ -215,8 +220,8 @@ class F8InlineCodeEditor(QtWidgets.QPlainTextEdit):
                 self._emit_if_changed(force=True)
                 event.accept()
                 return
-        except (AttributeError, RuntimeError, TypeError):
-            pass
+        except _QT_EVENT_ERRORS as exc:
+            logger.debug("Inline code editor key handling failed; falling back to default handler", exc_info=exc)
         super().keyPressEvent(event)
 
     def _emit_if_changed(self, *, force: bool = False) -> None:
@@ -359,8 +364,8 @@ class F8WrapLineEditor(QtWidgets.QPlainTextEdit):
         try:
             font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
             self.setFont(font)
-        except (AttributeError, RuntimeError, TypeError):
-            pass
+        except _QT_COMPAT_ERRORS as exc:
+            logger.debug("Failed to apply fixed-width font to wrapline editor", exc_info=exc)
         self.document().setDocumentMargin(4.0)
 
         self.setMinimumHeight(38)
@@ -396,12 +401,12 @@ class F8WrapLineEditor(QtWidgets.QPlainTextEdit):
                 self._emit_if_changed(force=True)
                 try:
                     self.clearFocus()
-                except RuntimeError:
-                    pass
+                except RuntimeError as exc:
+                    logger.debug("Wrapline editor failed to clear focus after commit", exc_info=exc)
                 event.accept()
                 return
-        except (AttributeError, RuntimeError, TypeError):
-            pass
+        except _QT_EVENT_ERRORS as exc:
+            logger.debug("Wrapline editor key handling failed; falling back to default handler", exc_info=exc)
         super().keyPressEvent(event)
 
     def insertFromMimeData(self, source: QtCore.QMimeData) -> None:  # type: ignore[override]
@@ -412,7 +417,8 @@ class F8WrapLineEditor(QtWidgets.QPlainTextEdit):
             if txt:
                 self.textCursor().insertText(txt)
             return
-        except Exception:
+        except _MIME_INSERT_ERRORS as exc:
+            logger.debug("Wrapline editor MIME normalization failed; falling back to default insert", exc_info=exc)
             return super().insertFromMimeData(source)
 
     def _emit_if_changed(self, *, force: bool = False) -> None:
@@ -469,8 +475,8 @@ class F8JsonValueEditor(QtWidgets.QTextEdit):
             return
         try:
             obj = json.loads(text)
-        except Exception as e:
-            show_warning(self, "Invalid JSON", str(e))
+        except json.JSONDecodeError as exc:
+            show_warning(self, "Invalid JSON", str(exc))
             self.setPlainText(self._prev_text)
             return
         self._prev_value = obj
@@ -524,14 +530,14 @@ class F8NumberLineEditor(QtWidgets.QLineEdit):
     def set_min(self, v) -> None:
         try:
             self._min = float(v)
-        except Exception:
+        except _NUMERIC_CONVERSION_ERRORS:
             self._min = None
         self._update_validator()
 
     def set_max(self, v) -> None:
         try:
             self._max = float(v)
-        except Exception:
+        except _NUMERIC_CONVERSION_ERRORS:
             self._max = None
         self._update_validator()
 
@@ -546,8 +552,8 @@ class F8NumberLineEditor(QtWidgets.QLineEdit):
         dv = QtGui.QDoubleValidator(vmin, vmax, 6, self)
         try:
             dv.setNotation(QtGui.QDoubleValidator.Notation.StandardNotation)
-        except (AttributeError, RuntimeError, TypeError):
-            pass
+        except _QT_COMPAT_ERRORS as exc:
+            logger.debug("Failed to set double validator notation", exc_info=exc)
         self.setValidator(dv)
 
     def set_scrub_enabled(self, enabled: bool) -> None:
@@ -560,7 +566,7 @@ class F8NumberLineEditor(QtWidgets.QLineEdit):
             return
         try:
             out = abs(float(step))
-        except (TypeError, ValueError):
+        except _NUMERIC_CONVERSION_ERRORS:
             self._scrub_base_step = None
             return
         if out <= 0.0:
@@ -585,7 +591,7 @@ class F8NumberLineEditor(QtWidgets.QLineEdit):
             if self._data_type is int:
                 return int(round(v))
             return float(v)
-        except Exception:
+        except _NUMERIC_CONVERSION_ERRORS:
             return None
 
     def set_value(self, value) -> None:

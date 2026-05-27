@@ -5,6 +5,7 @@ import weakref
 from qtpy import QtCore, QtWidgets
 
 from f8pystudio.editor_assist.session import EditorSessionKey
+from f8pystudio.ui.components import state_editors as state_editors_module
 from f8pystudio.ui.support import monaco_editor_host as monaco_host_module
 from f8pystudio.ui.support.monaco_editor_host import MonacoEditorHostDialog, open_code_editor_window
 from f8pystudio.ui.support.monaco_editor_page import MonacoEditorPageConfig, build_monaco_editor_html
@@ -48,6 +49,14 @@ class _FakeEditorWidget(QtWidgets.QWidget):
         if close_after and saved:
             self.accept_requested.emit()
         return saved
+
+
+class _InvalidEditorWindow:
+    def raise_(self) -> None:
+        raise RuntimeError("stale editor wrapper")
+
+    def activateWindow(self) -> None:
+        raise AssertionError("activateWindow should not be reached after raise_ fails")
 
 
 def test_open_code_editor_window_reuses_existing_tab_for_same_session_key(monkeypatch) -> None:
@@ -203,6 +212,29 @@ def test_code_button_widget_calls_persisted_setter_even_if_widget_destroyed(monk
     _ = widget_ref
     host.close()
     main.close()
+
+
+def test_code_button_recovers_from_invalid_cached_editor_window(monkeypatch) -> None:
+    _ensure_app()
+    replacement = QtWidgets.QDialog()
+    widget = F8CodeButtonEditor(None, title="Node A - code", language="python")
+    widget.set_name("code")
+    widget._editor_window = _InvalidEditorWindow()  # type: ignore[assignment]
+    debug_messages: list[str] = []
+
+    def _debug(message: str, *args, **kwargs) -> None:
+        assert kwargs.get("exc_info") is not None
+        debug_messages.append(str(message))
+
+    monkeypatch.setattr(state_editors_module, "open_code_editor_window", lambda *args, **kwargs: replacement)
+    monkeypatch.setattr(state_editors_module.logger, "debug", _debug)
+
+    widget._on_edit_clicked()
+
+    assert widget._editor_window is replacement
+    assert any("Discarding invalid code editor window" in message for message in debug_messages)
+    replacement.close()
+    widget.close()
 
 
 def test_open_code_editor_window_recovers_if_cached_host_wrapper_is_invalid(monkeypatch) -> None:

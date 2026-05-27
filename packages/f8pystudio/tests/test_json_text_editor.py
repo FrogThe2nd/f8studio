@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from f8pysdk.specs import F8ServiceSpec
-from qtpy import QtGui, QtWidgets
+from qtpy import QtCore, QtGui, QtWidgets
 
 from f8pystudio.ui.support.json_text_editor import (
     BracketMatch,
@@ -87,6 +87,26 @@ def test_json_prop_text_edit_attaches_json_enhancements() -> None:
     widget = F8JsonValueEditor()
     assert hasattr(widget, "_f8_json_highlighter")
     assert hasattr(widget, "_f8_json_bracket_pair_controller")
+
+
+def test_json_value_editor_invalid_json_rolls_back(monkeypatch) -> None:
+    _ensure_app()
+    widget = F8JsonValueEditor()
+    widget.set_name("payload")
+    widget.set_value({"ok": True})
+    widget._prev_text = widget.toPlainText()
+    warnings: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "f8pystudio.ui.components.state_editors.show_warning",
+        lambda _parent, title, message: warnings.append((str(title), str(message))),
+    )
+
+    widget.setPlainText("{not-json")
+    widget.focusOutEvent(QtGui.QFocusEvent(QtCore.QEvent.Type.FocusOut))
+
+    assert widget.toPlainText() == widget._prev_text
+    assert warnings
+    assert warnings[0][0] == "Invalid JSON"
 
 
 def test_node_info_dialog_raw_json_attaches_json_enhancements(monkeypatch) -> None:
