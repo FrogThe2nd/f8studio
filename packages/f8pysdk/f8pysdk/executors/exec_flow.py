@@ -13,6 +13,14 @@ from ..time_utils import now_ms
 
 logger = logging.getLogger(__name__)
 
+_ENTRYPOINT_CANCEL_ERRORS = (RuntimeError, TypeError, ValueError)
+_ENTRYPOINT_LIFECYCLE_ERRORS = (RuntimeError, TypeError, ValueError)
+_EXEC_CALLBACK_ERRORS = (LookupError, OSError, RuntimeError, TypeError, ValueError)
+_EXEC_FLOW_RECOVERY_ERRORS = (RuntimeError, TypeError, ValueError)
+_HALF_EDGE_ERRORS = (LookupError, OSError, RuntimeError, TypeError, ValueError)
+_NODE_LOOKUP_ERRORS = (TypeError, ValueError)
+_TRIGGER_WORKER_STOP_ERRORS = (RuntimeError, TypeError, ValueError)
+
 
 def _entrypoint_node_ids(graph: F8RuntimeGraph, *, service_id: str) -> tuple[str, ...]:
     entrypoint_ids: list[str] = []
@@ -105,8 +113,14 @@ class EntrypointContext:
         for t in list(self._tasks):
             try:
                 t.cancel()
-            except Exception:
-                pass
+            except _ENTRYPOINT_CANCEL_ERRORS as exc:
+                logger.exception(
+                    "entrypoint task cancel failed service=%s node=%s task=%s",
+                    self.executor.service_id,
+                    self.node_id,
+                    t.get_name(),
+                    exc_info=exc,
+                )
         if not self._tasks:
             return
         await asyncio.gather(*list(self._tasks), return_exceptions=True)
@@ -171,7 +185,7 @@ class ExecFlowExecutor:
             try:
                 await self._start_trigger_worker()
                 await self._start_entrypoints_for_graph(graph)
-            except Exception:
+            except _EXEC_FLOW_RECOVERY_ERRORS:
                 await self.stop_all_entrypoints()
                 await self._stop_trigger_worker()
                 self._drain_trigger_queue()
@@ -189,7 +203,7 @@ class ExecFlowExecutor:
     def get_registered_node(self, node_id: str) -> Any | None:
         try:
             node_id = ensure_token(node_id, label="node_id")
-        except Exception:
+        except _NODE_LOOKUP_ERRORS:
             return None
         return self._nodes.get(node_id)
 
@@ -208,7 +222,7 @@ class ExecFlowExecutor:
             try:
                 await self._start_trigger_worker()
                 await self._start_entrypoints_for_graph(graph)
-            except Exception:
+            except _EXEC_FLOW_RECOVERY_ERRORS:
                 await self.stop_all_entrypoints()
                 await self._stop_trigger_worker()
                 self._drain_trigger_queue()
@@ -243,17 +257,58 @@ class ExecFlowExecutor:
         for port in sorted(ports):
             try:
                 v = await node.compute_output(str(port), ctx_id=exec_id)  # type: ignore[misc]
-            except Exception:
+            except _HALF_EDGE_ERRORS as exc:
+                self._report_exec_error(
+                    str(node_id),
+                    "EXEC_HALF_EDGE_COMPUTE",
+                    f"half-edge compute failed node={node_id} port={port} exec_id={exec_id}: {exc}",
+                    exc,
+                    fingerprint=f"exec_flow:half_compute:{node_id}:{port}:{type(exc).__name__}:{exc}",
+                )
                 continue
             if v is None:
                 continue
             try:
                 await self._bus.emit_data(str(node_id), str(port), v, ts_ms=now_ms())
-            except Exception:
+            except _HALF_EDGE_ERRORS as exc:
+                self._report_exec_error(
+                    str(node_id),
+                    "EXEC_HALF_EDGE_EMIT",
+                    f"half-edge emit failed node={node_id} port={port} exec_id={exec_id}: {exc}",
+                    exc,
+                    fingerprint=f"exec_flow:half_emit:{node_id}:{port}:{type(exc).__name__}:{exc}",
+                )
                 continue
 
     def _rebuild_exec_routes(self, graph: F8RuntimeGraph) -> None:
         self._exec_out = validate_exec_topology_or_raise(graph, service_id=self._service_id)
+
+    def _report_exec_error(
+        self,
+        node_id: str,
+        code: str,
+        message: str,
+        exc: BaseException,
+        *,
+        fingerprint: str,
+    ) -> None:
+        logger.exception(message, exc_info=exc)
+        try:
+            self._bus.report_error(
+                str(node_id),
+                code,
+                message,
+                severity="error",
+                fingerprint=fingerprint,
+            )
+        except _EXEC_FLOW_RECOVERY_ERRORS as report_exc:
+            logger.exception(
+                "exec flow monitor error report failed service=%s node=%s code=%s",
+                self._service_id,
+                node_id,
+                code,
+                exc_info=report_exc,
+            )
 
     @staticmethod
     def _ensure_exec_acyclic(adj: dict[str, set[str]]) -> None:
@@ -315,7 +370,7 @@ class ExecFlowExecutor:
         self._entrypoint_ctx_by_node_id[node_id] = ctx
         try:
             await node.start_entrypoint(ctx)  # type: ignore[misc]
-        except Exception:
+        except _ENTRYPOINT_LIFECYCLE_ERRORS:
             await ctx.cancel()
             self._entrypoint_ctx_by_node_id.pop(node_id, None)
             raise
@@ -333,7 +388,7 @@ class ExecFlowExecutor:
             if node is not None and isinstance(node, EntrypointNode):
                 try:
                     await node.stop_entrypoint()  # type: ignore[misc]
-                except Exception as exc:
+                except _ENTRYPOINT_LIFECYCLE_ERRORS as exc:
                     logger.exception("stop_entrypoint failed for node=%s", node_id, exc_info=exc)
         finally:
             await ctx.cancel()
@@ -358,7 +413,7 @@ class ExecFlowExecutor:
             await task
         except asyncio.CancelledError:
             return
-        except Exception as exc:
+        except _TRIGGER_WORKER_STOP_ERRORS as exc:
             logger.exception("trigger worker stop failed for service=%s", self._service_id, exc_info=exc)
 
     def _drain_trigger_queue(self) -> None:
@@ -464,7 +519,14 @@ class ExecFlowExecutor:
                 continue
             try:
                 out_ports = await node.on_exec(exec_id, str(in_port))  # type: ignore[misc]
-            except Exception:
+            except _EXEC_CALLBACK_ERRORS as exc:
+                self._report_exec_error(
+                    str(to_node),
+                    "EXEC_NODE_CALLBACK",
+                    f"exec node callback failed node={to_node} in_port={in_port} exec_id={exec_id}: {exc}",
+                    exc,
+                    fingerprint=f"exec_flow:on_exec:{to_node}:{in_port}:{type(exc).__name__}:{exc}",
+                )
                 continue
 
             # Tick-driven cross-service publishing for outgoing half-edges (direction=out).

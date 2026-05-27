@@ -12,6 +12,7 @@ from f8pysdk.capabilities import EntrypointNode  # noqa: E402
 from f8pysdk.executors.exec_flow import EntrypointContext, ExecFlowExecutor  # noqa: E402
 from f8pysdk.specs import (  # noqa: E402
     F8Edge,
+    F8EdgeDirection,
     F8EdgeKindEnum,
     F8EdgeStrategyEnum,
     F8RuntimeGraph,
@@ -43,6 +44,20 @@ def _exec_edge(*, edge_id: str, service_id: str, from_node: str, from_port: str,
         toPort=to_port,
         kind=F8EdgeKindEnum.exec,
         strategy=F8EdgeStrategyEnum.latest,
+    )
+
+
+def _data_half_edge(*, edge_id: str, service_id: str, from_node: str, from_port: str, to_service: str, to_port: str) -> F8Edge:
+    return F8Edge(
+        edgeId=edge_id,
+        fromServiceId=service_id,
+        fromOperatorId=from_node,
+        fromPort=from_port,
+        toServiceId=to_service,
+        toPort=to_port,
+        kind=F8EdgeKindEnum.data,
+        strategy=F8EdgeStrategyEnum.latest,
+        direction=F8EdgeDirection.out,
     )
 
 
@@ -102,6 +117,28 @@ class _BlockingSinkNode(OperatorNode):
         self.entered.set()
         await self.release.wait()
         return []
+
+
+class _FailingExecNode(OperatorNode):
+    def __init__(self, node_id: str) -> None:
+        super().__init__(node_id=node_id, exec_in_ports=["exec"], exec_out_ports=[])
+
+    async def on_exec(self, exec_id: str | int, in_port: str | None = None) -> list[str]:
+        del exec_id, in_port
+        raise RuntimeError("exec failed")
+
+
+class _FailingComputeNode(OperatorNode):
+    def __init__(self, node_id: str) -> None:
+        super().__init__(node_id=node_id, data_out_ports=["out"], exec_in_ports=["exec"], exec_out_ports=[])
+
+    async def on_exec(self, exec_id: str | int, in_port: str | None = None) -> list[str]:
+        del exec_id, in_port
+        return []
+
+    async def compute_output(self, port: str, ctx_id: str | int | None = None) -> object:
+        del port, ctx_id
+        raise RuntimeError("compute failed")
 
 
 class ExecFlowMultiEntrypointTests(unittest.IsolatedAsyncioTestCase):
@@ -239,6 +276,84 @@ class ExecFlowMultiEntrypointTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(ValueError, "EntrypointNode: bad"):
             await executor.apply_rungraph(graph)
+        await executor.set_active(False)
+
+    async def test_exec_callback_failure_reports_monitor_error(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        executor = ExecFlowExecutor(bus)
+        failing = _FailingExecNode("failing")
+        executor.register_node(failing)
+
+        graph = F8RuntimeGraph(
+            graphId="g5",
+            revision="r1",
+            nodes=[
+                _runtime_node(node_id="src", service_id="svcA", exec_in=["in"], exec_out=["exec"]),
+                _runtime_node(node_id="failing", service_id="svcA", exec_in=["exec"], exec_out=[]),
+            ],
+            edges=[
+                _exec_edge(
+                    edge_id="e1",
+                    service_id="svcA",
+                    from_node="src",
+                    from_port="exec",
+                    to_node="failing",
+                    to_port="exec",
+                )
+            ],
+        )
+
+        await executor.apply_rungraph(graph)
+        await executor.trigger_exec("src", "exec", exec_id="boom")
+        snapshot = bus.monitor_collector._build_snapshot(ts_ms=1)
+
+        self.assertEqual(str(snapshot.error.currentCode), "EXEC_NODE_CALLBACK")
+        self.assertEqual(str(snapshot.error.currentNodeId), "failing")
+        self.assertIn("exec failed", str(snapshot.error.currentMessage))
+        await executor.set_active(False)
+
+    async def test_half_edge_compute_failure_reports_monitor_error(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        executor = ExecFlowExecutor(bus)
+        failing = _FailingComputeNode("failing")
+        executor.register_node(failing)
+
+        graph = F8RuntimeGraph(
+            graphId="g6",
+            revision="r1",
+            nodes=[
+                _runtime_node(node_id="src", service_id="svcA", exec_in=["in"], exec_out=["exec"]),
+                _runtime_node(node_id="failing", service_id="svcA", exec_in=["exec"], exec_out=[]),
+            ],
+            edges=[
+                _exec_edge(
+                    edge_id="e1",
+                    service_id="svcA",
+                    from_node="src",
+                    from_port="exec",
+                    to_node="failing",
+                    to_port="exec",
+                ),
+                _data_half_edge(
+                    edge_id="d1",
+                    service_id="svcA",
+                    from_node="failing",
+                    from_port="out",
+                    to_service="svcB",
+                    to_port="in",
+                ),
+            ],
+        )
+
+        await executor.apply_rungraph(graph)
+        await executor.trigger_exec("src", "exec", exec_id="boom")
+        snapshot = bus.monitor_collector._build_snapshot(ts_ms=1)
+
+        self.assertEqual(str(snapshot.error.currentCode), "EXEC_HALF_EDGE_COMPUTE")
+        self.assertEqual(str(snapshot.error.currentNodeId), "failing")
+        self.assertIn("compute failed", str(snapshot.error.currentMessage))
         await executor.set_active(False)
 
 
