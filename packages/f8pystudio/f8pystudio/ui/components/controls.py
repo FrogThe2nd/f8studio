@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 import logging
 import math
@@ -46,6 +47,68 @@ def _b64decode_to_bytes(b64: str) -> bytes:
 
 def _b64encode_bytes(data: bytes) -> str:
     return base64.b64encode(data).decode("ascii")
+
+
+def _graphics_proxy_for_widget(widget: QtWidgets.QWidget) -> QtWidgets.QGraphicsProxyWidget | None:
+    current: QtWidgets.QWidget | None = widget
+    while current is not None:
+        try:
+            proxy = current.graphicsProxyWidget()
+        except (RuntimeError, TypeError):
+            proxy = None
+        if proxy is not None:
+            return proxy
+        try:
+            current = current.parentWidget()
+        except (RuntimeError, TypeError):
+            return None
+    return None
+
+
+def _window_for_graphics_proxy(proxy: QtWidgets.QGraphicsProxyWidget) -> QtWidgets.QWidget | None:
+    try:
+        scene = proxy.scene()
+    except (RuntimeError, TypeError):
+        return None
+    if scene is None:
+        return None
+    try:
+        views = list(scene.views() or [])
+    except (RuntimeError, TypeError):
+        return None
+    if not views:
+        return None
+    visible_views: list[Any] = []
+    for view in views:
+        try:
+            if bool(view.isVisible()):
+                visible_views.append(view)
+        except (RuntimeError, TypeError):
+            continue
+    view = visible_views[0] if visible_views else views[0]
+    try:
+        window = view.window()
+    except (RuntimeError, TypeError):
+        return None
+    return window
+
+
+def _resolve_embedded_dialog_parent(widget: QtWidgets.QWidget) -> QtWidgets.QWidget | None:
+    proxy = _graphics_proxy_for_widget(widget)
+    if proxy is not None:
+        proxy_window = _window_for_graphics_proxy(proxy)
+        if proxy_window is not None:
+            return proxy_window
+    try:
+        widget_window = widget.window()
+    except (RuntimeError, TypeError):
+        widget_window = None
+    if widget_window is not None:
+        return widget_window
+    try:
+        return QtWidgets.QApplication.activeWindow()
+    except (RuntimeError, TypeError):
+        return None
 
 
 def parse_select_pool(ui_control: str) -> str | None:
@@ -1011,7 +1074,7 @@ class _F8ImageB64Dialog(QtWidgets.QDialog):
         data = b""
         try:
             data = _b64decode_to_bytes(self._b64)
-        except Exception:
+        except (binascii.Error, UnicodeEncodeError, ValueError):
             data = b""
         if not data:
             self._label.setText("No image")
@@ -1041,7 +1104,7 @@ class _F8ImageB64Dialog(QtWidgets.QDialog):
         try:
             with open(path, "rb") as f:
                 data = f.read()
-        except Exception as exc:
+        except OSError as exc:
             show_warning(self, "Load failed", str(exc))
             return
         self._b64 = _b64encode_bytes(data)
@@ -1085,51 +1148,7 @@ class F8ImageB64Editor(QtWidgets.QWidget):
         self._btn.setDisabled(bool(disabled))
 
     def _resolve_dialog_parent(self) -> QtWidgets.QWidget | None:
-        # When embedded in a QGraphicsProxyWidget, self.window() can be the proxy,
-        # which makes dialogs appear inside the scene (scaled/transparent). Find
-        # the real window from the scene view instead.
-        proxy = None
-        try:
-            w: QtWidgets.QWidget | None = self
-            while w is not None and proxy is None:
-                try:
-                    proxy = w.graphicsProxyWidget()
-                except Exception:
-                    proxy = None
-                try:
-                    w = w.parentWidget()
-                except Exception:
-                    w = None
-        except Exception:
-            proxy = None
-        if proxy is not None:
-            try:
-                scene = proxy.scene()
-            except Exception:
-                scene = None
-            if scene is not None:
-                try:
-                    views = scene.views()
-                except Exception:
-                    views = []
-                if views:
-                    view = next((v for v in views if v.isVisible()), views[0])
-                    try:
-                        w = view.window()
-                        if w is not None:
-                            return w
-                    except (AttributeError, RuntimeError, TypeError):
-                        pass
-        try:
-            w = self.window()
-            if w is not None:
-                return w
-        except (AttributeError, RuntimeError, TypeError):
-            pass
-        try:
-            return QtWidgets.QApplication.activeWindow()
-        except Exception:
-            return None
+        return _resolve_embedded_dialog_parent(self)
 
     def _open(self) -> None:
         parent = self._resolve_dialog_parent()
@@ -1221,7 +1240,7 @@ class F8MultiSelect(QtWidgets.QWidget):
                 parsed: Any = None
                 try:
                     parsed = json.loads(text)
-                except Exception:
+                except json.JSONDecodeError:
                     parsed = None
                 if isinstance(parsed, (list, tuple)):
                     raw_values = [str(v) for v in parsed]
@@ -1242,50 +1261,7 @@ class F8MultiSelect(QtWidgets.QWidget):
         return out
 
     def _resolve_dialog_parent(self) -> QtWidgets.QWidget | None:
-        # Same pattern as F8ImageB64Editor: when embedded in QGraphicsProxyWidget,
-        # resolve to the real window to avoid scene-embedded dialogs.
-        proxy = None
-        try:
-            w: QtWidgets.QWidget | None = self
-            while w is not None and proxy is None:
-                try:
-                    proxy = w.graphicsProxyWidget()
-                except Exception:
-                    proxy = None
-                try:
-                    w = w.parentWidget()
-                except Exception:
-                    w = None
-        except Exception:
-            proxy = None
-        if proxy is not None:
-            try:
-                scene = proxy.scene()
-            except Exception:
-                scene = None
-            if scene is not None:
-                try:
-                    views = scene.views()
-                except Exception:
-                    views = []
-                if views:
-                    view = next((v for v in views if v.isVisible()), views[0])
-                    try:
-                        top = view.window()
-                        if top is not None:
-                            return top
-                    except (AttributeError, RuntimeError, TypeError):
-                        pass
-        try:
-            top = self.window()
-            if top is not None:
-                return top
-        except (AttributeError, RuntimeError, TypeError):
-            pass
-        try:
-            return QtWidgets.QApplication.activeWindow()
-        except Exception:
-            return None
+        return _resolve_embedded_dialog_parent(self)
 
     @staticmethod
     def _set_list_checked(list_widget: QtWidgets.QListWidget, checked: bool) -> None:

@@ -229,6 +229,11 @@ def test_state_inline_controls_avoid_dynamic_attribute_probing() -> None:
     assert all(pattern not in source for pattern in forbidden_patterns)
 
 
+def test_base_ui_controls_avoid_broad_exception_boundaries() -> None:
+    source = (PACKAGE_ROOT / "ui" / "components" / "controls.py").read_text(encoding="utf-8")
+    assert "except Exception" not in source
+
+
 def test_assets_public_exports_remain_stable() -> None:
     import f8pystudio.assets as assets
 
