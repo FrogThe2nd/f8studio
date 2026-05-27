@@ -30,6 +30,65 @@ from .items.inline_command_panel import ensure_inline_command_rows as _ensure_in
 
 logger = logging.getLogger(__name__)
 WidgetT = TypeVar("WidgetT", bound=NodeBaseWidget)
+_SPEC_FIELD_ERRORS = (AttributeError, TypeError, ValueError)
+_NODEGRAPH_API_ERRORS = (AttributeError, KeyError, RuntimeError, TypeError, ValueError)
+_QT_ACCESS_ERRORS = (AttributeError, RuntimeError, TypeError)
+
+
+def _spec_name(item: Any) -> str:
+    try:
+        return str(item.name or "").strip()
+    except _SPEC_FIELD_ERRORS:
+        return ""
+
+
+def _spec_description(item: Any) -> str:
+    try:
+        return str(item.description or "").strip()
+    except _SPEC_FIELD_ERRORS:
+        return ""
+
+
+def _show_on_node(item: Any) -> bool:
+    try:
+        return bool(item.showOnNode)
+    except _SPEC_FIELD_ERRORS:
+        return False
+
+
+def _state_access(field: Any) -> Any | None:
+    try:
+        return field.access
+    except _SPEC_FIELD_ERRORS:
+        return None
+
+
+def _value_schema(field: Any) -> Any | None:
+    try:
+        return field.valueSchema
+    except _SPEC_FIELD_ERRORS:
+        return None
+
+
+def _schema_default_value(value_schema: Any) -> Any:
+    try:
+        return schema_default(value_schema)
+    except _SPEC_FIELD_ERRORS:
+        return None
+
+
+def _node_item_id(node_item: Any) -> str:
+    try:
+        return str(node_item.id or "").strip()
+    except _NODEGRAPH_API_ERRORS:
+        return ""
+
+
+def _operator_service_id(node: Any) -> str:
+    try:
+        return str(node.svcId or "").strip()
+    except _NODEGRAPH_API_ERRORS:
+        return ""
 
 
 class F8StudioOperatorBaseNode(F8StudioBaseNode):
@@ -80,19 +139,21 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
     def _build_data_port(self):
 
         for p in self.ordered_data_port_specs(is_in=True):
-            if not self.data_port_show_on_node(str(p.name or ""), is_in=True):
+            name = _spec_name(p)
+            if not name or not self.data_port_show_on_node(name, is_in=True):
                 continue
             self.add_input(
-                f"[D]{p.name}",
+                f"[D]{name}",
                 multi_input=False,
                 color=data_port_color(p),
             )
 
         for p in self.ordered_data_port_specs(is_in=False):
-            if not self.data_port_show_on_node(str(p.name or ""), is_in=False):
+            name = _spec_name(p)
+            if not name or not self.data_port_show_on_node(name, is_in=False):
                 continue
             self.add_output(
-                f"{p.name}[D]",
+                f"{name}[D]",
                 multi_output=True,
                 color=data_port_color(p),
             )
@@ -100,11 +161,12 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
     def _build_state_port(self):
 
         for s in self.effective_state_fields():
-            name = str(s.name or "").strip()
-            if not name or not bool(s.showOnNode):
+            name = _spec_name(s)
+            if not name or not _show_on_node(s):
                 continue
+            access = _state_access(s)
 
-            if s.access in (F8StateAccess.rw, F8StateAccess.wo):
+            if access in (F8StateAccess.rw, F8StateAccess.wo):
                 self.add_input(
                     f"[S]{name}",
                     multi_input=False,
@@ -112,7 +174,7 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
                     painter_func=draw_square_port,
                 )
 
-            if s.access in (F8StateAccess.rw, F8StateAccess.ro):
+            if access in (F8StateAccess.rw, F8StateAccess.ro):
                 self.add_output(
                     f"{name}[S]",
                     multi_output=True,
@@ -125,15 +187,13 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
 
     def _build_state_properties(self) -> None:
         for s in self.effective_state_fields() or []:
-            name = str(s.name or "").strip()
+            name = _spec_name(s)
             if not name:
                 continue
-            try:
-                default_value = schema_default(s.valueSchema)
-            except Exception:
-                default_value = None
-            widget_type, items, prop_range = self._state_widget_for_schema(s.valueSchema)
-            tooltip = str(s.description or "").strip() or None
+            value_schema = _value_schema(s)
+            default_value = _schema_default_value(value_schema)
+            widget_type, items, prop_range = self._state_widget_for_schema(value_schema)
+            tooltip = _spec_description(s) or None
             has_prop = False
             try:
                 has_prop = bool(self.has_property(name))  # type: ignore[attr-defined]
@@ -150,8 +210,8 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
                         widget_tooltip=tooltip,
                         tab="State",
                     )
-                except Exception as exc:
-                    logger.warning("Failed to create operator state property '%s': %s", name, exc)
+                except Exception:
+                    logger.exception("Failed to create operator state property '%s'", name)
                     continue
             self._ensure_state_property_metadata(
                 name=name,
@@ -230,13 +290,13 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
             return NodePropWidgetEnum.QTEXT_EDIT.value, None, None
         try:
             t = schema_type(value_schema)
-        except Exception:
+        except _SPEC_FIELD_ERRORS:
             t = ""
 
         # enum choice.
         try:
             enum_items = list(value_schema.enum or [])
-        except Exception:
+        except _SPEC_FIELD_ERRORS:
             enum_items = []
         if enum_items:
             return NodePropWidgetEnum.QCOMBO_BOX.value, [str(x) for x in enum_items], None
@@ -293,17 +353,14 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
                 return False
             try:
                 return bool(port.connected_ports())
-            except Exception:
+            except _NODEGRAPH_API_ERRORS:
                 try:
                     return bool(port.connected_ports)
-                except Exception:
+                except _NODEGRAPH_API_ERRORS:
                     return False
 
         for p in list(self.ordered_data_port_specs(is_in=True) or []):
-            try:
-                n = str(p.name or "").strip()
-            except Exception:
-                n = ""
+            n = _spec_name(p)
             if not n:
                 continue
             port_name = f"[D]{n}"
@@ -318,10 +375,7 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
                 desired_inputs[port_name] = {"color": data_port_color(p), "multi_input": False}
 
         for p in list(self.ordered_data_port_specs(is_in=False) or []):
-            try:
-                n = str(p.name or "").strip()
-            except Exception:
-                n = ""
+            n = _spec_name(p)
             if not n:
                 continue
             port_name = f"{n}[D]"
@@ -336,16 +390,17 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
                 desired_outputs[port_name] = {"color": data_port_color(p), "multi_output": True}
 
         for s in list(self.ordered_state_field_specs() or []):
-            name = str(s.name or "").strip()
-            if not name or not bool(s.showOnNode):
+            name = _spec_name(s)
+            if not name or not _show_on_node(s):
                 continue
-            if s.access in (F8StateAccess.rw, F8StateAccess.wo):
+            access = _state_access(s)
+            if access in (F8StateAccess.rw, F8StateAccess.wo):
                 desired_inputs[f"[S]{name}"] = {
                     "color": STATE_PORT_COLOR,
                     "painter_func": draw_square_port,
                     "multi_input": False,
                 }
-            if s.access in (F8StateAccess.rw, F8StateAccess.ro):
+            if access in (F8StateAccess.rw, F8StateAccess.ro):
                 desired_outputs[f"{name}[S]"] = {
                     "color": STATE_PORT_COLOR,
                     "painter_func": draw_square_port,
@@ -353,8 +408,8 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
                 }
 
         for command in list(self.ordered_command_specs() or []):
-            name = str(command.name or "").strip()
-            if not name or not bool(command.showOnNode):
+            name = _spec_name(command)
+            if not name or not _show_on_node(command):
                 continue
             desired_inputs[f"[C]{name}"] = {
                 "color": COMMAND_PORT_COLOR,
@@ -382,8 +437,8 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
                     except (AttributeError, RuntimeError, TypeError):
                         pass
                 self.delete_input(name)
-            except Exception as e:
-                logger.warning("Failed to delete input port %r: %s", name, e)
+            except _NODEGRAPH_API_ERRORS:
+                logger.exception("Failed to delete input port %r", name)
 
         for name in sorted(current_output_names - desired_output_names):
             try:
@@ -394,8 +449,8 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
                     except (AttributeError, RuntimeError, TypeError):
                         pass
                 self.delete_output(name)
-            except Exception as e:
-                logger.warning("Failed to delete output port %r: %s", name, e)
+            except _NODEGRAPH_API_ERRORS:
+                logger.exception("Failed to delete output port %r", name)
 
         # Add new ports from spec.
         current_input_names = set(self.inputs().keys())
@@ -410,8 +465,8 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
                     color=meta.get("color"),
                     painter_func=meta.get("painter_func"),
                 )
-            except Exception as e:
-                logger.warning("Failed to add input port %r: %s", name, e)
+            except _NODEGRAPH_API_ERRORS:
+                logger.exception("Failed to add input port %r", name)
 
         for name in sorted(desired_output_names - current_output_names):
             meta = desired_outputs.get(name) or {}
@@ -422,8 +477,8 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
                     color=meta.get("color"),
                     painter_func=meta.get("painter_func"),
                 )
-            except Exception as e:
-                logger.warning("Failed to add output port %r: %s", name, e)
+            except _NODEGRAPH_API_ERRORS:
+                logger.exception("Failed to add output port %r", name)
 
         # Best-effort cleanup for any orphaned port items left on the QGraphics node.
         try:
@@ -433,7 +488,7 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
 
             try:
                 input_items = view._input_items
-            except Exception:
+            except _NODEGRAPH_API_ERRORS:
                 input_items = None
             if isinstance(input_items, dict):
                 for port_item in list(input_items.keys()):
@@ -453,7 +508,7 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
 
             try:
                 output_items = view._output_items
-            except Exception:
+            except _NODEGRAPH_API_ERRORS:
                 output_items = None
             if isinstance(output_items, dict):
                 for port_item in list(output_items.keys()):
@@ -470,14 +525,14 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
                             view.scene().removeItem(text_item)
                     except (AttributeError, RuntimeError, TypeError):
                         pass
-        except Exception:
+        except _NODEGRAPH_API_ERRORS:
             logger.exception("Failed cleanup for orphaned operator port graphics")
 
         self._build_state_properties()
 
         try:
             self.view.draw_node()
-        except Exception:
+        except _NODEGRAPH_API_ERRORS:
             logger.exception("Failed to redraw operator node after sync_from_spec")
 
 class F8StudioOperatorNodeItem(F8StudioServiceNodeItem):
@@ -552,23 +607,18 @@ class F8StudioOperatorNodeItem(F8StudioServiceNodeItem):
         graph = None
         try:
             graph = viewer.f8_graph
-        except (AttributeError, RuntimeError, TypeError):
+        except _QT_ACCESS_ERRORS:
             graph = None
         if graph is None:
             return
         try:
             graph.on_operator_drop(
-                node_id=str(self.id or ""),
+                node_id=_node_item_id(self),
                 start_pos=start_xy,
                 start_container_id=start_container_id,
             )
         except Exception:
-            node_id = ""
-            try:
-                node_id = str(self.id or "")
-            except (AttributeError, RuntimeError, TypeError):
-                node_id = ""
-            logger.exception("operator drop rebind failed for node id=%s", node_id)
+            logger.exception("operator drop rebind failed for node id=%s", _node_item_id(self))
 
     def _ensure_service_toolbar(self, viewer: Any | None) -> None:  # type: ignore[override]
         return
@@ -579,17 +629,14 @@ class F8StudioOperatorNodeItem(F8StudioServiceNodeItem):
     def _service_id(self) -> str:  # type: ignore[override]
         node = self._backend_node()
         if node is not None:
-            try:
-                service_id = str(node.svcId or "").strip()
-            except (AttributeError, RuntimeError, TypeError):
-                service_id = ""
+            service_id = _operator_service_id(node)
             if service_id:
                 return service_id
         container = self._container_item
         if container is not None:
             try:
                 service_id = str(container.id or "").strip()
-            except (AttributeError, RuntimeError, TypeError):
+            except _QT_ACCESS_ERRORS:
                 service_id = ""
             if service_id:
                 return service_id
