@@ -23,6 +23,16 @@ def _compiled(
     )
 
 
+class _FailingIterable:
+    def __iter__(self):
+        raise TypeError("not iterable")
+
+
+class _FailingText:
+    def __str__(self) -> str:
+        raise TypeError("not text")
+
+
 def test_dedupe_fields_preserves_order() -> None:
     assert dedupe_fields(["a", "b", "a", "c", "b"]) == ("a", "b", "c")
 
@@ -64,6 +74,33 @@ def test_build_remote_watch_targets_adds_required_fields_and_sorts() -> None:
     assert invalid_messages
 
 
+def test_build_remote_watch_targets_skips_unreadable_global_nodes() -> None:
+    compiled = SimpleNamespace(
+        global_graph=SimpleNamespace(graphId="g", revision="r", nodes=_FailingIterable()),
+        per_service={},
+    )
+
+    assert build_remote_watch_targets(compiled) == ()
+
+
+def test_build_remote_watch_targets_skips_unreadable_state_fields() -> None:
+    compiled = _compiled(
+        nodes=[
+            SimpleNamespace(
+                serviceId="svc_a",
+                nodeId="node_1",
+                operatorClass="f8.op",
+                stateFields=_FailingIterable(),
+            )
+        ]
+    )
+
+    targets = build_remote_watch_targets(compiled)
+
+    assert len(targets) == 1
+    assert targets[0].fields == ("svcId", "operatorId")
+
+
 def test_build_local_state_field_index_for_studio_subgraph() -> None:
     studio_graph = SimpleNamespace(
         nodes=[
@@ -85,6 +122,16 @@ def test_build_local_state_field_index_for_studio_subgraph() -> None:
     assert index == {"nodeA": ("gain", "enabled")}
 
 
+def test_build_local_state_field_index_skips_unreadable_nodes() -> None:
+    compiled = _compiled(
+        per_service={
+            "studio.default": SimpleNamespace(nodes=_FailingIterable()),
+        }
+    )
+
+    assert build_local_state_field_index(compiled, studio_service_id="studio.default") == {}
+
+
 def test_build_studio_runtime_graph_uses_global_metadata() -> None:
     compiled = _compiled(graph_id="main.graph", revision="42")
 
@@ -93,3 +140,14 @@ def test_build_studio_runtime_graph_uses_global_metadata() -> None:
     assert graph.graphId == "main.graph"
     assert graph.revision == "42"
     assert graph.meta.source == "studio"
+
+
+def test_build_studio_runtime_graph_uses_defaults_for_unreadable_metadata() -> None:
+    compiled = _compiled(graph_id="unused", revision="unused")
+    compiled.global_graph.graphId = _FailingText()
+    compiled.global_graph.revision = _FailingText()
+
+    graph = build_studio_runtime_graph(compiled, studio_service_id="studio.default")
+
+    assert graph.graphId == "studio"
+    assert graph.revision == "1"

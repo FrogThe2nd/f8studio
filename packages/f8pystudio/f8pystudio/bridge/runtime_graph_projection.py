@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import logging
 from typing import Callable
 
-from f8pysdk.specs import F8RuntimeGraph, F8RuntimeGraphMeta
+import msgspec
+
+from f8pysdk.specs import F8RuntimeGraph, F8RuntimeGraphMeta, F8RuntimeNode, F8StateSpec
 from f8pysdk.command import is_hidden_command_state_field
 from f8pysdk.f8_naming import ensure_token
 
 from ..nodegraph.runtime_compiler import CompiledRuntimeGraphs
 from f8pystudio.bridge.remote_state_watcher import WatchTarget
+
+logger = logging.getLogger(__name__)
+_GRAPH_PROJECTION_ACCESS_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
 
 
 def dedupe_fields(fields: list[str]) -> tuple[str, ...]:
@@ -21,6 +27,62 @@ def dedupe_fields(fields: list[str]) -> tuple[str, ...]:
     return tuple(ordered)
 
 
+def _coerce_runtime_nodes(value: object, *, context: str) -> list[object]:
+    if value is None or isinstance(value, msgspec.UnsetType):
+        return []
+    try:
+        return list(value)
+    except _GRAPH_PROJECTION_ACCESS_ERRORS:
+        logger.debug("failed to read runtime nodes context=%s", context, exc_info=True)
+        return []
+
+
+def _coerce_runtime_edges(value: object, *, context: str) -> list[object]:
+    if value is None or isinstance(value, msgspec.UnsetType):
+        return []
+    try:
+        return list(value)
+    except _GRAPH_PROJECTION_ACCESS_ERRORS:
+        logger.debug("failed to read runtime edges context=%s", context, exc_info=True)
+        return []
+
+
+def _runtime_graph_text(value: object, *, default: str, context: str) -> str:
+    try:
+        text = str(value or "").strip()
+    except _GRAPH_PROJECTION_ACCESS_ERRORS:
+        logger.debug("failed to read runtime graph text context=%s", context, exc_info=True)
+        return default
+    return text or default
+
+
+def _runtime_node_state_fields(node: object, *, context: str) -> list[object]:
+    if isinstance(node, F8RuntimeNode):
+        return list(node.stateFields or [])
+    try:
+        state_fields = node.stateFields  # type: ignore[attr-defined]
+    except _GRAPH_PROJECTION_ACCESS_ERRORS:
+        logger.debug("failed to read runtime node state fields context=%s", context, exc_info=True)
+        return []
+    if state_fields is None or isinstance(state_fields, msgspec.UnsetType):
+        return []
+    try:
+        return list(state_fields)
+    except _GRAPH_PROJECTION_ACCESS_ERRORS:
+        logger.debug("failed to coerce runtime node state fields context=%s", context, exc_info=True)
+        return []
+
+
+def _state_field_name(field_spec: object) -> str:
+    if isinstance(field_spec, F8StateSpec):
+        return str(field_spec.name or "").strip()
+    try:
+        return str(field_spec.name or "").strip()  # type: ignore[attr-defined]
+    except _GRAPH_PROJECTION_ACCESS_ERRORS:
+        logger.debug("failed to read runtime state field name", exc_info=True)
+        return ""
+
+
 def build_studio_runtime_graph(compiled: CompiledRuntimeGraphs, *, studio_service_id: str) -> F8RuntimeGraph:
     """
     Build studio runtime graph without monitor node injection.
@@ -30,22 +92,10 @@ def build_studio_runtime_graph(compiled: CompiledRuntimeGraphs, *, studio_servic
         base_nodes = []
         base_edges = []
     else:
-        try:
-            base_nodes = list(studio_sub.nodes or [])
-        except Exception:
-            base_nodes = []
-        try:
-            base_edges = list(studio_sub.edges or [])
-        except Exception:
-            base_edges = []
-    try:
-        graph_id = str(compiled.global_graph.graphId or "studio")
-    except Exception:
-        graph_id = "studio"
-    try:
-        revision = str(compiled.global_graph.revision or "1")
-    except Exception:
-        revision = "1"
+        base_nodes = _coerce_runtime_nodes(studio_sub.nodes, context="studio-subgraph")
+        base_edges = _coerce_runtime_edges(studio_sub.edges, context="studio-subgraph")
+    graph_id = _runtime_graph_text(compiled.global_graph.graphId, default="studio", context="global-graph-id")
+    revision = _runtime_graph_text(compiled.global_graph.revision, default="1", context="global-revision")
     return F8RuntimeGraph(
         graphId=graph_id,
         revision=revision,
@@ -62,10 +112,7 @@ def build_remote_watch_targets(
     on_invalid_target: Callable[[str], None] | None = None,
 ) -> tuple[WatchTarget, ...]:
     targets: list[WatchTarget] = []
-    try:
-        nodes = list(compiled.global_graph.nodes or [])
-    except Exception:
-        nodes = []
+    nodes = _coerce_runtime_nodes(compiled.global_graph.nodes, context="global-graph")
     for node in nodes:
         try:
             service_id = ensure_token(str(node.serviceId or ""), label="service_id")
@@ -76,15 +123,9 @@ def build_remote_watch_targets(
             continue
 
         candidates: list[str] = []
-        try:
-            state_fields = list(node.stateFields or [])
-        except Exception:
-            state_fields = []
+        state_fields = _runtime_node_state_fields(node, context=f"remote-watch:{service_id}:{node_id}")
         for field_spec in state_fields:
-            try:
-                name = str(field_spec.name or "").strip()
-            except Exception:
-                name = ""
+            name = _state_field_name(field_spec)
             if name:
                 if is_hidden_command_state_field(name):
                     continue
@@ -115,13 +156,13 @@ def build_local_state_field_index(
     if studio_graph is None:
         return {}
     output: dict[str, tuple[str, ...]] = {}
-    for node in list(studio_graph.nodes or []):
+    for node in _coerce_runtime_nodes(studio_graph.nodes, context="studio-local-state-index"):
         node_id = str(node.nodeId or "").strip()
         if not node_id:
             continue
         field_names: list[str] = []
-        for field_spec in list(node.stateFields or []):
-            name = str(field_spec.name or "").strip()
+        for field_spec in _runtime_node_state_fields(node, context=f"local-state-index:{node_id}"):
+            name = _state_field_name(field_spec)
             if name and not is_hidden_command_state_field(name):
                 field_names.append(name)
         output[node_id] = dedupe_fields(field_names)
