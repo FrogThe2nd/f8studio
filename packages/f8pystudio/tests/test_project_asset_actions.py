@@ -599,6 +599,74 @@ def test_save_component_as_dialog_overwrites_only_local_drafts(monkeypatch, tmp_
     assert info_messages == [("Component Updated", "Updated component:\nVideo AI Tracking")]
 
 
+def test_export_project_json_reports_write_failure(monkeypatch, tmp_path: Path) -> None:
+    _ensure_app()
+    save_path = tmp_path / "project-export.json"
+    graph = _FakeGraph()
+    log_dock = _FakeLogDock()
+    parent = QtWidgets.QWidget()
+    warnings: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog,
+        "getSaveFileName",
+        lambda *_args, **_kwargs: (str(save_path), ""),
+    )
+    monkeypatch.setattr(
+        project_asset_actions,
+        "_write_json_payload",
+        lambda _path, _payload: (_ for _ in ()).throw(OSError("disk full")),
+    )
+
+    session_dir, exported_path = project_asset_actions.export_project_json_as_dialog(
+        parent=parent,
+        studio_graph=graph,
+        log_dock=log_dock,
+        start_dir=str(tmp_path),
+        show_warning=lambda _parent, title, message: warnings.append((str(title), str(message))),
+    )
+
+    assert session_dir == str(tmp_path)
+    assert exported_path is None
+    assert log_dock.lines == [("studio", "[project][export] export failed: disk full\n")]
+    assert log_dock.exceptions == [("studio", f"project export failed ({save_path})", "disk full")]
+    assert warnings == [("Export JSON failed", f"Failed to export project JSON:\n{save_path}\n\ndisk full")]
+
+
+def test_export_publish_json_reports_write_failure(monkeypatch, tmp_path: Path) -> None:
+    _ensure_app()
+    save_path = tmp_path / "publish-export.json"
+    graph = _FakeGraph()
+    log_dock = _FakeLogDock()
+    parent = QtWidgets.QWidget()
+    warnings: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog,
+        "getSaveFileName",
+        lambda *_args, **_kwargs: (str(save_path), ""),
+    )
+    monkeypatch.setattr(
+        project_asset_actions,
+        "_write_json_payload",
+        lambda _path, _payload: (_ for _ in ()).throw(OSError("disk full")),
+    )
+
+    session_dir, exported_path = project_asset_actions.export_publish_json_dialog(
+        parent=parent,
+        studio_graph=graph,
+        log_dock=log_dock,
+        start_dir=str(tmp_path),
+        show_warning=lambda _parent, title, message: warnings.append((str(title), str(message))),
+    )
+
+    assert session_dir == str(tmp_path)
+    assert exported_path is None
+    assert log_dock.lines == [("studio", "[session][publish] export failed: disk full\n")]
+    assert log_dock.exceptions == [("studio", f"publish session failed ({save_path})", "disk full")]
+    assert warnings == [("Publish JSON failed", f"Failed to export publish JSON:\n{save_path}\n\ndisk full")]
+
+
 def test_asset_overwrite_dialog_validation_error_is_inline_not_toast() -> None:
     _ensure_app()
     for toast in list(_ACTIVE_TOASTS):

@@ -54,6 +54,26 @@ class ProjectAssetGraphLike(Protocol):
     def begin_graph_placement(self, request: GraphInsertRequest, *, label: str = "") -> None: ...
 
 
+def _report_action_exception(
+    *,
+    parent: QtWidgets.QWidget,
+    log_dock: ProjectAssetLogDockLike,
+    log_line: str,
+    report_context: str,
+    exc: Exception,
+    show_warning: MessageDialogFn,
+    warning_title: str,
+    warning_message: str,
+) -> None:
+    log_dock.append("studio", f"{log_line}: {exc}\n")
+    log_dock.report_exception("studio", report_context, exc)
+    show_warning(parent, warning_title, f"{warning_message}\n\n{exc}")
+
+
+def _write_json_payload(path: str, payload: JsonObject) -> None:
+    Path(path).write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
 def _current_project_record(service: ProjectStorageService) -> F8ProjectRecord | None:
     current_project = service.project(service.current_project_id())
     if current_project is not None:
@@ -190,9 +210,16 @@ def open_project_dialog(
         log_dock.append("studio", f"[project] loaded: {record.name} ({record.projectId})\n")
         return str(start_dir or ""), True
     except Exception as exc:
-        log_dock.append("studio", f"[project] load failed: {exc}\n")
-        log_dock.report_exception("studio", "project load failed", exc)
-        show_warning(parent, "Load failed", f"Failed to load project.\n\n{exc}")
+        _report_action_exception(
+            parent=parent,
+            log_dock=log_dock,
+            log_line="[project] load failed",
+            report_context="project load failed",
+            exc=exc,
+            show_warning=show_warning,
+            warning_title="Load failed",
+            warning_message="Failed to load project.",
+        )
         return str(start_dir or ""), False
 
 
@@ -225,9 +252,16 @@ def _restore_project_history_from_picker(
         loaded_from_history.append(True)
         dialog.accept()
     except Exception as exc:
-        log_dock.append("studio", f"[project] load restored history failed: {exc}\n")
-        log_dock.report_exception("studio", "project history load failed", exc)
-        show_warning(parent, "Load failed", f"Failed to load restored project history.\n\n{exc}")
+        _report_action_exception(
+            parent=parent,
+            log_dock=log_dock,
+            log_line="[project] load restored history failed",
+            report_context="project history load failed",
+            exc=exc,
+            show_warning=show_warning,
+            warning_title="Load failed",
+            warning_message="Failed to load restored project history.",
+        )
 
 
 def _delete_project_from_picker(
@@ -261,9 +295,16 @@ def _delete_project_from_picker(
         show_info_message(parent, "Project deleted", f"Deleted project:\n{record.name}")
         dialog.replace_projects(projects=service.list_projects(), current_project_id=service.current_project_id())
     except Exception as exc:
-        log_dock.append("studio", f"[project] delete failed: {exc}\n")
-        log_dock.report_exception("studio", "project delete failed", exc)
-        show_warning(parent, "Delete failed", f"Failed to delete project.\n\n{exc}")
+        _report_action_exception(
+            parent=parent,
+            log_dock=log_dock,
+            log_line="[project] delete failed",
+            report_context="project delete failed",
+            exc=exc,
+            show_warning=show_warning,
+            warning_title="Delete failed",
+            warning_message="Failed to delete project.",
+        )
 
 
 def import_project_json_as_dialog(
@@ -308,9 +349,16 @@ def import_project_json_as_dialog(
         log_dock.append("studio", f"[project][import] imported: {record.name} ({record.projectId})\n")
         return resolved_dir, True
     except Exception as exc:
-        log_dock.append("studio", f"[project][import] failed: {exc}\n")
-        log_dock.report_exception("studio", f"project import failed ({selected_path})", exc)
-        show_warning(parent, "Import failed", f"Failed to import project JSON.\n\n{exc}")
+        _report_action_exception(
+            parent=parent,
+            log_dock=log_dock,
+            log_line="[project][import] failed",
+            report_context=f"project import failed ({selected_path})",
+            exc=exc,
+            show_warning=show_warning,
+            warning_title="Import failed",
+            warning_message="Failed to import project JSON.",
+        )
         return str(start_dir or ""), False
 
 
@@ -344,9 +392,16 @@ def save_project_as_dialog(
         log_dock.append("studio", f"[project] saved: {record.name} ({record.projectId})\n")
         return str(start_dir or ""), True
     except Exception as exc:
-        log_dock.append("studio", f"[project] save failed: {exc}\n")
-        log_dock.report_exception("studio", "project save failed", exc)
-        show_warning(parent, "Save failed", f"Failed to save project.\n\n{exc}")
+        _report_action_exception(
+            parent=parent,
+            log_dock=log_dock,
+            log_line="[project] save failed",
+            report_context="project save failed",
+            exc=exc,
+            show_warning=show_warning,
+            warning_title="Save failed",
+            warning_message="Failed to save project.",
+        )
         return str(start_dir or ""), False
 
 
@@ -371,14 +426,35 @@ def export_project_json_as_dialog(
     save_path = selected_path if selected_path.lower().endswith(".json") else selected_path + ".json"
     try:
         payload = studio_graph.serialize_session()
-        Path(save_path).write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    except Exception as exc:
+        _report_action_exception(
+            parent=parent,
+            log_dock=log_dock,
+            log_line="[project][export] export failed",
+            report_context=f"project export failed ({save_path})",
+            exc=exc,
+            show_warning=show_warning,
+            warning_title="Export JSON failed",
+            warning_message=f"Failed to export project JSON:\n{save_path}",
+        )
+        return str(start_dir or ""), None
+
+    try:
+        _write_json_payload(save_path, payload)
         resolved_dir = str(Path(save_path).resolve().parent)
         log_dock.append("studio", f"[project][export] exported: {save_path}\n")
         return resolved_dir, str(save_path)
-    except Exception as exc:
-        log_dock.append("studio", f"[project][export] export failed: {exc}\n")
-        log_dock.report_exception("studio", f"project export failed ({save_path})", exc)
-        show_warning(parent, "Export JSON failed", f"Failed to export project JSON:\n{save_path}\n\n{exc}")
+    except (OSError, TypeError, ValueError) as exc:
+        _report_action_exception(
+            parent=parent,
+            log_dock=log_dock,
+            log_line="[project][export] export failed",
+            report_context=f"project export failed ({save_path})",
+            exc=exc,
+            show_warning=show_warning,
+            warning_title="Export JSON failed",
+            warning_message=f"Failed to export project JSON:\n{save_path}",
+        )
         return str(start_dir or ""), None
 
 
@@ -403,14 +479,35 @@ def export_publish_json_dialog(
     save_path = selected_path if selected_path.lower().endswith(".json") else selected_path + ".json"
     try:
         payload = studio_graph.serialize_publish_session()
-        Path(save_path).write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    except Exception as exc:
+        _report_action_exception(
+            parent=parent,
+            log_dock=log_dock,
+            log_line="[session][publish] export failed",
+            report_context=f"publish session failed ({save_path})",
+            exc=exc,
+            show_warning=show_warning,
+            warning_title="Publish JSON failed",
+            warning_message=f"Failed to export publish JSON:\n{save_path}",
+        )
+        return str(start_dir or ""), None
+
+    try:
+        _write_json_payload(save_path, payload)
         resolved_dir = str(Path(save_path).resolve().parent)
         log_dock.append("studio", f"[session][publish] exported: {save_path}\n")
         return resolved_dir, str(save_path)
-    except Exception as exc:
-        log_dock.append("studio", f"[session][publish] export failed: {exc}\n")
-        log_dock.report_exception("studio", f"publish session failed ({save_path})", exc)
-        show_warning(parent, "Publish JSON failed", f"Failed to export publish JSON:\n{save_path}\n\n{exc}")
+    except (OSError, TypeError, ValueError) as exc:
+        _report_action_exception(
+            parent=parent,
+            log_dock=log_dock,
+            log_line="[session][publish] export failed",
+            report_context=f"publish session failed ({save_path})",
+            exc=exc,
+            show_warning=show_warning,
+            warning_title="Publish JSON failed",
+            warning_message=f"Failed to export publish JSON:\n{save_path}",
+        )
         return str(start_dir or ""), None
 
 
@@ -508,9 +605,16 @@ def save_component_as_dialog(
         show_info(parent, f"Component {action_text}", f"{action_text} component:\n{record.name}")
         return True
     except Exception as exc:
-        log_dock.append("studio", f"[component] save failed: {exc}\n")
-        log_dock.report_exception("studio", "component save failed", exc)
-        show_warning(parent, "Save component failed", f"Failed to save component.\n\n{exc}")
+        _report_action_exception(
+            parent=parent,
+            log_dock=log_dock,
+            log_line="[component] save failed",
+            report_context="component save failed",
+            exc=exc,
+            show_warning=show_warning,
+            warning_title="Save component failed",
+            warning_message="Failed to save component.",
+        )
         return False
 
 
@@ -554,9 +658,16 @@ def show_project_history_dialog(
         )
         return True
     except Exception as exc:
-        log_dock.append("studio", f"[project] load restored history failed: {exc}\n")
-        log_dock.report_exception("studio", "project history load failed", exc)
-        show_warning(parent, "Load failed", f"Failed to load restored project history.\n\n{exc}")
+        _report_action_exception(
+            parent=parent,
+            log_dock=log_dock,
+            log_line="[project] load restored history failed",
+            report_context="project history load failed",
+            exc=exc,
+            show_warning=show_warning,
+            warning_title="Load failed",
+            warning_message="Failed to load restored project history.",
+        )
         return False
 
 
@@ -632,9 +743,16 @@ def _show_project_history_for_project(
                     f"Deleted project version v{selected_version_number}.",
                 )
             except Exception as exc:
-                log_dock.append("studio", f"[project] delete failed: {exc}\n")
-                log_dock.report_exception("studio", "project delete failed", exc)
-                show_warning(parent, "Delete failed", f"Failed to delete project version.\n\n{exc}")
+                _report_action_exception(
+                    parent=parent,
+                    log_dock=log_dock,
+                    log_line="[project] delete failed",
+                    report_context="project delete failed",
+                    exc=exc,
+                    show_warning=show_warning,
+                    warning_title="Delete failed",
+                    warning_message="Failed to delete project version.",
+                )
             continue
         try:
             restored = service.restore_project_version(
@@ -652,9 +770,16 @@ def _show_project_history_for_project(
             )
             return restored
         except Exception as exc:
-            log_dock.append("studio", f"[project] restore failed: {exc}\n")
-            log_dock.report_exception("studio", "project restore failed", exc)
-            show_warning(parent, "Restore failed", f"Failed to restore project version.\n\n{exc}")
+            _report_action_exception(
+                parent=parent,
+                log_dock=log_dock,
+                log_line="[project] restore failed",
+                report_context="project restore failed",
+                exc=exc,
+                show_warning=show_warning,
+                warning_title="Restore failed",
+                warning_message="Failed to restore project version.",
+            )
             return None
 
 
@@ -679,9 +804,16 @@ def insert_graph_json_dialog(
     try:
         request = studio_graph.prepare_insert_graph_from_file(selected_path)
     except Exception as exc:
-        log_dock.append("studio", f"[insert] prepare failed: {exc}\n")
-        log_dock.report_exception("studio", f"insert graph prepare failed ({selected_path})", exc)
-        show_warning(parent, "Insert failed", f"Failed to prepare insert:\n{selected_path}\n\n{exc}")
+        _report_action_exception(
+            parent=parent,
+            log_dock=log_dock,
+            log_line="[insert] prepare failed",
+            report_context=f"insert graph prepare failed ({selected_path})",
+            exc=exc,
+            show_warning=show_warning,
+            warning_title="Insert failed",
+            warning_message=f"Failed to prepare insert:\n{selected_path}",
+        )
         return str(start_dir or "")
 
     resolved_dir = str(Path(selected_path).resolve().parent)
