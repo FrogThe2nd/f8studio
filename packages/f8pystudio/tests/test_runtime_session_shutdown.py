@@ -46,6 +46,23 @@ class _FakeProcessGateway:
         return SimpleNamespace(success=True)
 
 
+class _FailingCloseGateway:
+    def __init__(self) -> None:
+        self.close_calls = 0
+
+    async def close(self) -> None:
+        self.close_calls += 1
+        raise RuntimeError("close failed")
+
+
+class _TrackingCloseGateway:
+    def __init__(self) -> None:
+        self.close_calls = 0
+
+    async def close(self) -> None:
+        self.close_calls += 1
+
+
 def test_bridge_stop_skips_blocking_zenoh_singleton_native_close() -> None:
     entered = threading.Event()
     release = threading.Event()
@@ -106,3 +123,28 @@ def test_bridge_stop_stops_known_managed_services_not_only_tracked_processes() -
     assert fake_gateway.terminate_external_calls == ["svc_live"]
     assert bridge._service_liveliness_instances_by_service == {}
     assert bridge._service_alive_cache["svc_live"][0] is False
+
+
+def test_bridge_stop_reports_close_failure_and_continues_shutdown() -> None:
+    bridge = PyStudioServiceBridge(PyStudioServiceBridgeConfig(kill_managed_services_on_exit=False))
+    bridge._ensure_async_runtime_started()
+    command_gateway = _FailingCloseGateway()
+    rungraph_gateway = _TrackingCloseGateway()
+    runtime_transport = _TrackingCloseGateway()
+    reported: list[str] = []
+    bridge._command_gateway = command_gateway
+    bridge._rungraph_gateway = rungraph_gateway
+    bridge._runtime_transport = runtime_transport  # type: ignore[assignment]
+
+    def _report_exception(context: str, exc: BaseException) -> None:
+        reported.append(f"{context}:{type(exc).__name__}")
+
+    bridge._report_exception = _report_exception  # type: ignore[method-assign]
+
+    bridge.stop()
+
+    assert command_gateway.close_calls == 1
+    assert rungraph_gateway.close_calls == 1
+    assert runtime_transport.close_calls == 1
+    assert bridge._runtime_transport is None
+    assert "close command gateway failed:RuntimeError" in reported

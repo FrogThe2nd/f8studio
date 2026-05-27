@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+import msgspec
 from f8pysdk.bus import BusBackend
 from f8pysdk.codec import decode_obj, dump_json
 from f8pysdk.zenoh_naming import zenoh_studio_liveliness_key
@@ -119,6 +121,18 @@ class RuntimeSessionControllerMixin:
             self._studio_service_lock_loop = loop
         return lock
 
+    async def _run_async_boundary_step(self, context: str, step: Callable[[], Awaitable[object]]) -> None:
+        try:
+            await step()
+        except Exception as exc:
+            self._report_exception(context, exc)
+
+    def _run_sync_boundary_step(self, context: str, step: Callable[[], object]) -> None:
+        try:
+            step()
+        except Exception as exc:
+            self._report_exception(context, exc)
+
     async def _ensure_studio_service_started_async(self) -> bool:
         if self._studio_service_bus() is not None:
             return True
@@ -147,10 +161,10 @@ class RuntimeSessionControllerMixin:
             except Exception as exc:
                 self._emit_log_line(f"studio runtime start failed: {exc}")
                 if svc is not None:
-                    try:
-                        await svc.stop()
-                    except Exception as stop_exc:
-                        self._report_exception("cleanup failed studio runtime start failed", stop_exc)
+                    await self._run_async_boundary_step(
+                        "cleanup failed studio runtime start failed",
+                        lambda: svc.stop(),
+                    )
                 self._svc = None
                 self._cache_service_alive(self.studio_service_id, False)
                 self._cache_service_active(self.studio_service_id, None)
@@ -333,14 +347,11 @@ class RuntimeSessionControllerMixin:
         except Exception as exc:
             self._report_exception("declare zenoh service liveliness watch failed", exc)
             if owns_session:
-                try:
-                    close_zenoh_session_best_effort(
-                        session,
-                        context="pystudio-liveliness-watch-declare-failed",
-                        native_close=False,
-                    )
-                except Exception as close_exc:
-                    self._report_exception("close zenoh service liveliness session failed", close_exc)
+                close_zenoh_session_best_effort(
+                    session,
+                    context="pystudio-liveliness-watch-declare-failed",
+                    native_close=False,
+                )
 
     def _on_zenoh_service_liveliness(self, service_id: str, runtime_instance_id: str, alive: bool) -> None:
         sid = str(service_id or "").strip()
@@ -462,10 +473,10 @@ class RuntimeSessionControllerMixin:
                 self._remote_state_watcher = None
                 self._remote_state_gateway = None
 
-        try:
-            await self._start_zenoh_service_liveliness_watch_async()
-        except Exception as exc:
-            self._report_exception("start zenoh service liveliness watch failed", exc)
+        await self._run_async_boundary_step(
+            "start zenoh service liveliness watch failed",
+            self._start_zenoh_service_liveliness_watch_async,
+        )
 
         if self._monitor_sub is None:
 
@@ -481,7 +492,7 @@ class RuntimeSessionControllerMixin:
                     return
                 try:
                     snapshot = self._monitor_center.ingest_snapshot(value)
-                except Exception as exc:
+                except (TypeError, ValueError, msgspec.ValidationError) as exc:
                     self._report_exception("ingest monitor snapshot failed", exc)
                     return
                 self._monitor_center.update_service_status(
@@ -509,17 +520,17 @@ class RuntimeSessionControllerMixin:
                 self._report_exception("subscribe monitor stream failed", exc)
 
         # Re-apply current desired lifecycle to any already-known managed services.
-        try:
-            await self._set_managed_active_async(bool(self._managed_active))
-        except Exception as exc:
-            self._report_exception("re-apply managed active failed", exc)
+        await self._run_async_boundary_step(
+            "re-apply managed active failed",
+            lambda: self._set_managed_active_async(bool(self._managed_active)),
+        )
 
         compiled = self._last_compiled
         if compiled is not None:
-            try:
-                await self._refresh_studio_runtime_async(compiled=compiled)
-            except Exception as exc:
-                self._report_exception("refresh studio runtime after bridge start failed", exc)
+            await self._run_async_boundary_step(
+                "refresh studio runtime after bridge start failed",
+                lambda: self._refresh_studio_runtime_async(compiled=compiled),
+            )
         return None
 
     async def _start_async(self) -> str | None:
@@ -527,6 +538,13 @@ class RuntimeSessionControllerMixin:
         if startup_blocked_message is not None:
             return startup_blocked_message
         return await self._start_after_preflight_async()
+
+    def _stop_known_service_process_for_shutdown(self, service_id: str) -> None:
+        self._stop_process_once_local(service_id)
+        if not self.is_service_running(service_id):
+            self._cache_stopped_service(service_id)
+        else:
+            self._emit_log_line(f"[service] shutdown stop incomplete serviceId={service_id}")
 
     async def _stop_async(self) -> None:
         monitor_ui_flush_task = self._monitor_ui_flush_task
@@ -557,101 +575,80 @@ class RuntimeSessionControllerMixin:
                             result,
                         )
             for sid in service_ids:
-                try:
-                    self._stop_process_once_local(sid)
-                    if not self.is_service_running(sid):
-                        self._cache_stopped_service(sid)
-                    else:
-                        self._emit_log_line(f"[service] shutdown stop incomplete serviceId={sid}")
-                except Exception as exc:
-                    self._report_exception(f"stop service process failed serviceId={sid}", exc)
+                self._run_sync_boundary_step(
+                    f"stop service process failed serviceId={sid}",
+                    lambda service_id=sid: self._stop_known_service_process_for_shutdown(service_id),
+                )
 
-        if self._monitor_sub is not None:
-            try:
-                await self._monitor_sub.unsubscribe()
-            except Exception as exc:
-                self._report_exception("unsubscribe monitor stream failed", exc)
+        monitor_sub = self._monitor_sub
         self._monitor_sub = None
+        if monitor_sub is not None:
+            await self._run_async_boundary_step(
+                "unsubscribe monitor stream failed",
+                lambda: monitor_sub.unsubscribe(),
+            )
         liveliness_sub = self._zenoh_service_liveliness_sub
         self._zenoh_service_liveliness_sub = None
         if liveliness_sub is not None:
-            try:
-                liveliness_sub.undeclare()
-            except Exception as exc:
-                self._report_exception("undeclare zenoh service liveliness watch failed", exc)
+            self._run_sync_boundary_step(
+                "undeclare zenoh service liveliness watch failed",
+                lambda: liveliness_sub.undeclare(),
+            )
         liveliness_session = self._zenoh_service_liveliness_session
         self._zenoh_service_liveliness_session = None
         if liveliness_session is not None:
-            try:
-                close_zenoh_session_best_effort(
-                    liveliness_session,
-                    context="pystudio-service-liveliness",
-                    native_close=False,
-                )
-            except Exception as exc:
-                self._report_exception("close zenoh service liveliness session failed", exc)
-        try:
-            if self._remote_state_gateway is not None:
-                await self._remote_state_gateway.stop()
-            elif self._remote_state_watcher is not None:
-                await self._remote_state_watcher.stop()
-        except Exception as exc:
-            self._report_exception("stop remote state watcher failed", exc)
+            close_zenoh_session_best_effort(
+                liveliness_session,
+                context="pystudio-service-liveliness",
+                native_close=False,
+            )
+        if self._remote_state_gateway is not None:
+            await self._run_async_boundary_step(
+                "stop remote state watcher failed",
+                lambda: self._remote_state_gateway.stop(),
+            )
+        elif self._remote_state_watcher is not None:
+            await self._run_async_boundary_step(
+                "stop remote state watcher failed",
+                lambda: self._remote_state_watcher.stop(),
+            )
         self._remote_state_gateway = None
         self._remote_state_watcher = None
         self._watch_targets_cache = None
         async with self._studio_service_lock_for_loop():
             svc = self._svc
             self._svc = None
-            try:
-                if svc is not None:
-                    await svc.stop()
-            except Exception as exc:
-                self._report_exception("stop studio service failed", exc)
+            if svc is not None:
+                await self._run_async_boundary_step("stop studio service failed", lambda: svc.stop())
         self._cache_service_alive(self.studio_service_id, False)
         self._cache_service_active(self.studio_service_id, None)
         self._monitor_center.update_service_status(service_id=self.studio_service_id, ready=False)
         self._studio_service_lock = None
         self._studio_service_lock_loop = None
 
-        try:
-            await self._command_gateway.close()
-        except Exception as exc:
-            self._report_exception("close command gateway failed", exc)
+        await self._run_async_boundary_step("close command gateway failed", lambda: self._command_gateway.close())
 
-        try:
-            await self._rungraph_gateway.close()
-        except Exception as exc:
-            self._report_exception("close rungraph gateway failed", exc)
+        await self._run_async_boundary_step("close rungraph gateway failed", lambda: self._rungraph_gateway.close())
 
         runtime_transport = self._runtime_transport
         self._runtime_transport = None
         if runtime_transport is not None:
-            try:
-                await runtime_transport.close()
-            except Exception as exc:
-                self._report_exception("close runtime transport failed", exc)
+            await self._run_async_boundary_step("close runtime transport failed", lambda: runtime_transport.close())
         self._runtime_transport_lock = None
         self._runtime_transport_lock_loop = None
 
         token = self._zenoh_singleton_token
         self._zenoh_singleton_token = None
         if token is not None:
-            try:
-                token.undeclare()
-            except Exception as exc:
-                self._report_exception("undeclare zenoh singleton token failed", exc)
+            self._run_sync_boundary_step("undeclare zenoh singleton token failed", lambda: token.undeclare())
         session = self._zenoh_singleton_session
         self._zenoh_singleton_session = None
         if session is not None:
-            try:
-                close_zenoh_session_best_effort(
-                    session,
-                    context="pystudio-singleton",
-                    native_close=False,
-                )
-            except Exception as exc:
-                self._report_exception("close zenoh singleton session failed", exc)
+            close_zenoh_session_best_effort(
+                session,
+                context="pystudio-singleton",
+                native_close=False,
+            )
 
     def _runtime_transport_lock_for_loop(self) -> asyncio.Lock:
         loop = asyncio.get_running_loop()
