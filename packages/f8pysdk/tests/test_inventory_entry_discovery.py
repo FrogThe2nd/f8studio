@@ -8,6 +8,11 @@ import pytest
 
 from f8pysdk.codec import dump_json
 from f8pysdk.service_runtime_tools.inventory.catalog import ServiceCatalog
+from f8pysdk.service_runtime_tools.inventory.describe import (
+    discovery_parallelism,
+    discovery_slow_ms_default,
+    read_static_describe_payload,
+)
 from f8pysdk.service_runtime_tools.inventory.discovery import load_discovery_into_catalog
 from f8pysdk.service_runtime_tools.inventory.entry import find_service_dirs, load_service_entry
 from f8pysdk.service_runtime_tools.inventory.policy import (
@@ -162,6 +167,32 @@ def test_load_service_entry_logs_platform_candidate_path_failure(
 
     assert str(entry.serviceClass) == "f8.tests.platform"
     assert "platform service entry command probe failed" in caplog.text
+
+
+def test_read_static_describe_payload_logs_invalid_json(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    service_dir = tmp_path / "services" / "f8" / "entry"
+    _write_entry(service_dir)
+    (service_dir / "describe.json").write_text("{not-json", encoding="utf-8")
+    entry = load_service_entry(service_dir)
+
+    caplog.set_level("DEBUG", logger="f8pysdk.service_runtime_tools.inventory.describe")
+    payload, source = read_static_describe_payload(service_dir, entry)
+
+    assert payload is None
+    assert source is None
+    assert "Failed to read static describe JSON" in caplog.text
+
+
+def test_discovery_env_parse_failures_are_logged(monkeypatch: Any, caplog: pytest.LogCaptureFixture) -> None:
+    monkeypatch.setenv("F8_DESCRIBE_JOBS", "many")
+    monkeypatch.setenv("F8_DISCOVERY_SLOW_MS", "slow")
+
+    caplog.set_level("DEBUG", logger="f8pysdk.service_runtime_tools.inventory.describe")
+
+    assert discovery_parallelism(4) == 1
+    assert discovery_slow_ms_default() == 0.0
+    assert "Invalid discovery parallelism env value" in caplog.text
+    assert "Invalid discovery slow threshold env value" in caplog.text
 
 
 def test_load_discovery_into_catalog_skips_disabled_service_class(tmp_path: Path) -> None:

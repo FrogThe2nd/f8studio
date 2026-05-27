@@ -24,6 +24,13 @@ logger = logging.getLogger(__name__)
 _LAST_DISCOVERY_TIMING_LINES: list[str] = []
 _DISCOVERY_ERROR_LOCK = threading.Lock()
 _LAST_DISCOVERY_ERROR_LINES: list[str] = []
+_STATIC_DESCRIBE_JSON_ERRORS = (OSError, UnicodeError, json.JSONDecodeError)
+_STATIC_DESCRIBE_YAML_ERRORS = (ValueError,)
+_DESCRIBE_ENTRY_READ_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
+_DESCRIBE_PATH_ERRORS = (AttributeError, OSError, RuntimeError, TypeError, ValueError)
+_DESCRIBE_SUBPROCESS_ERRORS = (OSError, RuntimeError, ValueError, subprocess.SubprocessError)
+_DESCRIBE_VALIDATION_ERRORS = (msgspec.ValidationError, TypeError, ValueError)
+_ENV_PARSE_ERRORS = (TypeError, ValueError)
 
 
 def last_discovery_timing_lines() -> list[str]:
@@ -68,7 +75,8 @@ def _read_static_describe_file(service_dir: Path) -> dict[str, Any] | None:
             raw = json_path.read_text("utf-8")
             obj = json.loads(raw) if raw.strip() else None
             return obj if isinstance(obj, dict) else None
-        except Exception:
+        except _STATIC_DESCRIBE_JSON_ERRORS as exc:
+            logger.debug("Failed to read static describe JSON path=%s", json_path, exc_info=exc)
             return None
 
     for name in ("describe.yml", "describe.yaml"):
@@ -78,7 +86,8 @@ def _read_static_describe_file(service_dir: Path) -> dict[str, Any] | None:
         try:
             obj = _read_yaml(yaml_path)
             return obj if isinstance(obj, dict) else None
-        except Exception:
+        except _STATIC_DESCRIBE_YAML_ERRORS as exc:
+            logger.debug("Failed to read static describe YAML path=%s", yaml_path, exc_info=exc)
             return None
     return None
 
@@ -123,14 +132,16 @@ def _extract_last_json_obj(text: str) -> Any | None:
     raw = (text or "").strip()
     if not raw:
         return None
+    single_json_error: json.JSONDecodeError | None = None
     try:
         return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
+    except json.JSONDecodeError as exc:
+        single_json_error = exc
 
     decoder = json.JSONDecoder()
     index = 0
     last: Any | None = None
+    last_decode_error: json.JSONDecodeError | None = None
     while index < len(raw):
         match = re.search(r"[\{\[]", raw[index:])
         if match is None:
@@ -140,8 +151,13 @@ def _extract_last_json_obj(text: str) -> Any | None:
             obj, end = decoder.raw_decode(raw[start:])
             last = obj
             index = start + end
-        except Exception:
+        except json.JSONDecodeError as exc:
+            last_decode_error = exc
             index = start + 1
+    if last is None:
+        decode_error = last_decode_error or single_json_error
+        if decode_error is not None:
+            logger.debug("Failed to decode JSON from describe output", exc_info=decode_error)
     return last
 
 
@@ -179,7 +195,8 @@ def describe_entry(
         timeout_ms = int(entry.timeoutMs or 4000)
         if _is_pixi_command(str(launch.command)):
             timeout_ms = max(timeout_ms, 15000)
-    except Exception:
+    except _DESCRIBE_ENTRY_READ_ERRORS as exc:
+        logger.debug("Failed to prepare describe command for %s", service_dir, exc_info=exc)
         return None
 
     payload_obj: Any = initial_data if initial_data else None
@@ -195,8 +212,8 @@ def describe_entry(
         if isinstance(launch_env, dict):
             try:
                 env.update({str(k): str(v) for k, v in launch_env.items()})
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                pass
+            except _DESCRIBE_ENTRY_READ_ERRORS as exc:
+                logger.debug("Failed to apply describe launch environment for %s", service_dir, exc_info=exc)
 
         cwd = service_dir
         try:
@@ -208,7 +225,8 @@ def describe_entry(
             else:
                 workdir_path = workdir_path.resolve()
             cwd = workdir_path
-        except Exception:
+        except _DESCRIBE_PATH_ERRORS as exc:
+            logger.debug("Failed to resolve describe workdir for %s; using service dir", service_dir, exc_info=exc)
             cwd = service_dir
 
         started_at = time.perf_counter()
@@ -225,10 +243,10 @@ def describe_entry(
                 timeout=max(0.1, timeout_ms / 1000.0),
                 check=False,
             )
-        except Exception as exc:
+        except _DESCRIBE_SUBPROCESS_ERRORS as exc:
             message = f"describe subprocess failed for {service_dir}: {exc} (cwd={cwd}, cmd={' '.join(cmd)})"
             _add_discovery_error(message)
-            logger.error(message)
+            logger.error(message, exc_info=exc)
             return None
         finally:
             if logger.isEnabledFor(logging.DEBUG):
@@ -279,7 +297,8 @@ def describe_entry(
     try:
         payload = validate_as(F8ServiceDescribe, data)
         data = msgspec.to_builtins(payload)
-    except Exception:
+    except _DESCRIBE_VALIDATION_ERRORS as exc:
+        logger.debug("Describe payload validation failed for %s; using compatibility fallback", service_dir, exc_info=exc)
         if "service" not in data:
             message = f"describe JSON missing required key 'service' for {service_dir}: {_describe_command_text()}"
             _add_discovery_error(message)
@@ -293,8 +312,8 @@ def describe_entry(
         if isinstance(service_payload, dict) and not service_payload.get("launch"):
             service_payload["launch"] = msgspec.to_builtins(entry.launch)
             data["service"] = service_payload
-    except (AttributeError, RuntimeError, TypeError, ValueError):
-        pass
+    except _DESCRIBE_ENTRY_READ_ERRORS as exc:
+        logger.debug("Failed to backfill service launch in describe payload for %s", service_dir, exc_info=exc)
 
     try:
         entry_service_class = str(entry.serviceClass or "").strip()
@@ -307,8 +326,8 @@ def describe_entry(
             _add_discovery_error(message)
             logger.error(message)
             return None
-    except (AttributeError, RuntimeError, TypeError, ValueError):
-        pass
+    except _DESCRIBE_ENTRY_READ_ERRORS as exc:
+        logger.debug("Failed to compare service class from describe payload for %s", service_dir, exc_info=exc)
 
     return data
 
@@ -345,7 +364,8 @@ def discovery_parallelism(service_count: int) -> int:
     if raw:
         try:
             return max(1, int(raw))
-        except Exception:
+        except _ENV_PARSE_ERRORS as exc:
+            logger.debug("Invalid discovery parallelism env value=%r; using 1", raw, exc_info=exc)
             return 1
 
     cpu_count = os.cpu_count() or 4
@@ -367,7 +387,8 @@ def discovery_slow_ms_default() -> float:
         return 0.0
     try:
         return max(0.0, float(raw))
-    except Exception:
+    except _ENV_PARSE_ERRORS as exc:
+        logger.debug("Invalid discovery slow threshold env value=%r; using 0.0", raw, exc_info=exc)
         return 0.0
 
 
