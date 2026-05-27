@@ -53,6 +53,26 @@ class _ShutdownHarness:
         self.events.append("qt-quit")
 
 
+class _FakeLogDock:
+    def __init__(self) -> None:
+        self.lines: list[tuple[str, str]] = []
+
+    def append(self, service_id: str, line: str) -> None:
+        self.lines.append((service_id, line))
+
+
+class _FailingLogDock:
+    def append(self, _service_id: str, _line: str) -> None:
+        raise RuntimeError("dock closed")
+
+
+class _DiscoveryLogHarness:
+    append_discovery_logs = F8StudioMainWin.append_discovery_logs
+
+    def __init__(self, log_dock: object) -> None:
+        self._log_dock = log_dock
+
+
 def test_shutdown_for_app_exit_continues_after_step_failure() -> None:
     host = _ShutdownHarness()
 
@@ -84,3 +104,38 @@ def test_shutdown_for_app_exit_is_idempotent() -> None:
     host.shutdown_for_app_exit()
 
     assert host.events == first_events
+
+
+def test_append_discovery_logs_emits_timing_and_error_lines() -> None:
+    log_dock = _FakeLogDock()
+    host = _DiscoveryLogHarness(log_dock)
+
+    host.append_discovery_logs(timing_lines=["timing\n"], error_lines=["error\n"])
+
+    assert log_dock.lines == [
+        ("studio", "timing\n"),
+        ("studio", "error\n"),
+    ]
+
+
+def test_append_discovery_logs_skips_duplicate_error_summary() -> None:
+    log_dock = _FakeLogDock()
+    host = _DiscoveryLogHarness(log_dock)
+
+    host.append_discovery_logs(
+        timing_lines=["discovery took 0.1s\n", "discovery errors: 2\n"],
+        error_lines=["detail should already be included\n"],
+    )
+
+    assert log_dock.lines == [
+        ("studio", "discovery took 0.1s\n"),
+        ("studio", "discovery errors: 2\n"),
+    ]
+
+
+def test_append_discovery_logs_reports_log_dock_failures(caplog) -> None:
+    host = _DiscoveryLogHarness(_FailingLogDock())
+
+    host.append_discovery_logs(timing_lines=["timing\n"], error_lines=[])
+
+    assert "Failed to emit discovery logs to studio log dock" in caplog.text

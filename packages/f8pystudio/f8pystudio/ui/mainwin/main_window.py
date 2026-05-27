@@ -34,6 +34,7 @@ from f8pystudio.bridge.studio_bridge import (
 from f8pystudio.studio_specs.registry import SERVICE_CLASS as STUDIO_SERVICE_CLASS
 
 logger = logging.getLogger(__name__)
+_LOG_DOCK_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
 
 
 class F8StudioMainWin(
@@ -388,7 +389,7 @@ class F8StudioMainWin(
                 return
             for line in error_lines:
                 self._log_dock.append("studio", str(line))
-        except Exception:
+        except _LOG_DOCK_ERRORS:
             logger.exception("Failed to emit discovery logs to studio log dock")
 
     def closeEvent(self, event) -> None:
