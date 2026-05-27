@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
 from dataclasses import dataclass
+import logging
+from pathlib import Path
 from typing import cast
 
 from qtpy import QtCore, QtTest, QtWidgets
@@ -32,6 +33,7 @@ from f8pystudio.assets.components.component_models import (
     F8ComponentDraftOriginKind,
     F8ComponentEntry,
     F8ComponentRecord,
+    F8ComponentRemoteRequestError,
     F8ComponentRemoteUser,
     F8ComponentSourceKind,
     F8ComponentVisibility,
@@ -2016,6 +2018,123 @@ def test_component_catalog_create_on_canvas_keeps_dialog_open(monkeypatch) -> No
     assert fake_graph.prepare_calls == [(entry.record.content, "Create Component")]
     assert len(fake_graph.placement_calls) == 1
     assert fake_graph.placement_calls[0][1] == "Component: Create Component\n2 nodes"
+
+    dialog.close()
+
+
+def test_component_catalog_create_on_canvas_failure_reports_context(monkeypatch, caplog) -> None:
+    _ensure_app()
+
+    class _FakeGraph:
+        def prepare_insert_graph_from_component(self, payload: object, *, component_name: str) -> object:
+            del payload, component_name
+            raise ValueError("invalid component payload")
+
+        def begin_graph_placement(self, request: object, *, label: str = "") -> None:
+            raise AssertionError("placement should not start after prepare failure")
+
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
+    dialog = ComponentCatalogDialog(parent=None, node_graph=_FakeGraph())
+    entry = F8ComponentEntry(
+        record=F8ComponentRecord(
+            componentId="component-create-fail",
+            name="Create Failing Component",
+            content={},
+        ),
+        source=F8ComponentSourceKind.local,
+        installed=True,
+    )
+    warning_messages: list[tuple[str, str]] = []
+    accept_calls: list[str] = []
+
+    monkeypatch.setattr(dialog, "_selected_entry", lambda: entry)
+    monkeypatch.setattr(dialog, "_ensure_component_hydrated", lambda selected_entry, operation_name: selected_entry)
+    monkeypatch.setattr(dialog, "accept", lambda: accept_calls.append("accept"))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_actions_mixin.show_warning",
+        lambda _parent, title, message: warning_messages.append((str(title), str(message))),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="f8pystudio.assets.ui.component_catalog_actions_mixin"):
+        dialog._on_insert_clicked()
+
+    assert accept_calls == []
+    assert warning_messages == [("Create on canvas failed", "invalid component payload")]
+    assert "prepare component graph insertion" in caplog.text
+
+    dialog.close()
+
+
+def test_component_catalog_import_failure_reports_context(monkeypatch, caplog, tmp_path: Path) -> None:
+    _ensure_app()
+    missing_path = tmp_path / "missing-component.json"
+    warning_messages: list[tuple[str, str]] = []
+
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog,
+        "getOpenFileName",
+        lambda *_args, **_kwargs: (str(missing_path), "JSON (*.json)"),
+    )
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_actions_mixin.show_warning",
+        lambda _parent, title, message: warning_messages.append((str(title), str(message))),
+    )
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+
+    with caplog.at_level(logging.ERROR, logger="f8pystudio.assets.ui.component_catalog_actions_mixin"):
+        dialog._on_import_clicked()
+
+    assert warning_messages == [("Import failed", f"Component asset JSON not found: {missing_path}")]
+    assert "import component asset JSON" in caplog.text
+
+    dialog.close()
+
+
+def test_component_catalog_remote_load_failure_reports_context(monkeypatch, caplog, tmp_path: Path) -> None:
+    _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "component-load-fail.ini"), QtCore.QSettings.IniFormat)
+    service = ComponentCatalogService(db_path=tmp_path / "assets.db")
+    remote_entry = F8ComponentEntry(
+        record=F8ComponentRecord(
+            componentId="remote-load-fail",
+            name="Remote Load Fail",
+            content={},
+        ),
+        source=F8ComponentSourceKind.remote_private,
+        visibility=F8ComponentVisibility.private,
+        ownerUserId="u1",
+        ownerDisplayName="User One",
+        remoteVersionNumber=1,
+        installed=False,
+        hasCachedContent=False,
+    )
+    warning_messages: list[tuple[str, str]] = []
+
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+    dialog._sync_client = ComponentSyncClient(settings=settings, catalog_service=service)
+    monkeypatch.setattr(dialog, "_selected_action_entries", lambda: (remote_entry, None, remote_entry))
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "hydrate_component",
+        lambda _component_id: (_ for _ in ()).throw(
+            F8ComponentRemoteRequestError("download failed", status_code=503)
+        ),
+    )
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_actions_mixin.show_warning",
+        lambda _parent, title, message: warning_messages.append((str(title), str(message))),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="f8pystudio.assets.ui.component_catalog_actions_mixin"):
+        dialog._on_install_clicked()
+
+    assert warning_messages == [("Load failed", "download failed")]
+    assert "load remote component" in caplog.text
 
     dialog.close()
 

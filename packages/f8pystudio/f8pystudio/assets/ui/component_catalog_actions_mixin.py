@@ -4,7 +4,9 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
+import msgspec
 from qtpy import QtCore, QtWidgets
+from sqlalchemy.exc import SQLAlchemyError
 
 from f8pysdk.codec import dump_json, validate_as
 
@@ -13,6 +15,8 @@ from ..components.component_catalog import component_entry_has_cached_content, c
 from ..components.component_models import (
     F8ComponentDraftOriginKind,
     F8ComponentEntry,
+    F8ComponentRemoteAuthError,
+    F8ComponentRemoteConflictError,
     F8ComponentRemoteRequestError,
     F8ComponentRecord,
     F8ComponentSourceKind,
@@ -47,8 +51,41 @@ else:
 
 logger = logging.getLogger(__name__)
 
+_COMPONENT_LOCAL_ACTION_ERRORS = (
+    KeyError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    msgspec.DecodeError,
+    SQLAlchemyError,
+)
+_COMPONENT_REMOTE_ACTION_ERRORS = (
+    F8ComponentRemoteAuthError,
+    F8ComponentRemoteConflictError,
+    F8ComponentRemoteRequestError,
+    KeyError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    msgspec.DecodeError,
+    SQLAlchemyError,
+)
+
 
 class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
+    def _report_component_action_failure(
+        self,
+        *,
+        title: str,
+        context: str,
+        exc: Exception,
+        message: str | None = None,
+    ) -> None:
+        logger.exception("Component catalog action failed: %s", context)
+        warning_message = str(exc) if message is None else f"{message}\n\n{exc}"
+        show_warning(self, title, warning_message)
+
     @staticmethod
     def _component_publish_change_flags(
         *,
@@ -141,8 +178,12 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
                 ),
                 change_summary=change_summary,
             )
-        except Exception as exc:
-            show_warning(self, "Publish failed", str(exc))
+        except _COMPONENT_REMOTE_ACTION_ERRORS as exc:
+            self._report_component_action_failure(
+                title="Publish failed",
+                context="create remote component for draft",
+                exc=exc,
+            )
             return None
         _ = self._draft_service_for_catalog().create_draft_from_record(
             draft_entry.record,
@@ -328,9 +369,13 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
                 updatedAt=timestamp,
             )
             upsert_component(record)
-        except Exception as exc:
-            logger.exception("Component catalog save component failed")
-            show_warning(self, "Save component failed", f"Failed to save component.\n\n{exc}")
+        except _COMPONENT_LOCAL_ACTION_ERRORS as exc:
+            self._report_component_action_failure(
+                title="Save component failed",
+                context="save component draft from graph",
+                exc=exc,
+                message="Failed to save component.",
+            )
             return
         action_text = "Updated" if overwrite_entry is not None else "Saved"
         show_info(self, action_text, f"{action_text} component:\n{record.name}")
@@ -434,8 +479,12 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
         try:
             if has_owned_remote and remote_entry is not None:
                 self._sync_client.delete_component(str(remote_entry.record.componentId))
-        except Exception as exc:
-            show_warning(self, "Delete failed", str(exc))
+        except _COMPONENT_REMOTE_ACTION_ERRORS as exc:
+            self._report_component_action_failure(
+                title="Delete failed",
+                context="delete remote component",
+                exc=exc,
+            )
             return
         self._rebuild_browser_after_remote_asset_changed()
 
@@ -491,8 +540,12 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
             return
         try:
             installed = self._sync_client.hydrate_component(str(remote_entry.record.componentId))
-        except Exception as exc:
-            show_warning(self, "Load failed", str(exc))
+        except _COMPONENT_REMOTE_ACTION_ERRORS as exc:
+            self._report_component_action_failure(
+                title="Load failed",
+                context="load remote component",
+                exc=exc,
+            )
             return
         show_info(self, "Loaded", f"Loaded component:\n{installed.record.name}")
         self._rebuild_browser_after_installed_state_changed(
@@ -512,8 +565,12 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
             else:
                 updated = self._sync_client.subscribe_component(str(selected_entry.record.componentId))
                 show_info(self, "Subscribed", f"Subscribed to component:\n{updated.record.name}")
-        except Exception as exc:
-            show_warning(self, "Subscription failed", str(exc))
+        except _COMPONENT_REMOTE_ACTION_ERRORS as exc:
+            self._report_component_action_failure(
+                title="Subscription failed",
+                context="toggle component subscription",
+                exc=exc,
+            )
             return
         self._rebuild_browser_after_remote_scope_state_changed(
             preserve_component_id=str(updated.record.componentId)
@@ -591,10 +648,18 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
                         missing_component_id=target_asset_id,
                     ):
                         return self._create_remote_component_for_draft(draft_entry)
-                    show_warning(self, "Publish failed", str(exc))
+                    self._report_component_action_failure(
+                        title="Publish failed",
+                        context="load linked remote component for publish",
+                        exc=exc,
+                    )
                     return None
-                except Exception as exc:
-                    show_warning(self, "Publish failed", str(exc))
+                except _COMPONENT_REMOTE_ACTION_ERRORS as exc:
+                    self._report_component_action_failure(
+                        title="Publish failed",
+                        context="load linked remote component for publish",
+                        exc=exc,
+                    )
                     return None
             elif not component_entry_has_cached_content(remote_entry):
                 try:
@@ -608,10 +673,18 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
                             draft_entry,
                             preferred_visibility=remote_entry.visibility,
                         )
-                    show_warning(self, "Publish failed", str(exc))
+                    self._report_component_action_failure(
+                        title="Publish failed",
+                        context="hydrate linked remote component for publish",
+                        exc=exc,
+                    )
                     return None
-                except Exception as exc:
-                    show_warning(self, "Publish failed", str(exc))
+                except _COMPONENT_REMOTE_ACTION_ERRORS as exc:
+                    self._report_component_action_failure(
+                        title="Publish failed",
+                        context="hydrate linked remote component for publish",
+                        exc=exc,
+                    )
                     return None
             has_structural_changes, has_metadata_changes = self._component_publish_change_flags(
                 remote_entry=remote_entry,
@@ -659,10 +732,18 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
                         draft_entry,
                         preferred_visibility=remote_entry.visibility,
                     )
-                show_warning(self, "Publish failed", str(exc))
+                self._report_component_action_failure(
+                    title="Publish failed",
+                    context="publish linked component draft",
+                    exc=exc,
+                )
                 return None
-            except Exception as exc:
-                show_warning(self, "Publish failed", str(exc))
+            except _COMPONENT_REMOTE_ACTION_ERRORS as exc:
+                self._report_component_action_failure(
+                    title="Publish failed",
+                    context="publish linked component draft",
+                    exc=exc,
+                )
                 return None
             _ = self._draft_service_for_catalog().create_draft_from_record(
                 draft_entry.record,
@@ -703,8 +784,12 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
                 visibility=next_visibility,
                 version_number=selected_entry.remoteVersionNumber,
             )
-        except Exception as exc:
-            show_warning(self, "Visibility update failed", str(exc))
+        except _COMPONENT_REMOTE_ACTION_ERRORS as exc:
+            self._report_component_action_failure(
+                title="Visibility update failed",
+                context="update component visibility",
+                exc=exc,
+            )
             return
         self._rebuild_browser_after_remote_asset_changed(
             preserve_component_id=str(selected_entry.record.componentId)
@@ -725,8 +810,12 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
                 selected_entry.record.content,
                 component_name=selected_entry.record.name,
             )
-        except Exception as exc:
-            show_warning(self, "Create on canvas failed", str(exc))
+        except _COMPONENT_LOCAL_ACTION_ERRORS as exc:
+            self._report_component_action_failure(
+                title="Create on canvas failed",
+                context="prepare component graph insertion",
+                exc=exc,
+            )
             return
         graph.begin_graph_placement(
             request,
@@ -748,8 +837,12 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
             return
         try:
             imported = import_component_from_json(selected_path)
-        except Exception as exc:
-            show_warning(self, "Import failed", str(exc))
+        except _COMPONENT_LOCAL_ACTION_ERRORS as exc:
+            self._report_component_action_failure(
+                title="Import failed",
+                context="import component asset JSON",
+                exc=exc,
+            )
             return
         self._rebuild_browser_after_draft_changed(
             preserve_component_id=str(imported.componentId)
@@ -774,7 +867,11 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
             return
         try:
             out_path = export_component_to_json(selected_entry.record.componentId, selected_path)
-        except Exception as exc:
-            show_warning(self, "Export failed", str(exc))
+        except _COMPONENT_LOCAL_ACTION_ERRORS as exc:
+            self._report_component_action_failure(
+                title="Export failed",
+                context="export component asset JSON",
+                exc=exc,
+            )
             return
         show_info(self, "Exported", f"Saved:\n{out_path}")
