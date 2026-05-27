@@ -90,6 +90,41 @@ class _Sample:
     skeleton_protocol: str | None = None
 
 
+def _as_float_bbox(raw_bbox: Any) -> tuple[float, float, float, float] | None:
+    if not isinstance(raw_bbox, (list, tuple)) or len(raw_bbox) != 4:
+        return None
+    if any(value is None for value in raw_bbox):
+        return None
+    try:
+        x1, y1, x2, y2 = (float(raw_bbox[0]), float(raw_bbox[1]), float(raw_bbox[2]), float(raw_bbox[3]))
+    except (TypeError, ValueError):
+        return None
+    return x1, y1, x2, y2
+
+
+def _keypoint_dicts(raw_keypoints: Any) -> list[dict[str, Any]] | None:
+    if not isinstance(raw_keypoints, list):
+        return None
+    return [item for item in raw_keypoints if isinstance(item, dict)]
+
+
+def _detection_track_item(raw_detection: dict[str, Any], *, fallback_id: int, payload_skeleton_protocol: str) -> dict[str, Any]:
+    raw_id = raw_detection.get("id")
+    try:
+        detection_id = int(raw_id) if raw_id is not None else int(fallback_id)
+    except (TypeError, ValueError):
+        detection_id = int(fallback_id)
+    bbox = _as_float_bbox(raw_detection.get("bbox"))
+    skeleton_protocol = str(raw_detection.get("skeletonProtocol") or payload_skeleton_protocol or "").strip()
+    return {
+        "id": detection_id,
+        "bbox": list(bbox) if bbox is not None else None,
+        "keypoints": _keypoint_dicts(raw_detection.get("keypoints")),
+        "kind": "det",
+        "skeletonProtocol": skeleton_protocol,
+    }
+
+
 class VizTrackRuntimeNode(StudioVizRuntimeNodeBase):
     """
     Studio-side node that visualizes tracking results.
@@ -266,72 +301,26 @@ class VizTrackRuntimeNode(StudioVizRuntimeNodeBase):
                 for i, det in enumerate(dets_any, start=1):
                     if not isinstance(det, dict):
                         continue
-                    det_id = i
-                    try:
-                        if det.get("id") is not None:
-                            det_id = int(det.get("id"))
-                    except Exception:
-                        det_id = i
-                    bbox = None
-                    try:
-                        bb = det.get("bbox")
-                        if isinstance(bb, (list, tuple)) and len(bb) == 4 and all(v is not None for v in bb):
-                            x1, y1, x2, y2 = (float(bb[0]), float(bb[1]), float(bb[2]), float(bb[3]))
-                            bbox = (x1, y1, x2, y2)
-                    except Exception:
-                        bbox = None
-                    kps = None
-                    try:
-                        kp = det.get("keypoints")
-                        if isinstance(kp, list):
-                            kps = [x for x in kp if isinstance(x, dict)]
-                    except Exception:
-                        kps = None
                     det_tracks.append(
-                        {
-                            "id": int(det_id),
-                            "bbox": list(bbox) if bbox is not None else None,
-                            "keypoints": kps,
-                            "kind": "det",
-                            "skeletonProtocol": str(det.get("skeletonProtocol") or payload_skeleton_protocol or "").strip(),
-                        }
+                        _detection_track_item(
+                            det,
+                            fallback_id=i,
+                            payload_skeleton_protocol=payload_skeleton_protocol,
+                        )
                     )
                 tracks = det_tracks
 
         for t in tracks:
             if not isinstance(t, dict):
                 continue
-            if not isinstance(t, dict):
-                continue
             try:
                 tid = int(t.get("id"))
             except (TypeError, ValueError):
                 continue
-            bbox = None
-            try:
-                bb = t.get("bbox")
-                if isinstance(bb, (list, tuple)) and len(bb) == 4 and all(v is not None for v in bb):
-                    x1, y1, x2, y2 = (float(bb[0]), float(bb[1]), float(bb[2]), float(bb[3]))
-                    bbox = (x1, y1, x2, y2)
-            except Exception:
-                bbox = None
-            kps = None
-            try:
-                kp = t.get("keypoints")
-                if isinstance(kp, list):
-                    kps = [x for x in kp if isinstance(x, dict)]
-            except Exception:
-                kps = None
-            kind = "track"
-            try:
-                kind = str(t.get("kind") or t.get("source") or "track")
-            except Exception:
-                kind = "track"
-            skeleton_protocol = ""
-            try:
-                skeleton_protocol = str(t.get("skeletonProtocol") or payload_skeleton_protocol or "").strip()
-            except Exception:
-                skeleton_protocol = ""
+            bbox = _as_float_bbox(t.get("bbox"))
+            kps = _keypoint_dicts(t.get("keypoints"))
+            kind = str(t.get("kind") or t.get("source") or "track")
+            skeleton_protocol = str(t.get("skeletonProtocol") or payload_skeleton_protocol or "").strip()
 
             q = self._tracks.get(tid)
             if q is None:
@@ -469,13 +458,13 @@ class VizTrackRuntimeNode(StudioVizRuntimeNodeBase):
         v: Any = None
         try:
             v = await self.get_state_value(name)
-        except Exception:
+        except (KeyError, RuntimeError, TypeError, ValueError):
             v = None
         if v is None:
             v = self._initial_state.get(name)
         try:
             out = int(v) if v is not None else int(default)
-        except Exception:
+        except (TypeError, ValueError):
             out = int(default)
         if out < minimum:
             out = minimum
@@ -487,26 +476,23 @@ class VizTrackRuntimeNode(StudioVizRuntimeNodeBase):
         v: Any = None
         try:
             v = await self.get_state_value(name)
-        except Exception:
+        except (KeyError, RuntimeError, TypeError, ValueError):
             v = None
         if v is None:
             v = self._initial_state.get(name)
-        try:
-            return str(v) if v is not None else str(default)
-        except Exception:
-            return str(default)
+        return str(v) if v is not None else str(default)
 
     async def _get_float_state(self, name: str, *, default: float, minimum: float, maximum: float) -> float:
         v: Any = None
         try:
             v = await self.get_state_value(name)
-        except Exception:
+        except (KeyError, RuntimeError, TypeError, ValueError):
             v = None
         if v is None:
             v = self._initial_state.get(name)
         try:
             out = float(v) if v is not None else float(default)
-        except Exception:
+        except (TypeError, ValueError):
             out = float(default)
         if out < minimum:
             out = minimum
@@ -518,7 +504,7 @@ class VizTrackRuntimeNode(StudioVizRuntimeNodeBase):
         v: Any = None
         try:
             v = await self.get_state_value(name)
-        except Exception:
+        except (KeyError, RuntimeError, TypeError, ValueError):
             v = None
         if v is None:
             v = self._initial_state.get(name)
