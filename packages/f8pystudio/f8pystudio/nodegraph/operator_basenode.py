@@ -45,6 +45,8 @@ _NODEGRAPH_API_ERRORS = (
     PortRegistrationError,
 )
 _QT_ACCESS_ERRORS = (AttributeError, RuntimeError, TypeError)
+_POSITION_READ_ERRORS = (AttributeError, IndexError, RuntimeError, TypeError, ValueError)
+_BRIDGE_QUERY_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
 
 
 @dataclass(frozen=True)
@@ -599,66 +601,91 @@ class F8StudioOperatorNodeItem(F8StudioServiceNodeItem):
         - highlight pipes on selection
         """
         if change == QtWidgets.QGraphicsItem.ItemSelectedChange and self.scene():
-            try:
-                self.reset_pipes()
-                if value:
-                    self.highlight_pipes()
-            except (AttributeError, RuntimeError, TypeError):
-                pass
-            try:
-                self.setZValue(Z_VAL_NODE)
-                if not self.selected:
-                    self.setZValue(Z_VAL_NODE + 1)
-            except (AttributeError, RuntimeError, TypeError):
-                pass
+            self._sync_selection_pipe_state(selected=bool(value))
+            self._sync_selection_z_value()
 
         return super().itemChange(change, value)
 
     def mousePressEvent(self, event):  # type: ignore[override]
         if event.button() == QtCore.Qt.LeftButton:
-            try:
-                p = self.xy_pos
-                self._drag_start_xy = (float(p[0]), float(p[1]))
-            except (AttributeError, RuntimeError, TypeError, ValueError, IndexError):
-                self._drag_start_xy = None
-            container = self._container_item
-            if container is None:
-                self._drag_start_container_id = ""
-            else:
-                try:
-                    self._drag_start_container_id = str(container.id or "").strip()
-                except (AttributeError, RuntimeError, TypeError):
-                    self._drag_start_container_id = ""
+            self._record_drag_start()
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):  # type: ignore[override]
         super().mouseReleaseEvent(event)
         if event.button() != QtCore.Qt.LeftButton:
             return
+        self._handle_left_mouse_release()
+
+    def _sync_selection_pipe_state(self, *, selected: bool) -> None:
+        try:
+            self.reset_pipes()
+            if selected:
+                self.highlight_pipes()
+        except _NODEGRAPH_API_ERRORS:
+            logger.debug("Failed to update operator pipe selection highlight.", exc_info=True)
+
+    def _sync_selection_z_value(self) -> None:
+        try:
+            self.setZValue(Z_VAL_NODE)
+            if not self.selected:
+                self.setZValue(Z_VAL_NODE + 1)
+        except _QT_ACCESS_ERRORS:
+            logger.debug("Failed to update operator selection z value.", exc_info=True)
+
+    def _record_drag_start(self) -> None:
+        self._drag_start_xy = self._current_xy_pos()
+        self._drag_start_container_id = self._current_container_id()
+
+    def _current_xy_pos(self) -> tuple[float, float] | None:
+        try:
+            pos = self.xy_pos
+            return float(pos[0]), float(pos[1])
+        except _POSITION_READ_ERRORS:
+            logger.debug("Failed to record operator drag start position for node id=%s.", _node_item_id(self), exc_info=True)
+            return None
+
+    def _current_container_id(self) -> str:
+        container = self._container_item
+        if container is None:
+            return ""
+        try:
+            return str(container.id or "").strip()
+        except _QT_ACCESS_ERRORS:
+            logger.debug("Failed to record operator drag start container for node id=%s.", _node_item_id(self), exc_info=True)
+            return ""
+
+    def _handle_left_mouse_release(self) -> None:
         start_xy = self._drag_start_xy
         start_container_id = str(self._drag_start_container_id or "")
         self._drag_start_xy = None
         self._drag_start_container_id = ""
         if start_xy is None:
             return
-        viewer = self.viewer()
-        if viewer is None:
-            return
-        graph = None
-        try:
-            graph = viewer.f8_graph
-        except _QT_ACCESS_ERRORS:
-            graph = None
+        graph = self._graph_for_drop_rebind()
         if graph is None:
             return
+        self._notify_operator_drop(graph=graph, start_xy=start_xy, start_container_id=start_container_id)
+
+    def _graph_for_drop_rebind(self) -> Any | None:
+        viewer = self.viewer()
+        if viewer is None:
+            return None
+        try:
+            return viewer.f8_graph
+        except _QT_ACCESS_ERRORS:
+            logger.debug("Failed to access operator graph during drop rebind for node id=%s.", _node_item_id(self), exc_info=True)
+            return None
+
+    def _notify_operator_drop(self, *, graph: Any, start_xy: tuple[float, float], start_container_id: str) -> None:
         try:
             graph.on_operator_drop(
                 node_id=_node_item_id(self),
                 start_pos=start_xy,
                 start_container_id=start_container_id,
             )
-        except Exception:
-            logger.exception("operator drop rebind failed for node id=%s", _node_item_id(self))
+        except _NODEGRAPH_API_ERRORS:
+            logger.exception("Operator drop rebind failed for node id=%s", _node_item_id(self))
 
     def _ensure_service_toolbar(self, viewer: Any | None) -> None:  # type: ignore[override]
         return
@@ -677,6 +704,7 @@ class F8StudioOperatorNodeItem(F8StudioServiceNodeItem):
             try:
                 service_id = str(container.id or "").strip()
             except _QT_ACCESS_ERRORS:
+                logger.debug("Failed to read operator container service id for node id=%s.", _node_item_id(self), exc_info=True)
                 service_id = ""
             if service_id:
                 return service_id
@@ -689,7 +717,8 @@ class F8StudioOperatorNodeItem(F8StudioServiceNodeItem):
             return False
         try:
             return bool(bridge.is_service_running(service_id))
-        except (AttributeError, RuntimeError, TypeError, ValueError):
+        except _BRIDGE_QUERY_ERRORS:
+            logger.debug("Failed to query operator service process state for service id=%s.", service_id, exc_info=True)
             return False
 
     def _on_bridge_service_process_state(self, service_id: str, running: bool) -> None:  # type: ignore[override]
@@ -697,12 +726,12 @@ class F8StudioOperatorNodeItem(F8StudioServiceNodeItem):
             return
         try:
             self._refresh_inline_command_rows()
-        except (AttributeError, RuntimeError, TypeError):
-            pass
+        except _QT_ACCESS_ERRORS:
+            logger.debug("Failed to refresh operator command rows after service state change: service_id=%s.", service_id, exc_info=True)
         try:
             QtCore.QTimer.singleShot(0, self.draw_node)
-        except (AttributeError, RuntimeError, TypeError):
-            pass
+        except _QT_ACCESS_ERRORS:
+            logger.debug("Failed to schedule operator redraw after service state change: service_id=%s.", service_id, exc_info=True)
 
     def _ensure_inline_command_rows(self) -> None:  # type: ignore[override]
         _ensure_inline_command_rows_impl(self)
