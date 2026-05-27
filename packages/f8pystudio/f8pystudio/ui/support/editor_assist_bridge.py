@@ -6,7 +6,7 @@ import logging
 import os
 import threading
 import time
-from typing import Any
+from typing import Any, TypeVar
 
 from qtpy import QtCore
 
@@ -14,6 +14,9 @@ from f8pystudio.editor_assist.lsp_client import LspClientError, PythonLspClient
 from f8pystudio.editor_assist.workspace import EditorAssistContext, EditorWorkspaceSession
 
 logger = logging.getLogger(__name__)
+_WorkerResultT = TypeVar("_WorkerResultT")
+_LSP_REQUEST_ERRORS = (LspClientError, OSError, RuntimeError, TypeError, ValueError)
+_LSP_CONTEXT_ERRORS = (*_LSP_REQUEST_ERRORS, FileNotFoundError)
 
 
 def _float_env(name: str, default: float, *, minimum: float) -> float:
@@ -103,10 +106,10 @@ class PythonEditorAssistBridge(QtCore.QObject):
                 text=snapshot.text,
                 version=int(version),
             )
-        except Exception:
+        except _LSP_CONTEXT_ERRORS:
             try:
                 client.shutdown()
-            except Exception:
+            except _LSP_REQUEST_ERRORS:
                 logger.exception("python lsp bridge failed to shutdown client after init error")
             workspace.close()
             raise
@@ -172,7 +175,7 @@ class PythonEditorAssistBridge(QtCore.QObject):
                 code=code_snapshot,
                 version=next_version,
             )
-        except Exception as exc:
+        except _LSP_CONTEXT_ERRORS as exc:
             self._log_bridge_error("reloadContext", exc)
             return False
 
@@ -191,7 +194,7 @@ class PythonEditorAssistBridge(QtCore.QObject):
         self._cancel_future(signature_future)
         try:
             old_client.shutdown()
-        except Exception:
+        except _LSP_REQUEST_ERRORS:
             logger.exception("python lsp bridge reload failed to shutdown old client")
         old_workspace.close()
         elapsed_ms = int((time.perf_counter() - started_at) * 1000.0)
@@ -225,12 +228,25 @@ class PythonEditorAssistBridge(QtCore.QObject):
                     text=snapshot.text,
                     version=self._version,
                 )
-        except Exception as exc:
+        except _LSP_CONTEXT_ERRORS as exc:
             self._log_bridge_error("didChange", exc)
 
     @QtCore.Slot(str)
     def syncDocument(self, code: str) -> None:
         self.sync_document(code)
+
+    def _worker_future_result(
+        self,
+        *,
+        stage: str,
+        done_future: concurrent.futures.Future[_WorkerResultT],
+        default: _WorkerResultT,
+    ) -> _WorkerResultT:
+        try:
+            return done_future.result()
+        except Exception as exc:  # boundary: worker thread callback
+            self._log_bridge_error(stage, exc)
+            return default
 
     @QtCore.Slot(str, str, int, int)
     def request_completions(self, request_id: str, code: str, line: int, column: int) -> None:
@@ -256,11 +272,7 @@ class PythonEditorAssistBridge(QtCore.QObject):
         def _on_done(done_future: concurrent.futures.Future[list[dict[str, Any]]]) -> None:
             if done_future.cancelled() or self._is_shutting_down:
                 return
-            try:
-                items = done_future.result()
-            except Exception as exc:  # boundary: worker thread callback
-                self._log_bridge_error("completion", exc)
-                items = []
+            items = self._worker_future_result(stage="completion", done_future=done_future, default=[])
             with self._state_lock:
                 if generation != self._completion_generation:
                     return
@@ -300,11 +312,7 @@ class PythonEditorAssistBridge(QtCore.QObject):
         def _on_done(done_future: concurrent.futures.Future[dict[str, Any] | None]) -> None:
             if done_future.cancelled() or self._is_shutting_down:
                 return
-            try:
-                payload = done_future.result()
-            except Exception as exc:  # boundary: worker thread callback
-                self._log_bridge_error("completionResolve", exc)
-                payload = None
+            payload = self._worker_future_result(stage="completionResolve", done_future=done_future, default=None)
             with self._state_lock:
                 if generation != self._completion_resolve_generation:
                     return
@@ -348,11 +356,7 @@ class PythonEditorAssistBridge(QtCore.QObject):
         def _on_done(done_future: concurrent.futures.Future[dict[str, Any] | None]) -> None:
             if done_future.cancelled() or self._is_shutting_down:
                 return
-            try:
-                payload = done_future.result()
-            except Exception as exc:  # boundary: worker thread callback
-                self._log_bridge_error("hover", exc)
-                payload = None
+            payload = self._worker_future_result(stage="hover", done_future=done_future, default=None)
             with self._state_lock:
                 if generation != self._hover_generation:
                     return
@@ -389,11 +393,7 @@ class PythonEditorAssistBridge(QtCore.QObject):
         def _on_done(done_future: concurrent.futures.Future[dict[str, Any] | None]) -> None:
             if done_future.cancelled() or self._is_shutting_down:
                 return
-            try:
-                payload = done_future.result()
-            except Exception as exc:  # boundary: worker thread callback
-                self._log_bridge_error("signatureHelp", exc)
-                payload = None
+            payload = self._worker_future_result(stage="signatureHelp", done_future=done_future, default=None)
             with self._state_lock:
                 if generation != self._signature_generation:
                     return
@@ -499,10 +499,10 @@ class PythonEditorAssistBridge(QtCore.QObject):
                 )
                 self._clear_completion_resolve_items()
                 return self._normalize_completion_result(result_retry)
-            except Exception as retry_exc:
+            except _LSP_REQUEST_ERRORS as retry_exc:
                 self._log_bridge_error("completion", retry_exc)
                 return []
-        except Exception as exc:
+        except _LSP_REQUEST_ERRORS as exc:
             self._log_bridge_error("completion", exc)
             return []
 
@@ -539,7 +539,7 @@ class PythonEditorAssistBridge(QtCore.QObject):
                 timeout_s=self._completion_resolve_timeout_s,
             )
             return self._normalize_resolved_completion_item(result)
-        except Exception as exc:
+        except _LSP_REQUEST_ERRORS as exc:
             self._log_bridge_error("completionResolve", exc)
             return None
 
@@ -553,7 +553,7 @@ class PythonEditorAssistBridge(QtCore.QObject):
                 timeout_s=self._hover_timeout_s,
             )
             return self._normalize_hover_result(result)
-        except Exception as exc:
+        except _LSP_REQUEST_ERRORS as exc:
             self._log_bridge_error("hover", exc)
             return None
 
@@ -568,7 +568,7 @@ class PythonEditorAssistBridge(QtCore.QObject):
                 timeout_s=self._signature_timeout_s,
             )
             return self._normalize_signature_result(result)
-        except Exception as exc:
+        except _LSP_REQUEST_ERRORS as exc:
             self._log_bridge_error("signatureHelp", exc)
             return None
 
