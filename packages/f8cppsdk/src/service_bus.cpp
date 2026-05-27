@@ -1159,13 +1159,14 @@ RuntimeBytes ServiceBus::handle_runtime_control_request(const std::string& endpo
       return ok_response(json{{"active", req.active}});
     }
     if (endpoint == "status") {
+      const _RungraphMetadata rungraph_metadata = rungraph_metadata_snapshot();
       return ok_response(json{{"serviceId", cfg_.service_id},
                               {"serviceClass", cfg_.service_class},
                               {"runtimeInstanceId", runtime_instance_id_},
                               {"active", is_active()},
-                              {"rungraphGraphId", rungraph_graph_id_},
-                              {"rungraphRevision", rungraph_revision_},
-                              {"rungraphFingerprint", rungraph_fingerprint_}});
+                              {"rungraphGraphId", rungraph_metadata.graph_id},
+                              {"rungraphRevision", rungraph_metadata.revision},
+                              {"rungraphFingerprint", rungraph_metadata.fingerprint}});
     }
     if (endpoint == "terminate" || endpoint == "quit") {
       spdlog::info("{} requested serviceId={}", endpoint, cfg_.service_id);
@@ -1832,9 +1833,9 @@ bool ServiceBus::on_set_rungraph(const json& graph_obj, const json& meta, std::s
     if (meta.is_object() && meta.contains("targetFingerprint") && meta["targetFingerprint"].is_string()) {
       target_fingerprint = trim_copy(meta["targetFingerprint"].get<std::string>());
     }
-    rungraph_fingerprint_ = target_fingerprint.empty() ? build_rungraph_deploy_fingerprint(persisted) : target_fingerprint;
-    rungraph_graph_id_ = persisted.value("graphId", "");
-    rungraph_revision_ = persisted.value("revision", "");
+    const std::string applied_fingerprint =
+        target_fingerprint.empty() ? build_rungraph_deploy_fingerprint(persisted) : target_fingerprint;
+    set_rungraph_metadata(persisted.value("graphId", ""), persisted.value("revision", ""), applied_fingerprint);
     const auto bytes = encode_json(persisted);
     (void)runtime_retained_put(rungraph_key(cfg_.service_id), bytes);
   } catch (const std::exception& ex) {
@@ -1865,6 +1866,18 @@ bool ServiceBus::on_set_rungraph(const json& graph_obj, const json& meta, std::s
     }
   }
   return true;
+}
+
+ServiceBus::_RungraphMetadata ServiceBus::rungraph_metadata_snapshot() const {
+  std::lock_guard<std::mutex> lock(rungraph_apply_mu_);
+  return _RungraphMetadata{rungraph_graph_id_, rungraph_revision_, rungraph_fingerprint_};
+}
+
+void ServiceBus::set_rungraph_metadata(std::string graph_id, std::string revision, std::string fingerprint) {
+  std::lock_guard<std::mutex> lock(rungraph_apply_mu_);
+  rungraph_graph_id_ = std::move(graph_id);
+  rungraph_revision_ = std::move(revision);
+  rungraph_fingerprint_ = std::move(fingerprint);
 }
 
 bool ServiceBus::submit_rungraph(const json& graph_obj, const json& meta, const std::string& req_id,
@@ -1907,7 +1920,8 @@ bool ServiceBus::submit_rungraph(const json& graph_obj, const json& meta, const 
         return false;
       }
       rungraph_req_fingerprints_[req_id_s] = target_fingerprint;
-      if (!force_apply && !rungraph_fingerprint_.empty() && rungraph_fingerprint_ == target_fingerprint) {
+      const std::string current_fingerprint = rungraph_fingerprint_;
+      if (!force_apply && !current_fingerprint.empty() && current_fingerprint == target_fingerprint) {
         publish_applied = true;
       } else if (auto aliases_it = rungraph_inflight_aliases_.find(target_fingerprint);
                  aliases_it != rungraph_inflight_aliases_.end()) {
@@ -1961,6 +1975,7 @@ void ServiceBus::stop_rungraph_apply_worker() {
     rungraph_apply_stop_requested_ = true;
     rungraph_apply_running_ = false;
     rungraph_apply_queue_.clear();
+    rungraph_inflight_aliases_.clear();
   }
   rungraph_apply_cv_.notify_all();
   if (rungraph_apply_thread_.joinable()) {
@@ -2047,7 +2062,9 @@ void ServiceBus::run_rungraph_apply_worker(json graph_obj, json meta, std::strin
                   cfg_.service_id, target_fingerprint.substr(0, 16), elapsed_ms, error_code, error_message);
     return;
   }
-  const std::string applied_fingerprint = rungraph_fingerprint_.empty() ? target_fingerprint : rungraph_fingerprint_;
+  const _RungraphMetadata rungraph_metadata = rungraph_metadata_snapshot();
+  const std::string applied_fingerprint =
+      rungraph_metadata.fingerprint.empty() ? target_fingerprint : rungraph_metadata.fingerprint;
   aliases = collect_and_clear_aliases();
   publish_rungraph_deploy_status_for_aliases(graph_obj, aliases, "applied", source, target_fingerprint,
                                              applied_fingerprint);
@@ -2511,40 +2528,13 @@ bool ServiceBus::should_apply_rungraph_state_value(const std::string& node_id, c
   return true;
 }
 
-void ServiceBus::apply_rungraph_local(const json& graph_obj, std::string& error_code, std::string& error_message) {
+bool ServiceBus::build_rungraph_state_routing_plan(const f8::cppsdk::generated::F8RuntimeGraph& graph,
+                                                   _RungraphStateRoutingPlan& plan,
+                                                   std::string& error_code,
+                                                   std::string& error_message) const {
   using namespace f8::cppsdk::generated;
 
-  F8RuntimeGraph graph{};
-  ParseError perr{};
-  if (!parse_F8RuntimeGraph(graph_obj, graph, perr)) {
-    error_code = "INVALID_RUNGRAPH";
-    error_message = perr.message.empty() ? "invalid rungraph" : perr.message;
-    return;
-  }
-  try {
-    validate_state_edges_or_throw(graph);
-  } catch (const std::exception& ex) {
-    error_code = "INVALID_RUNGRAPH";
-    error_message = ex.what();
-    return;
-  }
-
-  // Service/container nodes require nodeId == serviceId.
-  for (const auto& n : graph.nodes.value_or(std::vector<F8RuntimeNode>{})) {
-    if (!n.operatorClass.has_value() && n.nodeId != n.serviceId) {
-      error_code = "INVALID_RUNGRAPH";
-      error_message = "service node requires nodeId == serviceId";
-      return;
-    }
-  }
-
-  std::unordered_map<_NodeFieldKey, std::string, _NodeFieldKeyHash> state_access;
-  std::unordered_map<_NodeFieldKey, std::vector<_NodeFieldKey>, _NodeFieldKeyHash> intra_state_out;
-  std::unordered_map<_RemoteStateKey, std::vector<_NodeFieldKey>, _RemoteStateKeyHash> cross_state_in;
-  std::unordered_set<_NodeFieldKey, _NodeFieldKeyHash> cross_state_targets;
-  std::unordered_set<_RemoteStateKey, _RemoteStateKeyHash> cross_state_initial_read_set;
-  std::vector<_RemoteStateKey> cross_state_initial_reads;
-
+  plan = _RungraphStateRoutingPlan{};
   const std::string sid = cfg_.service_id;
 
   // Build access map and validate rungraph-provided stateValues.
@@ -2553,37 +2543,40 @@ void ServiceBus::apply_rungraph_local(const json& graph_obj, std::string& error_
     if (n.nodeId.empty()) {
       error_code = "INVALID_RUNGRAPH";
       error_message = "missing nodeId";
-      return;
+      return false;
     }
+
     std::unordered_map<std::string, std::string> access_by_name;
     if (n.stateFields.has_value()) {
       for (const auto& sf : n.stateFields.value()) {
         const std::string name = sf.name;
         if (name.empty()) continue;
         const std::string access_s = access_to_string(sf.access);
-        state_access[{n.nodeId, name}] = access_s;
+        plan.state_access[{n.nodeId, name}] = access_s;
         access_by_name[name] = access_s;
       }
     }
+
     if (n.stateValues.is_object()) {
       for (auto it = n.stateValues.begin(); it != n.stateValues.end(); ++it) {
-        const std::string k = it.key();
-        const auto a_it = access_by_name.find(k);
-        if (a_it == access_by_name.end()) {
+        const std::string field = it.key();
+        const auto access_it = access_by_name.find(field);
+        if (access_it == access_by_name.end()) {
           error_code = "INVALID_RUNGRAPH";
-          error_message = "unknown state value: " + n.nodeId + "." + k;
-          return;
+          error_message = "unknown state value: " + n.nodeId + "." + field;
+          return false;
         }
-        if (a_it->second == "ro") {
+        if (access_it->second == "ro") {
           error_code = "INVALID_RUNGRAPH";
-          error_message = "read-only state cannot be set by rungraph: " + n.nodeId + "." + k;
-          return;
+          error_message = "read-only state cannot be set by rungraph: " + n.nodeId + "." + field;
+          return false;
         }
       }
     }
   }
 
-  // Build intra-service state edge fanout table.
+  std::unordered_set<_RemoteStateKey, _RemoteStateKeyHash> cross_state_initial_read_set;
+
   for (const auto& e : graph.edges.value_or(std::vector<F8Edge>{})) {
     if (e.kind != F8EdgeKindEnum::state) continue;
     const std::string from_sid = e.fromServiceId;
@@ -2599,41 +2592,43 @@ void ServiceBus::apply_rungraph_local(const json& graph_obj, std::string& error_
     if (from_sid.empty() || to_node.empty() || from_node.empty() || from_field.empty() || to_field.empty()) continue;
 
     // Pre-filter to only writable targets for external propagation to reduce per-update overhead.
-    {
-      const auto it_access = state_access.find({to_node, to_field});
-      if (it_access == state_access.end()) continue;
-      if (it_access->second == "ro") continue;
-    }
+    const auto access_it = plan.state_access.find({to_node, to_field});
+    if (access_it == plan.state_access.end()) continue;
+    if (access_it->second == "ro") continue;
 
     if (from_sid == sid) {
-      // Intra-service state edge.
-      intra_state_out[{from_node, from_field}].push_back({to_node, to_field});
-    } else {
-      // Cross-service state binding (remote KV -> local field).
-      const _RemoteStateKey remote_state_key{from_sid, from_node, from_field};
-      cross_state_in[remote_state_key].push_back({to_node, to_field});
-      cross_state_targets.insert({to_node, to_field});
-      if (cross_state_initial_read_set.insert(remote_state_key).second) {
-        cross_state_initial_reads.push_back(remote_state_key);
-      }
+      plan.intra_state_out[{from_node, from_field}].push_back({to_node, to_field});
+      continue;
+    }
+
+    const _RemoteStateKey remote_state_key{from_sid, from_node, from_field};
+    plan.cross_state_in[remote_state_key].push_back({to_node, to_field});
+    plan.cross_state_targets.insert({to_node, to_field});
+    if (cross_state_initial_read_set.insert(remote_state_key).second) {
+      plan.cross_state_initial_reads.push_back(remote_state_key);
     }
   }
 
+  return true;
+}
+
+std::unordered_map<ServiceBus::_NodeFieldKey, std::string, ServiceBus::_NodeFieldKeyHash>
+ServiceBus::install_rungraph_state_routing_plan(_RungraphStateRoutingPlan plan) {
   std::unordered_map<_NodeFieldKey, std::string, _NodeFieldKeyHash> state_access_snapshot;
   {
     std::lock_guard<std::mutex> lock(state_mu_);
-    state_access_ = std::move(state_access);
-    intra_state_out_ = std::move(intra_state_out);
-    cross_state_in_ = std::move(cross_state_in);
-    cross_state_targets_ = std::move(cross_state_targets);
+    state_access_ = std::move(plan.state_access);
+    intra_state_out_ = std::move(plan.intra_state_out);
+    cross_state_in_ = std::move(plan.cross_state_in);
+    cross_state_targets_ = std::move(plan.cross_state_targets);
     rebuild_command_bindings_locked();
     has_rungraph_ = true;
     state_access_snapshot = state_access_;
   }
+  return state_access_snapshot;
+}
 
-  apply_data_routes_from_rungraph(graph_obj);
-
-  // Ensure retained peer state watches are running for any cross-state dependencies.
+void ServiceBus::sync_rungraph_peer_state_watches(const std::vector<_RemoteStateKey>& cross_state_initial_reads) {
   std::unordered_set<std::string> want_peers;
   for (const auto& remote_state_key : cross_state_initial_reads) {
     want_peers.insert(remote_state_key.peer_service_id);
@@ -2684,71 +2679,68 @@ void ServiceBus::apply_rungraph_local(const json& graph_obj, std::string& error_
       spdlog::info("state_debug[{}] cross_state_watch_started peer={} keyExpr={}", cfg_.service_id, peer, key_expr);
     }
   }
+}
 
-  // Zenoh retained state history delivers current peer values through the watch itself.
+void ServiceBus::apply_rungraph_state_values(
+    const f8::cppsdk::generated::F8RuntimeGraph& graph,
+    const std::unordered_set<_NodeFieldKey, _NodeFieldKeyHash>& cross_state_targets,
+    std::int64_t rungraph_ts) {
+  using namespace f8::cppsdk::generated;
 
-  // Apply per-node stateValues (best-effort reconcile using rungraph meta.ts).
-  const std::int64_t rungraph_ts = rungraph_ts_ms(graph);
-
+  const std::string sid = cfg_.service_id;
   for (const auto& n : graph.nodes.value_or(std::vector<F8RuntimeNode>{})) {
     if (n.serviceId != sid) continue;
     const std::string node_id = n.nodeId;
     if (!n.stateValues.is_object()) continue;
+
     for (auto it = n.stateValues.begin(); it != n.stateValues.end(); ++it) {
       const std::string field = it.key();
-      const json v = it.value();
+      const json value = it.value();
 
       // Cross-service state edges are directional: downstream follows upstream.
       // Do not apply rungraph stateValues to fields that are cross-state targets,
       // otherwise local UI defaults (often empty) can clobber remote-propagated values.
-      if (cross_state_targets_.find(_NodeFieldKey{node_id, field}) != cross_state_targets_.end()) {
+      if (cross_state_targets.find(_NodeFieldKey{node_id, field}) != cross_state_targets.end()) {
         if (state_debug_enabled()) {
           spdlog::info("state_debug[{}] cross_state_skip_rungraph node={}.{} value={}", cfg_.service_id, node_id, field,
-                       v.dump());
+                       value.dump());
         }
         continue;
       }
 
       if (node_id == sid && field == "active") {
-        if (v.is_boolean()) {
-          if (!should_apply_rungraph_state_value(node_id, field, v, rungraph_ts)) continue;
-          set_active_local(v.get<bool>(), json{{"via", "rungraph"}, {"rungraphReconcile", true}}, "rungraph");
+        if (value.is_boolean()) {
+          if (!should_apply_rungraph_state_value(node_id, field, value, rungraph_ts)) continue;
+          set_active_local(value.get<bool>(), json{{"via", "rungraph"}, {"rungraphReconcile", true}}, "rungraph");
         } else {
           spdlog::warn("rungraph active reconcile skipped non-boolean value serviceId={}", cfg_.service_id);
         }
         continue;
       }
 
-      if (!should_apply_rungraph_state_value(node_id, field, v, rungraph_ts)) continue;
-      publish_state_local(node_id, field, v, rungraph_ts > 0 ? rungraph_ts : now_ms(), "rungraph",
+      if (!should_apply_rungraph_state_value(node_id, field, value, rungraph_ts)) continue;
+      publish_state_local(node_id, field, value, rungraph_ts > 0 ? rungraph_ts : now_ms(), "rungraph",
                           json{{"via", "rungraph"}, {"rungraphReconcile", true}}, "rungraph",
                           true, false);
     }
   }
+}
 
-  // Initial sync for intra-service state edges:
-  // propagate existing root values once so edge-driven targets do not remain stale
-  // until the next upstream change.
-  struct IntraStateKey {
-    std::string node_id;
-    std::string field;
-    bool operator==(const IntraStateKey& other) const { return node_id == other.node_id && field == other.field; }
-  };
-  struct IntraStateKeyHash {
-    std::size_t operator()(const IntraStateKey& k) const noexcept {
-      return std::hash<std::string>{}(k.node_id) ^ (std::hash<std::string>{}(k.field) << 1);
-    }
-  };
+void ServiceBus::initial_sync_intra_state_edges(
+    const f8::cppsdk::generated::F8RuntimeGraph& graph,
+    const std::unordered_map<_NodeFieldKey, std::string, _NodeFieldKeyHash>& state_access_snapshot) {
+  using namespace f8::cppsdk::generated;
 
-  std::unordered_map<IntraStateKey, std::vector<IntraStateKey>, IntraStateKeyHash> out_edges;
-  std::unordered_set<IntraStateKey, IntraStateKeyHash> inbound;
-  std::unordered_set<IntraStateKey, IntraStateKeyHash> nodes_set;
-  std::vector<IntraStateKey> nodes;
+  const std::string sid = cfg_.service_id;
+  std::unordered_map<_NodeFieldKey, std::vector<_NodeFieldKey>, _NodeFieldKeyHash> out_edges;
+  std::unordered_set<_NodeFieldKey, _NodeFieldKeyHash> inbound;
+  std::unordered_set<_NodeFieldKey, _NodeFieldKeyHash> nodes_set;
+  std::vector<_NodeFieldKey> nodes;
 
-  auto add_node = [&](const IntraStateKey& k) {
-    if (nodes_set.find(k) != nodes_set.end()) return;
-    nodes_set.insert(k);
-    nodes.push_back(k);
+  auto add_node = [&](const _NodeFieldKey& key) {
+    if (nodes_set.find(key) != nodes_set.end()) return;
+    nodes_set.insert(key);
+    nodes.push_back(key);
   };
 
   for (const auto& e : graph.edges.value_or(std::vector<F8Edge>{})) {
@@ -2765,107 +2757,160 @@ void ServiceBus::apply_rungraph_local(const json& graph_obj, std::string& error_
     const std::string to_field = e.toPort;
     if (from_node.empty() || to_node.empty() || from_field.empty() || to_field.empty()) continue;
 
-    auto it_access = state_access_snapshot.find({to_node, to_field});
-    if (it_access == state_access_snapshot.end()) continue;
-    if (it_access->second != "rw" && it_access->second != "wo") continue;
+    const auto access_it = state_access_snapshot.find({to_node, to_field});
+    if (access_it == state_access_snapshot.end()) continue;
+    if (access_it->second != "rw" && access_it->second != "wo") continue;
 
-    IntraStateKey from_key{from_node, from_field};
-    IntraStateKey to_key{to_node, to_field};
+    _NodeFieldKey from_key{from_node, from_field};
+    _NodeFieldKey to_key{to_node, to_field};
     out_edges[from_key].push_back(to_key);
     inbound.insert(to_key);
     add_node(from_key);
     add_node(to_key);
   }
 
-  if (!out_edges.empty()) {
-    std::vector<IntraStateKey> roots;
-    roots.reserve(nodes.size());
-    for (const auto& k : nodes) {
-      if (inbound.find(k) == inbound.end()) {
-        roots.push_back(k);
-      }
+  if (out_edges.empty()) {
+    return;
+  }
+
+  std::vector<_NodeFieldKey> roots;
+  roots.reserve(nodes.size());
+  for (const auto& key : nodes) {
+    if (inbound.find(key) == inbound.end()) {
+      roots.push_back(key);
     }
+  }
 
-    const std::int64_t init_ts = now_ms();
-    for (const auto& root : roots) {
-      const auto root_state = get_state(root.node_id, root.field);
-      if (!root_state.found) continue;
+  const std::int64_t init_ts = now_ms();
+  for (const auto& root : roots) {
+    const auto root_state = get_state(root.node_id, root.field);
+    if (!root_state.found) continue;
 
-      std::vector<std::pair<IntraStateKey, json>> queue;
-      queue.push_back({root, root_state.value});
-      std::size_t head = 0;
-      std::unordered_set<IntraStateKey, IntraStateKeyHash> seen;
+    std::vector<std::pair<_NodeFieldKey, json>> queue;
+    queue.push_back({root, root_state.value});
+    std::size_t head = 0;
+    std::unordered_set<_NodeFieldKey, _NodeFieldKeyHash> seen;
 
-      while (head < queue.size()) {
-        const auto from_key = queue[head].first;
-        const auto from_value = queue[head].second;
-        ++head;
+    while (head < queue.size()) {
+      const auto from_key = queue[head].first;
+      const auto from_value = queue[head].second;
+      ++head;
 
-        if (seen.find(from_key) != seen.end()) continue;
-        seen.insert(from_key);
+      if (seen.find(from_key) != seen.end()) continue;
+      seen.insert(from_key);
 
-        const auto it = out_edges.find(from_key);
-        if (it == out_edges.end()) continue;
+      const auto edge_it = out_edges.find(from_key);
+      if (edge_it == out_edges.end()) continue;
 
-        for (const auto& to_key : it->second) {
-          if (seen.find(to_key) != seen.end()) continue;
+      for (const auto& to_key : edge_it->second) {
+        if (seen.find(to_key) != seen.end()) continue;
 
-          const auto to_state = get_state(to_key.node_id, to_key.field);
-          if (to_state.found) {
-            bool same = false;
-            try {
-              same = (to_state.value == from_value);
-            } catch (...) {
-              same = false;
-            }
-            if (same) {
-              queue.push_back({to_key, to_state.value});
-              continue;
-            }
+        const auto to_state = get_state(to_key.node_id, to_key.field);
+        if (to_state.found) {
+          bool same = false;
+          try {
+            same = (to_state.value == from_value);
+          } catch (const std::exception& exc) {
+            spdlog::warn("state edge init compare failed serviceId={} nodeId={} field={}: {}", cfg_.service_id,
+                         to_key.node_id, to_key.field, exc.what());
           }
-
-          publish_state_local(
-              to_key.node_id,
-              to_key.field,
-              from_value,
-              init_ts,
-              "state_edge_intra_init",
-              json{{"fromNodeId", from_key.node_id}, {"fromField", from_key.field}},
-              "external",
-              true,
-              true);
-
-          const auto applied_state = get_state(to_key.node_id, to_key.field);
-          if (applied_state.found) {
-            queue.push_back({to_key, applied_state.value});
-          } else {
-            queue.push_back({to_key, from_value});
+          if (same) {
+            queue.push_back({to_key, to_state.value});
+            continue;
           }
+        }
+
+        publish_state_local(
+            to_key.node_id,
+            to_key.field,
+            from_value,
+            init_ts,
+            "state_edge_intra_init",
+            json{{"fromNodeId", from_key.node_id}, {"fromField", from_key.field}},
+            "external",
+            true,
+            true);
+
+        const auto applied_state = get_state(to_key.node_id, to_key.field);
+        if (applied_state.found) {
+          queue.push_back({to_key, applied_state.value});
+        } else {
+          queue.push_back({to_key, from_value});
         }
       }
     }
   }
+}
 
-  // Seed identity fields (`svcId`, `operatorId`) when declared in stateFields.
+void ServiceBus::seed_rungraph_identity_state(
+    const f8::cppsdk::generated::F8RuntimeGraph& graph,
+    const std::unordered_map<_NodeFieldKey, std::string, _NodeFieldKeyHash>& state_access_snapshot,
+    std::int64_t rungraph_ts) {
+  using namespace f8::cppsdk::generated;
+
+  const std::string sid = cfg_.service_id;
+  const std::int64_t ts_ms = rungraph_ts > 0 ? rungraph_ts : now_ms();
   for (const auto& n : graph.nodes.value_or(std::vector<F8RuntimeNode>{})) {
     if (n.serviceId != sid) continue;
     const std::string node_id = n.nodeId;
-    bool has_svc_id = false;
-    bool has_operator_id = false;
-    {
-      std::lock_guard<std::mutex> lock(state_mu_);
-      has_svc_id = state_access_.find({node_id, "svcId"}) != state_access_.end();
-      has_operator_id = n.operatorClass.has_value() && state_access_.find({node_id, "operatorId"}) != state_access_.end();
-    }
+    const bool has_svc_id = state_access_snapshot.find({node_id, "svcId"}) != state_access_snapshot.end();
+    const bool has_operator_id =
+        n.operatorClass.has_value() && state_access_snapshot.find({node_id, "operatorId"}) != state_access_snapshot.end();
+
     if (has_svc_id) {
-      publish_state_local(node_id, "svcId", n.serviceId.empty() ? sid : n.serviceId, rungraph_ts > 0 ? rungraph_ts : now_ms(),
+      publish_state_local(node_id, "svcId", n.serviceId.empty() ? sid : n.serviceId, ts_ms,
                           "system", json{{"builtin", true}}, "system", false, false);
     }
     if (has_operator_id) {
-      publish_state_local(node_id, "operatorId", n.nodeId, rungraph_ts > 0 ? rungraph_ts : now_ms(), "system",
-                          json{{"builtin", true}}, "system", false, false);
+      publish_state_local(node_id, "operatorId", n.nodeId, ts_ms,
+                          "system", json{{"builtin", true}}, "system", false, false);
     }
   }
+}
+
+void ServiceBus::apply_rungraph_local(const json& graph_obj, std::string& error_code, std::string& error_message) {
+  using namespace f8::cppsdk::generated;
+
+  F8RuntimeGraph graph{};
+  ParseError perr{};
+  if (!parse_F8RuntimeGraph(graph_obj, graph, perr)) {
+    error_code = "INVALID_RUNGRAPH";
+    error_message = perr.message.empty() ? "invalid rungraph" : perr.message;
+    return;
+  }
+  try {
+    validate_state_edges_or_throw(graph);
+  } catch (const std::exception& ex) {
+    error_code = "INVALID_RUNGRAPH";
+    error_message = ex.what();
+    return;
+  }
+
+  // Service/container nodes require nodeId == serviceId.
+  for (const auto& n : graph.nodes.value_or(std::vector<F8RuntimeNode>{})) {
+    if (!n.operatorClass.has_value() && n.nodeId != n.serviceId) {
+      error_code = "INVALID_RUNGRAPH";
+      error_message = "service node requires nodeId == serviceId";
+      return;
+    }
+  }
+
+  _RungraphStateRoutingPlan state_plan;
+  if (!build_rungraph_state_routing_plan(graph, state_plan, error_code, error_message)) {
+    return;
+  }
+  const std::vector<_RemoteStateKey> cross_state_initial_reads = state_plan.cross_state_initial_reads;
+  const std::unordered_set<_NodeFieldKey, _NodeFieldKeyHash> cross_state_targets_snapshot = state_plan.cross_state_targets;
+  const auto state_access_snapshot = install_rungraph_state_routing_plan(std::move(state_plan));
+
+  apply_data_routes_from_rungraph(graph_obj);
+  sync_rungraph_peer_state_watches(cross_state_initial_reads);
+
+  // Zenoh retained state history delivers current peer values through the watch itself.
+  const std::int64_t rungraph_ts = rungraph_ts_ms(graph);
+  apply_rungraph_state_values(graph, cross_state_targets_snapshot, rungraph_ts);
+  initial_sync_intra_state_edges(graph, state_access_snapshot);
+  seed_rungraph_identity_state(graph, state_access_snapshot, rungraph_ts);
 }
 
 void ServiceBus::publish_state_local(const std::string& node_id, const std::string& field, const json& value,

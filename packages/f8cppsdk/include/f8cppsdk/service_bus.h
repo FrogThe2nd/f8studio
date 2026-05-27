@@ -257,6 +257,12 @@ class ServiceBus final : public ServiceControlHandler {
     std::string target_fingerprint;
   };
 
+  struct _RungraphMetadata {
+    std::string graph_id;
+    std::string revision;
+    std::string fingerprint;
+  };
+
   std::thread rungraph_apply_thread_;
   mutable std::mutex rungraph_apply_mu_;
   std::condition_variable rungraph_apply_cv_;
@@ -268,6 +274,8 @@ class ServiceBus final : public ServiceControlHandler {
   std::string rungraph_fingerprint_;
   std::string rungraph_graph_id_;
   std::string rungraph_revision_;
+  _RungraphMetadata rungraph_metadata_snapshot() const;
+  void set_rungraph_metadata(std::string graph_id, std::string revision, std::string fingerprint);
 
   mutable std::mutex lifecycle_mu_;
   std::vector<LifecycleNode*> lifecycle_nodes_;
@@ -335,6 +343,33 @@ class ServiceBus final : public ServiceControlHandler {
       return h1 ^ (h2 << 1) ^ (h3 << 2);
     }
   };
+
+  struct _RungraphStateRoutingPlan {
+    std::unordered_map<_NodeFieldKey, std::string, _NodeFieldKeyHash> state_access;
+    std::unordered_map<_NodeFieldKey, std::vector<_NodeFieldKey>, _NodeFieldKeyHash> intra_state_out;
+    std::unordered_map<_RemoteStateKey, std::vector<_NodeFieldKey>, _RemoteStateKeyHash> cross_state_in;
+    std::unordered_set<_NodeFieldKey, _NodeFieldKeyHash> cross_state_targets;
+    std::vector<_RemoteStateKey> cross_state_initial_reads;
+  };
+
+  bool build_rungraph_state_routing_plan(const f8::cppsdk::generated::F8RuntimeGraph& graph,
+                                         _RungraphStateRoutingPlan& plan,
+                                         std::string& error_code,
+                                         std::string& error_message) const;
+  std::unordered_map<_NodeFieldKey, std::string, _NodeFieldKeyHash> install_rungraph_state_routing_plan(
+      _RungraphStateRoutingPlan plan);
+  void sync_rungraph_peer_state_watches(const std::vector<_RemoteStateKey>& cross_state_initial_reads);
+  void apply_rungraph_state_values(
+      const f8::cppsdk::generated::F8RuntimeGraph& graph,
+      const std::unordered_set<_NodeFieldKey, _NodeFieldKeyHash>& cross_state_targets,
+      std::int64_t rungraph_ts);
+  void initial_sync_intra_state_edges(
+      const f8::cppsdk::generated::F8RuntimeGraph& graph,
+      const std::unordered_map<_NodeFieldKey, std::string, _NodeFieldKeyHash>& state_access_snapshot);
+  void seed_rungraph_identity_state(
+      const f8::cppsdk::generated::F8RuntimeGraph& graph,
+      const std::unordered_map<_NodeFieldKey, std::string, _NodeFieldKeyHash>& state_access_snapshot,
+      std::int64_t rungraph_ts);
 
   struct _InputBuffer {
     using JsonPtr = std::shared_ptr<const json>;

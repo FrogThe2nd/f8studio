@@ -262,6 +262,53 @@ class RungraphApplyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status_a.phase, "applied")
         self.assertEqual(status_b.phase, "applied")
 
+    async def test_submit_rungraph_clears_inflight_alias_after_cancel(self) -> None:
+        class _BlockingHook:
+            def __init__(self) -> None:
+                self.count = 0
+                self.block = asyncio.Event()
+
+            async def on_rungraph(self, graph: F8RuntimeGraph) -> None:
+                _ = graph
+                self.count += 1
+                await self.block.wait()
+
+            async def validate_rungraph(self, graph: F8RuntimeGraph) -> None:
+                _ = graph
+
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svc")
+        hook = _BlockingHook()
+        bus.register_rungraph_hook(hook)
+        graph = F8RuntimeGraph(
+            graphId="g-cancel-retry",
+            revision="r1",
+            nodes=[F8RuntimeNode(nodeId="svc", serviceId="svc", serviceClass="svc", operatorClass=None)],
+            edges=[],
+        )
+
+        await bus.submit_rungraph(graph, req_id="req-cancel-a", source="test")
+        await asyncio.sleep(0)
+        tasks = list(bus._rungraph_apply_tasks)
+        self.assertEqual(hook.count, 1)
+
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self.assertNotIn(build_rungraph_deploy_fingerprint(graph), bus._rungraph_inflight_aliases)
+
+        hook.block.set()
+        await bus.submit_rungraph(graph, req_id="req-cancel-b", source="test")
+        status = await wait_rungraph_deploy_status(
+            bus._transport,
+            service_id="svc",
+            req_id="req-cancel-b",
+            timeout_s=1.0,
+        )
+
+        self.assertEqual(status.phase, "applied")
+        self.assertEqual(hook.count, 2)
+
     async def test_submit_rungraph_force_apply_reapplies_same_target(self) -> None:
         class _CountingHook:
             def __init__(self) -> None:

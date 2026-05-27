@@ -571,6 +571,7 @@ class ServiceBus:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._rungraph_apply_tasks.clear()
+        self._rungraph_inflight_aliases.clear()
         await _stop_impl(self)
         self._started = False
         self._closed = True
@@ -785,6 +786,17 @@ class ServiceBus:
             )
             try:
                 await self.set_rungraph(graph)
+            except asyncio.CancelledError:
+                cancelled_aliases = set(self._rungraph_inflight_aliases.pop(target_fingerprint, aliases))
+                await self._publish_rungraph_status_for_aliases(
+                    graph,
+                    req_ids=cancelled_aliases,
+                    phase="failed",
+                    source=source,
+                    target_fingerprint=target_fingerprint,
+                    error_message="rungraph apply cancelled",
+                )
+                raise
             except Exception as exc:
                 failed_aliases = set(self._rungraph_inflight_aliases.pop(target_fingerprint, aliases))
                 self._schedule_rungraph_status_publish_for_aliases(
@@ -806,6 +818,28 @@ class ServiceBus:
                 source=source,
                 target_fingerprint=target_fingerprint,
                 applied_fingerprint=applied_fingerprint,
+            )
+
+    async def _publish_rungraph_status_for_aliases(
+        self,
+        graph: F8RuntimeGraph,
+        *,
+        req_ids: set[str],
+        phase: str,
+        source: str,
+        target_fingerprint: str,
+        applied_fingerprint: str = "",
+        error_message: str = "",
+    ) -> None:
+        for req_id in sorted(str(item) for item in req_ids if str(item or "").strip()):
+            await self._publish_rungraph_status(
+                graph,
+                req_id=req_id,
+                phase=phase,
+                source=source,
+                target_fingerprint=target_fingerprint,
+                applied_fingerprint=applied_fingerprint,
+                error_message=error_message,
             )
 
     def _schedule_rungraph_status_publish_for_aliases(
