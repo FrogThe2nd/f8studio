@@ -67,6 +67,19 @@ def _monitor_current_error_message(bus: ServiceBus) -> str:
     return str(snapshot.error.currentMessage or "")
 
 
+class _FailingEmitPythonScriptRuntimeNode(PythonScriptRuntimeNode):
+    async def emit(
+        self,
+        port: str,
+        value: object,
+        *,
+        ts_ms: int | None = None,
+        ctx_id: str | int | None = None,
+    ) -> None:
+        del port, value, ts_ms, ctx_id
+        raise RuntimeError("emit failed")
+
+
 class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
     def test_inputs_access_mode_detection(self) -> None:
         mapping_only = (
@@ -788,6 +801,22 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         await node.on_state("code", good_code, ts_ms=123)
         await asyncio.sleep(0.05)
         self.assertEqual(_monitor_current_error_message(bus), "")
+
+    async def test_apply_result_reports_emit_failure(self) -> None:
+        code = "def onMsg(ctx, inputs):\n    return {'outputs': {'out': 1}}\n"
+        op = _runtime_python_script_node(node_id="ps_emit_fail", code=code)
+        node = _FailingEmitPythonScriptRuntimeNode(
+            node_id="ps_emit_fail",
+            node=op,
+            initial_state={"code": code},
+        )
+
+        result = await node._apply_result({"outputs": {"out": 1}})
+
+        self.assertIsNone(result)
+        error_text = str(node._last_error or "")
+        self.assertIn("result:emit:out", error_text)
+        self.assertIn("emit failed", error_text)
 
     async def test_ctx_dict_access_reports_monitor_error(self) -> None:
         harness = ServiceBusHarness()

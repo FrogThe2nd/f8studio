@@ -52,6 +52,8 @@ OPERATOR_CLASS = "f8.python_script"
 _REPEATING_ERROR_LOG_INTERVAL_MS = 2000
 logger = logging.getLogger(__name__)
 
+_HOOK_AWAITABLE_SCHEDULE_ERRORS = (RuntimeError, TypeError, ValueError)
+
 @dataclass
 class _LatestVideoSubscription:
     key: str
@@ -540,12 +542,9 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                 return {"kind": "bgra32", "shape": [height, width, 4], "data": None}
             data = None
             if np is not None:
-                try:
-                    arr = np.frombuffer(compact, dtype=np.uint8)
-                    if int(arr.size) == (height * width * 4):
-                        data = arr.reshape(height, width, 4)
-                except Exception:
-                    data = None
+                arr = np.frombuffer(compact, dtype=np.uint8)
+                if int(arr.size) == (height * width * 4):
+                    data = arr.reshape(height, width, 4)
             return {"kind": "bgra32", "shape": [height, width, 4], "data": data}
 
         if fmt == VIDEO_FORMAT_FLOW2_F16:
@@ -555,12 +554,9 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                 return {"kind": "flow2_f16", "shape": [height, width, 2], "data": None}
             data = None
             if np is not None:
-                try:
-                    arr = np.frombuffer(compact, dtype="<f2")
-                    if int(arr.size) == (height * width * 2):
-                        data = arr.reshape(height, width, 2)
-                except Exception:
-                    data = None
+                arr = np.frombuffer(compact, dtype="<f2")
+                if int(arr.size) == (height * width * 2):
+                    data = arr.reshape(height, width, 2)
             return {"kind": "flow2_f16", "shape": [height, width, 2], "data": data}
 
         return None
@@ -856,6 +852,30 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             return self._ctx
         return self._ctx.with_exec_in(exec_in)
 
+    def _close_unscheduled_hook_awaitable(self, name: str, result: Any) -> None:
+        if not inspect.iscoroutine(result):
+            return
+        try:
+            result.close()
+        except RuntimeError as exc:
+            self._set_error(f"{name}:schedule", exc)
+
+    def _schedule_sync_hook_awaitable(self, name: str, result: Any) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError as exc:
+            self._close_unscheduled_hook_awaitable(name, result)
+            self._set_error(f"{name}:schedule", exc)
+            return
+        try:
+            task = asyncio.ensure_future(result, loop=loop)
+        except _HOOK_AWAITABLE_SCHEDULE_ERRORS as exc:
+            self._close_unscheduled_hook_awaitable(name, result)
+            self._set_error(f"{name}:schedule", exc)
+            return
+        if isinstance(task, asyncio.Task):
+            task.set_name(f"python_script:{name}:{self.node_id}")
+
     def _invoke_hook_sync(self, name: str, *args: Any) -> None:
         fn = self._hooks.runtime.get(name)
         if not callable(fn):
@@ -868,11 +888,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             t0 = self._metrics_start()
             r = fn(self._ctx, *args)
             if inspect.isawaitable(r):
-                try:
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(r, name=f"python_script:{name}:{self.node_id}")
-                except Exception:
-                    pass
+                self._schedule_sync_hook_awaitable(name, r)
             self._metrics_add_hook_time(t0)
         except Exception as exc:
             self._set_error(name, exc)
@@ -1109,6 +1125,15 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             self._metrics_add_output_norm_time(t0)
         return outputs
 
+    async def _emit_script_output(self, port: str, value: Any, *, stage: str) -> bool:
+        output_port = str(port)
+        try:
+            await self.emit(output_port, value)
+        except Exception as exc:
+            self._set_error(f"{stage}:emit:{output_port}", exc)
+            return False
+        return True
+
     async def _run_on_msg(self, inputs: dict[str, Any], *, exec_in: str | None) -> None:
         fn = self._hooks.on_msg
         if not callable(fn):
@@ -1146,11 +1171,9 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             except ValueError as exc:
                 self._set_error("result", exc)
                 return None
-            try:
-                for k, v in outputs.items():
-                    await self.emit(str(k), v)
-            except Exception:
-                return None
+            for k, v in outputs.items():
+                if not await self._emit_script_output(str(k), v, stage="result"):
+                    return None
 
             if exec_sel is None:
                 return None
@@ -1166,9 +1189,10 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                 t0 = self._metrics_start()
                 out_value = normalize_script_output_value(r)
                 self._metrics_add_output_norm_time(t0)
-                await self.emit("out", out_value)
-            except Exception:
-                pass
+            except Exception as exc:
+                self._set_error("result:normalize:out", exc)
+                return None
+            _ = await self._emit_script_output("out", out_value, stage="result")
         return None
 
     def _decode_inputs(self, inputs: dict[str, Any], *, stage: str) -> Any | None:
