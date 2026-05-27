@@ -457,7 +457,7 @@ class RuntimeRungraphGateway:
             result = await evidence_task
             if result.success or not last_ack_error:
                 return result
-            if "not observed" in result.error_message:
+            if "not received" in result.error_message:
                 return RungraphDeployResult(
                     service_id=service_id,
                     success=False,

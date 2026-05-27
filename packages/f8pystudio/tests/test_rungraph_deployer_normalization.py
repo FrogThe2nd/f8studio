@@ -780,6 +780,34 @@ def test_gateway_reports_request_status_key_when_apply_evidence_is_missing() -> 
     asyncio.run(_run())
 
 
+def test_gateway_includes_ack_failure_when_ack_and_apply_evidence_are_missing() -> None:
+    async def _run() -> None:
+        transport = _RequestOnlyNoEvidenceTransportStub(request_timeout=True)
+        transport.retained["f8/svc/svc1/status/ready"] = encode_obj(_ready_payload())
+        graph = F8RuntimeGraph(
+            graphId="g1",
+            revision="r1",
+            nodes=[F8RuntimeNode(nodeId="svc1", serviceId="svc1", serviceClass="svc.a", operatorClass=None)],
+            edges=[],
+        )
+        gateway = RuntimeRungraphGateway(
+            RungraphDeployConfig(
+                apply_timeout_s=0.01,
+                request_attempts=1,
+            )
+        )
+        gateway._transport = transport
+
+        result = await gateway.deploy_runtime_graph(_DeployRequest(service_id="svc1", graph=graph, source="test"))
+
+        assert result.success is False
+        assert "set_rungraph acknowledgement failed" in result.error_message
+        assert "query timed out" in result.error_message
+        assert "rungraph apply status not received within 0.01s" in result.error_message
+
+    asyncio.run(_run())
+
+
 def test_gateway_accepts_ready_payload_without_protocol_fields() -> None:
     async def _run() -> None:
         transport = _GatewayTransportStub()
