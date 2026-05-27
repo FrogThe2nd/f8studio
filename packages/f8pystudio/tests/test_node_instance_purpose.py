@@ -12,6 +12,7 @@ from f8pystudio.ui.widgets.node_property_panel.editor import (
     F8StudioSingleNodePropertiesWidget,
     _NodePropEditorViewState,
 )
+from f8pystudio.ui.widgets.node_property_panel.editor_build_mixin import NodePropertyEditorBuildMixin
 from f8pystudio.ui.widgets.node_property_panel.editor_view_state_mixin import NodePropertyEditorViewStateMixin
 from f8pystudio.ui.widgets.node_property_panel.graph_sync_mixin import NodePropertyPanelGraphSyncMixin
 from f8pystudio.ui.widgets.node_property_panel.containers import _F8ReorderList
@@ -364,3 +365,25 @@ def test_reorder_list_drop_indicator_does_not_affect_rows_or_order() -> None:
     assert reorder_list.rows() == rows
 
 
+def test_hide_empty_property_tabs_logs_remove_fallback(monkeypatch, caplog) -> None:
+    _ensure_app()
+    tab_widget = QtWidgets.QTabWidget()
+    tab_window = SimpleNamespace(get_all_widgets=lambda: [])
+    tab_widget.addTab(QtWidgets.QWidget(tab_widget), "State")
+
+    class _BuildHost(NodePropertyEditorBuildMixin):
+        def __init__(self) -> None:
+            self._F8StudioNodePropEditorWidget__tab = tab_widget
+            self._F8StudioNodePropEditorWidget__tab_windows = {"State": tab_window}
+
+    def _raise_set_tab_visible(index: int, visible: bool) -> None:
+        raise RuntimeError(f"setTabVisible failed index={index} visible={visible}")
+
+    monkeypatch.setattr(tab_widget, "setTabVisible", _raise_set_tab_visible)
+    caplog.set_level("DEBUG", logger="f8pystudio.ui.widgets.node_property_panel.editor_build_mixin")
+
+    host = _BuildHost()
+    host._hide_empty_property_tabs(host)
+
+    assert tab_widget.count() == 0
+    assert "Failed to hide empty property tab 'State'; removing tab instead" in caplog.text

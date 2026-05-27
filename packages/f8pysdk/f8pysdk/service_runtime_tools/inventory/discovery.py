@@ -29,6 +29,7 @@ from .policy import (
 
 
 logger = logging.getLogger(__name__)
+_DISCOVERY_PATH_REWRITE_ERRORS = (AttributeError, OSError, RuntimeError, TypeError, ValueError)
 
 
 def load_discovery_into_catalog(
@@ -80,7 +81,8 @@ def load_discovery_into_catalog(
         for _service_dir, entry in subprocess_entries:
             try:
                 command_name = str(entry.launch.command or "").strip().lower()
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                logger.debug("Failed to inspect service launch command for pixi discovery guard", exc_info=exc)
                 continue
             if command_name in ("pixi", "pixi.exe", "pixi.bat", "pixi.cmd") or Path(command_name).name in (
                 "pixi",
@@ -168,8 +170,8 @@ def load_discovery_into_catalog(
                     service_payload = dict(service_payload)
                     service_payload["launch"] = launch
                     payload["service"] = service_payload
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
-            pass
+        except _DISCOVERY_PATH_REWRITE_ERRORS as exc:
+            logger.debug("Failed to rewrite service launch workdir from %s", service_dir, exc_info=exc)
 
         try:
             service_spec = target_catalog.register_service(

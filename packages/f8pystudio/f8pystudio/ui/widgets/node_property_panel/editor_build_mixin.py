@@ -50,6 +50,8 @@ from .layer_membership_editor import F8LayerMembershipEditor
 from .ports import _F8SpecPortEditor
 
 logger = logging.getLogger(__name__)
+_STATE_FIELD_READ_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
+_TAB_VISIBILITY_FALLBACK_ERRORS = (AttributeError, IndexError, RuntimeError, TypeError, ValueError)
 
 
 class NodePropertyEditorBuildMixin(NodePropertyEditorTabsMixin):
@@ -60,12 +62,14 @@ class NodePropertyEditorBuildMixin(NodePropertyEditorTabsMixin):
             return names
         try:
             fields = list(spec.stateFields or [])
-        except Exception:
+        except _STATE_FIELD_READ_ERRORS as exc:
+            logger.debug("Failed to read spec state fields", exc_info=exc)
             return names
         for field in fields:
             try:
                 name = str(field.name or "").strip()
-            except Exception:
+            except _STATE_FIELD_READ_ERRORS as exc:
+                logger.debug("Failed to read state field name from spec field", exc_info=exc)
                 continue
             if name:
                 names.add(name)
@@ -246,12 +250,14 @@ class NodePropertyEditorBuildMixin(NodePropertyEditorTabsMixin):
         if not eff_fields and spec is not None:
             try:
                 eff_fields = list(spec.stateFields or [])
-            except Exception:
+            except _STATE_FIELD_READ_ERRORS as exc:
+                logger.debug("Failed to read effective state fields from spec", exc_info=exc)
                 eff_fields = []
         for field in eff_fields:
             try:
                 name = str(field.name or "").strip()
-            except Exception:
+            except _STATE_FIELD_READ_ERRORS as exc:
+                logger.debug("Failed to read state field name while populating State tab", exc_info=exc)
                 name = ""
             if not name or name not in values:
                 continue
@@ -457,7 +463,8 @@ class NodePropertyEditorBuildMixin(NodePropertyEditorTabsMixin):
                 continue
             try:
                 tab_widget.setTabVisible(tab_index[tab_name], False)
-            except Exception:
+            except _TAB_VISIBILITY_FALLBACK_ERRORS as exc:
+                logger.debug("Failed to hide empty property tab '%s'; removing tab instead", tab_name, exc_info=exc)
                 tab_widget.removeTab(tab_index[tab_name])
 
     def _select_default_tab(self, host: Any) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from collections.abc import Iterable
@@ -12,6 +13,8 @@ from f8pysdk.codec import dump_json, validate_as
 from f8pysdk.specs import F8ServiceEntry, F8ServiceLaunchSpec
 
 _YAML_SAFE_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+logger = logging.getLogger(__name__)
+_ENTRY_PATH_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
 
 
 def _default_roots() -> list[Path]:
@@ -24,8 +27,8 @@ def _default_roots() -> list[Path]:
             candidate = parent / "services"
             if candidate.is_dir():
                 return [candidate.resolve()]
-    except (OSError, RuntimeError, TypeError, ValueError):
-        pass
+    except _ENTRY_PATH_ERRORS as exc:
+        logger.debug("default service discovery root probe failed", exc_info=exc)
     return []
 
 
@@ -79,7 +82,8 @@ def find_service_dirs(roots: Iterable[Path]) -> list[Path]:
             for svc_file in resolved_root.rglob("*"):
                 if svc_file.name in service_file_names and svc_file.is_file():
                     found.add(svc_file.parent.resolve())
-        except Exception:
+        except _ENTRY_PATH_ERRORS as exc:
+            logger.debug("recursive service discovery failed root=%s; falling back to direct children", resolved_root, exc_info=exc)
             for child in sorted(resolved_root.iterdir()):
                 if not child.is_dir():
                     continue
@@ -109,8 +113,8 @@ def _absolutize_entry_paths(entry: F8ServiceEntry, *, service_dir: Path) -> F8Se
         )
         if looks_like_path and not command_path.is_absolute():
             command = str((workdir_path / command_path).resolve())
-    except (OSError, RuntimeError, TypeError, ValueError):
-        pass
+    except _ENTRY_PATH_ERRORS as exc:
+        logger.debug("service entry command path absolutization failed command=%s", command_raw, exc_info=exc)
 
     absolute_launch = F8ServiceLaunchSpec(
         command=command,
@@ -156,8 +160,8 @@ def load_service_entry(service_dir: Path) -> F8ServiceEntry:
                     resolved_command = (workdir_path / command_path).resolve()
                     if not resolved_command.is_file():
                         return None
-            except Exception:
-                pass
+            except _ENTRY_PATH_ERRORS as exc:
+                logger.debug("platform service entry command probe failed path=%s", candidate, exc_info=exc)
         return obj
 
     data: Any | None = None

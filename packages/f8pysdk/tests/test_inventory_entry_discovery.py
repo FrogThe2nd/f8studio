@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from f8pysdk.codec import dump_json
 from f8pysdk.service_runtime_tools.inventory.catalog import ServiceCatalog
 from f8pysdk.service_runtime_tools.inventory.discovery import load_discovery_into_catalog
@@ -43,6 +45,27 @@ def test_find_service_dirs_ignores_missing_roots(tmp_path: Path) -> None:
     missing = tmp_path / "missing"
 
     assert find_service_dirs([missing]) == []
+
+
+def test_find_service_dirs_logs_recursive_scan_fallback(tmp_path: Path, monkeypatch: Any, caplog: pytest.LogCaptureFixture) -> None:
+    root = tmp_path / "services"
+    service_dir = root / "alpha"
+    service_dir.mkdir(parents=True)
+    (service_dir / "service.yml").write_text("launch:\n  command: echo\n", encoding="utf-8")
+    original_rglob = Path.rglob
+
+    def _failing_rglob(path: Path, pattern: str) -> Any:
+        if path == root:
+            raise OSError("scan failed")
+        return original_rglob(path, pattern)
+
+    monkeypatch.setattr(Path, "rglob", _failing_rglob)
+
+    caplog.set_level("DEBUG", logger="f8pysdk.service_runtime_tools.inventory.entry")
+    found = find_service_dirs([root])
+
+    assert found == [service_dir.resolve()]
+    assert "recursive service discovery failed" in caplog.text
 
 
 def _write_entry(service_dir: Path, *, workdir: str = "./", command: str = "runner") -> None:
@@ -100,6 +123,45 @@ def test_load_service_entry_matches_for_relative_and_absolute_service_dir(tmp_pa
 
     assert relative_payload == absolute_payload
     assert relative_payload["launch"]["workdir"] == str(service_dir.resolve())
+
+
+def test_load_service_entry_logs_platform_candidate_path_failure(
+    tmp_path: Path,
+    monkeypatch: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    service_dir = tmp_path / "services" / "f8" / "entry"
+    service_dir.mkdir(parents=True)
+    (service_dir / "service.linux.yml").write_text(
+        "schemaVersion: f8serviceEntry/1\n"
+        "serviceClass: f8.tests.platform\n"
+        "launch:\n"
+        "  command: ./runner.py\n"
+        "  workdir: ./\n",
+        encoding="utf-8",
+    )
+    (service_dir / "service.yml").write_text(
+        "schemaVersion: f8serviceEntry/1\n"
+        "serviceClass: f8.tests.fallback\n"
+        "launch:\n"
+        "  command: runner\n"
+        "  workdir: ./\n",
+        encoding="utf-8",
+    )
+    original_resolve = Path.resolve
+
+    def _failing_resolve(path: Path, *args: Any, **kwargs: Any) -> Path:
+        if path.name == "runner.py":
+            raise OSError("resolve failed")
+        return original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", _failing_resolve)
+
+    caplog.set_level("DEBUG", logger="f8pysdk.service_runtime_tools.inventory.entry")
+    entry = load_service_entry(service_dir)
+
+    assert str(entry.serviceClass) == "f8.tests.platform"
+    assert "platform service entry command probe failed" in caplog.text
 
 
 def test_load_discovery_into_catalog_skips_disabled_service_class(tmp_path: Path) -> None:
