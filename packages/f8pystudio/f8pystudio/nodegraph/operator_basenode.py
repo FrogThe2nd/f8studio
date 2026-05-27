@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 from typing import Any, Callable, TypeVar
 
 from .node_base import F8StudioBaseNode
 
+from f8pysdk.command import command_input_port_name, command_output_port_name
 from f8pysdk.specs import F8OperatorSpec, F8StateAccess
 from f8pysdk.specs import schema_default, schema_type
 
 from qtpy import QtCore, QtWidgets
+from NodeGraphQt.errors import NodePropertyError, PortError, PortRegistrationError
 from NodeGraphQt.nodes.base_node import NodeBaseWidget
 
 from NodeGraphQt.constants import (
@@ -31,8 +34,31 @@ from .items.inline_command_panel import ensure_inline_command_rows as _ensure_in
 logger = logging.getLogger(__name__)
 WidgetT = TypeVar("WidgetT", bound=NodeBaseWidget)
 _SPEC_FIELD_ERRORS = (AttributeError, TypeError, ValueError)
-_NODEGRAPH_API_ERRORS = (AttributeError, KeyError, RuntimeError, TypeError, ValueError)
+_NODEGRAPH_API_ERRORS = (
+    AttributeError,
+    KeyError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    NodePropertyError,
+    PortError,
+    PortRegistrationError,
+)
 _QT_ACCESS_ERRORS = (AttributeError, RuntimeError, TypeError)
+
+
+@dataclass(frozen=True)
+class _InputPortDefinition:
+    color: tuple[int, int, int]
+    painter_func: Callable[..., None] | None = None
+    multi_input: bool = False
+
+
+@dataclass(frozen=True)
+class _OutputPortDefinition:
+    color: tuple[int, int, int]
+    painter_func: Callable[..., None] | None = None
+    multi_output: bool = True
 
 
 def _spec_name(item: Any) -> str:
@@ -89,6 +115,44 @@ def _operator_service_id(node: Any) -> str:
         return str(node.svcId or "").strip()
     except _NODEGRAPH_API_ERRORS:
         return ""
+
+
+def _port_has_connections(port: Any | None) -> bool:
+    if port is None:
+        return False
+    try:
+        return bool(port.connected_ports())
+    except _NODEGRAPH_API_ERRORS:
+        logger.debug("Failed to inspect operator port connections.", exc_info=True)
+        return False
+
+
+def _remove_orphaned_port_items(
+    *,
+    view: Any,
+    port_items: dict[Any, Any],
+    valid_port_views: set[Any],
+) -> None:
+    try:
+        scene = view.scene()
+    except _QT_ACCESS_ERRORS:
+        logger.debug("Failed to inspect operator node scene during orphaned port cleanup.", exc_info=True)
+        scene = None
+
+    for port_item in list(port_items.keys()):
+        if port_item in valid_port_views:
+            continue
+        text_item = port_items.pop(port_item, None)
+        if text_item is None:
+            continue
+        try:
+            port_item.setParentItem(None)
+            text_item.setParentItem(None)
+            if scene is not None:
+                scene.removeItem(port_item)
+                scene.removeItem(text_item)
+        except _QT_ACCESS_ERRORS:
+            logger.debug("Failed to remove orphaned operator port graphics.", exc_info=True)
 
 
 class F8StudioOperatorBaseNode(F8StudioBaseNode):
@@ -210,7 +274,7 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
                         widget_tooltip=tooltip,
                         tab="State",
                     )
-                except Exception:
+                except _NODEGRAPH_API_ERRORS:
                     logger.exception("Failed to create operator state property '%s'", name)
                     continue
             self._ensure_state_property_metadata(
@@ -249,7 +313,7 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
             attrs[self.type_][name]["tooltip"] = tooltip
         try:
             graph_model.set_node_common_properties(attrs)
-        except Exception:
+        except _NODEGRAPH_API_ERRORS:
             logger.exception("Failed to ensure operator state property metadata: node=%s field=%s", self.type_, name)
 
     def state_bool(self, name: str, *, default: bool) -> bool:
@@ -321,43 +385,32 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
         - ports (exec/data/state)
         - state properties (adds any missing fields)
         """
+        self._ensure_port_deletion_allowed()
+        desired_inputs, desired_outputs = self._desired_ports_from_spec()
+        self._sync_ports_to_definitions(desired_inputs=desired_inputs, desired_outputs=desired_outputs)
+        self._cleanup_orphaned_port_graphics()
+        self._build_state_properties()
+        self._redraw_after_spec_sync()
+
+    def _ensure_port_deletion_allowed(self) -> None:
         try:
             if not self.port_deletion_allowed():
                 self.set_port_deletion_allowed(True)
         except (AttributeError, RuntimeError, TypeError):
-            pass
+            logger.debug("Failed to enable operator port deletion during spec sync.", exc_info=True)
 
-        # Sync ports from spec.
-        #
-        # Important: NodeGraphQt `delete_input/delete_output` does not clear
-        # pipes. If ports are removed while still connected, NodeGraphQt can
-        # leave "dangling" pipes in the scene, crashing during paint.
-        desired_inputs: dict[str, dict[str, Any]] = {}
-        desired_outputs: dict[str, dict[str, Any]] = {}
+    def _desired_ports_from_spec(self) -> tuple[dict[str, _InputPortDefinition], dict[str, _OutputPortDefinition]]:
+        desired_inputs: dict[str, _InputPortDefinition] = {}
+        desired_outputs: dict[str, _OutputPortDefinition] = {}
 
         for p in list(self.ordered_exec_port_names(is_in=True) or []):
-            desired_inputs[f"[E]{p}"] = {
-                "color": EXEC_PORT_COLOR,
-                "painter_func": draw_exec_port,
-                "multi_input": False,
-            }
+            desired_inputs[f"[E]{p}"] = _InputPortDefinition(color=EXEC_PORT_COLOR, painter_func=draw_exec_port)
         for p in list(self.ordered_exec_port_names(is_in=False) or []):
-            desired_outputs[f"{p}[E]"] = {
-                "color": EXEC_PORT_COLOR,
-                "painter_func": draw_exec_port,
-                "multi_output": False,
-            }
-
-        def _port_has_connections(port: Any) -> bool:
-            if port is None:
-                return False
-            try:
-                return bool(port.connected_ports())
-            except _NODEGRAPH_API_ERRORS:
-                try:
-                    return bool(port.connected_ports)
-                except _NODEGRAPH_API_ERRORS:
-                    return False
+            desired_outputs[f"{p}[E]"] = _OutputPortDefinition(
+                color=EXEC_PORT_COLOR,
+                painter_func=draw_exec_port,
+                multi_output=False,
+            )
 
         for p in list(self.ordered_data_port_specs(is_in=True) or []):
             n = _spec_name(p)
@@ -370,9 +423,9 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
                     if _port_has_connections(self.get_input(port_name)):
                         show_on_node = True
                 except (AttributeError, RuntimeError, TypeError):
-                    pass
+                    logger.debug("Failed to inspect existing input port %r during operator spec sync.", port_name, exc_info=True)
             if show_on_node:
-                desired_inputs[port_name] = {"color": data_port_color(p), "multi_input": False}
+                desired_inputs[port_name] = _InputPortDefinition(color=data_port_color(p))
 
         for p in list(self.ordered_data_port_specs(is_in=False) or []):
             n = _spec_name(p)
@@ -385,9 +438,9 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
                     if _port_has_connections(self.get_output(port_name)):
                         show_on_node = True
                 except (AttributeError, RuntimeError, TypeError):
-                    pass
+                    logger.debug("Failed to inspect existing output port %r during operator spec sync.", port_name, exc_info=True)
             if show_on_node:
-                desired_outputs[port_name] = {"color": data_port_color(p), "multi_output": True}
+                desired_outputs[port_name] = _OutputPortDefinition(color=data_port_color(p))
 
         for s in list(self.ordered_state_field_specs() or []):
             name = _spec_name(s)
@@ -395,32 +448,34 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
                 continue
             access = _state_access(s)
             if access in (F8StateAccess.rw, F8StateAccess.wo):
-                desired_inputs[f"[S]{name}"] = {
-                    "color": STATE_PORT_COLOR,
-                    "painter_func": draw_square_port,
-                    "multi_input": False,
-                }
+                desired_inputs[f"[S]{name}"] = _InputPortDefinition(color=STATE_PORT_COLOR, painter_func=draw_square_port)
             if access in (F8StateAccess.rw, F8StateAccess.ro):
-                desired_outputs[f"{name}[S]"] = {
-                    "color": STATE_PORT_COLOR,
-                    "painter_func": draw_square_port,
-                    "multi_output": True,
-                }
+                desired_outputs[f"{name}[S]"] = _OutputPortDefinition(color=STATE_PORT_COLOR, painter_func=draw_square_port)
 
         for command in list(self.ordered_command_specs() or []):
             name = _spec_name(command)
             if not name or not _show_on_node(command):
                 continue
-            desired_inputs[f"[C]{name}"] = {
-                "color": COMMAND_PORT_COLOR,
-                "painter_func": draw_square_port,
-                "multi_input": False,
-            }
-            desired_outputs[f"{name}[C]"] = {
-                "color": COMMAND_PORT_COLOR,
-                "painter_func": draw_square_port,
-                "multi_output": True,
-            }
+            desired_inputs[command_input_port_name(name)] = _InputPortDefinition(
+                color=COMMAND_PORT_COLOR,
+                painter_func=draw_square_port,
+            )
+            desired_outputs[command_output_port_name(name)] = _OutputPortDefinition(
+                color=COMMAND_PORT_COLOR,
+                painter_func=draw_square_port,
+            )
+
+        return desired_inputs, desired_outputs
+
+    def _sync_ports_to_definitions(
+        self,
+        *,
+        desired_inputs: dict[str, _InputPortDefinition],
+        desired_outputs: dict[str, _OutputPortDefinition],
+    ) -> None:
+        # Important: NodeGraphQt `delete_input/delete_output` does not clear
+        # pipes. If ports are removed while still connected, NodeGraphQt can
+        # leave dangling pipes in the scene, crashing during paint.
 
         # Remove ports that no longer exist in spec (disconnect first).
         current_input_names = set(self.inputs().keys())
@@ -429,57 +484,69 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
         desired_output_names = set(desired_outputs.keys())
 
         for name in sorted(current_input_names - desired_input_names):
-            try:
-                port = self.get_input(name)
-                if port is not None:
-                    try:
-                        port.clear_connections(push_undo=False, emit_signal=False)
-                    except (AttributeError, RuntimeError, TypeError):
-                        pass
-                self.delete_input(name)
-            except _NODEGRAPH_API_ERRORS:
-                logger.exception("Failed to delete input port %r", name)
+            self._delete_stale_input_port(name)
 
         for name in sorted(current_output_names - desired_output_names):
-            try:
-                port = self.get_output(name)
-                if port is not None:
-                    try:
-                        port.clear_connections(push_undo=False, emit_signal=False)
-                    except (AttributeError, RuntimeError, TypeError):
-                        pass
-                self.delete_output(name)
-            except _NODEGRAPH_API_ERRORS:
-                logger.exception("Failed to delete output port %r", name)
+            self._delete_stale_output_port(name)
 
         # Add new ports from spec.
         current_input_names = set(self.inputs().keys())
         current_output_names = set(self.outputs().keys())
 
         for name in sorted(desired_input_names - current_input_names):
-            meta = desired_inputs.get(name) or {}
-            try:
-                self.add_input(
-                    name,
-                    multi_input=bool(meta.get("multi_input", False)),
-                    color=meta.get("color"),
-                    painter_func=meta.get("painter_func"),
-                )
-            except _NODEGRAPH_API_ERRORS:
-                logger.exception("Failed to add input port %r", name)
+            self._add_missing_input_port(name, desired_inputs[name])
 
         for name in sorted(desired_output_names - current_output_names):
-            meta = desired_outputs.get(name) or {}
-            try:
-                self.add_output(
-                    name,
-                    multi_output=bool(meta.get("multi_output", True)),
-                    color=meta.get("color"),
-                    painter_func=meta.get("painter_func"),
-                )
-            except _NODEGRAPH_API_ERRORS:
-                logger.exception("Failed to add output port %r", name)
+            self._add_missing_output_port(name, desired_outputs[name])
 
+    def _delete_stale_input_port(self, name: str) -> None:
+        try:
+            port = self.get_input(name)
+            if port is not None:
+                self._clear_stale_port_connections(port=port, port_name=name)
+            self.delete_input(name)
+        except _NODEGRAPH_API_ERRORS:
+            logger.exception("Failed to delete input port %r", name)
+
+    def _delete_stale_output_port(self, name: str) -> None:
+        try:
+            port = self.get_output(name)
+            if port is not None:
+                self._clear_stale_port_connections(port=port, port_name=name)
+            self.delete_output(name)
+        except _NODEGRAPH_API_ERRORS:
+            logger.exception("Failed to delete output port %r", name)
+
+    @staticmethod
+    def _clear_stale_port_connections(*, port: Any, port_name: str) -> None:
+        try:
+            port.clear_connections(push_undo=False, emit_signal=False)
+        except _NODEGRAPH_API_ERRORS:
+            logger.debug("Failed to clear stale operator port connections for %r.", port_name, exc_info=True)
+
+    def _add_missing_input_port(self, name: str, definition: _InputPortDefinition) -> None:
+        try:
+            self.add_input(
+                name,
+                multi_input=definition.multi_input,
+                color=definition.color,
+                painter_func=definition.painter_func,
+            )
+        except _NODEGRAPH_API_ERRORS:
+            logger.exception("Failed to add input port %r", name)
+
+    def _add_missing_output_port(self, name: str, definition: _OutputPortDefinition) -> None:
+        try:
+            self.add_output(
+                name,
+                multi_output=definition.multi_output,
+                color=definition.color,
+                painter_func=definition.painter_func,
+            )
+        except _NODEGRAPH_API_ERRORS:
+            logger.exception("Failed to add output port %r", name)
+
+    def _cleanup_orphaned_port_graphics(self) -> None:
         # Best-effort cleanup for any orphaned port items left on the QGraphics node.
         try:
             view = self.view
@@ -491,45 +558,18 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
             except _NODEGRAPH_API_ERRORS:
                 input_items = None
             if isinstance(input_items, dict):
-                for port_item in list(input_items.keys()):
-                    if port_item in valid_in_views:
-                        continue
-                    text_item = input_items.pop(port_item, None)
-                    if text_item is None:
-                        continue
-                    try:
-                        port_item.setParentItem(None)
-                        text_item.setParentItem(None)
-                        if view.scene() is not None:
-                            view.scene().removeItem(port_item)
-                            view.scene().removeItem(text_item)
-                    except (AttributeError, RuntimeError, TypeError):
-                        pass
+                _remove_orphaned_port_items(view=view, port_items=input_items, valid_port_views=valid_in_views)
 
             try:
                 output_items = view._output_items
             except _NODEGRAPH_API_ERRORS:
                 output_items = None
             if isinstance(output_items, dict):
-                for port_item in list(output_items.keys()):
-                    if port_item in valid_out_views:
-                        continue
-                    text_item = output_items.pop(port_item, None)
-                    if text_item is None:
-                        continue
-                    try:
-                        port_item.setParentItem(None)
-                        text_item.setParentItem(None)
-                        if view.scene() is not None:
-                            view.scene().removeItem(port_item)
-                            view.scene().removeItem(text_item)
-                    except (AttributeError, RuntimeError, TypeError):
-                        pass
+                _remove_orphaned_port_items(view=view, port_items=output_items, valid_port_views=valid_out_views)
         except _NODEGRAPH_API_ERRORS:
             logger.exception("Failed cleanup for orphaned operator port graphics")
 
-        self._build_state_properties()
-
+    def _redraw_after_spec_sync(self) -> None:
         try:
             self.view.draw_node()
         except _NODEGRAPH_API_ERRORS:

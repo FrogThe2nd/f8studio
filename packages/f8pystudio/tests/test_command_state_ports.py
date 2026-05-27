@@ -846,6 +846,61 @@ def test_sync_from_spec_hides_command_ports_and_rows_when_show_on_node_turns_off
     assert "stopTracking" not in view._command_inline_proxies
 
 
+def test_operator_sync_from_spec_hides_unconnected_data_port_when_show_on_node_turns_off() -> None:
+    _ensure_app()
+    spec = F8OperatorSpec(
+        serviceClass="f8.test.service",
+        operatorClass="f8.test.operator",
+        label="Operator",
+        dataInPorts=[F8DataPortSpec(name="payload", valueSchema=any_schema(), required=False, showOnNode=True)],
+    )
+    node_cls = type(
+        "TmpOperatorNodeHideDataPort",
+        (F8StudioOperatorBaseNode,),
+        {"__identifier__": "op", "NODE_NAME": spec.label, "SPEC_TEMPLATE": spec},
+    )
+    node = node_cls()
+    assert "[D]payload" in node.inputs()
+
+    node.spec.dataInPorts = [F8DataPortSpec(name="payload", valueSchema=any_schema(), required=False, showOnNode=False)]
+    node.sync_from_spec()
+
+    assert "[D]payload" not in node.inputs()
+
+
+def test_operator_sync_from_spec_keeps_connected_hidden_data_port_visible() -> None:
+    _ensure_app()
+    spec = F8OperatorSpec(
+        serviceClass="f8.test.service",
+        operatorClass="f8.test.operator",
+        label="Operator",
+        dataInPorts=[F8DataPortSpec(name="payload", valueSchema=any_schema(), required=False, showOnNode=True)],
+    )
+    node_cls = type(
+        "TmpOperatorNodeKeepConnectedDataPort",
+        (F8StudioOperatorBaseNode,),
+        {"__identifier__": "op", "NODE_NAME": spec.label, "SPEC_TEMPLATE": spec},
+    )
+    node = node_cls()
+    assert "[D]payload" in node.inputs()
+
+    port = node.get_input("[D]payload")
+    original_get_input = node.get_input
+
+    def _connected_input(name: str):
+        if name == "[D]payload":
+            return SimpleNamespace(connected_ports=lambda: [object()])
+        return original_get_input(name)
+
+    node.get_input = _connected_input  # type: ignore[method-assign]
+    node.spec.dataInPorts = [F8DataPortSpec(name="payload", valueSchema=any_schema(), required=False, showOnNode=False)]
+    node.sync_from_spec()
+    node.get_input = original_get_input  # type: ignore[method-assign]
+
+    assert port is not None
+    assert node.inputs().get("[D]payload") is port
+
+
 def test_operator_node_draw_places_command_ports_beside_inline_row() -> None:
     _ensure_app()
     spec = F8OperatorSpec(
