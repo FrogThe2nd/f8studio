@@ -55,6 +55,8 @@ class _GatewayTransportStub:
         *,
         publish_status: bool = True,
         request_timeout: bool = False,
+        status_runtime_instance_id: str = "inst_svc1",
+        apply_runtime_instance_id: str = "inst_svc1",
     ) -> None:
         self.retained: dict[str, bytes] = {}
         self._watchers: list[tuple[str, Callable[[str, bytes], Awaitable[None]]]] = []
@@ -62,6 +64,8 @@ class _GatewayTransportStub:
         self.status_probe_count = 0
         self.publish_status = bool(publish_status)
         self.request_timeout = bool(request_timeout)
+        self.status_runtime_instance_id = str(status_runtime_instance_id)
+        self.apply_runtime_instance_id = str(apply_runtime_instance_id)
         self.status_fingerprint = ""
 
     async def connect(self) -> None:
@@ -97,7 +101,7 @@ class _GatewayTransportStub:
                     "result": {
                         "serviceId": "svc1",
                         "serviceClass": "f8.tests.svc1",
-                        "runtimeInstanceId": "inst_svc1",
+                        "runtimeInstanceId": self.status_runtime_instance_id,
                         "active": True,
                         "rungraphGraphId": "g1",
                         "rungraphRevision": "r1",
@@ -170,7 +174,7 @@ class _GatewayTransportStub:
                 "ts": 1,
                 "targetFingerprint": target_fingerprint,
                 "appliedFingerprint": self.status_fingerprint,
-                "runtimeInstanceId": "inst_svc1",
+                "runtimeInstanceId": self.apply_runtime_instance_id,
             }
             await self.retained_put(
                 rungraph_deploy_request_status_key("svc1", req_id),
@@ -294,6 +298,38 @@ class _RepublishConfigOnlyTransportStub(_RequestOnlyNoEvidenceTransportStub):
         await self.retained_put("f8/svc/svc1/config/rungraph", encode_obj(graph))
 
 
+class _ForceApplyConfigOnlyTransportStub(_RepublishConfigOnlyTransportStub):
+    async def request(
+        self,
+        key: str,
+        payload: bytes,
+        *,
+        timeout: float = 1.0,
+        raise_on_error: bool = False,
+    ) -> bytes | None:
+        if key == svc_endpoint_key("svc1", "status"):
+            self.status_probe_count += 1
+            decoded_status = decode_obj(payload)
+            assert isinstance(decoded_status, dict)
+            return encode_obj(
+                {
+                    "reqId": str(decoded_status.get("reqId") or ""),
+                    "ok": True,
+                    "result": {
+                        "serviceId": "svc1",
+                        "serviceClass": "f8.tests.svc1",
+                        "runtimeInstanceId": "inst_svc1",
+                        "active": True,
+                        "rungraphGraphId": "",
+                        "rungraphRevision": "",
+                        "rungraphFingerprint": "",
+                    },
+                    "error": None,
+                }
+            )
+        return await super().request(key, payload, timeout=timeout, raise_on_error=raise_on_error)
+
+
 class _ConfigGetFailsNoEvidenceTransportStub(_RequestOnlyNoEvidenceTransportStub):
     async def retained_get(self, key: str) -> bytes | None:
         if str(key).endswith("/config/rungraph"):
@@ -340,6 +376,7 @@ class _DeployRequest:
     graph: F8RuntimeGraph
     source: str
     force_apply: bool = False
+    expected_runtime_instance_id: str = ""
 
 
 def test_gateway_waits_for_rungraph_applied_status_after_ack() -> None:
@@ -461,6 +498,62 @@ def test_gateway_force_apply_sends_set_rungraph_even_when_status_already_has_tar
     asyncio.run(_run())
 
 
+def test_gateway_force_apply_requires_status_evidence_from_ready_runtime_instance() -> None:
+    async def _run() -> None:
+        transport = _GatewayTransportStub(apply_runtime_instance_id="old_inst")
+        graph = F8RuntimeGraph(
+            graphId="g1",
+            revision="r1",
+            nodes=[F8RuntimeNode(nodeId="svc1", serviceId="svc1", serviceClass="svc.a", operatorClass=None)],
+            edges=[],
+        )
+        gateway = RuntimeRungraphGateway(RungraphDeployConfig(apply_timeout_s=0.01))
+        gateway._transport = transport
+
+        result = await gateway.deploy_runtime_graph(
+            _DeployRequest(service_id="svc1", graph=graph, source="test:force", force_apply=True)
+        )
+
+        assert result.success is False
+        assert len(transport.request_payloads) == 1
+        assert "unexpected runtime instance" in result.error_message
+        assert "expectedRuntimeInstanceId=inst_svc1" in result.error_message
+        assert "runtimeInstanceId=old_inst" in result.error_message
+
+    asyncio.run(_run())
+
+
+def test_gateway_respects_explicit_expected_runtime_instance_id() -> None:
+    async def _run() -> None:
+        transport = _GatewayTransportStub(
+            status_runtime_instance_id="ready_inst",
+            apply_runtime_instance_id="apply_inst",
+        )
+        graph = F8RuntimeGraph(
+            graphId="g1",
+            revision="r1",
+            nodes=[F8RuntimeNode(nodeId="svc1", serviceId="svc1", serviceClass="svc.a", operatorClass=None)],
+            edges=[],
+        )
+        gateway = RuntimeRungraphGateway(RungraphDeployConfig(apply_timeout_s=1.0))
+        gateway._transport = transport
+
+        result = await gateway.deploy_runtime_graph(
+            _DeployRequest(
+                service_id="svc1",
+                graph=graph,
+                source="test:force",
+                force_apply=True,
+                expected_runtime_instance_id="apply_inst",
+            )
+        )
+
+        assert result.success is True
+        assert len(transport.request_payloads) == 1
+
+    asyncio.run(_run())
+
+
 def test_gateway_installs_evidence_watchers_before_set_rungraph_request() -> None:
     async def _run() -> None:
         transport = _WatchOrderTransportStub()
@@ -478,6 +571,30 @@ def test_gateway_installs_evidence_watchers_before_set_rungraph_request() -> Non
 
         assert result.success is True
         assert transport.watch_count_before_set_rungraph >= 2
+
+    asyncio.run(_run())
+
+
+def test_gateway_force_apply_ignores_config_republish_without_status_evidence() -> None:
+    async def _run() -> None:
+        transport = _ForceApplyConfigOnlyTransportStub()
+        transport.retained["f8/svc/svc1/status/ready"] = encode_obj(_ready_payload())
+        graph = F8RuntimeGraph(
+            graphId="g1",
+            revision="r1",
+            nodes=[F8RuntimeNode(nodeId="svc1", serviceId="svc1", serviceClass="svc.a", operatorClass=None)],
+            edges=[],
+        )
+        gateway = RuntimeRungraphGateway(RungraphDeployConfig(apply_timeout_s=0.01))
+        gateway._transport = transport
+
+        result = await gateway.deploy_runtime_graph(
+            _DeployRequest(service_id="svc1", graph=graph, source="test:force", force_apply=True)
+        )
+
+        assert result.success is False
+        assert len(transport.request_payloads) == 1
+        assert "expectedRuntimeInstanceId=inst_svc1" in result.error_message
 
     asyncio.run(_run())
 

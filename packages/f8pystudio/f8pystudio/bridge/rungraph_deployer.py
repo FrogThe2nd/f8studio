@@ -53,6 +53,7 @@ class RungraphDeployRequest:
     graph: F8RuntimeGraph
     source: str = "studio"
     force_apply: bool = False
+    expected_runtime_instance_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -95,6 +96,7 @@ class RuntimeRungraphGateway:
         *,
         service_id: str,
         target_fingerprint: str,
+        expected_runtime_instance_id: str = "",
         timeout_s: float,
     ) -> bool:
         request_payload = F8StatusRequest(reqId=new_id(), args=F8EmptyArgs(), meta={"source": "studio:deploy-evidence"})
@@ -119,16 +121,32 @@ class RuntimeRungraphGateway:
         result = response.result
         if result is None or isinstance(result, msgspec.UnsetType):
             return False
+        expected_runtime_instance_id_s = str(expected_runtime_instance_id or "").strip()
+        if expected_runtime_instance_id_s:
+            runtime_instance_id = str(result.runtimeInstanceId or "").strip()
+            if runtime_instance_id != expected_runtime_instance_id_s:
+                return False
         fingerprint = str(result.rungraphFingerprint or "").strip()
         return bool(fingerprint and fingerprint == target_fingerprint)
 
     @staticmethod
-    def _status_payload_matches_target(payload: Any, *, req_id: str, target_fingerprint: str) -> tuple[bool, str]:
+    def _status_payload_matches_target(
+        payload: Any,
+        *,
+        req_id: str,
+        target_fingerprint: str,
+        expected_runtime_instance_id: str = "",
+    ) -> tuple[bool, str]:
         if not isinstance(payload, dict):
             return (False, "")
         payload_req_id = str(payload.get("reqId") or "").strip()
         if payload_req_id != req_id:
             return (False, "")
+        expected_runtime_instance_id_s = str(expected_runtime_instance_id or "").strip()
+        if expected_runtime_instance_id_s:
+            runtime_instance_id = str(payload.get("runtimeInstanceId") or "").strip()
+            if runtime_instance_id != expected_runtime_instance_id_s:
+                return (False, "")
         phase = str(payload.get("phase") or "").strip()
         target = str(payload.get("targetFingerprint") or "").strip()
         applied = str(payload.get("appliedFingerprint") or "").strip()
@@ -192,6 +210,7 @@ class RuntimeRungraphGateway:
         initial_config_fingerprint: str,
         deadline_s: float,
         force_apply: bool = False,
+        expected_runtime_instance_id: str = "",
         watcher_ready: asyncio.Future[None] | None = None,
     ) -> RungraphDeployResult:
         loop = asyncio.get_running_loop()
@@ -204,13 +223,19 @@ class RuntimeRungraphGateway:
         last_phase = ""
         last_target_fingerprint = ""
         last_applied_fingerprint = ""
+        last_runtime_instance_id = ""
         last_status_key = rungraph_deploy_request_status_key(service_id, req_id)
+        expected_runtime_instance_id_s = str(expected_runtime_instance_id or "").strip()
+        config_can_satisfy = not bool(force_apply) and not expected_runtime_instance_id_s
 
         async def _on_evidence(key: str, value: bytes) -> None:
             nonlocal failed_message, last_phase, last_target_fingerprint, last_applied_fingerprint
+            nonlocal last_runtime_instance_id
             if fut.done():
                 return
             if key.endswith("/config/rungraph"):
+                if not config_can_satisfy:
+                    return
                 fingerprint = self._decode_retained_rungraph_fingerprint(value)
                 if fingerprint == target_fingerprint:
                     fut.set_result(RungraphDeployResult(service_id=service_id, success=True, error_message=""))
@@ -226,10 +251,12 @@ class RuntimeRungraphGateway:
                     last_phase = phase
                     last_target_fingerprint = str(payload.get("targetFingerprint") or "").strip()
                     last_applied_fingerprint = str(payload.get("appliedFingerprint") or "").strip()
+                    last_runtime_instance_id = str(payload.get("runtimeInstanceId") or "").strip()
             matched, error = self._status_payload_matches_target(
                 payload,
                 req_id=req_id,
                 target_fingerprint=target_fingerprint,
+                expected_runtime_instance_id=expected_runtime_instance_id_s,
             )
             if matched:
                 fut.set_result(RungraphDeployResult(service_id=service_id, success=True, error_message=""))
@@ -250,7 +277,7 @@ class RuntimeRungraphGateway:
             while True:
                 if fut.done():
                     return await fut
-                if initial_config_fingerprint != target_fingerprint:
+                if config_can_satisfy and initial_config_fingerprint != target_fingerprint:
                     retained_raw, retained_fingerprint = await self._retained_config_sample(
                         transport,
                         service_id=service_id,
@@ -262,6 +289,7 @@ class RuntimeRungraphGateway:
                         transport,
                         service_id=service_id,
                         target_fingerprint=target_fingerprint,
+                        expected_runtime_instance_id=expected_runtime_instance_id_s,
                         timeout_s=min(0.25, max(0.05, self.config.endpoint_probe_timeout_s)),
                     ):
                         return RungraphDeployResult(service_id=service_id, success=True, error_message="")
@@ -269,6 +297,23 @@ class RuntimeRungraphGateway:
                 if remaining <= 0:
                     if failed_message:
                         return RungraphDeployResult(service_id=service_id, success=False, error_message=failed_message)
+                    if (
+                        expected_runtime_instance_id_s
+                        and last_phase == "applied"
+                        and last_applied_fingerprint == target_fingerprint
+                        and last_runtime_instance_id
+                        and last_runtime_instance_id != expected_runtime_instance_id_s
+                    ):
+                        return RungraphDeployResult(
+                            service_id=service_id,
+                            success=False,
+                            error_message=(
+                                f"rungraph apply reported applied from unexpected runtime instance within "
+                                f"{float(self.config.apply_timeout_s):g}s "
+                                f"(expectedRuntimeInstanceId={expected_runtime_instance_id_s}, "
+                                f"runtimeInstanceId={last_runtime_instance_id}, key={last_status_key})"
+                            ),
+                        )
                     if last_phase == "applied" and last_applied_fingerprint:
                         target_short = (last_target_fingerprint or target_fingerprint)[:16]
                         applied_short = last_applied_fingerprint[:16]
@@ -295,7 +340,8 @@ class RuntimeRungraphGateway:
                         success=False,
                         error_message=(
                             f"rungraph apply status not received within {float(self.config.apply_timeout_s):g}s "
-                            f"(key={last_status_key}, fingerprint={target_fingerprint[:16]})"
+                            f"(key={last_status_key}, fingerprint={target_fingerprint[:16]}"
+                            f"{', expectedRuntimeInstanceId=' + expected_runtime_instance_id_s if expected_runtime_instance_id_s else ''})"
                         ),
                     )
                 try:
@@ -363,7 +409,7 @@ class RuntimeRungraphGateway:
         transport: RuntimeTransport,
         *,
         service_id: str,
-    ) -> None:
+    ) -> str:
         deadline = asyncio.get_running_loop().time() + max(0.001, float(self.config.endpoint_ready_timeout_s))
         last_error = ""
         while True:
@@ -379,7 +425,10 @@ class RuntimeRungraphGateway:
                 if raw:
                     response = decode_as(raw, F8StatusReply)
                     if bool(response.ok):
-                        return
+                        result = response.result
+                        if result is None or isinstance(result, msgspec.UnsetType):
+                            return ""
+                        return str(result.runtimeInstanceId or "").strip()
                     if response.error is not None and not isinstance(response.error, msgspec.UnsetType):
                         last_error = str(response.error.message or "")
             except (TimeoutError, ValueError, RuntimeError, OSError) as exc:
@@ -406,8 +455,9 @@ class RuntimeRungraphGateway:
     async def deploy_runtime_graph(self, req: RungraphDeployRequest) -> RungraphDeployResult:
         service_id = str(req.service_id)
         transport = await self.ensure_connected()
+        ready_runtime_instance_id = ""
         try:
-            await self._wait_control_endpoint_ready(
+            ready_runtime_instance_id = await self._wait_control_endpoint_ready(
                 transport,
                 service_id=service_id,
             )
@@ -421,11 +471,15 @@ class RuntimeRungraphGateway:
         deploy_source = f"{str(req.source or 'studio')}:{req_id}"
         graph_for_request = self._normalize_graph_for_request(req.graph, source=deploy_source)
         target_fingerprint = build_rungraph_deploy_fingerprint(graph_for_request)
+        expected_runtime_instance_id = str(req.expected_runtime_instance_id or "").strip()
+        if not expected_runtime_instance_id and bool(req.force_apply):
+            expected_runtime_instance_id = ready_runtime_instance_id
         if not bool(req.force_apply):
             if await self._status_endpoint_has_target(
                 transport,
                 service_id=service_id,
                 target_fingerprint=target_fingerprint,
+                expected_runtime_instance_id=expected_runtime_instance_id,
                 timeout_s=min(0.25, max(0.05, self.config.endpoint_probe_timeout_s)),
             ):
                 return RungraphDeployResult(service_id=service_id, success=True, error_message="")
@@ -450,6 +504,7 @@ class RuntimeRungraphGateway:
                 initial_config_fingerprint=initial_config_fingerprint,
                 deadline_s=deadline_s,
                 force_apply=bool(req.force_apply),
+                expected_runtime_instance_id=expected_runtime_instance_id,
                 watcher_ready=watcher_ready,
             ),
             name=f"rungraph_target_evidence:{service_id}:{req_id}",

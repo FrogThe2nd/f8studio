@@ -11,6 +11,7 @@ from .process_logging import (
     default_process_log_dir,
     enable_process_crash_dump,
     install_process_diagnostics,
+    install_qt_message_logging,
     install_uncaught_exception_logging,
 )
 
@@ -25,6 +26,7 @@ __all__ = [
     "fingerprint_exception",
     "format_exception_lines",
     "install_process_diagnostics",
+    "install_qt_message_logging",
     "install_uncaught_exception_logging",
     "report_exception",
     "resolve_env_log_level",
