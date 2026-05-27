@@ -11,6 +11,7 @@ from f8pysdk.specs import (
     F8StateSpec,
     any_schema,
 )
+from f8pystudio.nodegraph.items.node_item_core import port_name, state_field_info
 from f8pystudio.nodegraph.patch_hub_nodeitem import F8StudioPatchHubNodeItem
 from f8pystudio.nodegraph.service_basenode import F8StudioServiceNodeItem
 from f8pystudio.nodegraph.ui_override_mutations import apply_named_order, get_list_order_override
@@ -25,6 +26,28 @@ class _FakePort:
 
     def isVisible(self) -> bool:
         return True
+
+
+class _AttributePort:
+    def __init__(self, name: str) -> None:
+        self.name = str(name)
+
+
+class _PartiallyBrokenStateField:
+    name = "cfg"
+    showOnNode = True
+    label = "Config"
+    uiControl = "code[python]"
+    access = F8StateAccess.rw
+    required = True
+
+    @property
+    def description(self) -> str:
+        raise RuntimeError("description unavailable")
+
+    @property
+    def valueSchema(self) -> object:
+        raise RuntimeError("schema unavailable")
 
 
 class _BackendStub:
@@ -181,6 +204,25 @@ def _make_spec() -> F8OperatorSpec:
             F8Command(name="stop", showOnNode=True),
         ],
     )
+
+
+def test_node_item_core_reads_port_attribute_fallback() -> None:
+    assert port_name(_AttributePort("[D]input")) == "[D]input"
+
+
+def test_state_field_info_logs_field_fallbacks(caplog) -> None:
+    caplog.set_level("DEBUG", logger="f8pystudio.nodegraph.items.node_item_core")
+
+    info = state_field_info(_PartiallyBrokenStateField())
+
+    assert info is not None
+    assert info.name == "cfg"
+    assert info.tooltip == "cfg"
+    assert info.value_schema is None
+    assert info.ui_control == "code[python]"
+    assert info.ui_language == "python"
+    assert "Failed to read description for state field 'cfg'" in caplog.text
+    assert "Failed to read valueSchema for state field 'cfg'" in caplog.text
 
 
 def test_service_node_item_uses_spec_order_for_editable_groups() -> None:

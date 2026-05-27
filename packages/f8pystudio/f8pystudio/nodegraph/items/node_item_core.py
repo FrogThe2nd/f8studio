@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import enum
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 from ...ui.support.ui_control import ui_control_language
+
+logger = logging.getLogger(__name__)
+_FIELD_READ_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
+
 
 @dataclass(frozen=True)
 class StateFieldInfo:
@@ -26,52 +31,63 @@ def port_name(port: Any) -> str:
     """
     try:
         return str(port.name() or "")
-    except (AttributeError, RuntimeError, TypeError):
-        pass
+    except _FIELD_READ_ERRORS as exc:
+        logger.debug("Failed to read NodeGraphQt port name via name()", exc_info=exc)
     try:
         return str(port.name or "")
-    except (AttributeError, RuntimeError, TypeError):
+    except _FIELD_READ_ERRORS as exc:
+        logger.debug("Failed to read NodeGraphQt port name attribute", exc_info=exc)
         return ""
+
 
 def state_field_info(field: Any) -> StateFieldInfo | None:
     try:
         name = str(field.name or "").strip()
-    except Exception:
+    except _FIELD_READ_ERRORS as exc:
+        logger.debug("Failed to read state field name", exc_info=exc)
         return None
     if not name:
         return None
 
     try:
         show_on_node = bool(field.showOnNode)
-    except Exception:
+    except _FIELD_READ_ERRORS as exc:
+        logger.debug("Failed to read showOnNode for state field '%s'", name, exc_info=exc)
         show_on_node = False
     try:
         label = str(field.label or "").strip() or name
-    except Exception:
+    except _FIELD_READ_ERRORS as exc:
+        logger.debug("Failed to read label for state field '%s'", name, exc_info=exc)
         label = name
     try:
         tooltip = str(field.description or "").strip() or name
-    except Exception:
+    except _FIELD_READ_ERRORS as exc:
+        logger.debug("Failed to read description for state field '%s'", name, exc_info=exc)
         tooltip = name
     try:
         ui_control = str(field.uiControl or "").strip()
-    except Exception:
+    except _FIELD_READ_ERRORS as exc:
+        logger.debug("Failed to read uiControl for state field '%s'", name, exc_info=exc)
         ui_control = ""
     try:
         ui_language = ui_control_language(str(field.uiControl or ""))
-    except Exception:
+    except _FIELD_READ_ERRORS as exc:
+        logger.debug("Failed to derive UI language for state field '%s'", name, exc_info=exc)
         ui_language = ""
     try:
         value_schema = field.valueSchema
-    except Exception:
+    except _FIELD_READ_ERRORS as exc:
+        logger.debug("Failed to read valueSchema for state field '%s'", name, exc_info=exc)
         value_schema = None
     try:
         access = field.access
-    except Exception:
+    except _FIELD_READ_ERRORS as exc:
+        logger.debug("Failed to read access for state field '%s'", name, exc_info=exc)
         access = None
     try:
         required = bool(field.required)
-    except Exception:
+    except _FIELD_READ_ERRORS as exc:
+        logger.debug("Failed to read required for state field '%s'", name, exc_info=exc)
         required = False
 
     if isinstance(access, enum.Enum):
