@@ -260,6 +260,41 @@ class RungraphApplyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status_a.phase, "applied")
         self.assertEqual(status_b.phase, "applied")
 
+    async def test_submit_rungraph_force_apply_reapplies_same_target(self) -> None:
+        class _CountingHook:
+            def __init__(self) -> None:
+                self.count = 0
+
+            async def on_rungraph(self, graph: F8RuntimeGraph) -> None:
+                _ = graph
+                self.count += 1
+
+            async def validate_rungraph(self, graph: F8RuntimeGraph) -> None:
+                _ = graph
+
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svc")
+        hook = _CountingHook()
+        bus.register_rungraph_hook(hook)
+        graph = F8RuntimeGraph(
+            graphId="g-force",
+            revision="r1",
+            nodes=[F8RuntimeNode(nodeId="svc", serviceId="svc", serviceClass="svc", operatorClass=None)],
+            edges=[],
+        )
+
+        await bus.submit_rungraph(graph, req_id="req-first", source="test")
+        await wait_rungraph_deploy_status(bus._transport, service_id="svc", req_id="req-first", timeout_s=1.0)
+        await bus.submit_rungraph(graph, req_id="req-second", source="test")
+        await wait_rungraph_deploy_status(bus._transport, service_id="svc", req_id="req-second", timeout_s=1.0)
+        self.assertEqual(hook.count, 1)
+
+        await bus.submit_rungraph(graph, req_id="req-force", source="test", force_apply=True)
+        status = await wait_rungraph_deploy_status(bus._transport, service_id="svc", req_id="req-force", timeout_s=1.0)
+
+        self.assertEqual(status.phase, "applied")
+        self.assertEqual(hook.count, 2)
+
     async def test_submit_rungraph_rejects_req_id_reuse_with_different_target(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svc")

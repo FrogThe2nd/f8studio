@@ -52,6 +52,7 @@ class RungraphDeployRequest:
     service_id: str
     graph: F8RuntimeGraph
     source: str = "studio"
+    force_apply: bool = False
 
 
 @dataclass(frozen=True)
@@ -190,6 +191,7 @@ class RuntimeRungraphGateway:
         initial_config_raw: bytes | None,
         initial_config_fingerprint: str,
         deadline_s: float,
+        force_apply: bool = False,
         watcher_ready: asyncio.Future[None] | None = None,
     ) -> RungraphDeployResult:
         loop = asyncio.get_running_loop()
@@ -255,13 +257,14 @@ class RuntimeRungraphGateway:
                     )
                     if retained_fingerprint == target_fingerprint and retained_raw != initial_config_raw:
                         return RungraphDeployResult(service_id=service_id, success=True, error_message="")
-                if await self._status_endpoint_has_target(
-                    transport,
-                    service_id=service_id,
-                    target_fingerprint=target_fingerprint,
-                    timeout_s=min(0.25, max(0.05, self.config.endpoint_probe_timeout_s)),
-                ):
-                    return RungraphDeployResult(service_id=service_id, success=True, error_message="")
+                if not bool(force_apply):
+                    if await self._status_endpoint_has_target(
+                        transport,
+                        service_id=service_id,
+                        target_fingerprint=target_fingerprint,
+                        timeout_s=min(0.25, max(0.05, self.config.endpoint_probe_timeout_s)),
+                    ):
+                        return RungraphDeployResult(service_id=service_id, success=True, error_message="")
                 remaining = deadline_s - loop.time()
                 if remaining <= 0:
                     if failed_message:
@@ -418,13 +421,14 @@ class RuntimeRungraphGateway:
         deploy_source = f"{str(req.source or 'studio')}:{req_id}"
         graph_for_request = self._normalize_graph_for_request(req.graph, source=deploy_source)
         target_fingerprint = build_rungraph_deploy_fingerprint(graph_for_request)
-        if await self._status_endpoint_has_target(
-            transport,
-            service_id=service_id,
-            target_fingerprint=target_fingerprint,
-            timeout_s=min(0.25, max(0.05, self.config.endpoint_probe_timeout_s)),
-        ):
-            return RungraphDeployResult(service_id=service_id, success=True, error_message="")
+        if not bool(req.force_apply):
+            if await self._status_endpoint_has_target(
+                transport,
+                service_id=service_id,
+                target_fingerprint=target_fingerprint,
+                timeout_s=min(0.25, max(0.05, self.config.endpoint_probe_timeout_s)),
+            ):
+                return RungraphDeployResult(service_id=service_id, success=True, error_message="")
         initial_config_raw, initial_config_fingerprint = await self._retained_config_sample(
             transport,
             service_id=service_id,
@@ -432,7 +436,7 @@ class RuntimeRungraphGateway:
         request_payload = F8SetRungraphRequest(
             reqId=req_id,
             args=F8SetRungraphArgs(graph=graph_for_request),
-            meta={"source": deploy_source, "targetFingerprint": target_fingerprint},
+            meta={"source": deploy_source, "targetFingerprint": target_fingerprint, "forceApply": bool(req.force_apply)},
         )
         deadline_s = asyncio.get_running_loop().time() + max(0.001, float(self.config.apply_timeout_s))
         watcher_ready: asyncio.Future[None] = asyncio.get_running_loop().create_future()
@@ -445,6 +449,7 @@ class RuntimeRungraphGateway:
                 initial_config_raw=initial_config_raw,
                 initial_config_fingerprint=initial_config_fingerprint,
                 deadline_s=deadline_s,
+                force_apply=bool(req.force_apply),
                 watcher_ready=watcher_ready,
             ),
             name=f"rungraph_target_evidence:{service_id}:{req_id}",

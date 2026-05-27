@@ -419,15 +419,18 @@ class ServiceBusControlHandlers:
         try:
             source = "control"
             target_fingerprint = ""
+            force_apply = False
             meta = decoded_req.meta
             if isinstance(meta, dict):
                 source = str(meta.get("source") or "control")
                 target_fingerprint = str(meta.get("targetFingerprint") or "")
+                force_apply = bool(meta.get("forceApply"))
             await self._bus.submit_rungraph(
                 graph,
                 req_id=req_id,
                 source=source,
                 target_fingerprint=target_fingerprint,
+                force_apply=force_apply,
             )
         except Exception as exc:
             await req.respond(

@@ -26,13 +26,21 @@ class RungraphDeployFlow:
     rungraph_gateway: RungraphGateway
     emit_log: Callable[[str], None]
 
-    async def _deploy_one(self, *, service_id: str, graph: F8RuntimeGraph, failure_prefix: str) -> None:
+    async def _deploy_one(
+        self,
+        *,
+        service_id: str,
+        graph: F8RuntimeGraph,
+        failure_prefix: str,
+        force_apply: bool = False,
+    ) -> None:
         try:
             result = await self.rungraph_gateway.deploy_runtime_graph(
                 RungraphDeployRequest(
                     service_id=service_id,
                     graph=graph,
                     source="studio",
+                    force_apply=bool(force_apply),
                 )
             )
             if not result.success:
@@ -55,7 +63,12 @@ class RungraphDeployFlow:
         if graph is None:
             return
 
-        await self._deploy_one(service_id=sid, graph=graph, failure_prefix="deploy service rungraph failed")
+        await self._deploy_one(
+            service_id=sid,
+            graph=graph,
+            failure_prefix="deploy service rungraph failed",
+            force_apply=True,
+        )
 
     async def deploy_all_service_rungraphs(self, *, compiled: CompiledRuntimeGraphs) -> None:
         await self.deploy_selected_service_rungraphs(compiled=compiled, allowed_service_ids=None)
@@ -68,7 +81,12 @@ class RungraphDeployFlow:
     ) -> None:
         async def _deploy_limited(service_id: str, graph: F8RuntimeGraph) -> None:
             async with semaphore:
-                await self._deploy_one(service_id=service_id, graph=graph, failure_prefix="deploy failed")
+                await self._deploy_one(
+                    service_id=service_id,
+                    graph=graph,
+                    failure_prefix="deploy failed",
+                    force_apply=False,
+                )
 
         tasks: list[asyncio.Task[None]] = []
         semaphore = asyncio.Semaphore(DEPLOY_SERVICE_CONCURRENCY)

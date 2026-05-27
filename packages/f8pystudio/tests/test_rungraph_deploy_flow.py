@@ -19,10 +19,12 @@ class _FakeRungraphGateway:
         self._delays = dict(delays or {})
         self.calls: list[str] = []
         self.finished: list[str] = []
+        self.force_apply_by_call: list[bool] = []
 
     async def deploy_runtime_graph(self, req: object) -> _DeployResult:
         service_id = str(req.service_id)  # type: ignore[attr-defined]
         self.calls.append(service_id)
+        self.force_apply_by_call.append(bool(req.force_apply))  # type: ignore[attr-defined]
         delay = float(self._delays.get(service_id, 0.0))
         if delay > 0:
             await asyncio.sleep(delay)
@@ -56,6 +58,7 @@ def test_deploy_service_rungraph_logs_rejection() -> None:
     asyncio.run(flow.deploy_service_rungraph(service_id="svc_a", compiled=compiled))  # type: ignore[arg-type]
 
     assert gateway.calls == ["svc_a"]
+    assert gateway.force_apply_by_call == [True]
     assert logs == ["deploy service rungraph failed serviceId=svc_a: rejected"]
 
 
@@ -78,6 +81,7 @@ def test_deploy_all_service_rungraphs_skips_studio_service() -> None:
     asyncio.run(flow.deploy_all_service_rungraphs(compiled=compiled))  # type: ignore[arg-type]
 
     assert gateway.calls == ["svc_a", "svc_b"]
+    assert gateway.force_apply_by_call == [False, False]
     assert logs == ["deploy failed serviceId=svc_b: rejected"]
 
 

@@ -1872,6 +1872,8 @@ bool ServiceBus::submit_rungraph(const json& graph_obj, const json& meta, const 
   if (meta.is_object() && meta.contains("targetFingerprint") && meta["targetFingerprint"].is_string()) {
     target_fingerprint = trim_copy(meta["targetFingerprint"].get<std::string>());
   }
+  const bool force_apply =
+      meta.is_object() && meta.contains("forceApply") && meta["forceApply"].is_boolean() && meta["forceApply"].get<bool>();
   if (target_fingerprint.empty()) {
     target_fingerprint = build_rungraph_deploy_fingerprint(graph_obj);
   }
@@ -1889,7 +1891,7 @@ bool ServiceBus::submit_rungraph(const json& graph_obj, const json& meta, const 
         return false;
       }
       rungraph_req_fingerprints_[req_id_s] = target_fingerprint;
-      if (!rungraph_fingerprint_.empty() && rungraph_fingerprint_ == target_fingerprint) {
+      if (!force_apply && !rungraph_fingerprint_.empty() && rungraph_fingerprint_ == target_fingerprint) {
         publish_applied = true;
       } else if (auto aliases_it = rungraph_inflight_aliases_.find(target_fingerprint);
                  aliases_it != rungraph_inflight_aliases_.end()) {

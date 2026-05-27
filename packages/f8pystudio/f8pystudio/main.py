@@ -13,6 +13,7 @@ from f8pysdk.service_runtime_tools.inventory.policy import (
 )
 from f8pystudio.bridge.runtime_config import PyStudioServiceBridgeConfig
 from f8pystudio.diagnostics.logging import configure_root_logging_from_env
+from f8pystudio.diagnostics.process_logging import install_process_diagnostics
 
 
 def _env_or(default: str, name: str) -> str:
@@ -126,6 +127,7 @@ def _force_process_exit(exit_code: int) -> None:
 
 def main(argv: list[str] | None = None, *, force_process_exit: bool = False) -> int:
     configure_root_logging_from_env()
+    install_process_diagnostics()
 
     parser = argparse.ArgumentParser(description="F8PyStudio")
     parser.add_argument("--describe", action="store_true", help="Output the service description in JSON format")

@@ -339,6 +339,7 @@ class _DeployRequest:
     service_id: str
     graph: F8RuntimeGraph
     source: str
+    force_apply: bool = False
 
 
 def test_gateway_waits_for_rungraph_applied_status_after_ack() -> None:
@@ -404,6 +405,58 @@ def test_gateway_uses_rungraph_status_when_ack_times_out() -> None:
 
         assert result.success is True
         assert result.error_message == ""
+
+    asyncio.run(_run())
+
+
+def test_gateway_skips_set_rungraph_when_status_already_has_target() -> None:
+    async def _run() -> None:
+        transport = _GatewayTransportStub()
+        graph = F8RuntimeGraph(
+            graphId="g1",
+            revision="r1",
+            nodes=[F8RuntimeNode(nodeId="svc1", serviceId="svc1", serviceClass="svc.a", operatorClass=None)],
+            edges=[],
+        )
+        gateway = RuntimeRungraphGateway(RungraphDeployConfig(apply_timeout_s=1.0))
+        normalized = gateway._normalize_graph_for_request(graph, source="test:status-ready")
+        transport.status_fingerprint = build_rungraph_deploy_fingerprint(normalized)
+        gateway._transport = transport
+
+        result = await gateway.deploy_runtime_graph(
+            _DeployRequest(service_id="svc1", graph=graph, source="test:status-ready")
+        )
+
+        assert result.success is True
+        assert result.error_message == ""
+        assert transport.request_payloads == []
+
+    asyncio.run(_run())
+
+
+def test_gateway_force_apply_sends_set_rungraph_even_when_status_already_has_target() -> None:
+    async def _run() -> None:
+        transport = _GatewayTransportStub()
+        graph = F8RuntimeGraph(
+            graphId="g1",
+            revision="r1",
+            nodes=[F8RuntimeNode(nodeId="svc1", serviceId="svc1", serviceClass="svc.a", operatorClass=None)],
+            edges=[],
+        )
+        gateway = RuntimeRungraphGateway(RungraphDeployConfig(apply_timeout_s=1.0))
+        normalized = gateway._normalize_graph_for_request(graph, source="test:force")
+        transport.status_fingerprint = build_rungraph_deploy_fingerprint(normalized)
+        gateway._transport = transport
+
+        result = await gateway.deploy_runtime_graph(
+            _DeployRequest(service_id="svc1", graph=graph, source="test:force", force_apply=True)
+        )
+
+        assert result.success is True
+        assert len(transport.request_payloads) == 1
+        request_meta = transport.request_payloads[0].get("meta")
+        assert isinstance(request_meta, dict)
+        assert request_meta.get("forceApply") is True
 
     asyncio.run(_run())
 

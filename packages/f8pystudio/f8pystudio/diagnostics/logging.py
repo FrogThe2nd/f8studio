@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 
+from .process_logging import FILE_HANDLER_NAME
 from f8pysdk.logging_utils import (
     apply_root_log_level as _apply_root_log_level,
     resolve_env_log_level as _resolve_env_log_level,
@@ -28,6 +29,9 @@ def apply_root_log_level(level: int) -> None:
     console handlers with a default NOTSET level.
     """
     _apply_root_log_level(level)
+    for handler in list(logging.getLogger().handlers):
+        if handler.name == FILE_HANDLER_NAME:
+            handler.setLevel(logging.NOTSET)
 
 
 def configure_root_logging_from_env() -> None:

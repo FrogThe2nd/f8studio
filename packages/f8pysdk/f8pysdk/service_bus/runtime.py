@@ -707,6 +707,7 @@ class ServiceBus:
         req_id: str,
         source: str = "control",
         target_fingerprint: str = "",
+        force_apply: bool = False,
     ) -> None:
         """
         Accept a remote rungraph deployment request and apply it asynchronously.
@@ -724,7 +725,7 @@ class ServiceBus:
         if existing_fingerprint is not None and existing_fingerprint != fingerprint:
             raise ValueError("req_id already used for a different rungraph fingerprint")
         self._rungraph_req_fingerprints[req_id_s] = fingerprint
-        if self._rungraph_fingerprint and self._rungraph_fingerprint == fingerprint:
+        if not bool(force_apply) and self._rungraph_fingerprint and self._rungraph_fingerprint == fingerprint:
             self._schedule_rungraph_status_publish(
                 graph,
                 req_id=req_id_s,
