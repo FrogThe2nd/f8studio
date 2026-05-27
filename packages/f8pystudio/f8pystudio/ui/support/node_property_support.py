@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import enum
 import logging
 from typing import Any
+
+import msgspec
 
 from f8pysdk.specs import F8DataTypeSchema
 from f8pysdk.codec import dump_json
@@ -13,6 +16,9 @@ from ...nodegraph.state_schema import schema_type_any
 from ..dialogs.schema_builder_dialog import schema_from_json_obj, schema_to_json_obj
 
 logger = logging.getLogger(__name__)
+_NODE_ACCESS_ERRORS = (AttributeError, RuntimeError, TypeError)
+_JSON_DUMP_ERRORS = (AttributeError, TypeError, ValueError)
+_SCHEMA_CONVERSION_ERRORS = (AttributeError, TypeError, ValueError, msgspec.ValidationError)
 
 
 def state_input_is_connected(node: Any, field_name: str) -> bool:
@@ -44,7 +50,8 @@ def state_input_is_connected(node: Any, field_name: str) -> bool:
 def get_node_spec(node: Any) -> Any | None:
     try:
         return node.spec
-    except Exception:
+    except _NODE_ACCESS_ERRORS:
+        logger.debug("Failed to read node spec for property panel.", exc_info=True)
         return None
 
 
@@ -78,11 +85,13 @@ def node_missing_lock_info(node: Any) -> tuple[bool, str]:
         return False, ""
     try:
         model = node.model
-    except Exception:
+    except _NODE_ACCESS_ERRORS:
+        logger.debug("Failed to read node model for missing-lock info.", exc_info=True)
         return False, ""
     try:
         f8_sys = model.f8_sys
-    except Exception:
+    except _NODE_ACCESS_ERRORS:
+        logger.debug("Failed to read node f8_sys metadata for missing-lock info.", exc_info=True)
         return False, ""
     if not isinstance(f8_sys, dict):
         return False, ""
@@ -98,18 +107,13 @@ def to_jsonable(value: Any) -> Any:
         return [to_jsonable(item) for item in value]
     if isinstance(value, dict):
         return {str(key): to_jsonable(item) for key, item in value.items()}
-    if not isinstance(value, (bytes, bytearray)):
-        try:
-            return to_jsonable(value.value)
-        except AttributeError:
-            pass
+    if isinstance(value, enum.Enum):
+        return to_jsonable(value.value)
     try:
         dumped = dump_json(value, mode="json")
-    except Exception:
-        try:
-            dumped = dump_json(value)
-        except Exception:
-            dumped = None
+    except _JSON_DUMP_ERRORS:
+        logger.debug("Failed to convert value to JSON-compatible payload for property panel.", exc_info=True)
+        dumped = None
     if dumped is not None:
         return to_jsonable(dumped)
     return str(value)
@@ -128,17 +132,17 @@ def schema_to_json_obj_loose(schema: Any) -> Any:
     if schema_kind in {"string", "number", "integer", "boolean", "null", "object", "array", "any"}:
         try:
             return schema_to_json_obj(schema)
-        except Exception:
+        except _SCHEMA_CONVERSION_ERRORS:
             logger.exception("strict schema_to_json_obj failed for F8DataTypeSchema")
             return None
     try:
         typed_schema = schema_from_json_obj_loose(schema)
-    except Exception:
+    except _SCHEMA_CONVERSION_ERRORS:
         typed_schema = None
     if typed_schema is not None:
         try:
             return schema_to_json_obj(typed_schema)
-        except Exception:
+        except _SCHEMA_CONVERSION_ERRORS:
             logger.exception("strict schema_to_json_obj failed after coercion")
             return None
     try:
