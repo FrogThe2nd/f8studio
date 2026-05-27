@@ -219,6 +219,16 @@ def test_command_ui_modules_avoid_dynamic_attribute_probing() -> None:
         assert all(pattern not in source for pattern in forbidden_patterns), str(path)
 
 
+def test_state_inline_controls_avoid_dynamic_attribute_probing() -> None:
+    forbidden_patterns = (
+        "getattr(",
+        "setattr(",
+        "hasattr(",
+    )
+    source = (PACKAGE_ROOT / "nodegraph" / "items" / "state_inline_controls.py").read_text(encoding="utf-8")
+    assert all(pattern not in source for pattern in forbidden_patterns)
+
+
 def test_assets_public_exports_remain_stable() -> None:
     import f8pystudio.assets as assets
 

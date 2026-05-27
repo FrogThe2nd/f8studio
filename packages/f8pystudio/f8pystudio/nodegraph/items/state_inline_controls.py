@@ -56,6 +56,31 @@ from .service_toolbar_host import F8ElideToolButton, F8ForceGlobalToolTipFilter
 logger = logging.getLogger(__name__)
 
 INLINE_HEADER_BUTTON_STYLE = inline_header_button_qss()
+_NODE_ACCESS_ERRORS = (AttributeError, RuntimeError, TypeError)
+_NODE_VALUE_ACCESS_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
+_QT_PROXY_ACCESS_ERRORS = (AttributeError, RuntimeError, TypeError)
+_STATE_SPEC_ERRORS = (AttributeError, TypeError, ValueError)
+
+
+def _node_item_id(node_item: Any) -> str:
+    try:
+        return str(node_item.id or "").strip()
+    except _NODE_VALUE_ACCESS_ERRORS:
+        return ""
+
+
+def _backend_node_id(node: Any) -> str:
+    try:
+        return str(node.id or "").strip()
+    except _NODE_VALUE_ACCESS_ERRORS:
+        return ""
+
+
+def _node_spec(node: Any) -> Any | None:
+    try:
+        return node.spec
+    except _NODE_ACCESS_ERRORS:
+        return None
 
 
 def _json_safe_schema_value(value: Any) -> Any:
@@ -102,7 +127,7 @@ def state_inline_control_serial(node_item: Any, info: StateFieldInfo) -> str:
             sort_keys=True,
             default=str,
         )
-    except Exception:
+    except (AttributeError, TypeError, ValueError):
         return ""
 
 
@@ -236,10 +261,7 @@ def _editor_assist_context(
     if node is None:
         return None
     spec = None
-    try:
-        spec = node.spec  # type: ignore[attr-defined]
-    except Exception:
-        spec = None
+    spec = _node_spec(node)
     if spec is None:
         return None
 
@@ -270,7 +292,10 @@ def set_state_inline_control_read_only(control: QtWidgets.QWidget, *, read_only:
 
 
 def _preview_force_read_only(node_item: Any) -> bool:
-    return bool(getattr(node_item, "_f8_preview_read_only", False))
+    try:
+        return bool(node_item._f8_preview_read_only)
+    except _NODE_VALUE_ACCESS_ERRORS:
+        return False
 
 
 def refresh_state_inline_control_read_only(node_item: Any) -> None:
@@ -282,7 +307,7 @@ def refresh_state_inline_control_read_only(node_item: Any) -> None:
         return
     try:
         fields = list(node.effective_state_fields() or [])
-    except Exception:
+    except _NODE_VALUE_ACCESS_ERRORS:
         fields = []
     for field in fields:
         info = state_field_info(field)
@@ -334,11 +359,7 @@ def sync_state_inline_controls_from_graph_property(node_item: Any, node: Any, na
         try:
             updater(value)
         except Exception:
-            try:
-                node_id = str(node_item.id or "")
-            except Exception:
-                node_id = ""
-            logger.exception("inline state updater failed nodeId=%s key=%s", node_id, key)
+            logger.exception("inline state updater failed nodeId=%s key=%s", _node_item_id(node_item), key)
 
     if preview_updater is not None and preview_updater is not updater:
         try:
@@ -348,11 +369,7 @@ def sync_state_inline_controls_from_graph_property(node_item: Any, node: Any, na
         try:
             preview_updater(preview_value)
         except Exception:
-            try:
-                node_id = str(node_item.id or "")
-            except Exception:
-                node_id = ""
-            logger.exception("inline wave preview updater failed nodeId=%s key=%s", node_id, key)
+            logger.exception("inline wave preview updater failed nodeId=%s key=%s", _node_item_id(node_item), key)
 
     if pattern_updater is not None and pattern_updater is not updater:
         try:
@@ -362,11 +379,7 @@ def sync_state_inline_controls_from_graph_property(node_item: Any, node: Any, na
         try:
             pattern_updater(points_value)
         except Exception:
-            try:
-                node_id = str(node_item.id or "")
-            except Exception:
-                node_id = ""
-            logger.exception("inline wave pattern updater failed nodeId=%s key=%s", node_id, key)
+            logger.exception("inline wave pattern updater failed nodeId=%s key=%s", _node_item_id(node_item), key)
 
     refresh_state_inline_option_pools(node_item, key)
 
@@ -400,15 +413,15 @@ def refresh_state_inline_option_pools(node_item: Any, changed_field: str) -> Non
             continue
         try:
             pool_value = node.get_property(pool)
-        except Exception:
+        except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
             pool_value = None
         items = resolve_pool_items(pool_value)
         try:
             selected_value = node.get_property(field)
-        except Exception:
+        except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
             try:
                 selected_value = ctrl.value()
-            except Exception:
+            except _NODE_VALUE_ACCESS_ERRORS:
                 selected_value = None
         try:
             ctrl.set_options(items, labels=items)
@@ -542,7 +555,7 @@ def build_state_inline_control(
             return []
         try:
             value = node.get_property(pool_field)
-        except Exception:
+        except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
             return []
         return resolve_pool_items(value)
 
@@ -567,16 +580,14 @@ def build_state_inline_control(
     )
     try:
         graph = node_item._graph()
-    except AttributeError:
+    except _NODE_ACCESS_ERRORS:
         graph = None
     node = node_item._backend_node()
-    node_id = ""
-    if node is not None:
-        node_id = str(node.id or "").strip()
+    node_id = _backend_node_id(node) if node is not None else ""
 
     try:
         viewer = node_item.viewer()
-    except AttributeError:
+    except _NODE_ACCESS_ERRORS:
         viewer = None
     warning_parent = None
     if viewer is not None:
@@ -650,17 +661,14 @@ def ensure_state_inline_controls(node_item: Any) -> None:
         return
     try:
         fields = list(node.effective_state_fields() or [])
-    except Exception:
-        try:
-            spec = node.spec
-        except Exception:
-            spec = None
+    except _NODE_VALUE_ACCESS_ERRORS:
+        spec = _node_spec(node)
         if spec is None:
             fields = []
         else:
             try:
                 fields = list(spec.stateFields or [])
-            except Exception:
+            except _STATE_SPEC_ERRORS:
                 fields = []
 
     show: list[StateFieldInfo] = []
@@ -691,7 +699,7 @@ def ensure_state_inline_controls(node_item: Any) -> None:
         old = None
         try:
             old = proxy.widget()
-        except Exception:
+        except _QT_PROXY_ACCESS_ERRORS:
             old = None
         try:
             proxy.setWidget(None)
@@ -780,7 +788,7 @@ def ensure_state_inline_controls(node_item: Any) -> None:
         old = None
         try:
             old = proxy.widget()
-        except Exception:
+        except _QT_PROXY_ACCESS_ERRORS:
             old = None
         proxy.setWidget(panel)
 
