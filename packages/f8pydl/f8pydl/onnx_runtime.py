@@ -1,11 +1,36 @@
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from .model_config import ModelSpec
 from .vision_utils import LetterboxResult, letterbox_bgr, nms_xyxy
+
+logger = logging.getLogger(__name__)
+
+_ORT_CPU_PROVIDER = "CPUExecutionProvider"
+_ORT_CUDA_PROVIDER = "CUDAExecutionProvider"
+_ORT_PROVIDER_QUERY_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
+_CV2_IMPORT_ERRORS = (ImportError, OSError)
+_NUMERIC_INFERENCE_ERRORS = (FloatingPointError, TypeError, ValueError)
+
+
+class _OrtInferenceSessionFactory(Protocol):
+    def __call__(self, model_path: str, *, providers: list[str]) -> Any: ...
+
+
+class _OrtModule(Protocol):
+    InferenceSession: _OrtInferenceSessionFactory
+
+    def get_available_providers(self) -> list[str]: ...
+
+
+class _Cv2Module(Protocol):
+    error: type[Exception]
+
+    def boxPoints(self, box: tuple[tuple[float, float], tuple[float, float], float]) -> Any: ...  # noqa: N802
 
 
 @dataclass(frozen=True)
@@ -40,16 +65,28 @@ class TemporalDetectorInputSpec:
     input_width: int
 
 
-def _choose_ort_providers(*, prefer: Literal["auto", "cuda", "cpu"]) -> list[str]:
-    import onnxruntime as ort  # type: ignore
+@dataclass(frozen=True)
+class _OrtSessionInitResult:
+    session: Any
+    provider_warning: str
 
+
+def _available_ort_providers(ort: _OrtModule) -> list[str]:
     try:
-        available = list(ort.get_available_providers())  # type: ignore[attr-defined]
-    except Exception:
-        available = []
+        return [str(provider) for provider in ort.get_available_providers()]
+    except _ORT_PROVIDER_QUERY_ERRORS:
+        logger.debug("failed to query ONNX Runtime providers", exc_info=True)
+        return []
+
+
+def _choose_ort_providers_from_available(
+    available: list[str],
+    *,
+    prefer: Literal["auto", "cuda", "cpu"],
+) -> list[str]:
     by_lower = {str(p).lower(): str(p) for p in available}
-    cuda = by_lower.get("cudaexecutionprovider", "CUDAExecutionProvider")
-    cpu = by_lower.get("cpuexecutionprovider", "CPUExecutionProvider")
+    cuda = by_lower.get("cudaexecutionprovider", _ORT_CUDA_PROVIDER)
+    cpu = by_lower.get("cpuexecutionprovider", _ORT_CPU_PROVIDER)
     if prefer == "cpu":
         return [cpu]
     if prefer == "cuda":
@@ -61,31 +98,55 @@ def _choose_ort_providers(*, prefer: Literal["auto", "cuda", "cpu"]) -> list[str
     return [cpu]
 
 
+def _choose_ort_providers(*, prefer: Literal["auto", "cuda", "cpu"]) -> list[str]:
+    import onnxruntime as ort  # type: ignore
+
+    return _choose_ort_providers_from_available(_available_ort_providers(ort), prefer=prefer)
+
+
+def _create_ort_session(
+    ort: _OrtModule,
+    model_path: str,
+    *,
+    ort_provider: Literal["auto", "cuda", "cpu"],
+) -> _OrtSessionInitResult:
+    providers = _choose_ort_providers_from_available(_available_ort_providers(ort), prefer=ort_provider)
+    try:
+        session = ort.InferenceSession(model_path, providers=providers)
+        return _OrtSessionInitResult(session=session, provider_warning="")
+    except Exception as exc:
+        if ort_provider == "cpu":
+            raise
+        available = _available_ort_providers(ort)
+        provider_warning = (
+            f"Failed to init ORT providers={providers!r}; falling back to CPUExecutionProvider. "
+            f"availableProviders={available!r}; error={exc}"
+        )
+        logger.warning(
+            "failed to initialize ONNX Runtime session; falling back to CPU provider "
+            "model_path=%s providers=%r available_providers=%r",
+            model_path,
+            providers,
+            available,
+            exc_info=True,
+        )
+        session = ort.InferenceSession(model_path, providers=[_ORT_CPU_PROVIDER])
+        return _OrtSessionInitResult(session=session, provider_warning=provider_warning)
+
+
 class _OnnxSession:
     def __init__(self, model_path: str, *, ort_provider: Literal["auto", "cuda", "cpu"]) -> None:
         import onnxruntime as ort  # type: ignore
 
-        self.provider_warning: str = ""
-        providers = _choose_ort_providers(prefer=ort_provider)
-        try:
-            self._session = ort.InferenceSession(model_path, providers=providers)
-        except Exception as exc:
-            prefer = str(ort_provider or "auto").lower()
-            if prefer in ("auto", "cuda"):
-                try:
-                    available = list(ort.get_available_providers())  # type: ignore[attr-defined]
-                except Exception:
-                    available = []
-                self.provider_warning = (
-                    f"Failed to init ORT providers={providers!r}; falling back to CPUExecutionProvider. "
-                    f"availableProviders={available!r}; error={exc}"
-                )
-                self._session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
-            else:
-                raise
-        self.input_name = str(self._session.get_inputs()[0].name)
+        session_result = _create_ort_session(ort, model_path, ort_provider=ort_provider)
+        self._session = session_result.session
+        self.provider_warning = session_result.provider_warning
+        inputs = list(self._session.get_inputs())
+        if not inputs:
+            raise ValueError("ONNX model must have at least 1 input")
+        self.input_name = str(inputs[0].name)
         self.active_providers = list(self._session.get_providers())
-        self.input_meta = self._session.get_inputs()[0]
+        self.input_meta = inputs[0]
 
     def run(self, x: Any) -> Any:
         out = self._session.run(None, {self.input_name: x})
@@ -192,7 +253,7 @@ class OnnxYoloDetectorRuntime:
             cls_int_like = False
             try:
                 cls_int_like = bool(np.mean(np.abs(cls_col - np.round(cls_col)) < 1e-3) > 0.95)
-            except Exception:
+            except _NUMERIC_INFERENCE_ERRORS:
                 cls_int_like = False
 
             if nc == 1 or cls_int_like:
@@ -446,31 +507,60 @@ class OnnxYoloDetectorRuntime:
     def _xywha_to_poly_lb(self, xywha: Any) -> Any:
         import numpy as np  # type: ignore
 
-        angle_unit = "deg"
-        try:
-            ymeta = (self.spec.meta or {}).get("yolo")
-            if isinstance(ymeta, dict):
-                angle_unit = str(ymeta.get("angleUnit") or "deg").strip().lower()
-        except Exception:
-            angle_unit = "deg"
+        angle_unit = self._obb_angle_unit()
+        cv2_module = self._optional_cv2_module()
 
         polys: list[Any] = []
         for (cx, cy, w, h, ang) in xywha:
             a = float(ang)
             if angle_unit in ("rad", "radian", "radians"):
                 a = a * 180.0 / math.pi
-            try:
-                import cv2  # type: ignore
-
-                pts = cv2.boxPoints(((float(cx), float(cy)), (float(w), float(h)), float(a)))  # type: ignore[arg-type]
+            pts = self._cv2_box_points(cv2_module, cx=float(cx), cy=float(cy), w=float(w), h=float(h), angle_deg=float(a))
+            if pts is not None:
                 polys.append(pts.astype(np.float32))
-            except Exception:
-                x1 = float(cx) - float(w) / 2.0
-                y1 = float(cy) - float(h) / 2.0
-                x2 = float(cx) + float(w) / 2.0
-                y2 = float(cy) + float(h) / 2.0
-                polys.append(np.asarray([[x1, y1], [x2, y1], [x2, y2], [x1, y2]], dtype=np.float32))
+                continue
+            x1 = float(cx) - float(w) / 2.0
+            y1 = float(cy) - float(h) / 2.0
+            x2 = float(cx) + float(w) / 2.0
+            y2 = float(cy) + float(h) / 2.0
+            polys.append(np.asarray([[x1, y1], [x2, y1], [x2, y2], [x1, y2]], dtype=np.float32))
         return np.stack(polys, axis=0) if polys else np.zeros((0, 4, 2), dtype=np.float32)
+
+    def _obb_angle_unit(self) -> str:
+        meta = self.spec.meta
+        if meta is None:
+            return "deg"
+        ymeta = meta.get("yolo")
+        if not isinstance(ymeta, dict):
+            return "deg"
+        return str(ymeta.get("angleUnit") or "deg").strip().lower()
+
+    @staticmethod
+    def _optional_cv2_module() -> _Cv2Module | None:
+        try:
+            import cv2  # type: ignore
+        except _CV2_IMPORT_ERRORS:
+            logger.debug("OpenCV is unavailable while decoding OBB polygons", exc_info=True)
+            return None
+        return cv2
+
+    @staticmethod
+    def _cv2_box_points(
+        cv2_module: _Cv2Module | None,
+        *,
+        cx: float,
+        cy: float,
+        w: float,
+        h: float,
+        angle_deg: float,
+    ) -> Any | None:
+        if cv2_module is None:
+            return None
+        try:
+            return cv2_module.boxPoints(((cx, cy), (w, h), angle_deg))
+        except (cv2_module.error, TypeError, ValueError):
+            logger.debug("OpenCV failed to decode OBB polygon; using axis-aligned fallback", exc_info=True)
+            return None
 
     def _map_polys_to_frame(self, polys_lb: Any, *, lb: LetterboxResult, frame_bgr: Any) -> Any:
         import numpy as np  # type: ignore
@@ -802,24 +892,9 @@ class OnnxNeuFlowRuntime:
         import onnxruntime as ort  # type: ignore
 
         self.spec = spec
-        self.provider_warning: str = ""
-        providers = _choose_ort_providers(prefer=ort_provider)
-        try:
-            self._session = ort.InferenceSession(str(spec.onnx_path), providers=providers)
-        except Exception as exc:
-            prefer = str(ort_provider or "auto").lower()
-            if prefer in ("auto", "cuda"):
-                try:
-                    available = list(ort.get_available_providers())  # type: ignore[attr-defined]
-                except Exception:
-                    available = []
-                self.provider_warning = (
-                    f"Failed to init ORT providers={providers!r}; falling back to CPUExecutionProvider. "
-                    f"availableProviders={available!r}; error={exc}"
-                )
-                self._session = ort.InferenceSession(str(spec.onnx_path), providers=["CPUExecutionProvider"])
-            else:
-                raise
+        session_result = _create_ort_session(ort, str(spec.onnx_path), ort_provider=ort_provider)
+        self._session = session_result.session
+        self.provider_warning = session_result.provider_warning
         inputs = list(self._session.get_inputs())
         if len(inputs) != 2:
             raise ValueError(f"NeuFlow model must have exactly 2 inputs, got {len(inputs)}")
@@ -936,26 +1011,11 @@ class OnnxTemporalWaveRuntime:
         import onnxruntime as ort  # type: ignore
 
         self.spec = spec
-        self.provider_warning: str = ""
         self.output_scale = float(output_scale)
         self.output_bias = float(output_bias)
-        providers = _choose_ort_providers(prefer=ort_provider)
-        try:
-            self._session = ort.InferenceSession(str(spec.onnx_path), providers=providers)
-        except Exception as exc:
-            prefer = str(ort_provider or "auto").lower()
-            if prefer in ("auto", "cuda"):
-                try:
-                    available = list(ort.get_available_providers())  # type: ignore[attr-defined]
-                except Exception:
-                    available = []
-                self.provider_warning = (
-                    f"Failed to init ORT providers={providers!r}; falling back to CPUExecutionProvider. "
-                    f"availableProviders={available!r}; error={exc}"
-                )
-                self._session = ort.InferenceSession(str(spec.onnx_path), providers=["CPUExecutionProvider"])
-            else:
-                raise
+        session_result = _create_ort_session(ort, str(spec.onnx_path), ort_provider=ort_provider)
+        self._session = session_result.session
+        self.provider_warning = session_result.provider_warning
 
         inputs = list(self._session.get_inputs())
         if len(inputs) != 1:
