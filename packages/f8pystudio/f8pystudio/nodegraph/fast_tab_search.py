@@ -74,6 +74,7 @@ class FastTabSearchMenuWidget(TabSearchMenuWidget):
     def _clear_actions(self):
         for action in self._searched_actions:
             self.removeAction(action)
+            action.triggered.connect(self._on_search_submitted)
         del self._searched_actions[:]
         self._search_result_action_names = ()
 
@@ -89,7 +90,32 @@ class FastTabSearchMenuWidget(TabSearchMenuWidget):
 
     def _on_search_submitted(self):
         self.flush_pending_search()
-        super()._on_search_submitted()
+        if self._block_submit:
+            self._close()
+            return
+
+        sender = self.sender()
+        if isinstance(sender, QtWidgets.QAction):
+            action = sender
+        else:
+            action = self._selected_search_action()
+            if action is None:
+                self._close()
+                return
+
+        node_type = self._node_dict.get(action.text())
+        if node_type:
+            self.search_submitted.emit(node_type)
+
+        self._close()
+
+    def _selected_search_action(self) -> QtWidgets.QAction | None:
+        active_action = self.activeAction()
+        if active_action in self._searched_actions:
+            return active_action
+        if self._searched_actions:
+            return self._searched_actions[0]
+        return None
 
     def _apply_pending_search_text(self) -> None:
         self._apply_search_text(self._pending_search_text)

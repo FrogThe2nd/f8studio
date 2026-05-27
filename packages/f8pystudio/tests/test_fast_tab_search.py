@@ -137,6 +137,69 @@ def test_fast_tab_search_keeps_existing_render_when_result_names_do_not_change(m
     widget.deleteLater()
 
 
+def test_fast_tab_search_enter_submits_active_search_action() -> None:
+    _ensure_app()
+    widget = FastTabSearchMenuWidget()
+    widget._show = lambda: None  # type: ignore[method-assign]
+
+    widget.rebuild = True
+    widget.set_nodes(
+        {
+            "Alpha": ["svc.category.alpha"],
+            "Beta": ["svc.category.beta"],
+            "Gamma": ["svc.category.gamma"],
+        }
+    )
+    widget._block_submit = False
+    submitted: list[str] = []
+    widget.search_submitted.connect(submitted.append)  # type: ignore[arg-type]
+
+    widget.line_edit.setText("a")
+    widget.flush_pending_search_for_test()
+    assert [action.text() for action in widget._searched_actions] == ["Alpha", "Gamma", "Beta"]
+
+    widget.setActiveAction(widget._searched_actions[1])
+    widget._on_search_submitted()
+
+    assert submitted == ["svc.category.gamma"]
+
+    widget.close()
+    widget.deleteLater()
+
+
+def test_fast_tab_search_reconnected_search_action_submits_clicked_candidate() -> None:
+    _ensure_app()
+    widget = FastTabSearchMenuWidget()
+    widget._show = lambda: None  # type: ignore[method-assign]
+
+    widget.rebuild = True
+    widget.set_nodes(
+        {
+            "Alpha": ["svc.category.alpha"],
+            "Beta": ["svc.category.beta"],
+            "Gamma": ["svc.category.gamma"],
+        }
+    )
+    widget._block_submit = False
+    submitted: list[str] = []
+    widget.search_submitted.connect(submitted.append)  # type: ignore[arg-type]
+
+    widget.line_edit.setText("a")
+    widget.flush_pending_search_for_test()
+    widget.line_edit.setText("al")
+    widget.flush_pending_search_for_test()
+    widget.line_edit.setText("a")
+    widget.flush_pending_search_for_test()
+    assert [action.text() for action in widget._searched_actions] == ["Alpha", "Gamma", "Beta"]
+
+    widget._searched_actions[1].trigger()
+
+    assert submitted == ["svc.category.gamma"]
+
+    widget.close()
+    widget.deleteLater()
+
+
 def test_viewer_uses_fast_tab_search_widget() -> None:
     _ensure_app()
     viewer = F8StudioNodeViewer()
