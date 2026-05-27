@@ -7,6 +7,7 @@ from qtpy import QtCore, QtWidgets
 
 from f8pystudio.nodegraph.node_base import F8StudioBaseNode
 from f8pystudio.nodegraph.backdrop_nodeitem import F8StudioBackdropNodeItem
+from f8pystudio.nodegraph import container_basenode as container_module
 from f8pystudio.nodegraph.container_basenode import F8StudioContainerNodeItem
 from f8pystudio.nodegraph.items.backdrop_sizer import F8StudioBackdropSizer
 from f8pystudio.nodegraph.node_graph import F8StudioGraph
@@ -86,6 +87,22 @@ class _FakePersistentNode:
 
     def set_property(self, name: str, value: object, push_undo: bool = True) -> None:
         self.set_calls.append((str(name), value, bool(push_undo)))
+
+
+class _FailingPersistentNode:
+    def __init__(self) -> None:
+        self.model = SimpleNamespace(set_property=self._raise_model_set_property)
+
+    def set_property(self, name: str, value: object, push_undo: bool = True) -> None:
+        _ = name
+        _ = value
+        _ = push_undo
+        raise RuntimeError("node set_property failed")
+
+    def _raise_model_set_property(self, name: str, value: object) -> None:
+        _ = name
+        _ = value
+        raise RuntimeError("model set_property failed")
 
 
 def test_filter_redundant_container_child_moves_drops_child_when_container_also_moved() -> None:
@@ -180,6 +197,63 @@ def test_container_restore_resets_forced_child_view_and_persistent_disabled_stat
     assert child_view.disabled is False
     assert child_view.f8_container_forced_disabled is False
     assert node.set_calls == [("disabled", False, False)]
+
+
+def test_container_child_model_disabled_failures_are_logged(monkeypatch) -> None:
+    debug_messages: list[str] = []
+
+    def _debug(message: str, *args: object, **kwargs: object) -> None:
+        assert kwargs.get("exc_info") is True
+        debug_messages.append(str(message) % args)
+
+    monkeypatch.setattr(container_module.logger, "debug", _debug)
+    node = _FailingPersistentNode()
+    container = SimpleNamespace(_backend_node_for_child_view=lambda view: node)
+
+    F8StudioContainerNodeItem._set_child_model_disabled(container, view=SimpleNamespace(id="op"), disabled=True)
+
+    assert debug_messages == [
+        "Failed to set container child disabled property via node.set_property.",
+        "Failed to set container child disabled property via node.model.",
+    ]
+
+
+def test_container_toolbar_node_provider_failure_is_logged(monkeypatch) -> None:
+    debug_messages: list[str] = []
+
+    def _debug(message: str, *args: object, **kwargs: object) -> None:
+        assert kwargs.get("exc_info") is True
+        debug_messages.append(str(message) % args)
+
+    class _Graph:
+        def get_node_by_id(self, node_id: str) -> object:
+            assert node_id == "svc1"
+            raise RuntimeError("node lookup failed")
+
+    monkeypatch.setattr(container_module.logger, "debug", _debug)
+    container = SimpleNamespace(_graph_for_toolbar=lambda viewer: _Graph(), _current_service_id=lambda: "svc1")
+
+    assert F8StudioContainerNodeItem._toolbar_node(container, viewer=None) is None
+    assert debug_messages == ["Failed to resolve container toolbar node for service id=svc1."]
+
+
+def test_container_toolbar_compile_failure_is_logged(monkeypatch) -> None:
+    debug_messages: list[str] = []
+
+    def _debug(message: str, *args: object, **kwargs: object) -> None:
+        assert kwargs.get("exc_info") is True
+        debug_messages.append(str(message) % args)
+
+    def _raise_compile(graph: object) -> object:
+        _ = graph
+        raise RuntimeError("compile failed")
+
+    monkeypatch.setattr(container_module.logger, "debug", _debug)
+    monkeypatch.setattr("f8pystudio.nodegraph.runtime_compiler.compile_runtime_graphs_from_studio", _raise_compile)
+    container = SimpleNamespace(_graph_for_toolbar=lambda viewer: object(), _current_service_id=lambda: "svc1")
+
+    assert F8StudioContainerNodeItem._compiled_graphs_for_toolbar(container, viewer=None) is None
+    assert debug_messages == ["Failed to compile container toolbar rungraphs for service id=svc1."]
 
 
 def test_container_title_double_click_enters_inline_rename() -> None:

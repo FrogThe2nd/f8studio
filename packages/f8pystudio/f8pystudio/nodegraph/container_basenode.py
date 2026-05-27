@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+import logging
 from typing import Any
 
 from qtpy import QtCore, QtGui, QtWidgets
@@ -17,6 +18,45 @@ from .items.backdrop_sizer import F8StudioBackdropSizer
 from .node_base import F8StudioBaseNode
 from .service_process_toolbar import ServiceProcessToolbar
 from .viewer import F8StudioNodeViewer
+
+logger = logging.getLogger(__name__)
+_SPEC_FIELD_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
+_QT_WIDGET_ERRORS = (AttributeError, RuntimeError, TypeError)
+_TOOLBAR_PROVIDER_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
+
+
+def _state_field_name(field: Any) -> str:
+    try:
+        return str(field.name or "").strip()
+    except _SPEC_FIELD_ERRORS:
+        logger.debug("Failed to read container state field name.", exc_info=True)
+        return ""
+
+
+def _state_field_description(field: Any) -> str:
+    try:
+        return str(field.description or "").strip()
+    except _SPEC_FIELD_ERRORS:
+        logger.debug("Failed to read container state field description.", exc_info=True)
+        return ""
+
+
+def _state_field_value_schema(field: Any) -> Any | None:
+    try:
+        return field.valueSchema
+    except _SPEC_FIELD_ERRORS:
+        logger.debug("Failed to read container state field valueSchema.", exc_info=True)
+        return None
+
+
+def _schema_default_value(value_schema: Any | None) -> Any:
+    if value_schema is None:
+        return None
+    try:
+        return schema_default(value_schema)
+    except _SPEC_FIELD_ERRORS:
+        logger.debug("Failed to read container state field default value.", exc_info=True)
+        return None
 
 
 class F8StudioContainerBaseNode(F8StudioBaseNode):
@@ -86,20 +126,18 @@ class F8StudioContainerBaseNode(F8StudioBaseNode):
 
     def _build_state_properties(self) -> None:
         for s in self.effective_state_fields() or []:
-            name = str(s.name or "").strip()
+            name = _state_field_name(s)
             if not name:
                 continue
             try:
                 if self.has_property(name):  # type: ignore[attr-defined]
                     continue
-            except (AttributeError, RuntimeError, TypeError):
-                pass
-            try:
-                default_value = schema_default(s.valueSchema)
-            except Exception:
-                default_value = None
-            widget_type, items, prop_range = self._state_widget_for_schema(s.valueSchema)
-            tooltip = str(s.description or "").strip() or None
+            except _QT_WIDGET_ERRORS:
+                logger.debug("Failed to inspect existing container state property '%s'.", name, exc_info=True)
+            value_schema = _state_field_value_schema(s)
+            default_value = _schema_default_value(value_schema)
+            widget_type, items, prop_range = self._state_widget_for_schema(value_schema)
+            tooltip = _state_field_description(s) or None
             try:
                 self.create_property(
                     name,
@@ -110,7 +148,8 @@ class F8StudioContainerBaseNode(F8StudioBaseNode):
                     widget_tooltip=tooltip,
                     tab="State",
                 )
-            except (AttributeError, RuntimeError, TypeError, ValueError):
+            except _SPEC_FIELD_ERRORS:
+                logger.exception("Failed to create container state property '%s'", name)
                 continue
 
     @staticmethod
@@ -119,12 +158,14 @@ class F8StudioContainerBaseNode(F8StudioBaseNode):
             return NodePropWidgetEnum.QTEXT_EDIT.value, None, None
         try:
             t = schema_type(value_schema)
-        except Exception:
+        except _SPEC_FIELD_ERRORS:
+            logger.debug("Failed to determine container state widget schema type.", exc_info=True)
             t = ""
 
         try:
             enum_items = list(value_schema.enum or [])
-        except Exception:
+        except _SPEC_FIELD_ERRORS:
+            logger.debug("Failed to read container state widget enum items.", exc_info=True)
             enum_items = []
         if enum_items:
             return NodePropWidgetEnum.QCOMBO_BOX.value, [str(x) for x in enum_items], None
@@ -249,7 +290,8 @@ class F8StudioContainerNodeItem(AbstractNodeItem):
             return None
         try:
             viewer = self.viewer()
-        except (AttributeError, RuntimeError, TypeError):
+        except _QT_WIDGET_ERRORS:
+            logger.debug("Failed to resolve container child backend viewer for child id=%s.", key, exc_info=True)
             return None
         if not isinstance(viewer, F8StudioNodeViewer):
             return None
@@ -259,6 +301,7 @@ class F8StudioContainerNodeItem(AbstractNodeItem):
         try:
             return graph.get_node_by_id(key)
         except (AttributeError, KeyError, RuntimeError, TypeError):
+            logger.debug("Failed to resolve container child backend node for child id=%s.", key, exc_info=True)
             return None
 
     def _set_child_model_disabled(self, view: Any, disabled: bool) -> None:
@@ -269,12 +312,12 @@ class F8StudioContainerNodeItem(AbstractNodeItem):
         try:
             node.set_property("disabled", target, push_undo=False)
             return
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            pass
+        except _SPEC_FIELD_ERRORS:
+            logger.debug("Failed to set container child disabled property via node.set_property.", exc_info=True)
         try:
             node.model.set_property("disabled", target)
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            pass
+        except _SPEC_FIELD_ERRORS:
+            logger.debug("Failed to set container child disabled property via node.model.", exc_info=True)
 
     def _restore_forced_child_if_needed(self, view: Any) -> None:
         key = self._child_state_key(view)
@@ -305,8 +348,8 @@ class F8StudioContainerNodeItem(AbstractNodeItem):
         if pos:
             try:
                 self.xy_pos = pos
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                pass
+            except _SPEC_FIELD_ERRORS:
+                logger.debug("Failed to apply container post-init position.", exc_info=True)
             self._position_service_toolbar()
 
     def _ensure_service_toolbar(self, viewer: Any | None) -> None:
@@ -316,67 +359,78 @@ class F8StudioContainerNodeItem(AbstractNodeItem):
         if not service_id:
             return
 
-        def _get_bridge() -> Any | None:
-            try:
-                if not isinstance(viewer, F8StudioNodeViewer):
-                    return None
-                g = viewer.f8_graph
-                return g.service_bridge if g is not None else None
-            except Exception:
-                return None
-
-        def _get_service_class() -> str:
-            try:
-                if not isinstance(viewer, F8StudioNodeViewer):
-                    return ""
-                g = viewer.f8_graph
-                if g is None:
-                    return ""
-                n = g.get_node_by_id(self._current_service_id())
-                if n is None:
-                    return ""
-                spec = n.spec
-                return str(spec.serviceClass or "")
-            except Exception:
-                return ""
-
-        def _get_node() -> Any | None:
-            try:
-                if not isinstance(viewer, F8StudioNodeViewer):
-                    return None
-                g = viewer.f8_graph
-                return g.get_node_by_id(self._current_service_id()) if g is not None else None
-            except Exception:
-                return None
-
-        def _get_compiled_graphs() -> Any | None:
-            try:
-                if not isinstance(viewer, F8StudioNodeViewer):
-                    return None
-                g = viewer.f8_graph
-                if g is None:
-                    return None
-                from .runtime_compiler import compile_runtime_graphs_from_studio
-
-                return compile_runtime_graphs_from_studio(g)
-            except Exception:
-                return None
-
         try:
             w = ServiceProcessToolbar(
                 service_id=service_id,
-                get_bridge=_get_bridge,
-                get_node=_get_node,
-                get_service_class=_get_service_class,
-                get_compiled_graphs=_get_compiled_graphs,
+                get_bridge=lambda: self._toolbar_bridge(viewer),
+                get_node=lambda: self._toolbar_node(viewer),
+                get_service_class=lambda: self._toolbar_service_class(viewer),
+                get_compiled_graphs=lambda: self._compiled_graphs_for_toolbar(viewer),
             )
             proxy = QtWidgets.QGraphicsProxyWidget(self)
             proxy.setWidget(w)
             # proxy.setZValue(10_000)
             # proxy.setCacheMode(QtWidgets.QGraphicsItem.NoCache)
             self._svc_toolbar_proxy = proxy
-        except Exception:
+        except _QT_WIDGET_ERRORS:
+            logger.exception("Failed to create container service toolbar for service id=%s", service_id)
             self._svc_toolbar_proxy = None
+
+    @staticmethod
+    def _graph_for_toolbar(viewer: Any | None) -> Any | None:
+        if not isinstance(viewer, F8StudioNodeViewer):
+            return None
+        try:
+            return viewer.f8_graph
+        except _TOOLBAR_PROVIDER_ERRORS:
+            logger.debug("Failed to resolve container toolbar graph from viewer.", exc_info=True)
+            return None
+
+    def _toolbar_bridge(self, viewer: Any | None) -> Any | None:
+        graph = self._graph_for_toolbar(viewer)
+        if graph is None:
+            return None
+        try:
+            return graph.service_bridge
+        except _TOOLBAR_PROVIDER_ERRORS:
+            logger.debug("Failed to resolve container toolbar bridge for service id=%s.", self._current_service_id(), exc_info=True)
+            return None
+
+    def _toolbar_node(self, viewer: Any | None) -> Any | None:
+        graph = self._graph_for_toolbar(viewer)
+        if graph is None:
+            return None
+        service_id = self._current_service_id()
+        if not service_id:
+            return None
+        try:
+            return graph.get_node_by_id(service_id)
+        except _TOOLBAR_PROVIDER_ERRORS:
+            logger.debug("Failed to resolve container toolbar node for service id=%s.", service_id, exc_info=True)
+            return None
+
+    def _toolbar_service_class(self, viewer: Any | None) -> str:
+        node = self._toolbar_node(viewer)
+        if node is None:
+            return ""
+        try:
+            spec = node.spec
+            return str(spec.serviceClass or "")
+        except _TOOLBAR_PROVIDER_ERRORS:
+            logger.debug("Failed to resolve container toolbar service class for service id=%s.", self._current_service_id(), exc_info=True)
+            return ""
+
+    def _compiled_graphs_for_toolbar(self, viewer: Any | None) -> Any | None:
+        graph = self._graph_for_toolbar(viewer)
+        if graph is None:
+            return None
+        try:
+            from .runtime_compiler import compile_runtime_graphs_from_studio
+
+            return compile_runtime_graphs_from_studio(graph)
+        except (AttributeError, RuntimeError, TypeError, ValueError, ImportError):
+            logger.debug("Failed to compile container toolbar rungraphs for service id=%s.", self._current_service_id(), exc_info=True)
+            return None
 
     def _current_service_id(self) -> str:
         try:
@@ -404,13 +458,14 @@ class F8StudioContainerNodeItem(AbstractNodeItem):
             rect = self.boundingRect()
             w = float(proxy.size().width() or 0.0)
             h = float(proxy.size().height() or 0.0)
-        except (AttributeError, RuntimeError, TypeError, ValueError):
+        except _SPEC_FIELD_ERRORS:
+            logger.debug("Failed to measure container service toolbar for service id=%s.", self._current_service_id(), exc_info=True)
             return
-        
+
         try:
             proxy.setPos(rect.right() - w, rect.top() - h)
-        except (AttributeError, RuntimeError, TypeError):
-            pass
+        except _QT_WIDGET_ERRORS:
+            logger.debug("Failed to position container service toolbar for service id=%s.", self._current_service_id(), exc_info=True)
 
     def _combined_rect(self, nodes: list[AbstractNodeItem]) -> QtCore.QRectF:
         group = self.scene().createItemGroup(nodes)
