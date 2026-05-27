@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from qtpy import QtCore, QtWidgets
@@ -24,6 +25,10 @@ logger = logging.getLogger(__name__)
 # controls both row visibility and command-port visibility.
 COMMAND_INLINE_BUTTON_STYLE = inline_command_button_qss()
 
+_COMMAND_SPEC_ERRORS = (AttributeError, TypeError, ValueError)
+_QT_ACCESS_ERRORS = (AttributeError, RuntimeError, TypeError)
+_QT_VALUE_ACCESS_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
+
 
 def _node_item_id(node_item: Any) -> str:
     try:
@@ -35,24 +40,28 @@ def _node_item_id(node_item: Any) -> str:
 def _command_name(command: Any) -> str:
     try:
         return str(command.name or "").strip()
-    except Exception:
+    except _COMMAND_SPEC_ERRORS:
         return ""
 
 
 def _command_description(command: Any) -> str:
     try:
         return str(command.description or "").strip()
-    except Exception:
+    except _COMMAND_SPEC_ERRORS:
         return ""
 
 
 def _visible_commands(node_item: Any) -> list[Any]:
-    node = node_item._backend_node()
+    try:
+        node = node_item._backend_node()
+    except _QT_VALUE_ACCESS_ERRORS:
+        logger.exception("read backend node failed nodeId=%s", _node_item_id(node_item))
+        return []
     if node is None:
         return []
     try:
         commands = list(node.effective_commands() or [])
-    except Exception:
+    except _QT_VALUE_ACCESS_ERRORS:
         logger.exception("read effective_commands failed nodeId=%s", _node_item_id(node_item))
         return []
 
@@ -63,7 +72,7 @@ def _visible_commands(node_item: Any) -> list[Any]:
             continue
         try:
             show_on_node = bool(command.showOnNode)
-        except Exception:
+        except _COMMAND_SPEC_ERRORS:
             logger.exception(
                 "read command showOnNode failed nodeId=%s command=%s",
                 _node_item_id(node_item),
@@ -232,7 +241,7 @@ def _sync_command_row(
             enabled=enabled,
             disabled_reason=disabled_reason,
         )
-    except Exception:
+    except _QT_VALUE_ACCESS_ERRORS:
         logger.exception("build command row failed nodeId=%s command=%s", _node_item_id(node_item), command_name)
         return None
 
@@ -260,32 +269,32 @@ def refresh_inline_command_rows(node_item: Any) -> None:
 def _is_missing_locked(node_item: Any) -> bool:
     try:
         node = node_item._backend_node()
-    except Exception:
+    except _QT_VALUE_ACCESS_ERRORS:
         return False
     if node is None:
         return False
     try:
         return bool(node.is_missing_locked())
-    except Exception:
+    except _QT_VALUE_ACCESS_ERRORS:
         return False
 
 
 def _snapshot_selected_node_ids(node_item: Any) -> list[str]:
     try:
         graph = node_item._graph()
-    except Exception:
+    except _QT_ACCESS_ERRORS:
         return []
     if graph is None:
         return []
     try:
         selected_nodes = list(graph.selected_nodes() or [])
-    except Exception:
+    except _QT_VALUE_ACCESS_ERRORS:
         return []
     out: list[str] = []
     for node in selected_nodes:
         try:
             node_id = str(node.id or "").strip()
-        except Exception:
+        except _QT_VALUE_ACCESS_ERRORS:
             node_id = ""
         if node_id:
             out.append(node_id)
@@ -295,25 +304,25 @@ def _snapshot_selected_node_ids(node_item: Any) -> list[str]:
 def _restore_selected_node_ids(node_item: Any, ids: list[str]) -> None:
     try:
         graph = node_item._graph()
-    except Exception:
+    except _QT_ACCESS_ERRORS:
         return
     if graph is None:
         return
     target_ids = {str(node_id).strip() for node_id in ids if str(node_id).strip()}
     try:
         nodes = list(graph.all_nodes() or [])
-    except Exception:
+    except _QT_VALUE_ACCESS_ERRORS:
         nodes = []
     for node in nodes:
         try:
             node_id = str(node.id or "").strip()
-        except Exception:
+        except _QT_VALUE_ACCESS_ERRORS:
             node_id = ""
         if not node_id:
             continue
         try:
             node.set_property("selected", node_id in target_ids, push_undo=False)
-        except Exception:
+        except _QT_VALUE_ACCESS_ERRORS:
             continue
 
 
@@ -332,13 +341,13 @@ def invoke_command(node_item: Any, cmd: Any) -> None:
     """
     try:
         call = str(cmd.name or "").strip()
-    except Exception:
+    except _COMMAND_SPEC_ERRORS:
         call = ""
     if not call:
         return
     try:
         node = node_item._backend_node()
-    except Exception:
+    except _QT_VALUE_ACCESS_ERRORS:
         node = None
     bridge = node_item._bridge()
     if bridge is None:
@@ -358,27 +367,22 @@ def invoke_command(node_item: Any, cmd: Any) -> None:
         try:
             viewer = node_item.viewer()
             parent = viewer.window() if viewer is not None else None
-        except Exception:
+        except _QT_ACCESS_ERRORS:
             parent = None
         try:
             if bool(node.handle_command_ui(cmd, parent=parent, source=CommandUiSource.NODEGRAPH)):
                 return
         except Exception:
-            node_id = ""
-            try:
-                node_id = str(node_item.id or "").strip()
-            except Exception:
-                node_id = ""
-            logger.exception("handle_command_ui failed nodeId=%s", node_id)
+            logger.exception("handle_command_ui failed nodeId=%s", _node_item_id(node_item))
     try:
         params = list(cmd.params or [])
-    except Exception:
+    except _COMMAND_SPEC_ERRORS:
         params = []
 
     # Route UI-triggered commands through hidden command input state so command
     # output ports and downstream graph fanout keep the same semantics for both
     # services and operators.
-    node_id = str(getattr(node_item, "id", "") or "").strip() or str(sid)
+    node_id = _node_item_id(node_item) or str(sid)
     if not params:
         try:
             bridge.set_remote_state(  # type: ignore[attr-defined]
@@ -413,17 +417,20 @@ def invoke_command(node_item: Any, cmd: Any) -> None:
 def prompt_command_args(node_item: Any, cmd: Any) -> dict[str, Any] | None:
     try:
         call = str(cmd.name or "").strip() or "Command"
-    except Exception:
+    except _COMMAND_SPEC_ERRORS:
         call = "Command"
     try:
         params = list(cmd.params or [])
-    except Exception:
+    except _COMMAND_SPEC_ERRORS:
         params = []
     if not params:
         return {}
 
-    viewer = node_item.viewer()
-    parent = viewer.window() if viewer is not None else None
+    try:
+        viewer = node_item.viewer()
+        parent = viewer.window() if viewer is not None else None
+    except _QT_ACCESS_ERRORS:
+        parent = None
 
     dlg = QtWidgets.QDialog(parent)
     dlg.setWindowTitle(call)
@@ -433,30 +440,30 @@ def prompt_command_args(node_item: Any, cmd: Any) -> dict[str, Any] | None:
     form.setContentsMargins(12, 12, 12, 12)
     form.setSpacing(8)
 
-    editors: dict[str, tuple[QtWidgets.QWidget, Any]] = {}
+    editors: dict[str, tuple[QtWidgets.QWidget, Callable[[], Any]]] = {}
 
     for param in params:
         try:
             name = str(param.name or "").strip()
-        except Exception:
+        except _COMMAND_SPEC_ERRORS:
             name = ""
         try:
             required = bool(param.required)
-        except Exception:
+        except _COMMAND_SPEC_ERRORS:
             required = False
         try:
             ui_raw = str(param.uiControl or "").strip()
             ui = ui_raw.lower()
-        except Exception:
+        except _COMMAND_SPEC_ERRORS:
             ui_raw = ""
             ui = ""
         try:
             schema = param.valueSchema
-        except Exception:
+        except _COMMAND_SPEC_ERRORS:
             schema = None
         try:
             desc_raw = param.description or ""
-        except Exception:
+        except _COMMAND_SPEC_ERRORS:
             desc_raw = ""
         if not name:
             continue
@@ -468,7 +475,7 @@ def prompt_command_args(node_item: Any, cmd: Any) -> dict[str, Any] | None:
         lo, hi = node_item._schema_numeric_range(schema)
         try:
             default_value = schema_default(schema)
-        except Exception:
+        except _COMMAND_SPEC_ERRORS:
             default_value = None
 
         label = f"{name} *" if required else name
@@ -490,7 +497,7 @@ def prompt_command_args(node_item: Any, cmd: Any) -> dict[str, Any] | None:
                         value = node.get_property(pool_field)
                         if isinstance(value, (list, tuple)):
                             items = [str(item) for item in value]
-                    except Exception:
+                    except _QT_VALUE_ACCESS_ERRORS:
                         items = []
             else:
                 items = list(enum_items)
@@ -581,7 +588,7 @@ def prompt_command_args(node_item: Any, cmd: Any) -> dict[str, Any] | None:
             if default_value is not None:
                 try:
                     text_edit.setPlainText(json.dumps(default_value, ensure_ascii=False, indent=2))
-                except Exception:
+                except (TypeError, ValueError):
                     text_edit.setPlainText(str(default_value))
 
             def _get() -> Any:
@@ -590,7 +597,7 @@ def prompt_command_args(node_item: Any, cmd: Any) -> dict[str, Any] | None:
                     return None
                 try:
                     return json.loads(txt)
-                except Exception:
+                except json.JSONDecodeError:
                     return txt
 
             editors[name] = (_with_tooltip(text_edit), _get)
@@ -623,18 +630,18 @@ def prompt_command_args(node_item: Any, cmd: Any) -> dict[str, Any] | None:
         for param in params:
             try:
                 param_name = str(param.name or "").strip()
-            except Exception:
+            except _COMMAND_SPEC_ERRORS:
                 param_name = ""
             try:
                 required = bool(param.required)
-            except Exception:
+            except _COMMAND_SPEC_ERRORS:
                 required = False
             if not param_name or param_name not in editors:
                 continue
             _widget, getter = editors[param_name]
             try:
                 value = getter()
-            except Exception:
+            except (RuntimeError, TypeError, ValueError):
                 value = None
             if isinstance(value, str) and value.strip() == "":
                 value = None
