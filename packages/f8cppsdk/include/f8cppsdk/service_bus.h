@@ -28,6 +28,10 @@
 
 namespace f8::cppsdk {
 
+namespace generated {
+struct F8RuntimeGraph;
+}
+
 // Minimal, protocol-compatible service bus for C++ services.
 //
 // Zenoh is the default runtime path:
@@ -200,6 +204,7 @@ class ServiceBus final : public ServiceControlHandler {
   void load_active_from_retained();
   void apply_data_routes_from_rungraph(const json& graph_obj);
   void apply_rungraph_local(const json& graph_obj, std::string& error_code, std::string& error_message);
+  std::int64_t rungraph_ts_ms(const f8::cppsdk::generated::F8RuntimeGraph& graph) const;
   bool should_apply_rungraph_state_value(const std::string& node_id, const std::string& field, const json& value,
                                          std::int64_t rungraph_ts);
   void publish_state_local(const std::string& node_id, const std::string& field, const json& value, std::int64_t ts_ms,

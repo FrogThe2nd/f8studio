@@ -616,6 +616,31 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(v_cfg, "v2")
         self.assertEqual(v_mode, "m2")
 
+    async def test_rungraph_state_values_do_not_overwrite_equal_timestamp_state(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+
+        node = F8RuntimeNode(
+            nodeId="opA",
+            serviceId="svcA",
+            serviceClass="svcA",
+            operatorClass="OpA",
+            stateFields=[
+                F8StateSpec(name="cfg", valueSchema=string_schema(), access=F8StateAccess.rw),
+            ],
+            stateValues={"cfg": "rungraph"},
+        )
+        graph = F8RuntimeGraph(graphId="g1", revision="r1", nodes=[node], edges=[])
+        await bus.publish_state_runtime("opA", "cfg", "runtime", ts_ms=100)
+
+        with patch("f8pysdk.service_bus.workflow.rungraph.now_ms", return_value=100):
+            await bus.set_rungraph(graph)
+
+        state = await bus.get_state("opA", "cfg")
+        self.assertTrue(state.found)
+        self.assertEqual(state.value, "runtime")
+        self.assertEqual(state.ts_ms, 100)
+
     async def test_system_identity_seeds_and_protect(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")

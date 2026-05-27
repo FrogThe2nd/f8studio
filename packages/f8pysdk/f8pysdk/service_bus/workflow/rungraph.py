@@ -21,7 +21,7 @@ from ..._specs.schema import data_port_payload_kind
 from ...codec import unwrap_json_value
 from ...f8_naming import data_key
 from ...rungraph_fingerprint import build_rungraph_deploy_fingerprint
-from ...state import StateWriteOrigin, StateWriteSource
+from ...state import StateRead, StateWriteOrigin, StateWriteSource
 from ..internal.logging import log_error_once
 from ..state.helpers import build_intra_state_route_meta
 from ..state.options import StatePublishOptions
@@ -117,6 +117,20 @@ def _with_rungraph_ts(graph: F8RuntimeGraph, ts_ms: int) -> F8RuntimeGraph:
     return copy_model(graph, deep=True, update={"meta": meta2})
 
 
+def _rungraph_ts_ms(graph: F8RuntimeGraph) -> int:
+    meta = graph.meta
+    if meta is None or isinstance(meta, msgspec.UnsetType):
+        return 0
+    ts = meta.ts
+    if ts is None or isinstance(ts, msgspec.UnsetType):
+        return 0
+    try:
+        return int(ts)
+    except (TypeError, ValueError) as exc:
+        log.warning("rungraph has invalid meta.ts value=%r: %s", ts, exc)
+        return 0
+
+
 def _encode_rungraph_bytes(graph: F8RuntimeGraph) -> bytes:
     payload = dump_json(graph, mode="json", by_alias=True)
     return encode_obj(payload)
@@ -133,6 +147,45 @@ def _log_rungraph_error_once(bus: "ServiceBus", key: str, message: str, exc: Bas
         log.warning("rungraph_apply[%s] %s", bus.service_id, message)
         return
     log.error("rungraph_apply[%s] %s", bus.service_id, message, exc_info=exc)
+
+
+def _should_apply_rungraph_state_value(
+    existing: StateRead | None,
+    value: Any,
+    rungraph_ts: int,
+    *,
+    service_id: str,
+    node_id: str,
+    field: str,
+) -> bool:
+    if rungraph_ts <= 0:
+        return True
+    if existing is None or not existing.found:
+        return True
+    try:
+        if existing.value == value:
+            return False
+    except (TypeError, ValueError) as exc:
+        log.warning(
+            "rungraph state reconcile compare failed service_id=%s node_id=%s field=%s: %s",
+            service_id,
+            node_id,
+            field,
+            exc,
+        )
+    try:
+        return existing.ts_ms is None or int(existing.ts_ms) < int(rungraph_ts)
+    except (TypeError, ValueError) as exc:
+        log.warning(
+            "rungraph state reconcile timestamp compare failed service_id=%s node_id=%s field=%s ts_ms=%r rungraph_ts=%s: %s",
+            service_id,
+            node_id,
+            field,
+            existing.ts_ms,
+            rungraph_ts,
+            exc,
+        )
+        return True
 
 
 async def set_rungraph(bus: "ServiceBus", graph: F8RuntimeGraph) -> None:
@@ -234,11 +287,7 @@ async def apply_rungraph_state_values(bus: "ServiceBus", graph: F8RuntimeGraph) 
     """
     Materialize per-node `stateValues` into KV (and dispatch locally).
     """
-    meta = graph.meta
-    try:
-        rungraph_ts = int(meta.ts or 0) if meta is not None and not isinstance(meta, msgspec.UnsetType) else 0
-    except Exception:
-        rungraph_ts = 0
+    rungraph_ts = _rungraph_ts_ms(graph)
 
     concurrency = max(1, int(bus._state_sync_concurrency))
     sem = asyncio.Semaphore(concurrency)
@@ -267,17 +316,15 @@ async def apply_rungraph_state_values(bus: "ServiceBus", graph: F8RuntimeGraph) 
                         exc=exc,
                     )
                     st = None
-                if st is not None and st.found:
-                    try:
-                        if st.value == unwrapped:
-                            return
-                    except (TypeError, ValueError):
-                        pass
-                    try:
-                        if st.ts_ms is not None and int(st.ts_ms) > int(rungraph_ts):
-                            return
-                    except (TypeError, ValueError):
-                        pass
+                if not _should_apply_rungraph_state_value(
+                    st,
+                    unwrapped,
+                    rungraph_ts,
+                    service_id=bus.service_id,
+                    node_id=node_id,
+                    field=field,
+                ):
+                    return
 
             try:
                 await publish_state(

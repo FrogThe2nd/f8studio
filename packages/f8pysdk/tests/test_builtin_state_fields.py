@@ -25,6 +25,8 @@ from f8pysdk.specs import (  # noqa: E402
     can_edit_state_field_required,
     can_edit_state_field_value_schema,
     can_rename_state_field,
+    F8RuntimeGraph,
+    F8RuntimeNode,
     string_schema,
 )
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
@@ -296,6 +298,30 @@ class LifecycleBootstrapTests(unittest.IsolatedAsyncioTestCase):
         bus.register_node(node)
 
         await bus.publish_state_external("svcA", "active", False)
+
+        self.assertFalse(bus.active)
+        self.assertEqual(node.lifecycle_calls, [False])
+        state = await bus.get_state("svcA", "active")
+        self.assertTrue(state.found)
+        self.assertFalse(bool(state.value))
+
+    async def test_rungraph_active_state_value_applies_lifecycle(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        node = _LifecycleRecordingNode("svcA")
+        bus.register_node(node)
+
+        service_node = F8RuntimeNode(
+            nodeId="svcA",
+            serviceId="svcA",
+            serviceClass="svc.test",
+            operatorClass=None,
+            stateFields=service_state_fields_with_builtins([]),
+            stateValues={"active": False},
+        )
+        graph = F8RuntimeGraph(graphId="g1", revision="r1", nodes=[service_node], edges=[])
+
+        await bus.set_rungraph(graph)
 
         self.assertFalse(bus.active)
         self.assertEqual(node.lifecycle_calls, [False])

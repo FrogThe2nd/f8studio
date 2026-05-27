@@ -2474,6 +2474,17 @@ bool ServiceBus::publish_state_from_external(const std::string& node_id, const s
   }
 }
 
+std::int64_t ServiceBus::rungraph_ts_ms(const f8::cppsdk::generated::F8RuntimeGraph& graph) const {
+  if (!graph.meta.has_value()) {
+    return 0;
+  }
+  const std::optional<std::int64_t>& ts = graph.meta->ts;
+  if (!ts.has_value()) {
+    return 0;
+  }
+  return ts.value();
+}
+
 bool ServiceBus::should_apply_rungraph_state_value(const std::string& node_id, const std::string& field,
                                                    const json& value, std::int64_t rungraph_ts) {
   if (rungraph_ts <= 0) {
@@ -2677,12 +2688,7 @@ void ServiceBus::apply_rungraph_local(const json& graph_obj, std::string& error_
   // Zenoh retained state history delivers current peer values through the watch itself.
 
   // Apply per-node stateValues (best-effort reconcile using rungraph meta.ts).
-  std::int64_t rungraph_ts = 0;
-  try {
-    if (graph.meta.has_value()) rungraph_ts = graph.meta->ts.value_or(0);
-  } catch (...) {
-    rungraph_ts = 0;
-  }
+  const std::int64_t rungraph_ts = rungraph_ts_ms(graph);
 
   for (const auto& n : graph.nodes.value_or(std::vector<F8RuntimeNode>{})) {
     if (n.serviceId != sid) continue;
