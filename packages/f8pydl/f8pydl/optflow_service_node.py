@@ -20,6 +20,7 @@ from f8pysdk.zenoh_naming import zenoh_data_key
 
 from .model_config import ModelSpec, ModelTask, build_model_index, build_model_index_with_errors, load_model_spec
 from .onnx_runtime import OnnxNeuFlowRuntime
+from .service_paths import default_weights_dir, resolve_path_from_cwd_or_repo
 from .video_frame_source import (
     LatestVideoFrameSource,
     VideoFrameSourceConfig,
@@ -32,40 +33,11 @@ _MISSING_VIDEO_INPUT_GRACE_S = 2.0
 
 
 def _default_weights_dir() -> Path:
-    candidates: list[Path] = []
-    try:
-        candidates.append((Path.cwd() / "services" / "f8" / "dl" / "weights").resolve())
-    except Exception:
-        pass
-    try:
-        root = Path(__file__).resolve().parents[3]
-        candidates.append((root / "services" / "f8" / "dl" / "weights").resolve())
-    except Exception:
-        pass
-    for candidate in candidates:
-        try:
-            if candidate.exists() and candidate.is_dir():
-                return candidate
-        except Exception:
-            continue
-    return candidates[0] if candidates else Path.cwd().resolve()
+    return default_weights_dir()
 
 
 def _resolve_path_from_cwd_or_repo(raw: str) -> Path:
-    p = Path(raw).expanduser()
-    if p.is_absolute():
-        return p.resolve()
-    p1 = (Path.cwd() / p).resolve()
-    if p1.exists():
-        return p1
-    try:
-        root = Path(__file__).resolve().parents[3]
-        p2 = (root / p).resolve()
-        if p2.exists():
-            return p2
-    except Exception:
-        pass
-    return p1
+    return resolve_path_from_cwd_or_repo(raw)
 
 
 class _RollingWindow:

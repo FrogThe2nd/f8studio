@@ -18,6 +18,7 @@ from f8pysdk.video_transport import VIDEO_FORMAT_BGRA32
 from .constants import CLASSIFICATION_SCHEMA_VERSION, DETECTION_SCHEMA_VERSION
 from .model_config import ModelSpec, ModelTask, build_model_index, build_model_index_with_errors, load_model_spec
 from .onnx_runtime import OnnxClassifierRuntime, OnnxYoloDetectorRuntime, OnnxYowoTemporalDetectorRuntime
+from .service_paths import default_weights_dir, resolve_path_from_cwd_or_repo
 from .video_frame_source import (
     LatestVideoFrameSource,
     VideoFrameSourceConfig,
@@ -28,41 +29,11 @@ from .weights_downloader import ensure_onnx_file, onnx_file_matches_sha256
 
 
 def _default_weights_dir() -> Path:
-    candidates: list[Path] = []
-    try:
-        candidates.append((Path.cwd() / "services" / "f8" / "dl" / "weights").resolve())
-    except Exception:
-        pass
-    try:
-        root = Path(__file__).resolve().parents[3]
-        candidates.append((root / "services" / "f8" / "dl" / "weights").resolve())
-        candidates.append((root / "services" / "f8" / "detect_tracker" / "weights").resolve())
-    except Exception:
-        pass
-    for p in candidates:
-        try:
-            if p.exists() and p.is_dir():
-                return p
-        except Exception:
-            continue
-    return candidates[0] if candidates else Path.cwd().resolve()
+    return default_weights_dir(extra_relative_candidates=("services/f8/detect_tracker/weights",))
 
 
 def _resolve_path_from_cwd_or_repo(raw: str) -> Path:
-    p = Path(raw).expanduser()
-    if p.is_absolute():
-        return p.resolve()
-    p1 = (Path.cwd() / p).resolve()
-    if p1.exists():
-        return p1
-    try:
-        root = Path(__file__).resolve().parents[3]
-        p2 = (root / p).resolve()
-        if p2.exists():
-            return p2
-    except Exception:
-        pass
-    return p1
+    return resolve_path_from_cwd_or_repo(raw)
 
 
 @dataclass(frozen=True)
