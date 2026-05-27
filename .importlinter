@@ -13,3 +13,16 @@ forbidden_modules =
     f8pystudio.operators
     f8pystudio.render_nodes
     f8pystudio.app
+
+[importlinter:contract:bridge-rungraph-deploy-evidence-boundary]
+name = bridge.rungraph_deploy_evidence remains a pure deploy evidence helper
+type = forbidden
+source_modules =
+    f8pystudio.bridge.rungraph_deploy_evidence
+forbidden_modules =
+    f8pystudio.assets
+    f8pystudio.nodegraph
+    f8pystudio.ui
+    f8pystudio.operators
+    f8pystudio.render_nodes
+    f8pystudio.app

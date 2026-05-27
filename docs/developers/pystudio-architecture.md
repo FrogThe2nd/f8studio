@@ -22,6 +22,15 @@ The bridge layer should keep protocol-specific identity logic out of mixins. The
 
 Controller mixins may call these helpers, but should not duplicate Zenoh key parsing or string formats. This keeps deploy/restart/ACK logic easier to reason about and makes stale-instance bugs testable without a Qt bridge object.
 
+Rungraph apply evidence is similarly isolated in `bridge.rungraph_deploy_evidence`:
+
+- Retained rungraph config key formatting.
+- Retained rungraph fingerprint decoding.
+- Request-scoped apply status tracking.
+- Timeout/error message construction for ACK diagnostics.
+
+`bridge.rungraph_deployer` owns transport, retained watchers, endpoint probing, and retry timing. It should delegate status-payload interpretation to the evidence helper instead of growing another inline state machine.
+
 ## Recommended Refactoring Direction
 
 Prefer small explicit modules with typed data objects over wide mixins with implicit attributes:
