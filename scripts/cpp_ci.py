@@ -213,12 +213,18 @@ def _select_conan_release_presets() -> ConanPresetSelection:
 
 
 def _configure() -> None:
+    _configure_release(build_tests=False)
+
+
+def _configure_release(*, build_tests: bool) -> None:
     conan_presets = _select_conan_release_presets()
+    build_tests_value = "ON" if build_tests else "OFF"
     _run(
         [
             _cpp_tool("cmake"),
             "--preset",
             conan_presets.configure_preset_name,
+            f"-DBUILD_TESTS={build_tests_value}",
             "-DF8_DEPLOY_SERVICE_CLEAN=OFF",
             "-DF8_DEPLOY_SERVICE_RUNTIME_POST_BUILD=OFF",
             f"-DPKG_CONFIG_EXECUTABLE={_cpp_tool('pkg-config')}",
@@ -263,6 +269,24 @@ def _build_target(target: str) -> None:
     )
 
 
+def _test() -> None:
+    _configure_release(build_tests=True)
+    _build_target("f8cppsdk_tests")
+    _run(
+        [
+            _cpp_tool("ctest"),
+            "--test-dir",
+            "build",
+            "--output-on-failure",
+            "-R",
+            "f8cppsdk_tests",
+            "-C",
+            "Release",
+        ],
+        use_pixi_cpp_paths=True,
+    )
+
+
 def _lock_refresh() -> None:
     _run([_cpp_tool("conan"), "profile", "detect", "--force"], use_host_pkg_config=True)
     if LOCKFILE_PATH.is_file():
@@ -287,7 +311,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="C++ CI entrypoint for Conan + CMake.")
     parser.add_argument(
         "command",
-        choices=("bootstrap", "configure", "build", "build-target", "lock-refresh"),
+        choices=("bootstrap", "configure", "build", "build-target", "test", "lock-refresh"),
         help="Action to run.",
     )
     parser.add_argument("target", nargs="?", help="CMake target for the build-target command.")
@@ -306,6 +330,8 @@ def main() -> int:
         if not args.target:
             raise SystemExit("Missing target for build-target")
         _build_target(str(args.target))
+    elif args.command == "test":
+        _test()
     elif args.command == "lock-refresh":
         _lock_refresh()
     return 0

@@ -126,6 +126,46 @@ class CppCiConfigureTest(unittest.TestCase):
         self.assertEqual(configure_command[:3], ["cmake", "--preset", "conan-default"])
         self.assertEqual(build_command[:4], ["cmake", "--build", "--preset", "conan-release"])
 
+    def test_test_command_configures_builds_and_runs_gtest_target(self) -> None:
+        self.generated_preset_path.write_text(
+            "{\n"
+            '  "version": 3,\n'
+            '  "configurePresets": [{"name": "conan-default"}],\n'
+            '  "buildPresets": [{"name": "conan-release", "configurePreset": "conan-default"}]\n'
+            "}\n",
+            encoding="utf-8",
+        )
+        recorded_commands: list[list[str]] = []
+
+        def _record_run(
+            command: list[str],
+            *,
+            use_pixi_cpp_paths: bool = False,
+            use_host_pkg_config: bool = False,
+        ) -> None:
+            self.assertTrue(use_pixi_cpp_paths)
+            self.assertFalse(use_host_pkg_config)
+            recorded_commands.append(command)
+
+        with (
+            mock.patch.object(self.module, "REPO_ROOT", self.root),
+            mock.patch.object(self.module, "USER_PRESETS_PATH", self.user_presets_path),
+            mock.patch.object(self.module, "_run", side_effect=_record_run),
+        ):
+            self.module._test()
+
+        self.assertEqual(len(recorded_commands), 3)
+        configure_command = recorded_commands[0]
+        build_command = recorded_commands[1]
+        ctest_command = recorded_commands[2]
+
+        self.assertEqual(configure_command[:3], ["cmake", "--preset", "conan-default"])
+        self.assertIn("-DBUILD_TESTS=ON", configure_command)
+        self.assertEqual(build_command[:4], ["cmake", "--build", "--preset", "conan-release"])
+        self.assertIn("f8cppsdk_tests", build_command)
+        self.assertEqual(ctest_command[:3], ["ctest", "--test-dir", "build"])
+        self.assertIn("f8cppsdk_tests", ctest_command)
+
 
 if __name__ == "__main__":
     unittest.main()

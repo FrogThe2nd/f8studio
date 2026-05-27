@@ -17,7 +17,9 @@ using json = nlohmann::json;
 
 namespace {
 
-class RecordingNode final : public f8::cppsdk::OperatorNode, public f8::cppsdk::ComputableNode {
+class RecordingNode final : public f8::cppsdk::OperatorNode,
+                            public f8::cppsdk::ComputableNode,
+                            public f8::cppsdk::EntrypointNode {
  public:
   RecordingNode(std::string node_id, std::vector<std::string> route_ports, std::vector<std::string>* calls)
       : OperatorNode(std::move(node_id), {"in"}, {"out"}, {}, {"exec"}, std::move(route_ports)), calls_(calls) {}
@@ -34,6 +36,10 @@ class RecordingNode final : public f8::cppsdk::OperatorNode, public f8::cppsdk::
     if (port == "out") return json{{"node", node_id()}};
     return nullptr;
   }
+
+  void start_entrypoint(const f8::cppsdk::EntrypointContext& ctx) override { (void)ctx; }
+
+  void stop_entrypoint() override {}
 
  private:
   std::vector<std::string>* calls_;
@@ -170,7 +176,7 @@ TEST(CppExecFlow, PropagatesDepthFirstAndEmitsHalfEdgeOutputs) {
   f8::cppsdk::ServiceBus::Config cfg;
   cfg.service_id = "svc";
   cfg.service_class = "f8.test";
-  cfg.bus_backend = f8::cppsdk::BusBackend::kInMemory;
+  cfg.bus_backend = f8::cppsdk::BusBackend::kMem;
   f8::cppsdk::ServiceBus bus(cfg);
   f8::cppsdk::ExecFlowExecutor executor(bus);
 
@@ -205,7 +211,7 @@ TEST(CppExecFlow, PullResolvesLocalComputableDataEdge) {
   f8::cppsdk::ServiceBus::Config cfg;
   cfg.service_id = "svc";
   cfg.service_class = "f8.test";
-  cfg.bus_backend = f8::cppsdk::BusBackend::kInMemory;
+  cfg.bus_backend = f8::cppsdk::BusBackend::kMem;
   f8::cppsdk::ServiceBus bus(cfg);
   f8::cppsdk::ExecFlowExecutor executor(bus);
 
@@ -239,7 +245,7 @@ TEST(CppExecFlow, PullResolvesChainedLocalComputableDataEdges) {
   f8::cppsdk::ServiceBus::Config cfg;
   cfg.service_id = "svc";
   cfg.service_class = "f8.test";
-  cfg.bus_backend = f8::cppsdk::BusBackend::kInMemory;
+  cfg.bus_backend = f8::cppsdk::BusBackend::kMem;
   f8::cppsdk::ServiceBus bus(cfg);
   f8::cppsdk::ExecFlowExecutor executor(bus);
 
@@ -278,7 +284,7 @@ TEST(CppServiceHost, CreatesRecreatesAndRemovesNodes) {
   f8::cppsdk::ServiceBus::Config cfg;
   cfg.service_id = "svc";
   cfg.service_class = "f8.test";
-  cfg.bus_backend = f8::cppsdk::BusBackend::kInMemory;
+  cfg.bus_backend = f8::cppsdk::BusBackend::kMem;
   f8::cppsdk::ServiceBus bus(cfg);
 
   f8::cppsdk::RuntimeNodeRegistry registry;

@@ -141,6 +141,7 @@ libzenohc = ">=1.9.0,<1.10"
 libzenohcxx = ">=1.9.0,<1.10"
 sdl3 = ">=3.2,<4"
 yt-dlp = ">=2025.8,<2027"
+gtest = ">=1.17.0,<2"
 
 [feature.cpp.target.linux-64.dependencies]
 gxx_linux-64 = ">=11,<12"
@@ -163,6 +164,7 @@ cpp_lock_refresh = "python scripts/cpp_ci.py lock-refresh"
 cpp_bootstrap = "python scripts/cpp_ci.py bootstrap"
 cpp_configure_release = "python scripts/cpp_ci.py configure"
 cpp_build_release = "python scripts/cpp_ci.py build"
+cpp_test_release = "python scripts/cpp_ci.py test"
 cpp_bench_latest_video = "python scripts/cpp_ci.py configure && python scripts/cpp_ci.py build-target f8cpp_bench_latest_video_transport && build/Release/bin/f8cpp_bench_latest_video_transport"
 
 [feature.ci.dependencies]

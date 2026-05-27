@@ -43,7 +43,7 @@ TEST(RungraphRoutes, ParsesCrossServiceDataEdgesForTargetService) {
   ASSERT_EQ(routes.size(), 1u);
 
   const auto& kv = *routes.begin();
-  EXPECT_EQ(kv.first, "svc.svcA.nodes.op1.data.out");
+  EXPECT_EQ(kv.first, "f8/svc/svcA/nodes/op1/data/out");
   ASSERT_EQ(kv.second.size(), 1u);
   EXPECT_EQ(kv.second[0].to_node_id, "op2");
   EXPECT_EQ(kv.second[0].to_port, "in");
@@ -67,7 +67,7 @@ TEST(RungraphRoutes, ServiceNodeDefaultsOperatorIdToServiceId) {
   const auto routes = f8::cppsdk::parse_cross_service_data_routes(g, "svcB");
   ASSERT_EQ(routes.size(), 1u);
   const auto& kv = *routes.begin();
-  EXPECT_EQ(kv.first, "svc.svcA.nodes.svcA.data.out");
+  EXPECT_EQ(kv.first, "f8/svc/svcA/nodes/svcA/data/out");
   ASSERT_EQ(kv.second.size(), 1u);
   EXPECT_EQ(kv.second[0].to_node_id, "svcB");
 }
