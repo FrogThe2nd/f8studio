@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 
 from qtpy import QtCore
 
@@ -24,6 +24,25 @@ logger = logging.getLogger(__name__)
 _HOTKEY_COMBO_CONTROLS = {"select", "dropdown", "dropbox", "combo", "combobox"}
 
 
+class _HotkeyNode(Protocol):
+    id: str
+    spec: Any
+
+    def effective_state_fields(self) -> list[Any]: ...
+
+    def get_property(self, name: str) -> Any: ...
+
+    def set_property(self, name: str, value: Any, push_undo: bool = True) -> None: ...
+
+    def name(self) -> str: ...
+
+
+class _HotkeyGraph(Protocol):
+    def all_nodes(self) -> list[_HotkeyNode]: ...
+
+    def get_node_by_id(self, node_id: str) -> _HotkeyNode | None: ...
+
+
 class ControlPanelGlobalHotkeyController(QtCore.QObject):
     binding_activated = QtCore.Signal(str)
     registry_changed = QtCore.Signal()
@@ -37,7 +56,7 @@ class ControlPanelGlobalHotkeyController(QtCore.QObject):
         platform_name: str | None = None,
     ) -> None:
         super().__init__()
-        self._studio_graph = studio_graph
+        self._studio_graph: _HotkeyGraph = studio_graph
         self._emit_log_line = emit_log_line
         self._backend_error: str | None = None
         self._bindings_by_id: dict[str, GlobalHotkeyBinding] = {}
@@ -70,10 +89,7 @@ class ControlPanelGlobalHotkeyController(QtCore.QObject):
         self.registry_changed.emit()
         if backend is None:
             return
-        try:
-            backend.close()
-        except Exception:
-            logger.exception("Failed to close global hotkey backend")
+        self._run_backend_boundary("Failed to close global hotkey backend", backend.close)
 
     def suspend_hotkeys(self) -> None:
         self._suspend_depth += 1
@@ -81,10 +97,7 @@ class ControlPanelGlobalHotkeyController(QtCore.QObject):
             return
         backend = self._backend
         if backend is not None:
-            try:
-                backend.unregister_all()
-            except Exception:
-                logger.exception("Failed to suspend global hotkeys")
+            self._run_backend_boundary("Failed to suspend global hotkeys", backend.unregister_all)
         self.refresh_bindings()
 
     def resume_hotkeys(self) -> None:
@@ -138,10 +151,7 @@ class ControlPanelGlobalHotkeyController(QtCore.QObject):
         backend = self._backend
         next_bindings = self._discover_bindings()
         if backend is not None:
-            try:
-                backend.unregister_all()
-            except Exception:
-                logger.exception("Failed to clear global hotkeys before refresh")
+            self._run_backend_boundary("Failed to clear global hotkeys before refresh", backend.unregister_all)
         self._bindings_by_id = {}
         next_entries: list[GlobalHotkeyRegistryEntry] = []
         claimed_hotkeys: dict[str, GlobalHotkeyBinding] = {}
@@ -236,6 +246,13 @@ class ControlPanelGlobalHotkeyController(QtCore.QObject):
         self._registry_entries = next_entries
         self.registry_changed.emit()
 
+    @staticmethod
+    def _run_backend_boundary(context: str, action: Callable[[], None]) -> None:
+        try:
+            action()
+        except Exception:
+            logger.exception("%s", context)
+
     def on_graph_property_changed(self, node: Any, name: str, value: Any) -> None:
         _ = (node, value)
         property_name = str(name or "").strip()
@@ -251,10 +268,7 @@ class ControlPanelGlobalHotkeyController(QtCore.QObject):
         discovered: list[GlobalHotkeyBinding] = []
         nodes = list(self._studio_graph.all_nodes() or [])
         for node in nodes:
-            try:
-                node_id = str(node.id or "").strip()
-            except Exception:
-                node_id = ""
+            node_id = str(node.id or "").strip()
             if not node_id:
                 continue
             for field in effective_state_fields(node):
@@ -302,10 +316,7 @@ class ControlPanelGlobalHotkeyController(QtCore.QObject):
         binding = self._bindings_by_id.get(str(binding_id or ""))
         if binding is None:
             return
-        try:
-            node = self._studio_graph.get_node_by_id(binding.node_id)
-        except Exception:
-            node = None
+        node = self._studio_graph.get_node_by_id(binding.node_id)
         if node is None:
             self._log_once(
                 f"missing-node:{binding.binding_id}",
@@ -317,8 +328,6 @@ class ControlPanelGlobalHotkeyController(QtCore.QObject):
             return
         try:
             node.set_property(binding.field_name, next_value, push_undo=False)
-        except TypeError:
-            node.set_property(binding.field_name, next_value)
         except Exception as exc:
             self._log_once(
                 f"trigger:{binding.binding_id}:{type(exc).__name__}:{exc}",
@@ -328,7 +337,7 @@ class ControlPanelGlobalHotkeyController(QtCore.QObject):
     def _next_value_for_binding(self, *, node: Any, binding: GlobalHotkeyBinding) -> Any | None:
         try:
             current_value = node.get_property(binding.field_name)
-        except Exception:
+        except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
             current_value = None
         if binding.action == "select_next":
             field = self._state_field_for_binding(node=node, field_name=binding.field_name)
@@ -400,28 +409,28 @@ class ControlPanelGlobalHotkeyController(QtCore.QObject):
     def _field_name(field: Any) -> str:
         try:
             return str(field.name or "").strip()
-        except Exception:
+        except AttributeError:
             return ""
 
     @staticmethod
     def _field_ui_control(field: Any) -> ParsedUiControl:
         try:
             return parse_ui_control(str(field.uiControl or ""))
-        except Exception:
+        except AttributeError:
             return parse_ui_control("")
 
     @staticmethod
     def _field_schema(field: Any) -> Any | None:
         try:
             return field.valueSchema
-        except Exception:
+        except AttributeError:
             return None
 
     @staticmethod
     def _field_label(field: Any, fallback_name: str) -> str:
         try:
             label = str(field.label or "").strip()
-        except Exception:
+        except AttributeError:
             label = ""
         return label or str(fallback_name or "").strip()
 
@@ -429,18 +438,18 @@ class ControlPanelGlobalHotkeyController(QtCore.QObject):
     def _node_label(node: Any) -> str:
         try:
             spec = node.spec
-        except Exception:
+        except AttributeError:
             spec = None
         if spec is not None:
             try:
                 label = str(spec.label or "").strip()
-            except Exception:
+            except AttributeError:
                 label = ""
             if label:
                 return label
         try:
             label = str(node.name() or "").strip()
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError):
             label = ""
         return label
 
