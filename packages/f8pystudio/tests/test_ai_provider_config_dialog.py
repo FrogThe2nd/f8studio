@@ -55,3 +55,22 @@ def test_provider_dialog_disables_api_mode_for_anthropic(tmp_path: Path) -> None
         assert not dialog._api_mode_combo.isEnabled()
     finally:
         dialog.close()
+
+
+def test_provider_dialog_orders_footer_buttons(tmp_path: Path) -> None:
+    _ensure_app()
+    store = _make_store(tmp_path)
+    dialog = AiProviderConfigDialog(store)
+    try:
+        button_texts: list[str] = []
+        for index in range(dialog._footer_buttons_layout.count()):
+            item = dialog._footer_buttons_layout.itemAt(index)
+            if item is None:
+                continue
+            widget = item.widget()
+            if isinstance(widget, QtWidgets.QPushButton):
+                button_texts.append(widget.text())
+
+        assert button_texts == ["Save", "Close"]
+    finally:
+        dialog.close()

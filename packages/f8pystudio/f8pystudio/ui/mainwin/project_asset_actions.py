@@ -136,14 +136,48 @@ def open_project_dialog(
     log_dock: ProjectAssetLogDockLike,
     start_dir: str,
     show_warning: MessageDialogFn,
+    show_info_message: MessageDialogFn,
 ) -> tuple[str, bool]:
     service = ProjectStorageService()
+    projects = service.list_projects()
+    if not projects:
+        show_info_message(parent, "No project", "No local project was found.")
+        return str(start_dir or ""), False
     dialog = ProjectPickerDialog(
         parent=parent,
-        projects=service.list_projects(),
+        projects=projects,
         current_project_id=service.current_project_id(),
+        allow_history=True,
+        allow_delete=True,
+    )
+    loaded_from_history: list[bool] = []
+    dialog.history_requested.connect(  # type: ignore[attr-defined]
+        lambda project_id: _restore_project_history_from_picker(
+            parent=parent,
+            service=service,
+            dialog=dialog,
+            project_id=str(project_id),
+            studio_graph=studio_graph,
+            log_dock=log_dock,
+            show_warning=show_warning,
+            show_info_message=show_info_message,
+            loaded_from_history=loaded_from_history,
+        )
+    )
+    dialog.delete_requested.connect(  # type: ignore[attr-defined]
+        lambda project_id: _delete_project_from_picker(
+            parent=parent,
+            service=service,
+            dialog=dialog,
+            project_id=str(project_id),
+            log_dock=log_dock,
+            show_warning=show_warning,
+            show_info_message=show_info_message,
+        )
     )
     if dialog.exec() != QtWidgets.QDialog.Accepted:
+        if loaded_from_history:
+            return str(start_dir or ""), True
         return str(start_dir or ""), False
 
     try:
@@ -160,6 +194,76 @@ def open_project_dialog(
         log_dock.report_exception("studio", "project load failed", exc)
         show_warning(parent, "Load failed", f"Failed to load project.\n\n{exc}")
         return str(start_dir or ""), False
+
+
+def _restore_project_history_from_picker(
+    *,
+    parent: QtWidgets.QWidget,
+    service: ProjectStorageService,
+    dialog: ProjectPickerDialog,
+    project_id: str,
+    studio_graph: ProjectAssetGraphLike,
+    log_dock: ProjectAssetLogDockLike,
+    show_warning: MessageDialogFn,
+    show_info_message: MessageDialogFn,
+    loaded_from_history: list[bool],
+) -> None:
+    restored = _show_project_history_for_project(
+        parent=parent,
+        service=service,
+        project_id=project_id,
+        log_dock=log_dock,
+        show_warning=show_warning,
+        show_info_message=show_info_message,
+    )
+    dialog.replace_projects(projects=service.list_projects(), current_project_id=service.current_project_id())
+    if restored is None:
+        return
+    try:
+        studio_graph.load_session_payload(restored.content)
+        log_dock.append("studio", f"[project] loaded restored history: {restored.name} ({restored.projectId})\n")
+        loaded_from_history.append(True)
+        dialog.accept()
+    except Exception as exc:
+        log_dock.append("studio", f"[project] load restored history failed: {exc}\n")
+        log_dock.report_exception("studio", "project history load failed", exc)
+        show_warning(parent, "Load failed", f"Failed to load restored project history.\n\n{exc}")
+
+
+def _delete_project_from_picker(
+    *,
+    parent: QtWidgets.QWidget,
+    service: ProjectStorageService,
+    dialog: ProjectPickerDialog,
+    project_id: str,
+    log_dock: ProjectAssetLogDockLike,
+    show_warning: MessageDialogFn,
+    show_info_message: MessageDialogFn,
+) -> None:
+    record = service.project(project_id)
+    if record is None:
+        show_warning(parent, "Delete failed", f"Project not found:\n{project_id}")
+        dialog.replace_projects(projects=service.list_projects(), current_project_id=service.current_project_id())
+        return
+    answer = QtWidgets.QMessageBox.question(
+        parent,
+        "Delete project",
+        f"Delete local project '{record.name}' and all of its history?\nThis cannot be undone.",
+        QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+        QtWidgets.QMessageBox.No,
+    )
+    if answer != QtWidgets.QMessageBox.Yes:
+        return
+
+    try:
+        service.delete_project(project_id=record.projectId)
+        log_dock.append("studio", f"[project] deleted: {record.name} ({record.projectId})\n")
+        show_info_message(parent, "Project deleted", f"Deleted project:\n{record.name}")
+        dialog.replace_projects(projects=service.list_projects(), current_project_id=service.current_project_id())
+    except Exception as exc:
+        log_dock.append("studio", f"[project] delete failed: {exc}\n")
+        log_dock.report_exception("studio", "project delete failed", exc)
+        show_warning(parent, "Delete failed", f"Failed to delete project.\n\n{exc}")
 
 
 def import_project_json_as_dialog(
@@ -432,16 +536,49 @@ def show_project_history_dialog(
     if current_project is None:
         show_info_message(parent, "No project", "No local project was found.")
         return False
-    project_id = current_project.projectId
+    restored = _show_project_history_for_project(
+        parent=parent,
+        service=service,
+        project_id=current_project.projectId,
+        log_dock=log_dock,
+        show_warning=show_warning,
+        show_info_message=show_info_message,
+    )
+    if restored is None:
+        return False
+    try:
+        studio_graph.load_session_payload(restored.content)
+        log_dock.append(
+            "studio",
+            f"[project] loaded restored history: {restored.name} ({restored.projectId})\n",
+        )
+        return True
+    except Exception as exc:
+        log_dock.append("studio", f"[project] load restored history failed: {exc}\n")
+        log_dock.report_exception("studio", "project history load failed", exc)
+        show_warning(parent, "Load failed", f"Failed to load restored project history.\n\n{exc}")
+        return False
+
+
+def _show_project_history_for_project(
+    *,
+    parent: QtWidgets.QWidget,
+    service: ProjectStorageService,
+    project_id: str,
+    log_dock: ProjectAssetLogDockLike,
+    show_warning: MessageDialogFn,
+    show_info_message: MessageDialogFn,
+) -> F8ProjectRecord | None:
+    normalized_project_id = str(project_id or "").strip()
     while True:
-        current_project = service.project(project_id)
+        current_project = service.project(normalized_project_id)
         if current_project is None:
             show_info_message(parent, "No project", "No local project was found.")
-            return False
+            return None
         versions = service.list_project_versions(current_project.projectId)
         if not versions:
             show_info_message(parent, "Project History", "No project history found.")
-            return False
+            return None
 
         dialog = AssetVersionBrowserDialog(
             parent=parent,
@@ -464,11 +601,11 @@ def show_project_history_dialog(
             ],
         )
         if dialog.exec() != QtWidgets.QDialog.Accepted:
-            return False
+            return None
 
         selected_version_number = dialog.selected_version_number()
         if selected_version_number is None:
-            return False
+            return None
         selected_action_key = str(dialog.selected_action_key() or "restore")
         if selected_action_key == "delete":
             answer = QtWidgets.QMessageBox.question(
@@ -504,7 +641,6 @@ def show_project_history_dialog(
                 project_id=current_project.projectId,
                 version_number=int(selected_version_number),
             )
-            studio_graph.load_session_payload(restored.content)
             log_dock.append(
                 "studio",
                 f"[project] restored version v{selected_version_number} as latest ({restored.projectId})\n",
@@ -514,12 +650,12 @@ def show_project_history_dialog(
                 "Project restored",
                 f"Restored project version v{selected_version_number} as the latest version.",
             )
-            return True
+            return restored
         except Exception as exc:
             log_dock.append("studio", f"[project] restore failed: {exc}\n")
             log_dock.report_exception("studio", "project restore failed", exc)
             show_warning(parent, "Restore failed", f"Failed to restore project version.\n\n{exc}")
-            return False
+            return None
 
 
 def insert_graph_json_dialog(

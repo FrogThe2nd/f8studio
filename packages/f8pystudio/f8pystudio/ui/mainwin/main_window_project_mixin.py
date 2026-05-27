@@ -180,6 +180,7 @@ class MainWindowProjectMixin:
             log_dock=self._log_dock,
             start_dir=str(self._session_dialog_dir or ""),
             show_warning=show_warning,
+            show_info_message=show_info,
         )
         self._session_dialog_dir = str(session_dir)
         if loaded:

@@ -372,6 +372,33 @@ class ProjectStorageService:
                 .values(updated_at=timestamp)
             )
 
+    def delete_project(self, *, project_id: str) -> None:
+        normalized_project_id = str(project_id or "").strip()
+        if not normalized_project_id:
+            raise FileNotFoundError("Project not found: ")
+        with self._db.begin_sqla() as conn:
+            head_row = conn.execute(
+                select(project_heads_table.c.project_id).where(
+                    project_heads_table.c.project_id == normalized_project_id
+                )
+            ).mappings().first()
+            if head_row is None:
+                raise FileNotFoundError(f"Project not found: {normalized_project_id}")
+            _ = conn.execute(
+                delete(project_versions_table).where(
+                    project_versions_table.c.project_id == normalized_project_id
+                )
+            )
+            _ = conn.execute(
+                delete(project_heads_table).where(
+                    project_heads_table.c.project_id == normalized_project_id
+                )
+            )
+        if self.current_project_id() == normalized_project_id:
+            self._set_value(self._CURRENT_PROJECT_ID_KEY, "")
+        if self.autosave_project_id() == normalized_project_id:
+            self._set_value(self._AUTOSAVE_PROJECT_ID_KEY, "")
+
     def export_project_to_json(self, *, project_id: str, path: str) -> Path:
         record = self.project(project_id)
         if record is None:

@@ -172,6 +172,72 @@ class _FakeHistoryDialog:
         return self._action_key
 
 
+class _FakeProjectPickerDialog:
+    delete_id: str = ""
+    history_id: str = ""
+    open_id: str = ""
+    result: int = QtWidgets.QDialog.Accepted
+    accepted: bool = False
+    init_kwargs: dict[str, object] | None = None
+    project_counts: list[int] = []
+
+    def __init__(
+        self,
+        *,
+        parent: QtWidgets.QWidget | None,
+        projects: list[object],
+        current_project_id: str,
+        title: str = "Projects",
+        accept_text: str = "Open",
+        allow_history: bool = False,
+        allow_delete: bool = False,
+    ) -> None:
+        del parent
+        type(self).init_kwargs = {
+            "project_count": len(projects),
+            "current_project_id": str(current_project_id),
+            "title": str(title),
+            "accept_text": str(accept_text),
+            "allow_history": bool(allow_history),
+            "allow_delete": bool(allow_delete),
+        }
+        type(self).project_counts = [len(projects)]
+        self.history_requested = _FakeSignal()
+        self.delete_requested = _FakeSignal()
+
+    def exec(self) -> int:
+        type(self).accepted = False
+        if type(self).history_id:
+            self.history_requested.emit(type(self).history_id)
+        if type(self).accepted:
+            return QtWidgets.QDialog.Rejected
+        if type(self).delete_id:
+            self.delete_requested.emit(type(self).delete_id)
+        return int(type(self).result)
+
+    def selected_project_id(self) -> str:
+        return type(self).open_id
+
+    def replace_projects(self, *, projects: list[object], current_project_id: str) -> None:
+        del current_project_id
+        type(self).project_counts.append(len(projects))
+
+    def accept(self) -> None:
+        type(self).accepted = True
+
+
+class _FakeSignal:
+    def __init__(self) -> None:
+        self._callbacks: list[Callable[[str], None]] = []
+
+    def connect(self, callback: Callable[[str], None]) -> None:
+        self._callbacks.append(callback)
+
+    def emit(self, project_id: str) -> None:
+        for callback in list(self._callbacks):
+            callback(project_id)
+
+
 def test_show_project_history_dialog_deletes_selected_version_and_refreshes(monkeypatch, tmp_path: Path) -> None:
     _ensure_app()
     settings = QtCore.QSettings(str(tmp_path / "project-history-actions.ini"), QtCore.QSettings.IniFormat)
@@ -228,6 +294,138 @@ def test_show_project_history_dialog_deletes_selected_version_and_refreshes(monk
     assert warning_messages == []
     assert ("Project version deleted", "Deleted project version v1.") in info_messages
     assert any("deleted version v1" in line for _channel, line in log_dock.lines)
+
+
+def test_open_project_dialog_can_delete_project_and_continue_opening(monkeypatch, tmp_path: Path) -> None:
+    _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "project-delete-dialog.ini"), QtCore.QSettings.IniFormat)
+    service = ProjectStorageService(db_path=tmp_path / "assets.db", settings=settings)
+    keep = service.save_project(
+        content=_session_payload("keep-project"),
+        name="Keep Project",
+        description="",
+        tags=[],
+        set_current=True,
+    )
+    delete_me = service.save_project(
+        content=_session_payload("delete-project"),
+        name="Delete Project",
+        description="",
+        tags=[],
+        set_current=True,
+    )
+    _FakeProjectPickerDialog.delete_id = delete_me.projectId
+    _FakeProjectPickerDialog.history_id = ""
+    _FakeProjectPickerDialog.open_id = keep.projectId
+    _FakeProjectPickerDialog.result = QtWidgets.QDialog.Accepted
+    _FakeProjectPickerDialog.accepted = False
+    _FakeProjectPickerDialog.init_kwargs = None
+    _FakeProjectPickerDialog.project_counts = []
+
+    info_messages: list[tuple[str, str]] = []
+    warning_messages: list[tuple[str, str]] = []
+    graph = _FakeGraph()
+    log_dock = _FakeLogDock()
+    parent = QtWidgets.QWidget()
+
+    monkeypatch.setattr(project_asset_actions, "ProjectStorageService", lambda: service)
+    monkeypatch.setattr(project_asset_actions, "ProjectPickerDialog", _FakeProjectPickerDialog)
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "question",
+        lambda *args, **kwargs: QtWidgets.QMessageBox.Yes,
+    )
+
+    session_dir, loaded = project_asset_actions.open_project_dialog(
+        parent=parent,
+        studio_graph=graph,
+        log_dock=log_dock,
+        start_dir="/tmp/projects",
+        show_warning=lambda _parent, title, message: warning_messages.append((str(title), str(message))),
+        show_info_message=lambda _parent, title, message: info_messages.append((str(title), str(message))),
+    )
+
+    assert session_dir == "/tmp/projects"
+    assert loaded is True
+    assert service.project(delete_me.projectId) is None
+    assert service.project(keep.projectId) is not None
+    assert service.current_project_id() == keep.projectId
+    assert _FakeProjectPickerDialog.init_kwargs == {
+        "project_count": 2,
+        "current_project_id": delete_me.projectId,
+        "title": "Projects",
+        "accept_text": "Open",
+        "allow_history": True,
+        "allow_delete": True,
+    }
+    assert _FakeProjectPickerDialog.project_counts == [2, 1]
+    assert graph.loaded_payloads == [keep.content]
+    assert warning_messages == []
+    assert info_messages == [("Project deleted", "Deleted project:\nDelete Project")]
+    assert any("deleted: Delete Project" in line for _channel, line in log_dock.lines)
+    assert any("loaded: Keep Project" in line for _channel, line in log_dock.lines)
+
+
+def test_open_project_dialog_can_restore_selected_project_history(monkeypatch, tmp_path: Path) -> None:
+    _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "project-picker-history.ini"), QtCore.QSettings.IniFormat)
+    service = ProjectStorageService(db_path=tmp_path / "assets.db", settings=settings)
+    project = service.save_project(
+        content=_session_payload("history-first"),
+        name="History Project",
+        description="",
+        tags=[],
+        set_current=True,
+    )
+    _ = service.save_project(
+        content=_session_payload("history-second"),
+        project_id=project.projectId,
+        name=project.name,
+        description=project.description,
+        tags=list(project.tags),
+        set_current=True,
+    )
+    _FakeHistoryDialog.plans = [
+        _DialogPlan(result=QtWidgets.QDialog.Accepted, version_number=1, action_key="restore"),
+    ]
+    _FakeHistoryDialog.seen_item_counts = []
+    _FakeProjectPickerDialog.delete_id = ""
+    _FakeProjectPickerDialog.history_id = project.projectId
+    _FakeProjectPickerDialog.open_id = ""
+    _FakeProjectPickerDialog.result = QtWidgets.QDialog.Rejected
+    _FakeProjectPickerDialog.accepted = False
+    _FakeProjectPickerDialog.init_kwargs = None
+    _FakeProjectPickerDialog.project_counts = []
+
+    info_messages: list[tuple[str, str]] = []
+    warning_messages: list[tuple[str, str]] = []
+    graph = _FakeGraph()
+    log_dock = _FakeLogDock()
+    parent = QtWidgets.QWidget()
+
+    monkeypatch.setattr(project_asset_actions, "ProjectStorageService", lambda: service)
+    monkeypatch.setattr(project_asset_actions, "ProjectPickerDialog", _FakeProjectPickerDialog)
+    monkeypatch.setattr(project_asset_actions, "AssetVersionBrowserDialog", _FakeHistoryDialog)
+
+    session_dir, loaded = project_asset_actions.open_project_dialog(
+        parent=parent,
+        studio_graph=graph,
+        log_dock=log_dock,
+        start_dir="/tmp/projects",
+        show_warning=lambda _parent, title, message: warning_messages.append((str(title), str(message))),
+        show_info_message=lambda _parent, title, message: info_messages.append((str(title), str(message))),
+    )
+
+    assert session_dir == "/tmp/projects"
+    assert loaded is True
+    assert _FakeHistoryDialog.seen_item_counts == [2]
+    assert _FakeProjectPickerDialog.accepted is True
+    assert _FakeProjectPickerDialog.project_counts == [1, 1]
+    assert graph.loaded_payloads == [service.project(project.projectId).content]
+    assert "history-first" in graph.loaded_payloads[0]["layout"]["nodes"]
+    assert warning_messages == []
+    assert ("Project restored", "Restored project version v1 as the latest version.") in info_messages
+    assert any("loaded restored history: History Project" in line for _channel, line in log_dock.lines)
 
 
 def test_save_component_as_dialog_seeds_metadata_from_current_project(monkeypatch, tmp_path: Path) -> None:

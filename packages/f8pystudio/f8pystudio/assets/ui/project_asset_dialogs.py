@@ -302,17 +302,24 @@ class AssetOverwriteMetaDialog(QtWidgets.QDialog):
 
 
 class ProjectPickerDialog(QtWidgets.QDialog):
+    history_requested = QtCore.Signal(str)
+    delete_requested = QtCore.Signal(str)
+
     def __init__(
         self,
         *,
         parent: QtWidgets.QWidget | None,
         projects: list[F8ProjectSummary],
         current_project_id: str,
+        title: str = "Projects",
+        accept_text: str = "Open",
+        allow_history: bool = False,
+        allow_delete: bool = False,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Open Project")
+        self.setWindowTitle(str(title or "Projects"))
         self.resize(720, 420)
-        self._projects = list(projects)
+        self._projects: list[F8ProjectSummary] = []
         self._list = QtWidgets.QListWidget(self)
         self._details = QtWidgets.QPlainTextEdit(self)
         self._details.setReadOnly(True)
@@ -324,29 +331,54 @@ class ProjectPickerDialog(QtWidgets.QDialog):
         split.setStretchFactor(0, 3)
         split.setStretchFactor(1, 4)
 
-        buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.StandardButton.Open | QtWidgets.QDialogButtonBox.StandardButton.Cancel,
-            parent=self,
-        )
-        buttons.accepted.connect(self.accept)  # type: ignore[attr-defined]
-        buttons.rejected.connect(self.reject)  # type: ignore[attr-defined]
+        buttons = QtWidgets.QHBoxLayout()
+        buttons.setContentsMargins(0, 0, 0, 0)
+        buttons.setSpacing(8)
+        self._open_button = QtWidgets.QPushButton(str(accept_text or "Open"), self)
+        self._open_button.clicked.connect(self.accept)  # type: ignore[attr-defined]
+        buttons.addWidget(self._open_button)
+        self._history_button: QtWidgets.QPushButton | None = None
+        if bool(allow_history):
+            history_button = QtWidgets.QPushButton("History...", self)
+            history_button.clicked.connect(self._on_history_clicked)  # type: ignore[attr-defined]
+            buttons.addWidget(history_button)
+            self._history_button = history_button
+        self._delete_button: QtWidgets.QPushButton | None = None
+        if bool(allow_delete):
+            delete_button = QtWidgets.QPushButton("Delete", self)
+            delete_button.clicked.connect(self._on_delete_clicked)  # type: ignore[attr-defined]
+            buttons.addWidget(delete_button)
+            self._delete_button = delete_button
+        cancel_button = QtWidgets.QPushButton("Cancel", self)
+        cancel_button.clicked.connect(self.reject)  # type: ignore[attr-defined]
+        buttons.addWidget(cancel_button)
+        buttons.addStretch(1)
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(split)
-        layout.addWidget(buttons)
+        layout.addLayout(buttons)
 
+        self._list.currentItemChanged.connect(self._on_current_item_changed)  # type: ignore[attr-defined]
+        self.replace_projects(projects=projects, current_project_id=current_project_id)
+
+    def replace_projects(self, *, projects: list[F8ProjectSummary], current_project_id: str) -> None:
+        self._projects = list(projects)
+        normalized_current_project_id = str(current_project_id or "").strip()
+        selected_row = -1
+        self._list.blockSignals(True)
+        self._list.clear()
         for index, project in enumerate(self._projects):
             item = QtWidgets.QListWidgetItem(project.name)
             item.setData(QtCore.Qt.ItemDataRole.UserRole, project.projectId)
-            if project.projectId == current_project_id:
-                item.setSelected(True)
-                self._list.setCurrentRow(index)
             self._list.addItem(item)
-        self._list.currentItemChanged.connect(self._on_current_item_changed)  # type: ignore[attr-defined]
+            if project.projectId == normalized_current_project_id:
+                selected_row = index
+        if selected_row < 0 and self._list.count() > 0:
+            selected_row = 0
+        if selected_row >= 0:
+            self._list.setCurrentRow(selected_row)
+        self._list.blockSignals(False)
         current_item = _list_current_item_or_none(self._list)
-        if current_item is None and self._list.count() > 0:
-            self._list.setCurrentRow(0)
-            current_item = _list_current_item_or_none(self._list)
         self._on_current_item_changed(current_item, None)
 
     def selected_project_id(self) -> str:
@@ -355,13 +387,33 @@ class ProjectPickerDialog(QtWidgets.QDialog):
             return ""
         return str(item.data(QtCore.Qt.ItemDataRole.UserRole) or "").strip()
 
+    def _on_history_clicked(self) -> None:
+        project_id = self.selected_project_id()
+        if not project_id:
+            return
+        self.history_requested.emit(project_id)
+
+    def _on_delete_clicked(self) -> None:
+        project_id = self.selected_project_id()
+        if not project_id:
+            return
+        self.delete_requested.emit(project_id)
+
     def _on_current_item_changed(
         self,
         current: QtWidgets.QListWidgetItem | None,
         _previous: QtWidgets.QListWidgetItem | None,
     ) -> None:
+        self._open_button.setEnabled(current is not None)
+        history_button = self._history_button
+        if history_button is not None:
+            history_button.setEnabled(current is not None)
+        delete_button = self._delete_button
+        if delete_button is not None:
+            delete_button.setEnabled(current is not None)
         if current is None:
             self._details.setPlainText("")
+            self._details.setToolTip("")
             return
         selected_project_id = str(current.data(QtCore.Qt.ItemDataRole.UserRole) or "").strip()
         selected_summary = None
@@ -429,23 +481,28 @@ class AssetVersionBrowserDialog(QtWidgets.QDialog):
         split.setStretchFactor(0, 3)
         split.setStretchFactor(1, 5)
 
-        buttons = QtWidgets.QDialogButtonBox(parent=self)
-        close_button = buttons.addButton(QtWidgets.QDialogButtonBox.StandardButton.Close)
-        close_button.clicked.connect(self.reject)  # type: ignore[attr-defined]
         resolved_actions = list(actions or [])
         if primary_action_label and not resolved_actions:
             resolved_actions.append(AssetVersionBrowserAction(action_key="primary", label=primary_action_label))
+        buttons = QtWidgets.QHBoxLayout()
+        buttons.setContentsMargins(0, 0, 0, 0)
+        buttons.setSpacing(8)
         self._action_buttons: dict[str, QtWidgets.QPushButton] = {}
         for action in resolved_actions:
-            action_button = buttons.addButton(action.label, QtWidgets.QDialogButtonBox.ButtonRole.AcceptRole)
+            action_button = QtWidgets.QPushButton(action.label, self)
             action_button.clicked.connect(
                 lambda _checked=False, action_key=action.action_key: self._on_action_clicked(action_key)
             )  # type: ignore[attr-defined]
+            buttons.addWidget(action_button)
             self._action_buttons[action.action_key] = action_button
+        close_button = QtWidgets.QPushButton("Close", self)
+        close_button.clicked.connect(self.reject)  # type: ignore[attr-defined]
+        buttons.addWidget(close_button)
+        buttons.addStretch(1)
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(split)
-        layout.addWidget(buttons)
+        layout.addLayout(buttons)
 
         for item in self._items:
             display_time = format_timestamp_for_local_display(item.created_at)

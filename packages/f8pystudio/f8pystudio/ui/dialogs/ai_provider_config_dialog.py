@@ -173,14 +173,23 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
 
         right.addStretch()
 
-        # Save / discard buttons
-        btns = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.StandardButton.Save
-            | QtWidgets.QDialogButtonBox.StandardButton.Close
-        )
-        btns.button(QtWidgets.QDialogButtonBox.StandardButton.Save).clicked.connect(self._on_save_provider)  # type: ignore[attr-defined]
-        btns.button(QtWidgets.QDialogButtonBox.StandardButton.Close).clicked.connect(self.close)  # type: ignore[attr-defined]
-        right.addWidget(btns)
+        # Explicit ordering keeps provider actions consistent across Qt platform styles.
+        self._footer_buttons_layout = QtWidgets.QHBoxLayout()
+        self._footer_buttons_layout.setContentsMargins(0, 0, 0, 0)
+        self._footer_buttons_layout.setSpacing(8)
+        self._footer_buttons_layout.addStretch(1)
+
+        self._save_provider_button = QtWidgets.QPushButton("Save", self)
+        self._save_provider_button.setObjectName("aiProviderSaveButton")
+        self._save_provider_button.clicked.connect(self._on_save_provider)  # type: ignore[attr-defined]
+        self._footer_buttons_layout.addWidget(self._save_provider_button)
+
+        self._close_button = QtWidgets.QPushButton("Close", self)
+        self._close_button.setObjectName("aiProviderCloseButton")
+        self._close_button.clicked.connect(self.close)  # type: ignore[attr-defined]
+        self._footer_buttons_layout.addWidget(self._close_button)
+
+        right.addLayout(self._footer_buttons_layout)
 
         self._splitter.addWidget(right_widget)
         # Set initial sizes: 1/3 for list, 2/3 for form

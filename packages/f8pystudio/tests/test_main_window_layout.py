@@ -174,7 +174,7 @@ class _LayoutHarness(QtWidgets.QMainWindow):
         self._unsubscribe_asset_cache_changed = None
         self._fake_viewer = self._FakeViewer()
         self.studio_graph = self._FakeStudioGraph(self._fake_viewer)
-        self._open_project_action = self._create_action("Open Project", handler=lambda: None)
+        self._open_project_action = self._create_action("Manage Projects", handler=lambda: None)
         self._quicksave_project_action = self._create_action("Quick Save", handler=lambda: None)
         self._save_project_as_action = self._create_action("Save Project As", handler=lambda: None)
         self._clear_all_nodes_action = self._create_action("Clear All Nodes", handler=lambda: None)
@@ -341,7 +341,7 @@ def test_file_menu_exposes_export_to_component(tmp_path: Path) -> None:
 
     action_texts = [action.text() for action in file_menu.actions() if not action.isSeparator()]
     assert action_texts == [
-        "Open Project",
+        "Manage Projects",
         "Quick Save",
         "Save Project As",
         "Clear All Nodes",
@@ -391,7 +391,7 @@ def test_run_toolbar_places_global_hotkeys_after_variant_catalog(tmp_path: Path)
         action_texts_before_separator.append(action.text())
 
     assert action_texts_before_separator == [
-        "Open Project",
+        "Manage Projects",
         "Quick Save",
         "Save Project As",
         "Clear All Nodes",

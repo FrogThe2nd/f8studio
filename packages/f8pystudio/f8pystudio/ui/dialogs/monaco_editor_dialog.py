@@ -110,11 +110,18 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
         self._ai_quick_panel.open_full_config_requested.connect(self._open_full_ai_config)  # type: ignore[attr-defined]
         self._ai_quick_panel.raise_()
 
-        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Save | QtWidgets.QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self._on_save_clicked)  # type: ignore[attr-defined]
-        buttons.rejected.connect(self.close_requested.emit)  # type: ignore[attr-defined]
-        self._save_button = buttons.button(QtWidgets.QDialogButtonBox.Save)
+        editor_buttons = QtWidgets.QHBoxLayout()
+        editor_buttons.setContentsMargins(0, 0, 0, 0)
+        editor_buttons.setSpacing(8)
+        self._save_button = QtWidgets.QPushButton("Save", self)
+        self._save_button.setObjectName("monacoEditorSaveButton")
+        self._save_button.clicked.connect(self._on_save_clicked)  # type: ignore[attr-defined]
         self._save_button.setEnabled(False)
+        self._cancel_button = QtWidgets.QPushButton("Cancel", self)
+        self._cancel_button.setObjectName("monacoEditorCancelButton")
+        self._cancel_button.clicked.connect(self.close_requested.emit)  # type: ignore[attr-defined]
+        editor_buttons.addWidget(self._save_button)
+        editor_buttons.addWidget(self._cancel_button)
 
         self._ui_bridge.dirty_changed.connect(self._on_dirty_changed)  # type: ignore[attr-defined]
         self._ui_bridge.save_requested.connect(self._on_save_clicked)  # type: ignore[attr-defined]
@@ -139,7 +146,7 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
         bottom_bar.addWidget(self._ctx_btn)
         bottom_bar.addWidget(self._ai_panel_btn)
         bottom_bar.addStretch()
-        bottom_bar.addWidget(buttons)
+        bottom_bar.addLayout(editor_buttons)
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setSpacing(2)

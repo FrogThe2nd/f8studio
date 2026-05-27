@@ -626,6 +626,46 @@ def test_project_storage_delete_project_version_rejects_latest(tmp_path: Path) -
     assert [version.versionNumber for version in service.list_project_versions(saved.projectId)] == [2, 1]
 
 
+def test_project_storage_delete_project_removes_versions_and_clears_current_pointer(tmp_path: Path) -> None:
+    settings = QtCore.QSettings(str(tmp_path / "project-delete-full.ini"), QtCore.QSettings.IniFormat)
+    service = ProjectStorageService(db_path=tmp_path / "assets.db", settings=settings)
+
+    saved = service.save_project(
+        content=_session_payload("full-delete-1"),
+        name="Full Delete Demo",
+        description="",
+        tags=["delete"],
+        set_current=True,
+    )
+    _ = service.save_project(
+        content=_session_payload("full-delete-2"),
+        project_id=saved.projectId,
+        name=saved.name,
+        description=saved.description,
+        tags=list(saved.tags),
+        set_current=True,
+    )
+
+    service.delete_project(project_id=saved.projectId)
+
+    assert service.project(saved.projectId) is None
+    assert service.list_project_versions(saved.projectId) == []
+    assert service.current_project_id() == ""
+    assert [project.projectId for project in service.list_projects()] == []
+
+
+def test_project_storage_delete_project_clears_autosave_pointer(tmp_path: Path) -> None:
+    settings = QtCore.QSettings(str(tmp_path / "project-delete-autosave.ini"), QtCore.QSettings.IniFormat)
+    service = ProjectStorageService(db_path=tmp_path / "assets.db", settings=settings)
+    autosaved = service.save_last_project(content=_session_payload("autosave-delete"))
+
+    service.delete_project(project_id=autosaved.projectId)
+
+    assert service.project(autosaved.projectId) is None
+    assert service.autosave_project_id() == ""
+    assert service.load_last_project() is None
+
+
 def test_component_catalog_hides_uninstalled_remote_entries_until_installed(tmp_path: Path) -> None:
     service = ComponentCatalogService(db_path=tmp_path / "assets.db")
     local_entry = _component_entry(component_id="local-1", source=F8ComponentSourceKind.local, installed=True)

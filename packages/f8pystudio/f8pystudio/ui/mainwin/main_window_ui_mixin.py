@@ -529,11 +529,11 @@ class MainWindowUiMixin:
                 tool_tip="Save current project (Ctrl+S)",
             ),
             open_project_action=self._create_action(
-                "Open Project",
+                "Manage Projects",
                 handler=self._on_open_project_action,
                 shortcut="Ctrl+O",
                 icon=StudioIcon.FOLDER_OPEN,
-                tool_tip="Open project (Ctrl+O)",
+                tool_tip="Open or delete local projects (Ctrl+O)",
             ),
             import_project_json_action=self._create_action(
                 "Import Project JSON",
