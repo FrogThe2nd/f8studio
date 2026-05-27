@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -11,7 +12,7 @@ from f8pysdk.bus import BusBackend
 from f8pysdk.f8_naming import ensure_token
 
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
-from .process_lifecycle import StartServiceRequest, StopServiceRequest
+from .process_lifecycle import ServiceProcessMatch, ServiceProcessTerminateResult, StartServiceRequest, StopServiceRequest
 from .rungraph_deploy_flow import pick_compiled
 from .service_availability import (
     ServiceStatusReuseCode,
@@ -25,6 +26,7 @@ from f8pystudio.nodegraph.runtime_compiler import CompiledRuntimeGraphs
 
 SERVICE_STOP_GRACE_S = 0.8
 SERVICE_RESTART_GRACE_S = 2.2
+_PROCESS_GATEWAY_ERRORS = (OSError, RuntimeError, subprocess.SubprocessError, TypeError, ValueError)
 
 
 @dataclass(frozen=True)
@@ -76,6 +78,48 @@ class ServiceLifecycleControllerMixin:
     async def _ensure_requester(self) -> Any | None:
         return None
 
+    def _process_gateway_service_ids(self, *, context: str) -> list[str]:
+        try:
+            return [str(service_id) for service_id in self._process_gateway.service_ids()]
+        except _PROCESS_GATEWAY_ERRORS as exc:
+            self._report_exception(context, exc)
+            return []
+
+    def _process_gateway_is_running(self, service_id: str, *, context: str) -> bool:
+        sid = str(service_id or "").strip()
+        if not sid:
+            return False
+        try:
+            return bool(self._process_gateway.is_running(sid))
+        except _PROCESS_GATEWAY_ERRORS as exc:
+            self._report_exception(context, exc)
+            return False
+
+    def _external_processes_for_service(self, service_id: str, *, context: str) -> list[ServiceProcessMatch]:
+        sid = str(service_id or "").strip()
+        if not sid:
+            return []
+        try:
+            return list(self._process_gateway.external_processes(sid))
+        except _PROCESS_GATEWAY_ERRORS as exc:
+            self._report_exception(context, exc)
+            return []
+
+    def _terminate_external_processes_for_service(
+        self,
+        service_id: str,
+        *,
+        context: str,
+    ) -> ServiceProcessTerminateResult | None:
+        sid = str(service_id or "").strip()
+        if not sid:
+            return None
+        try:
+            return self._process_gateway.terminate_external_processes(sid)
+        except _PROCESS_GATEWAY_ERRORS as exc:
+            self._report_exception(context, exc)
+            return None
+
     def _stop_process_once_worker(self, service_id: str) -> StopProcessOnceResult:
         sid = str(service_id or "").strip()
         if not sid:
@@ -89,15 +133,16 @@ class ServiceLifecycleControllerMixin:
                 terminated_pids=(),
             )
         tracked_before_stop = False
-        try:
-            tracked_before_stop = sid in set(str(item) for item in self._process_gateway.service_ids())
-        except Exception as exc:
-            self._report_exception(f"list process service ids before stop failed serviceId={sid}", exc)
+        tracked_before_stop = sid in set(
+            self._process_gateway_service_ids(
+                context=f"list process service ids before stop failed serviceId={sid}"
+            )
+        )
         process_stop_ok = False
         try:
             stop_result = self._process_gateway.stop(StopServiceRequest(service_id=sid))
             process_stop_ok = bool(stop_result.success)
-        except Exception as exc:
+        except _PROCESS_GATEWAY_ERRORS as exc:
             self._emit_log_line(f"stop_service failed: {exc}")
         if tracked_before_stop and process_stop_ok:
             return StopProcessOnceResult(
@@ -119,13 +164,10 @@ class ServiceLifecycleControllerMixin:
                 matched_pids=(),
                 terminated_pids=(),
             )
-        try:
-            result = self._process_gateway.terminate_external_processes(sid)
-        except AttributeError:
-            result = None
-        except Exception as exc:
-            self._report_exception(f"terminate untracked service processes failed serviceId={sid}", exc)
-            result = None
+        result = self._terminate_external_processes_for_service(
+            sid,
+            context=f"terminate untracked service processes failed serviceId={sid}",
+        )
         if result is not None and bool(result.success):
             matched_pids = tuple(result.matched_pids or ())
             terminated_pids = tuple(result.terminated_pids or ())
@@ -219,10 +261,9 @@ class ServiceLifecycleControllerMixin:
         service_ids.update(
             str(sid) for sid in self._service_liveliness_instances_by_service.keys() if str(sid or "").strip()
         )
-        try:
-            service_ids.update(str(sid) for sid in self._process_gateway.service_ids() if str(sid or "").strip())
-        except Exception as exc:
-            self._report_exception("list process service ids failed", exc)
+        service_ids.update(
+            sid for sid in self._process_gateway_service_ids(context="list process service ids failed") if sid.strip()
+        )
         service_ids.discard(str(self.studio_service_id))
         return sorted(service_ids)
 
@@ -257,11 +298,11 @@ class ServiceLifecycleControllerMixin:
             return False
         if sid == self.studio_service_id:
             return self._studio_service_bus() is not None
-        try:
-            if bool(self._process_gateway.is_running(str(sid))):
-                return True
-        except Exception as exc:
-            self._report_exception(f"check process running failed serviceId={sid}", exc)
+        if self._process_gateway_is_running(
+            sid,
+            context=f"check process running failed serviceId={sid}",
+        ):
+            return True
         instances = self._service_liveliness_instances_by_service.get(sid)
         if instances:
             return True
@@ -387,26 +428,20 @@ class ServiceLifecycleControllerMixin:
         sid = str(service_id or "").strip()
         if not sid:
             return False
-        try:
-            matches = self._process_gateway.external_processes(sid)
-        except AttributeError:
-            return False
-        except Exception as exc:
-            self._report_exception(f"scan external service processes failed serviceId={sid}", exc)
-            return False
+        matches = self._external_processes_for_service(
+            sid,
+            context=f"scan external service processes failed serviceId={sid}",
+        )
         if not matches:
             return False
         if self._runtime_supervision_mode() != "studio_owned":
             return False
         pid_text = ",".join(str(match.pid) for match in matches)
         self._emit_log_line(f"cleanup untracked local service processes serviceId={sid} pids={pid_text}")
-        try:
-            result = self._process_gateway.terminate_external_processes(sid)
-        except AttributeError:
-            result = None
-        except Exception as exc:
-            self._report_exception(f"terminate untracked service processes failed serviceId={sid}", exc)
-            result = None
+        result = self._terminate_external_processes_for_service(
+            sid,
+            context=f"terminate untracked service processes failed serviceId={sid}",
+        )
         if result is None or not bool(result.success):
             return False
         terminated_text = ",".join(str(pid) for pid in result.terminated_pids)
@@ -418,24 +453,20 @@ class ServiceLifecycleControllerMixin:
         sid = str(service_id or "").strip()
         if not sid:
             return False
-        try:
-            matches = self._process_gateway.external_processes(sid)
-        except AttributeError:
-            return False
-        except Exception as exc:
-            self._report_exception(f"scan external service processes failed serviceId={sid}", exc)
-            return False
+        matches = self._external_processes_for_service(
+            sid,
+            context=f"scan external service processes failed serviceId={sid}",
+        )
         if not matches:
             return False
         pid_text = ",".join(str(match.pid) for match in matches)
         if self._try_cleanup_untracked_local_processes(sid):
             return False
         if self._runtime_supervision_mode() == "studio_owned":
-            try:
-                matches = self._process_gateway.external_processes(sid)
-            except Exception as exc:
-                self._report_exception(f"rescan external service processes failed serviceId={sid}", exc)
-                matches = []
+            matches = self._external_processes_for_service(
+                sid,
+                context=f"rescan external service processes failed serviceId={sid}",
+            )
             pid_text = ",".join(str(match.pid) for match in matches)
             if not matches:
                 self._cache_service_alive(sid, False)
@@ -521,7 +552,7 @@ class ServiceLifecycleControllerMixin:
                     on_output=lambda _sid, line, _sid2=sid: self.service_output.emit(_sid2, str(line)),
                 )
             )
-        except Exception as exc:
+        except _PROCESS_GATEWAY_ERRORS as exc:
             self._emit_log_line(f"start_service failed: {exc}")
             return False
         self._managed_service_ids.add(sid)
@@ -548,10 +579,10 @@ class ServiceLifecycleControllerMixin:
             return False
 
         local_running = False
-        try:
-            local_running = bool(self._process_gateway.is_running(sid))
-        except Exception as exc:
-            self._report_exception(f"check local process failed serviceId={sid}", exc)
+        local_running = self._process_gateway_is_running(
+            sid,
+            context=f"check local process failed serviceId={sid}",
+        )
         if local_running:
             instances = await self._live_runtime_instances(sid)
             if self._block_duplicate_runtime_instances(sid, instances):

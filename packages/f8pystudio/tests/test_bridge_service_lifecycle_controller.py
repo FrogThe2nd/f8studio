@@ -764,6 +764,28 @@ def test_stop_process_once_falls_back_to_untracked_process_cleanup() -> None:
     assert bridge.emitted_states[-1] == ("svc_reused", False)
 
 
+def test_service_lifecycle_reports_process_gateway_boundaries() -> None:
+    class _FailingGateway(_ProcessGateway):
+        def service_ids(self) -> list[str]:
+            raise RuntimeError("service ids unavailable")
+
+        def external_processes(self, service_id: str) -> list[Any]:
+            del service_id
+            raise RuntimeError("process scan unavailable")
+
+    bridge = _Harness()
+    bridge._process_gateway = _FailingGateway()
+    bridge._managed_service_ids.add("svc_managed")
+
+    known_ids = bridge._known_non_studio_service_ids()
+    collided = bridge._handle_external_process_collision("svc_scan")
+
+    assert known_ids == ["svc_managed"]
+    assert collided is False
+    assert "list process service ids failed:RuntimeError" in bridge.exceptions
+    assert "scan external service processes failed serviceId=svc_scan:RuntimeError" in bridge.exceptions
+
+
 def test_liveliness_instance_counts_as_running_after_alive_cache_expires() -> None:
     bridge = _Harness()
     bridge._service_liveliness_instances_by_service["svc_live_only"] = {"inst_live"}
