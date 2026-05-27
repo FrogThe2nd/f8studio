@@ -31,6 +31,15 @@ from f8pystudio.contracts.ui_commands import UiCommand
 from f8pystudio.studio_specs.registry import shared_pystudio_registry
 
 _MONITOR_UI_EMIT_INTERVAL_S = 1.0
+_RUNTIME_BOUNDARY_ERRORS = (
+    AttributeError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+    msgspec.DecodeError,
+)
 
 
 @dataclass(frozen=True)
@@ -92,6 +101,14 @@ class RuntimeSessionControllerMixin:
 
             config.insert_json5("listen/endpoints", json.dumps(list(cfg.zenoh_listen)))
         return config
+
+    @staticmethod
+    def _zenoh_boundary_errors(zenoh_module: Any) -> tuple[type[BaseException], ...]:
+        try:
+            zerror: type[BaseException] = zenoh_module.ZError
+        except AttributeError:
+            return _RUNTIME_BOUNDARY_ERRORS
+        return (*_RUNTIME_BOUNDARY_ERRORS, zerror)
 
     async def _ensure_studio_runtime_async(self, *, timeout_s: float = 6.0) -> bool:
         """
@@ -158,7 +175,7 @@ class RuntimeSessionControllerMixin:
                 self._cache_service_active(self.studio_service_id, True)
                 self._monitor_center.update_service_status(service_id=self.studio_service_id, ready=True)
                 return True
-            except Exception as exc:
+            except _RUNTIME_BOUNDARY_ERRORS as exc:
                 self._emit_log_line(f"studio runtime start failed: {exc}")
                 if svc is not None:
                     await self._run_async_boundary_step(
@@ -253,7 +270,7 @@ class RuntimeSessionControllerMixin:
         try:
             config = self._build_zenoh_session_config(zenoh)
             session = await asyncio.to_thread(zenoh.open, config)
-        except Exception as exc:
+        except self._zenoh_boundary_errors(zenoh) as exc:
             self._report_exception("open zenoh for singleton guard failed", exc)
             return None
 
@@ -280,7 +297,7 @@ class RuntimeSessionControllerMixin:
                     return SINGLETON_GUARD_DIALOG_MESSAGE
             self._zenoh_singleton_session = session
             self._zenoh_singleton_token = session.liveliness().declare_token(key)
-        except Exception as exc:
+        except self._zenoh_boundary_errors(zenoh) as exc:
             self._report_exception("zenoh singleton guard failed", exc)
             close_zenoh_session_best_effort(
                 session,
@@ -307,7 +324,7 @@ class RuntimeSessionControllerMixin:
                 config = self._build_zenoh_session_config(zenoh)
                 session = await asyncio.to_thread(zenoh.open, config)
                 owns_session = True
-            except Exception as exc:
+            except self._zenoh_boundary_errors(zenoh) as exc:
                 self._report_exception("open zenoh for service liveliness watch failed", exc)
                 return
 
@@ -333,7 +350,7 @@ class RuntimeSessionControllerMixin:
                         identity.runtime_instance_id,
                         False,
                     )
-            except Exception as exc:
+            except _RUNTIME_BOUNDARY_ERRORS as exc:
                 loop.call_soon_threadsafe(self._report_exception, "zenoh service liveliness sample failed", exc)
 
         try:
@@ -344,7 +361,7 @@ class RuntimeSessionControllerMixin:
             )
             if owns_session:
                 self._zenoh_service_liveliness_session = session
-        except Exception as exc:
+        except self._zenoh_boundary_errors(zenoh) as exc:
             self._report_exception("declare zenoh service liveliness watch failed", exc)
             if owns_session:
                 close_zenoh_session_best_effort(
@@ -395,7 +412,7 @@ class RuntimeSessionControllerMixin:
                 config = self._build_zenoh_session_config(zenoh)
                 session = await asyncio.to_thread(zenoh.open, config)
                 owns_session = True
-            except Exception as exc:
+            except self._zenoh_boundary_errors(zenoh) as exc:
                 self._report_exception("open zenoh for service liveliness query failed", exc)
                 return None
 
@@ -468,7 +485,7 @@ class RuntimeSessionControllerMixin:
                 )
                 self._remote_state_gateway = RemoteStateGatewayAdapter(self._remote_state_watcher)
                 await self._remote_state_gateway.start()
-            except Exception as exc:
+            except _RUNTIME_BOUNDARY_ERRORS as exc:
                 self._report_exception("start remote state watcher failed", exc)
                 self._remote_state_watcher = None
                 self._remote_state_gateway = None
@@ -516,7 +533,7 @@ class RuntimeSessionControllerMixin:
                     await _on_monitor_payload(bytes(payload))
 
                 self._monitor_sub = await transport.subscribe("f8/svc/*/nodes/*/data/monitor", cb=_on_monitor_sample)
-            except Exception as exc:
+            except _RUNTIME_BOUNDARY_ERRORS as exc:
                 self._report_exception("subscribe monitor stream failed", exc)
 
         # Re-apply current desired lifecycle to any already-known managed services.

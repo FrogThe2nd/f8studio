@@ -260,6 +260,70 @@ def test_start_after_preflight_refreshes_last_compiled_studio_runtime(monkeypatc
     assert len(_FakeStudioService.instances) == 1
 
 
+def test_start_after_preflight_reports_runtime_boundary_failures(monkeypatch) -> None:
+    _FakeStudioService.instances.clear()
+    _FakeStudioService.start_delay_s = 0.0
+    _FakeStudioService.fail_start = False
+    monkeypatch.setattr(
+        "f8pystudio.bridge.runtime_session_controller.PyStudioService",
+        _FakeStudioService,
+    )
+    monkeypatch.setattr(
+        "f8pystudio.bridge.runtime_session_controller.shared_pystudio_registry",
+        lambda: object(),
+    )
+
+    class _FailingRemoteStateWatcher:
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = dict(kwargs)
+
+    class _FailingRemoteStateGatewayAdapter:
+        def __init__(self, watcher: object) -> None:
+            self.watcher = watcher
+
+        async def start(self) -> None:
+            raise RuntimeError("watcher unavailable")
+
+    class _FailingTransport:
+        async def connect(self) -> None:
+            return None
+
+        async def subscribe(self, key_expr: str, *, cb: object | None = None) -> object:
+            del key_expr, cb
+            raise RuntimeError("monitor unavailable")
+
+    monkeypatch.setattr(
+        "f8pystudio.bridge.runtime_session_controller.RemoteStateWatcher",
+        _FailingRemoteStateWatcher,
+    )
+    monkeypatch.setattr(
+        "f8pystudio.bridge.runtime_session_controller.RemoteStateGatewayAdapter",
+        _FailingRemoteStateGatewayAdapter,
+    )
+
+    controller = _Controller()
+    controller._cfg = SimpleNamespace(
+        bus_backend="mem",
+        zenoh_config_path=None,
+        zenoh_connect=(),
+        zenoh_listen=(),
+        zenoh_shm_pool_bytes=256 * 1024 * 1024,
+    )
+    controller._runtime_transport = None
+    controller._runtime_transport_lock = None
+    controller._runtime_transport_lock_loop = None
+    controller._build_runtime_transport = lambda: _FailingTransport()  # type: ignore[method-assign]
+
+    result = asyncio.run(controller._start_after_preflight_async())
+
+    assert result is None
+    assert "start remote state watcher failed:RuntimeError" in controller.reported
+    assert "subscribe monitor stream failed:RuntimeError" in controller.reported
+    assert controller.set_active_calls == [True]
+    assert controller._remote_state_watcher is None
+    assert controller._remote_state_gateway is None
+
+
 def test_zenoh_liveliness_key_extracts_service_id() -> None:
     assert service_id_from_zenoh_liveliness_key("f8/live/svc/engine/instances/inst1") == "engine"
     assert service_id_from_zenoh_liveliness_key("/f8/live/svc/detector/instances/inst2/") == "detector"
