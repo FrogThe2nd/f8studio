@@ -14,6 +14,7 @@ if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
 from f8pyengine.operators.print import PrintRuntimeNode  # noqa: E402
+from f8pyengine.operators.serial_out import SerialOutRuntimeNode  # noqa: E402
 from f8pyengine.operators.tick import TickRuntimeNode  # noqa: E402
 
 
@@ -57,3 +58,22 @@ def test_tick_timer_resolution_failure_is_logged(monkeypatch, caplog) -> None:
     node._apply_windows_timer_resolution(True)
 
     assert "Windows timer resolution request failed enabled=True" in caplog.text
+
+
+def test_serial_out_logs_failed_json_string_unwrap(caplog) -> None:
+    node = SerialOutRuntimeNode(
+        node_id="serial",
+        node=_Node(dataInPorts=[_Port("value")]),
+        initial_state={},
+    )
+
+    caplog.set_level("DEBUG", logger="f8pyengine.operators.serial_out")
+    out = node._to_bytes('"unterminated')
+
+    assert out == b'"unterminated'
+    assert "JSON string unwrap failed" not in caplog.text
+
+    out = node._to_bytes('"bad\\q"')
+
+    assert out == b'"bad\\q"'
+    assert "JSON string unwrap failed" in caplog.text

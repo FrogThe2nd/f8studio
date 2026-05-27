@@ -27,6 +27,10 @@ from ..constants import SERVICE_CLASS
 OPERATOR_CLASS = "f8.serial_out"
 logger = logging.getLogger(__name__)
 
+_JSON_CONVERSION_ERRORS = (TypeError, ValueError)
+_PY_SERIAL_IMPORT_ERRORS = (ImportError, ModuleNotFoundError)
+_SERIAL_IO_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
+
 
 @dataclass(frozen=True)
 class _SerialConfig:
@@ -99,7 +103,7 @@ class SerialOutRuntimeNode(OperatorNode):
             port_s = "COM3"
         try:
             baud_i = int(baudrate)
-        except Exception:
+        except (TypeError, ValueError):
             baud_i = 115200
         baud_i = max(300, min(4000000, baud_i))
 
@@ -142,7 +146,7 @@ class SerialOutRuntimeNode(OperatorNode):
     async def _open_serial_locked(self, cfg: _SerialConfig) -> None:
         try:
             import serial  # type: ignore[import-not-found]
-        except Exception as exc:
+        except _PY_SERIAL_IMPORT_ERRORS as exc:
             self._last_error = f"pyserial not available: {exc}"
             self._serial = None
             return
@@ -156,7 +160,7 @@ class SerialOutRuntimeNode(OperatorNode):
                 write_timeout=0.1,
             )
             self._last_error = None
-        except Exception as exc:
+        except _SERIAL_IO_ERRORS as exc:
             self._serial = None
             self._last_error = f"{type(exc).__name__}: {exc}"
 
@@ -171,8 +175,8 @@ class SerialOutRuntimeNode(OperatorNode):
             return
         try:
             await asyncio.to_thread(s.close)
-        except Exception:
-            logger.exception("[%s:serial_out] close serial failed", self.node_id)
+        except _SERIAL_IO_ERRORS as exc:
+            logger.exception("[%s:serial_out] close serial failed", self.node_id, exc_info=exc)
 
     async def _write(self, data: bytes) -> int:
         async with self._lock:
@@ -183,10 +187,10 @@ class SerialOutRuntimeNode(OperatorNode):
                 n = await asyncio.to_thread(s.write, data)
                 try:
                     await asyncio.to_thread(s.flush)
-                except Exception:
-                    logger.exception("[%s:serial_out] flush failed", self.node_id)
+                except _SERIAL_IO_ERRORS as exc:
+                    logger.exception("[%s:serial_out] flush failed", self.node_id, exc_info=exc)
                 return int(n or 0)
-            except Exception as exc:
+            except _SERIAL_IO_ERRORS as exc:
                 self._last_error = f"{type(exc).__name__}: {exc}"
                 return 0
 
@@ -216,17 +220,14 @@ class SerialOutRuntimeNode(OperatorNode):
                     decoded = json.loads(ss)
                     if isinstance(decoded, str):
                         s = decoded
-                except Exception:
-                    pass
+                except _JSON_CONVERSION_ERRORS as exc:
+                    logger.debug("[%s:serial_out] JSON string unwrap failed", self.node_id, exc_info=exc)
         else:
             try:
                 s = json.dumps(value, ensure_ascii=False, default=str)
-            except Exception:
+            except _JSON_CONVERSION_ERRORS:
                 s = str(value)
-        try:
-            return s.encode("ascii", errors="replace")
-        except Exception:
-            return s.encode("ascii", errors="replace")
+        return s.encode("ascii", errors="replace")
 
 
 SerialOutRuntimeNode.SPEC = F8OperatorSpec(
