@@ -177,6 +177,21 @@ std::string command_output_state_field(const std::string& name) {
   return "__cmd__." + command_key_for_name(name) + ".out";
 }
 
+void stop_runtime_subscriptions(std::vector<std::unique_ptr<RuntimeSubscription>>& subscriptions,
+                                const std::string& service_id, const char* action) {
+  for (auto& sub : subscriptions) {
+    try {
+      if (sub) {
+        sub->stop();
+      }
+    } catch (const std::exception& exc) {
+      spdlog::warn("{} failed serviceId={}: {}", action, service_id, exc.what());
+    } catch (...) {
+      spdlog::warn("{} failed serviceId={}: unknown error", action, service_id);
+    }
+  }
+}
+
 json sorted_json_array(const json& arr, const std::function<std::string(const json&)>& key_fn) {
   if (!arr.is_array()) return json::array();
   std::vector<json> items;
@@ -955,17 +970,7 @@ void ServiceBus::apply_data_routes_from_rungraph(const json& graph_obj) {
     std::atomic_store(&data_routes_snapshot_, std::move(next_snapshot_const));
   }
 
-  for (auto& sub : removed_subscriptions) {
-    try {
-      if (sub) {
-        sub->stop();
-      }
-    } catch (const std::exception& exc) {
-      spdlog::warn("runtime data unsubscribe failed serviceId={}: {}", cfg_.service_id, exc.what());
-    } catch (...) {
-      spdlog::warn("runtime data unsubscribe failed serviceId={}: unknown error", cfg_.service_id);
-    }
-  }
+  stop_runtime_subscriptions(removed_subscriptions, cfg_.service_id, "runtime data unsubscribe");
 
   // Subscribe new keys.
   for (const auto& route_entry : next_snapshot->by_key) {
@@ -995,7 +1000,9 @@ void ServiceBus::apply_data_routes_from_rungraph(const json& graph_obj) {
         (void)it;
       }
       if (duplicate_sub) {
-        duplicate_sub->stop();
+        std::vector<std::unique_ptr<RuntimeSubscription>> duplicate_subscriptions;
+        duplicate_subscriptions.push_back(std::move(duplicate_sub));
+        stop_runtime_subscriptions(duplicate_subscriptions, cfg_.service_id, "runtime data duplicate subscription stop");
       }
     } else {
       spdlog::warn("runtime data subscription failed serviceId={} key={}", cfg_.service_id, key);
@@ -1301,17 +1308,7 @@ void ServiceBus::stop() {
     cross_state_in_.clear();
     cross_state_targets_.clear();
   }
-  for (auto& sub : peer_state_subs_to_stop) {
-    try {
-      if (sub) {
-        sub->stop();
-      }
-    } catch (const std::exception& exc) {
-      spdlog::warn("peer state subscription stop failed serviceId={}: {}", cfg_.service_id, exc.what());
-    } catch (...) {
-      spdlog::warn("peer state subscription stop failed serviceId={}: unknown error", cfg_.service_id);
-    }
-  }
+  stop_runtime_subscriptions(peer_state_subs_to_stop, cfg_.service_id, "peer state subscription stop");
 
   std::vector<std::unique_ptr<RuntimeSubscription>> runtime_data_subs_to_stop;
   {
@@ -1324,17 +1321,7 @@ void ServiceBus::stop() {
     data_input_stream_keys_.clear();
     std::atomic_store(&data_routes_snapshot_, std::shared_ptr<const _DataRoutingSnapshot>{});
   }
-  for (auto& sub : runtime_data_subs_to_stop) {
-    try {
-      if (sub) {
-        sub->stop();
-      }
-    } catch (const std::exception& exc) {
-      spdlog::warn("runtime data subscription stop failed serviceId={}: {}", cfg_.service_id, exc.what());
-    } catch (...) {
-      spdlog::warn("runtime data subscription stop failed serviceId={}: unknown error", cfg_.service_id);
-    }
-  }
+  stop_runtime_subscriptions(runtime_data_subs_to_stop, cfg_.service_id, "runtime data subscription stop");
   {
     std::lock_guard<std::mutex> lock(state_mu_);
     state_cache_.clear();
@@ -2487,6 +2474,32 @@ bool ServiceBus::publish_state_from_external(const std::string& node_id, const s
   }
 }
 
+bool ServiceBus::should_apply_rungraph_state_value(const std::string& node_id, const std::string& field,
+                                                   const json& value, std::int64_t rungraph_ts) {
+  if (rungraph_ts <= 0) {
+    return true;
+  }
+
+  const auto existing = get_state(node_id, field);
+  if (!existing.found) {
+    return true;
+  }
+
+  try {
+    if (existing.value == value) {
+      return false;
+    }
+  } catch (const std::exception& exc) {
+    spdlog::warn("rungraph state reconcile compare failed serviceId={} nodeId={} field={}: {}", cfg_.service_id,
+                 node_id, field, exc.what());
+  }
+
+  if (existing.ts_ms.has_value() && existing.ts_ms.value() >= rungraph_ts) {
+    return false;
+  }
+  return true;
+}
+
 void ServiceBus::apply_rungraph_local(const json& graph_obj, std::string& error_code, std::string& error_message) {
   using namespace f8::cppsdk::generated;
 
@@ -2627,17 +2640,7 @@ void ServiceBus::apply_rungraph_local(const json& graph_obj, std::string& error_
       it = peer_state_subs_by_service_id_.erase(it);
     }
   }
-  for (auto& sub : removed_peer_subscriptions) {
-    try {
-      if (sub) {
-        sub->stop();
-      }
-    } catch (const std::exception& exc) {
-      spdlog::warn("peer state subscription stop failed serviceId={}: {}", cfg_.service_id, exc.what());
-    } catch (...) {
-      spdlog::warn("peer state subscription stop failed serviceId={}: unknown error", cfg_.service_id);
-    }
-  }
+  stop_runtime_subscriptions(removed_peer_subscriptions, cfg_.service_id, "peer state subscription stop");
 
   for (const auto& peer : want_peers) {
     bool has_peer = false;
@@ -2700,20 +2703,17 @@ void ServiceBus::apply_rungraph_local(const json& graph_obj, std::string& error_
         continue;
       }
 
-      if (rungraph_ts > 0) {
-        const auto existing = get_state(node_id, field);
-        if (existing.found) {
-          try {
-            if (existing.value == v) {
-              continue;
-            }
-          } catch (...) {
-          }
-          if (existing.ts_ms.has_value() && existing.ts_ms.value() >= rungraph_ts) {
-            continue;
-          }
+      if (node_id == sid && field == "active") {
+        if (v.is_boolean()) {
+          if (!should_apply_rungraph_state_value(node_id, field, v, rungraph_ts)) continue;
+          set_active_local(v.get<bool>(), json{{"via", "rungraph"}, {"rungraphReconcile", true}}, "rungraph");
+        } else {
+          spdlog::warn("rungraph active reconcile skipped non-boolean value serviceId={}", cfg_.service_id);
         }
+        continue;
       }
+
+      if (!should_apply_rungraph_state_value(node_id, field, v, rungraph_ts)) continue;
       publish_state_local(node_id, field, v, rungraph_ts > 0 ? rungraph_ts : now_ms(), "rungraph",
                           json{{"via", "rungraph"}, {"rungraphReconcile", true}}, "rungraph",
                           true, false);

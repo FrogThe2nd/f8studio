@@ -200,6 +200,8 @@ class ServiceBus final : public ServiceControlHandler {
   void load_active_from_retained();
   void apply_data_routes_from_rungraph(const json& graph_obj);
   void apply_rungraph_local(const json& graph_obj, std::string& error_code, std::string& error_message);
+  bool should_apply_rungraph_state_value(const std::string& node_id, const std::string& field, const json& value,
+                                         std::int64_t rungraph_ts);
   void publish_state_local(const std::string& node_id, const std::string& field, const json& value, std::int64_t ts_ms,
                            const std::string& source, const json& meta, const std::string& origin,
                            bool deliver_local, bool allow_state_fanout);

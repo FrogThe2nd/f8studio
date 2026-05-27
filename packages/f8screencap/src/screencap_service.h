@@ -78,6 +78,7 @@ class ScreenCapService final : public f8::cppsdk::LifecycleNode,
 
   void publish_static_state();
   void publish_dynamic_state();
+  void publish_rungraph_reconcile_snapshot();
   void request_capture_restart();
 
   Config cfg_;

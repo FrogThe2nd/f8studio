@@ -563,51 +563,15 @@ bool ScreenCapService::on_set_rungraph(const json& graph_obj, const json& meta, 
   error_code.clear();
   error_message.clear();
 
+  (void)graph_obj;
+  (void)meta;
+
+  // ServiceBus reconciles rungraph `stateValues` into retained state and queues local
+  // delivery on the service main thread. Keep this hook as a light deploy signal only.
   // Treat any rungraph deploy as the "start signal" for this service.
   armed_.store(true, std::memory_order_release);
-
-  try {
-    if (!graph_obj.is_object() || !graph_obj.contains("nodes") || !graph_obj["nodes"].is_array())
-      return true;
-
-    const auto nodes = graph_obj["nodes"];
-    json service_node;
-    for (const auto& n : nodes) {
-      if (!n.is_object())
-        continue;
-      const std::string nid = n.value("nodeId", "");
-      if (nid != cfg_.service_id)
-        continue;
-      service_node = n;
-      break;
-    }
-    if (!service_node.is_object() || !service_node.contains("stateValues") || !service_node["stateValues"].is_object())
-      return true;
-
-    json meta2 = meta.is_object() ? meta : json::object();
-    meta2["via"] = "rungraph";
-    meta2["graphId"] = graph_obj.value("graphId", "");
-
-    const auto& values = service_node["stateValues"];
-    for (auto it = values.begin(); it != values.end(); ++it) {
-      const std::string field = it.key();
-      if (field.empty())
-        continue;
-      if (field != "active" && field != "mode" && field != "fps" && field != "displayId" && field != "windowId" &&
-          field != "region" && field != "scale") {
-        continue;
-      }
-      if (field == "active") {
-        if (bus_ && it.value().is_boolean()) {
-          bus_->set_active_local(it.value().get<bool>(), meta2, "rungraph");
-        }
-        continue;
-      }
-      std::string ec, em;
-      (void)on_set_state(cfg_.service_id, field, it.value(), meta2, ec, em);
-    }
-  } catch (...) {
-    return true;
+  if (bus_) {
+    bus_->post_main_thread([this]() { publish_rungraph_reconcile_snapshot(); });
   }
   return true;
 }
@@ -891,6 +855,11 @@ void ScreenCapService::publish_dynamic_state() {
   }
 }
 
+void ScreenCapService::publish_rungraph_reconcile_snapshot() {
+  publish_static_state();
+  publish_dynamic_state();
+}
+
 void ScreenCapService::request_capture_restart() {
   capture_restart_.store(true, std::memory_order_release);
 }
@@ -910,18 +879,18 @@ json ScreenCapService::describe() {
       state_field("mode", schema_string_enum({"display", "window", "region"}), "rw", "Mode", "display|window|region",
                   false),
       state_field("fps", schema_number(), "rw", "FPS", "Capture rate", true),
-      state_field("displayId", schema_integer(), "ro", "Display ID", "0..N-1 (see listDisplays)", false),
-      state_field("windowId", schema_string(), "ro", "Window ID",
+      state_field("displayId", schema_integer(), "rw", "Display ID", "0..N-1 (see listDisplays)", false),
+      state_field("windowId", schema_string(), "rw", "Window ID",
                   "backend-specific (e.g. win32:hwnd:0x... or x11:win:0x...)"),
       state_field("window",
                   schema_object(json{{"backend", schema_string()},
                                      {"id", schema_string()},
                                      {"pid", schema_integer()},
-                                     {"title", schema_string()},
-                                     {"rect", rect_schema()}}),
+                                      {"title", schema_string()},
+                                      {"rect", rect_schema()}}),
                   "ro", "Window", "Resolved window metadata (best-effort)", false),
-      state_field("region", rect_schema(), "ro", "Region", "Virtual desktop coordinates", false),
-      state_field("scale", size_schema(), "ro", "Scale", "Optional output size (0 disables)", false),
+      state_field("region", rect_schema(), "rw", "Region", "Virtual desktop coordinates", false),
+      state_field("scale", size_schema(), "rw", "Scale", "Optional output size (0 disables)", false),
       state_field("captureRunning", schema_boolean(), "ro", "Capture Running", "Is capture currently running", false),
       state_field("videoWidth", schema_integer(), "ro", "Video Width", "Width of the video frame in pixels", true),
       state_field("videoHeight", schema_integer(), "ro", "Video Height", "Height of the video frame in pixels", true),

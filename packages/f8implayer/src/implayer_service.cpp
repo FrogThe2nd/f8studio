@@ -1669,15 +1669,9 @@ bool ImPlayerService::on_set_rungraph(const nlohmann::json& graph_obj, const nlo
       if (field.empty())
         continue;
 
-      if (field != "active" && field != "mediaUrl" && field != "volume" && field != "videoOutputMaxWidth" &&
+      if (field != "mediaUrl" && field != "volume" && field != "videoOutputMaxWidth" &&
           field != "videoOutputMaxHeight" && field != "videoOutputMaxFps" && field != "authMode" &&
           field != "authBrowser") {
-        continue;
-      }
-      if (field == "active") {
-        if (bus_ && it.value().is_boolean()) {
-          bus_->set_active_local(it.value().get<bool>(), meta2, "rungraph");
-        }
         continue;
       }
       has_deferred_state = true;
