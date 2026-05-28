@@ -29,6 +29,7 @@ _QT_COMPAT_ERRORS = (AttributeError, RuntimeError, TypeError)
 _QT_EVENT_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
 _NUMERIC_CONVERSION_ERRORS = (TypeError, ValueError)
 _MIME_INSERT_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
+_CODE_EDITOR_PERSISTENCE_ERRORS = (Exception,)
 
 
 class F8CodeButtonEditor(QtWidgets.QWidget):
@@ -115,7 +116,7 @@ class F8CodeButtonEditor(QtWidgets.QWidget):
         if self._persisted_value_getter is not None:
             try:
                 initial_code = str(self._persisted_value_getter() or "")
-            except Exception:
+            except _CODE_EDITOR_PERSISTENCE_ERRORS:
                 logger.exception("Failed to load persisted code for property '%s'", self.get_name())
             else:
                 self.set_value(initial_code)
@@ -130,7 +131,7 @@ class F8CodeButtonEditor(QtWidgets.QWidget):
             if persisted_value_setter is not None:
                 try:
                     saved = persisted_value_setter(updated_text)
-                except Exception:
+                except _CODE_EDITOR_PERSISTENCE_ERRORS:
                     logger.exception("Failed to persist code for property '%s'", prop_name)
                     return False
                 if saved is False:
@@ -148,7 +149,7 @@ class F8CodeButtonEditor(QtWidgets.QWidget):
                 return True
             try:
                 return bool(persisted_target_exists_provider())
-            except Exception:
+            except _CODE_EDITOR_PERSISTENCE_ERRORS:
                 logger.exception("Failed to check persisted code target for property '%s'", prop_name)
                 return False
 
