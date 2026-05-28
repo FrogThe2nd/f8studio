@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from typing import Any
 
@@ -21,10 +22,12 @@ from f8pysdk.registry import Registry
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
 from f8pystudio.contracts.ui_commands import emit_ui_command
 from .categories import PALETTE_CATEGORY_VIZ
+from ._runtime_errors import OPERATOR_PULL_ERRORS, OPERATOR_STATE_READ_ERRORS, OPERATOR_VALUE_COMPARE_ERRORS
 from ._viz_base import StudioVizRuntimeNodeBase, viz_sampling_state_fields
 
 OPERATOR_CLASS = "f8.viz.text"
 RENDERER_CLASS = "viz_text"
+logger = logging.getLogger(__name__)
 
 
 class VizTextRuntimeNode(StudioVizRuntimeNodeBase):
@@ -46,6 +49,24 @@ class VizTextRuntimeNode(StudioVizRuntimeNodeBase):
         self._task: asyncio.Task[object] | None = None
         self._last_preview_value: Any = None
         self._last_preview_ts: int | None = None
+        self._last_loop_error_sig = ""
+        self._last_loop_error_log_ts_ms = 0
+
+    def _should_log_repeating_error(self, sig: str, *, now_ms: int) -> bool:
+        if sig != self._last_loop_error_sig:
+            self._last_loop_error_sig = sig
+            self._last_loop_error_log_ts_ms = int(now_ms)
+            return True
+        if (int(now_ms) - int(self._last_loop_error_log_ts_ms)) >= 5000:
+            self._last_loop_error_log_ts_ms = int(now_ms)
+            return True
+        return False
+
+    def _log_loop_exception_once(self, *, kind: str, exc: Exception) -> None:
+        now_ms = int(time.time() * 1000.0)
+        sig = f"{kind}:{type(exc).__name__}:{exc}"
+        if self._should_log_repeating_error(sig, now_ms=now_ms):
+            logger.exception("[%s:viz_text] %s failed", self.node_id, kind)
 
     def attach(self, bus: Any) -> None:
         super().attach(bus)
@@ -76,18 +97,20 @@ class VizTextRuntimeNode(StudioVizRuntimeNodeBase):
             throttle = None
             try:
                 throttle = await self.get_state_value("throttleMs")
-            except Exception:
+            except OPERATOR_STATE_READ_ERRORS as exc:
+                self._log_loop_exception_once(kind="read throttleMs", exc=exc)
                 throttle = None
             if throttle is None:
                 throttle = self._initial_state.get("throttleMs", 100)
             try:
                 throttle_ms = max(0, int(throttle) if throttle is not None else 100)
-            except Exception:
+            except (TypeError, ValueError):
                 throttle_ms = 100
 
             try:
                 v = await self.pull("inputData")
-            except Exception:
+            except OPERATOR_PULL_ERRORS as exc:
+                self._log_loop_exception_once(kind="pull inputData", exc=exc)
                 v = None
 
             if v is not None:
@@ -95,7 +118,8 @@ class VizTextRuntimeNode(StudioVizRuntimeNodeBase):
                 try:
                     if self._last_preview_ts is not None and self._last_preview_value == v:
                         changed = False
-                except Exception:
+                except OPERATOR_VALUE_COMPARE_ERRORS as exc:
+                    self._log_loop_exception_once(kind="compare preview value", exc=exc)
                     changed = True
                 if changed:
                     ts_ms = int(time.time() * 1000)

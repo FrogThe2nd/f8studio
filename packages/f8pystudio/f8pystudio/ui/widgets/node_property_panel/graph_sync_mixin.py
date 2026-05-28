@@ -17,6 +17,9 @@ _UI_OVERRIDE_STATE_FIELDS_KEY = "stateFields"
 _UI_OVERRIDE_COMMANDS_KEY = "commands"
 _UI_OVERRIDE_DATA_PORTS_KEY = "dataPorts"
 _UI_OVERRIDE_SHOW_ON_NODE_KEY = "showOnNode"
+_PROPERTY_PANEL_NODE_WRITE_ERRORS = (Exception,)
+_PROPERTY_PANEL_EDITOR_REFRESH_ERRORS = (Exception,)
+_PROPERTY_PANEL_WIDGET_WRITE_ERRORS = (Exception,)
 
 
 class NodePropertyPanelGraphSyncMixin:
@@ -146,7 +149,7 @@ class NodePropertyPanelGraphSyncMixin:
             return
         try:
             node.set_property(prop_name, prop_value, push_undo=True)
-        except Exception:
+        except _PROPERTY_PANEL_NODE_WRITE_ERRORS:
             host._log_exception("set_property failed nodeId=%s prop=%s", nid, prop_name)
 
     def _on_editor_property_changing(self, node_id: str, prop_name: str, prop_value: Any) -> None:
@@ -161,7 +164,7 @@ class NodePropertyPanelGraphSyncMixin:
             return
         try:
             node.set_property(prop_name, prop_value, push_undo=False)
-        except Exception:
+        except _PROPERTY_PANEL_NODE_WRITE_ERRORS:
             host._log_exception("set_property preview failed nodeId=%s prop=%s", nid, prop_name)
 
     def _on_graph_property_changed(self, node: Any, prop_name: str, prop_value: Any) -> None:
@@ -192,7 +195,7 @@ class NodePropertyPanelGraphSyncMixin:
 
         try:
             host._editor.refresh_option_pool(prop_key)
-        except Exception:
+        except _PROPERTY_PANEL_EDITOR_REFRESH_ERRORS:
             host._log_exception("refresh_option_pool failed for key=%s", prop_key)
 
         w = host._editor.get_widget(prop_name)
@@ -207,7 +210,7 @@ class NodePropertyPanelGraphSyncMixin:
         host._block_signal = True
         try:
             w.set_value(prop_value)
-        except Exception:
+        except _PROPERTY_PANEL_WIDGET_WRITE_ERRORS:
             host._log_exception("Failed to update property widget value key=%s", prop_key)
         finally:
             host._block_signal = False

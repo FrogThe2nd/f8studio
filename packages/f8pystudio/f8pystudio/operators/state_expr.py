@@ -32,6 +32,7 @@ from ._py_expr_eval import (
     unwrap_wrapped_value,
     wrap_value,
 )
+from ._runtime_errors import OPERATOR_EVAL_ERRORS, OPERATOR_STATE_PUBLISH_ERRORS, OPERATOR_VALUE_COMPARE_ERRORS
 
 OPERATOR_CLASS = "f8.state_expr"
 
@@ -190,11 +191,11 @@ class StateExprRuntimeNode(OperatorNode):
             return
         try:
             result = safe_eval_compiled(self._compiled, names=self._build_eval_names(), allow_numpy=self._allow_numpy)
-        except Exception as exc:
+        except OPERATOR_EVAL_ERRORS as exc:
             now_ms = int(time.time() * 1000.0)
             sig = f"{type(exc).__name__}:{exc}"
             if self._should_log_repeating_error(sig, now_ms=now_ms, kind="eval"):
-                logger.warning("[%s:state_expr] eval failed: %s", self.node_id, exc)
+                logger.warning("[%s:state_expr] eval failed: %s", self.node_id, exc, exc_info=True)
             self._out_value = None
             self._set_last_error(f"{type(exc).__name__}: {exc}")
             return
@@ -220,7 +221,7 @@ class StateExprRuntimeNode(OperatorNode):
                 )
                 return
             await self.clear_error()
-        except Exception as exc:
+        except OPERATOR_STATE_PUBLISH_ERRORS as exc:
             now_ms = int(time.time() * 1000.0)
             sig = f"monitor:{type(exc).__name__}:{exc}"
             if self._should_log_repeating_error(sig, now_ms=now_ms, kind="publish"):
@@ -229,7 +230,7 @@ class StateExprRuntimeNode(OperatorNode):
     async def _safe_set_state(self, field: str, value: Any) -> None:
         try:
             await self.set_state(field, value)
-        except Exception as exc:
+        except OPERATOR_STATE_PUBLISH_ERRORS as exc:
             now_ms = int(time.time() * 1000.0)
             sig = f"{field}:{type(exc).__name__}:{exc}"
             if self._should_log_repeating_error(sig, now_ms=now_ms, kind="publish"):
@@ -241,7 +242,7 @@ class StateExprRuntimeNode(OperatorNode):
             return False
         try:
             return bool(left == right)
-        except Exception:
+        except OPERATOR_VALUE_COMPARE_ERRORS:
             return False
 
 
