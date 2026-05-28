@@ -614,9 +614,9 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         )
         await node._emit_outputs({"outputs": {"out": 123}})
 
-        self.assertIsNotNone(node._last_error)
-        self.assertIn("result:emit:out", str(node._last_error))
-        self.assertIn("emit failed", str(node._last_error))
+        self.assertIsNotNone(node._error_reporter.last_error)
+        self.assertIn("result:emit:out", str(node._error_reporter.last_error))
+        self.assertIn("emit failed", str(node._error_reporter.last_error))
 
     async def test_hook_async_flags_and_invoke_context_reuse(self) -> None:
         harness = ServiceBusHarness()

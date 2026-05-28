@@ -14,6 +14,7 @@ from f8pysdk.codec import unwrap_json_value
 from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
 
+from .error_reporter import PyScriptErrorReporter
 from .local_exec import PyScriptLocalExec, PyScriptPermissionContext
 from .script_runtime_values import (
     PyScriptStatesView,
@@ -28,7 +29,6 @@ from .video_latest import VideoLatestConfig, VideoLatestSubscriptions
 logger = logging.getLogger(__name__)
 _DESTRUCTOR_CLEANUP_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
 _HOOK_AWAITABLE_SCHEDULE_ERRORS = (RuntimeError, TypeError, ValueError)
-_MONITOR_REPORT_ERRORS = (LookupError, OSError, RuntimeError, TypeError, ValueError)
 _SCRIPT_OUTPUT_ERRORS = (LookupError, OSError, RuntimeError, TypeError, ValueError)
 _SCRIPT_COMPILE_ERRORS = (Exception,)
 _SCRIPT_USER_HOOK_ERRORS = (Exception,)
@@ -224,8 +224,11 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         self._active = True
         self._closing = False
 
-        self._last_error: str | None = None
-        self._error_dedupe: dict[str, int] = {}
+        self._error_reporter = PyScriptErrorReporter(
+            node_id=self.node_id,
+            logger=logger,
+            report_error=self.report_error,
+        )
         self._self_state_writes: dict[str, Any] = {}
 
         self._tick_enabled = bool(self._initial_state.get("tickEnabled") or False)
@@ -307,34 +310,10 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         return max(1, out)
 
     def _set_error(self, stage: str, exc: BaseException) -> None:
-        msg = f"{stage}: {exc}"
-        self._last_error = msg
-        logger.error("[%s:pyscript] error %s", self.node_id, msg, exc_info=exc)
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return
-
-        async def _report_monitor_error() -> None:
-            try:
-                await self.report_error(
-                    "PYSCRIPT_ERROR",
-                    msg,
-                    severity="error",
-                    fingerprint=f"pyscript:{stage}:{type(exc).__name__}:{exc}",
-                )
-            except _MONITOR_REPORT_ERRORS as set_exc:
-                logger.error("[%s:pyscript] report monitor error failed", self.node_id, exc_info=set_exc)
-
-        loop.create_task(_report_monitor_error(), name=f"pyscript:reportError:{self.node_id}")
+        self._error_reporter.set_error(stage, exc)
 
     def _log_error_deduped(self, key: str, message: str, exc: BaseException) -> None:
-        now_ms = self._now_ms()
-        last_ts = int(self._error_dedupe.get(key) or 0)
-        if (now_ms - last_ts) < 2000:
-            return
-        self._error_dedupe[key] = now_ms
-        logger.error("[%s:pyscript] %s", self.node_id, message, exc_info=exc)
+        self._error_reporter.log_deduped(key, message, exc)
 
     async def _set_runtime_state(self, field: str, value: Any) -> None:
         self._self_state_writes[str(field)] = value
