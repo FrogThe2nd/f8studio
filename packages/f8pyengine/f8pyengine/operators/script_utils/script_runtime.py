@@ -4,6 +4,8 @@ import inspect
 from dataclasses import dataclass
 from typing import Any, Callable
 
+_SCRIPT_RUNTIME_COMPILE_ERRORS = (Exception,)
+
 
 @dataclass(slots=True)
 class HookSet:
@@ -31,7 +33,7 @@ class ScriptRuntimeCompiler:
         env: dict[str, Any] = {"__builtins__": __builtins__}
         try:
             exec(code, env, env)
-        except Exception as exc:
+        except _SCRIPT_RUNTIME_COMPILE_ERRORS as exc:
             self._set_error("compile", exc)
             return HookSet(
                 runtime={},

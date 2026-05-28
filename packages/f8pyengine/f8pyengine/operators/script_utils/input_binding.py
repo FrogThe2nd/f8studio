@@ -34,6 +34,7 @@ VALID_INPUT_MODES: tuple[InputMode, ...] = (
 )
 
 _DICT_STYLE_INPUT_METHODS: frozenset[str] = frozenset({"get", "keys", "items", "values", "to_dict"})
+_SCRIPT_INPUT_STYLE_INFER_ERRORS = (SyntaxError, TypeError, ValueError)
 
 
 class _MappedInputsView:
@@ -212,7 +213,8 @@ def _function_uses_dot_inputs_access(node: ast.FunctionDef | ast.AsyncFunctionDe
 def infer_script_input_style(code: str) -> str:
     try:
         return "dot" if script_uses_inputs_object_access(code) else "mapping"
-    except Exception:
+    except _SCRIPT_INPUT_STYLE_INFER_ERRORS as exc:
+        logger.debug("failed to infer python script input style", exc_info=exc)
         return "unknown"
 
 
