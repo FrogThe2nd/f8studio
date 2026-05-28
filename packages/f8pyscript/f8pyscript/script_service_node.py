@@ -18,8 +18,10 @@ from f8pysdk.nodes import ServiceNode
 
 from .script_runtime_values import (
     PyScriptStatesView,
+    ScriptOutputPorts,
+    build_script_output_ports,
+    extract_script_outputs,
     normalize_script_output_value,
-    normalize_script_output_value_fast,
 )
 from .video_latest import VideoLatestConfig, VideoLatestSubscriptions
 
@@ -282,9 +284,11 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         self._grant_ts_ms = 0
         self._grant_expires_ts_ms: int | None = None
 
-        self._data_out_port_set: set[str] = set()
-        self._single_data_out_port: str | None = None
-        self._has_out_port = False
+        self._script_output_ports = ScriptOutputPorts(
+            data_out_ports=frozenset(),
+            single_data_out_port=None,
+            has_out_port=False,
+        )
         self._refresh_data_out_port_cache()
 
         self._ctx: PyScriptServiceContext = self._build_ctx()
@@ -536,12 +540,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         return self._ctx
 
     def _refresh_data_out_port_cache(self) -> None:
-        self._data_out_port_set = {str(name) for name in self.data_out_ports}
-        if len(self._data_out_port_set) == 1:
-            self._single_data_out_port = next(iter(self._data_out_port_set))
-        else:
-            self._single_data_out_port = None
-        self._has_out_port = "out" in self._data_out_port_set
+        self._script_output_ports = build_script_output_ports(self.data_out_ports)
 
     def _build_states_view(self, state_keys: tuple[str, ...]) -> PyScriptStatesView:
         resolved_keys = [str(key) for key in state_keys if str(key)]
@@ -700,29 +699,9 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             self._set_error(stage, exc)
             raise
 
-    def _extract_outputs(self, result: Any) -> dict[str, Any]:
-        if result is None:
-            return {}
-        if isinstance(result, dict):
-            raw_outputs = result.get("outputs")
-            if isinstance(raw_outputs, dict):
-                single_out_port = self._single_data_out_port
-                if single_out_port is not None and len(raw_outputs) == 1 and single_out_port in raw_outputs:
-                    return {single_out_port: normalize_script_output_value_fast(raw_outputs.get(single_out_port))}
-                if len(raw_outputs) == 1:
-                    for key, value in raw_outputs.items():
-                        return {str(key): normalize_script_output_value_fast(value)}
-                return {str(k): normalize_script_output_value_fast(v) for k, v in raw_outputs.items()}
-            if "outputs" in result:
-                raise ValueError("script return field 'outputs' must be a dict")
-            raise ValueError("script dict return must include an 'outputs' dict")
-        if not self._has_out_port:
-            return {}
-        return {"out": normalize_script_output_value_fast(result)}
-
     async def _emit_outputs(self, result: Any) -> None:
         try:
-            outputs = self._extract_outputs(result)
+            outputs = extract_script_outputs(result, ports=self._script_output_ports)
         except ValueError as exc:
             self._set_error("result", exc)
             return

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import keyword
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -176,3 +178,51 @@ def normalize_script_output_value_fast(value: Any) -> Any:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     return normalize_script_output_value(value)
+
+
+@dataclass(frozen=True)
+class ScriptOutputPorts:
+    data_out_ports: frozenset[str]
+    single_data_out_port: str | None
+    has_out_port: bool
+
+
+def build_script_output_ports(data_out_ports: Iterable[str]) -> ScriptOutputPorts:
+    port_names = frozenset(str(name) for name in data_out_ports)
+    single_data_out_port: str | None = None
+    if len(port_names) == 1:
+        for port_name in port_names:
+            single_data_out_port = port_name
+    return ScriptOutputPorts(
+        data_out_ports=port_names,
+        single_data_out_port=single_data_out_port,
+        has_out_port="out" in port_names,
+    )
+
+
+def extract_script_outputs(
+    result: Any,
+    *,
+    ports: ScriptOutputPorts,
+    normalize_one: Callable[[Any], Any] = normalize_script_output_value_fast,
+) -> dict[str, Any]:
+    if result is None:
+        return {}
+
+    if isinstance(result, dict):
+        raw_outputs = result.get("outputs")
+        if isinstance(raw_outputs, dict):
+            single_out_port = ports.single_data_out_port
+            if single_out_port is not None and len(raw_outputs) == 1 and single_out_port in raw_outputs:
+                return {single_out_port: normalize_one(raw_outputs.get(single_out_port))}
+            if len(raw_outputs) == 1:
+                for key, value in raw_outputs.items():
+                    return {str(key): normalize_one(value)}
+            return {str(key): normalize_one(value) for key, value in raw_outputs.items()}
+        if "outputs" in result:
+            raise ValueError("script return field 'outputs' must be a dict")
+        raise ValueError("script dict return must include an 'outputs' dict")
+
+    if not ports.has_out_port:
+        return {}
+    return {"out": normalize_one(result)}
