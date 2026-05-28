@@ -19,7 +19,8 @@ from f8pysdk.registry import Registry, RuntimeNodeRegistry, create_runtime_node_
 
 from .constants import SERVICE_CLASS
 from .editor_assist_payload import pyscript_code_field_editor_assist_payload
-from .script_service_node import DEFAULT_CODE, PythonScriptServiceNode
+from .script_service_node import PythonScriptServiceNode
+from .script_templates import DEFAULT_CODE
 
 
 def register_specs(registry: Registry) -> Registry:

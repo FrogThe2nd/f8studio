@@ -22,6 +22,7 @@ from .script_runtime_values import (
     extract_script_outputs,
 )
 from .script_runtime import PyScriptHookSet, PyScriptRuntimeCompiler
+from .script_templates import DEFAULT_CODE
 from .state_access import PyScriptStateAccess, collect_readable_state_names
 from .tick_scheduler import PyScriptTickScheduler
 from .video_latest import VideoLatestConfig, VideoLatestSubscriptions
@@ -30,83 +31,6 @@ logger = logging.getLogger(__name__)
 _DESTRUCTOR_CLEANUP_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
 _SCRIPT_OUTPUT_ERRORS = (LookupError, OSError, RuntimeError, TypeError, ValueError)
 _SCRIPT_COMPILE_ERRORS = (Exception,)
-
-
-DEFAULT_CODE = (
-    "# Hooks template (uncomment what you need):\n"
-    "# - onStart(ctx)\n"
-    "# - onStop(ctx)\n"
-    "# - onPause(ctx, meta=None)\n"
-    "# - onResume(ctx, meta=None)\n"
-    "# - onState(ctx, field, value, ts_ms=None)\n"
-    "# - onData(ctx, port, value, ts_ms=None)\n"
-    "# - onTick(ctx, tick)\n"
-    "# - onCommand(ctx, name, args, meta=None)\n"
-    "#\n"
-    "# Useful context helpers:\n"
-    "# - ctx.states.<field> reads cached rw/ro/wo state snapshot\n"
-    "#   - example: ctx.states.tickEnabled\n"
-    "# - await ctx.read_state(field)  # fresh runtime read\n"
-    "# - ctx.states.get(field)  # cached snapshot\n"
-    "# - ctx.set_state(field, value)\n"
-    "# - await ctx.set_state_async(field, value)\n"
-    "# - ctx.emit(port, value)\n"
-    "# - ctx.permission.local_exec_granted / ctx.permission.expires_ts_ms\n"
-    "# - ctx.subscribe_video_latest(key, stream_key='f8/svc/.../data/video', decode='auto')\n"
-    "# - pkt = ctx.get_video_latest(key)\n"
-    "# - TypeGuard helpers are available from f8_dynamic_inputs\n"
-    "#   - example: from f8_dynamic_inputs import is_port_in\n"
-    "#   - optional: from f8_dynamic_inputs import *\n"
-    "#   - then: if is_port_in(value, port): ...\n"
-    "# - State TypeGuard helpers are available from f8_dynamic_states\n"
-    "#   - example: from f8_dynamic_states import is_state_tickEnabled\n"
-    "#   - then: if is_state_tickEnabled(value, field): ...\n"
-    "#\n"
-    "from typing import TYPE_CHECKING, Any\n"
-    "if TYPE_CHECKING:\n"
-    "    from f8_script_api import F8PyScriptContext, F8States, F8Tick\n"
-    "#\n"
-    "def onStart(ctx: 'F8PyScriptContext') -> None:\n"
-    "    ctx.log('pyscript started')\n"
-    "\n"
-    "# def onStop(ctx: 'F8PyScriptContext') -> None:\n"
-    "#     ctx.log('pyscript stopped')\n"
-    "#\n"
-    "# def onPause(ctx: 'F8PyScriptContext', meta: dict[str, Any] | None = None) -> None:\n"
-    "#     ctx.log(f'paused: {meta}')\n"
-    "#\n"
-    "# def onResume(ctx: 'F8PyScriptContext', meta: dict[str, Any] | None = None) -> None:\n"
-    "#     ctx.log(f'resumed: {meta}')\n"
-    "#\n"
-    "# def onState(\n"
-    "#     ctx: 'F8PyScriptContext',\n"
-    "#     field: str,\n"
-    "#     value: Any,\n"
-    "#     ts_ms: int | None = None,\n"
-    "# ) -> None:\n"
-    "#     ctx.log(f'state {field}={value} ts_ms={ts_ms}')\n"
-    "#\n"
-    "# def onData(\n"
-    "#     ctx: 'F8PyScriptContext',\n"
-    "#     port: str,\n"
-    "#     value: Any,\n"
-    "#     ts_ms: int | None = None,\n"
-    "# ) -> None:\n"
-    "#     ctx.log(f'data port={port} value={value} ts_ms={ts_ms}')\n"
-    "#\n"
-    "# def onTick(ctx: 'F8PyScriptContext', tick: 'F8Tick') -> None:\n"
-    "#     ctx.log(f'tick seq={tick.seq} tsMs={tick.tsMs} deltaMs={tick.deltaMs}')\n"
-    "#\n"
-    "# def onCommand(\n"
-    "#     ctx: 'F8PyScriptContext',\n"
-    "#     name: str,\n"
-    "#     args: dict[str, Any],\n"
-    "#     meta: dict[str, Any] | None = None,\n"
-    "# ) -> dict[str, Any]:\n"
-    "#     if name == 'ping':\n"
-    "#         return {'ok': True, 'result': {'pong': True}}\n"
-    "#     return {'ok': False, 'error': f'unknown command: {name}'}\n"
-)
 
 
 class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
