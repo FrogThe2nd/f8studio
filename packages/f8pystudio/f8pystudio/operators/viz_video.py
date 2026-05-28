@@ -32,6 +32,9 @@ OPERATOR_CLASS = "f8.viz.video"
 RENDERER_CLASS = "viz_video"
 log = logging.getLogger(__name__)
 
+_STATE_READ_ERRORS = (RuntimeError, OSError, TypeError, ValueError)
+_NUMERIC_PARSE_ERRORS = (TypeError, ValueError, OverflowError)
+
 
 class VizVideoRuntimeNode(OperatorNode):
     """
@@ -243,7 +246,7 @@ class VizVideoRuntimeNode(OperatorNode):
             loop = asyncio.get_running_loop()
             loop.create_task(self._ensure_config_loaded(), name=f"pystudio:video:init:{self.node_id}")
         except RuntimeError:
-            pass
+            log.debug("viz video config init deferred; no running event loop node_id=%s", self.node_id, exc_info=True)
 
     async def close(self) -> None:
         try:
@@ -256,8 +259,8 @@ class VizVideoRuntimeNode(OperatorNode):
             if t is not None:
                 t.cancel()
                 await asyncio.gather(t, return_exceptions=True)
-        except (RuntimeError, TypeError, ValueError) as exc:
-            log.debug("viz video node close cleanup failed node_id=%s", self.node_id, exc_info=exc)
+        except (RuntimeError, TypeError, ValueError):
+            log.debug("viz video node close cleanup failed node_id=%s", self.node_id, exc_info=True)
         emit_ui_command(self.node_id, "viz.video.detach", {}, ts_ms=int(time.time() * 1000))
 
     async def validate_rungraph(self, graph: F8RuntimeGraph) -> None:
@@ -348,23 +351,17 @@ class VizVideoRuntimeNode(OperatorNode):
         if self._config_loaded:
             return
         self._throttle_ms = await self._get_int_state("throttleMs", default=33, minimum=0, maximum=60000)
-        flow_mode = str(await self._get_str_state("flowDisplayMode", default=str(self._initial_state.get("flowDisplayMode", "off")))).strip().lower()
+        flow_mode = (await self._get_str_state("flowDisplayMode", default="off")).strip().lower()
         self._flow_display_mode = flow_mode if flow_mode in ("off", "hsv", "arrows") else "off"
         self._flow_mag_scale = await self._get_float_state("flowMagScale", default=20.0, minimum=0.1, maximum=500.0)
         self._flow_stride = await self._get_int_state("flowStride", default=12, minimum=2, maximum=128)
-        mode = str(await self._get_str_state("scaleMode", default=str(self._initial_state.get("scaleMode", "native")))).strip().lower()
+        mode = (await self._get_str_state("scaleMode", default="native")).strip().lower()
         self._scale_mode = mode if mode in ("native", "fit") else "native"
-        scalar_display = str(
-            await self._get_str_state("scalarDisplayMode", default=str(self._initial_state.get("scalarDisplayMode", "off")))
-        ).strip().lower()
+        scalar_display = (await self._get_str_state("scalarDisplayMode", default="off")).strip().lower()
         self._scalar_display_mode = self._normalize_scalar_display_mode(scalar_display)
-        scalar_colormap = str(
-            await self._get_str_state("scalarColormap", default=str(self._initial_state.get("scalarColormap", "turbo")))
-        ).strip().lower()
+        scalar_colormap = (await self._get_str_state("scalarColormap", default="turbo")).strip().lower()
         self._scalar_colormap = self._normalize_scalar_colormap(scalar_colormap)
-        scalar_range_mode = str(
-            await self._get_str_state("scalarRangeMode", default=str(self._initial_state.get("scalarRangeMode", "auto")))
-        ).strip().lower()
+        scalar_range_mode = (await self._get_str_state("scalarRangeMode", default="auto")).strip().lower()
         self._scalar_range_mode = self._normalize_scalar_range_mode(scalar_range_mode)
         self._scalar_min = await self._get_float_state("scalarMin", default=-1.0, minimum=-1_000_000_000.0, maximum=1_000_000_000.0)
         self._scalar_max = await self._get_float_state("scalarMax", default=1.0, minimum=-1_000_000_000.0, maximum=1_000_000_000.0)
@@ -382,11 +379,9 @@ class VizVideoRuntimeNode(OperatorNode):
         )
         self._scalar_invert = await self._get_bool_state(
             "scalarInvert",
-            default=bool(self._initial_state.get("scalarInvert", False)),
+            default=False,
         )
-        scalar_nan_mode = str(
-            await self._get_str_state("scalarNanMode", default=str(self._initial_state.get("scalarNanMode", "transparent")))
-        ).strip().lower()
+        scalar_nan_mode = (await self._get_str_state("scalarNanMode", default="transparent")).strip().lower()
         self._scalar_nan_mode = self._normalize_scalar_nan_mode(scalar_nan_mode)
         self._config_loaded = True
         await self._push_config(now_ms=int(time.time() * 1000))
@@ -431,16 +426,10 @@ class VizVideoRuntimeNode(OperatorNode):
         )
 
     async def _get_int_state(self, name: str, *, default: int, minimum: int, maximum: int) -> int:
-        v: Any = None
-        try:
-            v = await self.get_state_value(name)
-        except Exception:
-            v = None
-        if v is None:
-            v = self._initial_state.get(name)
+        v = await self._config_state_value(name)
         try:
             out = int(v) if v is not None else int(default)
-        except Exception:
+        except _NUMERIC_PARSE_ERRORS:
             out = int(default)
         if out < minimum:
             out = minimum
@@ -449,27 +438,11 @@ class VizVideoRuntimeNode(OperatorNode):
         return out
 
     async def _get_str_state(self, name: str, *, default: str) -> str:
-        v: Any = None
-        try:
-            v = await self.get_state_value(name)
-        except Exception:
-            v = None
-        if v is None:
-            v = self._initial_state.get(name)
-        try:
-            s = str(v) if v is not None else str(default)
-        except Exception:
-            s = str(default)
-        return s
+        v = await self._config_state_value(name)
+        return str(v) if v is not None else str(default)
 
     async def _get_bool_state(self, name: str, *, default: bool) -> bool:
-        v: Any = None
-        try:
-            v = await self.get_state_value(name)
-        except Exception:
-            v = None
-        if v is None:
-            v = self._initial_state.get(name, default)
+        v = await self._config_state_value(name, default=default)
         if isinstance(v, bool):
             return v
         if isinstance(v, (int, float)):
@@ -482,22 +455,31 @@ class VizVideoRuntimeNode(OperatorNode):
         return bool(default)
 
     async def _get_float_state(self, name: str, *, default: float, minimum: float, maximum: float) -> float:
-        v: Any = None
-        try:
-            v = await self.get_state_value(name)
-        except Exception:
-            v = None
-        if v is None:
-            v = self._initial_state.get(name)
+        v = await self._config_state_value(name)
         try:
             out = float(v) if v is not None else float(default)
-        except Exception:
+        except _NUMERIC_PARSE_ERRORS:
             out = float(default)
         if out < minimum:
             out = minimum
         if out > maximum:
             out = maximum
         return out
+
+    async def _config_state_value(self, name: str, *, default: Any = None) -> Any:
+        try:
+            value = await self.get_state_value(name)
+        except _STATE_READ_ERRORS:
+            log.debug(
+                "viz video state read failed; falling back to initial state node_id=%s field=%s",
+                self.node_id,
+                name,
+                exc_info=True,
+            )
+            value = None
+        if value is not None:
+            return value
+        return self._initial_state.get(name, default)
 
     @staticmethod
     def _normalize_scalar_display_mode(mode: str) -> str:
