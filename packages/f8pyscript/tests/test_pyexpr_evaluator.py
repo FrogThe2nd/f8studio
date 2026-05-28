@@ -1,5 +1,6 @@
-from f8pyscript.expr_evaluator import PyExprEvaluator, compile_pyexpr
+from f8pyscript.expr_evaluator import PyExprEvaluator
 from f8pyscript.expr_json_ref import wrap_pyexpr_value
+from f8pyscript.expr_validator import compile_pyexpr
 
 
 def test_compile_pyexpr_rejects_disallowed_calls() -> None:
