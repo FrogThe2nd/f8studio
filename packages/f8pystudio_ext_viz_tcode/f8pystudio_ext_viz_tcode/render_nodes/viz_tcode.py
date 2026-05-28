@@ -17,6 +17,9 @@ from f8pystudio.ui.support.webengine_utils import (
 )
 
 logger = logging.getLogger(__name__)
+_QT_WEBENGINE_IMPORT_ERRORS = (ImportError, OSError, RuntimeError)
+_QT_LIFECYCLE_ERRORS = (AttributeError, RuntimeError, TypeError)
+_RENDER_NODE_SETUP_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
 
 
 class _ViewerHandle(Protocol):
@@ -101,7 +104,8 @@ class _TCodeViewerWindow(QtWidgets.QDialog):
 
         try:
             from PySide6 import QtWebEngineWidgets  # type: ignore[import-not-found]
-        except Exception:
+        except _QT_WEBENGINE_IMPORT_ERRORS:
+            logger.debug("QtWebEngine widgets unavailable for tcode viewer", exc_info=True)
             QtWebEngineWidgets = None
 
         if QtWebEngineWidgets is None:
@@ -190,15 +194,15 @@ class _TCodeViewerWindow(QtWidgets.QDialog):
         self._shutdown_started = True
         try:
             self.detach_viewer()
-        except Exception:
+        except _QT_LIFECYCLE_ERRORS:
             logger.exception("failed to detach tcode viewer before shutdown")
         try:
             self.close()
-        except Exception:
+        except _QT_LIFECYCLE_ERRORS:
             logger.exception("failed to close tcode viewer during shutdown")
         try:
             self.deleteLater()
-        except Exception:
+        except _QT_LIFECYCLE_ERRORS:
             logger.exception("failed to schedule deleteLater for tcode viewer")
 
     def bind_host_parent(self, parent: QtWidgets.QWidget | None) -> None:
@@ -208,7 +212,7 @@ class _TCodeViewerWindow(QtWidgets.QDialog):
             return
         try:
             self.setParent(parent, self.windowFlags())
-        except Exception:
+        except _QT_LIFECYCLE_ERRORS:
             logger.exception("failed to bind TCode viewer parent")
 
     def set_model(self, model: str) -> None:
@@ -303,7 +307,7 @@ class VizTCodeRenderNode(F8StudioOperatorBaseNode):
             widget = _TCodeViewerWidget(self.view, name="__tcode_viewer", label="")
             self.add_ephemeral_widget(widget)
             widget.set_open_handler(self._open_viewer)
-        except Exception:
+        except _RENDER_NODE_SETUP_ERRORS:
             logger.exception("failed to init tcode viewer widget")
         self._bind_app_quit_hook()
 
@@ -316,7 +320,7 @@ class VizTCodeRenderNode(F8StudioOperatorBaseNode):
         try:
             app.aboutToQuit.connect(self._on_app_about_to_quit)  # type: ignore[attr-defined]
             self._app_quit_hook_bound = True
-        except Exception:
+        except _QT_LIFECYCLE_ERRORS:
             logger.exception("failed to bind TCode viewer app quit hook")
 
     def _on_app_about_to_quit(self) -> None:
@@ -325,13 +329,14 @@ class VizTCodeRenderNode(F8StudioOperatorBaseNode):
             return
         try:
             window.force_shutdown()
-        except Exception:
+        except _QT_LIFECYCLE_ERRORS:
             logger.exception("failed to shutdown TCode viewer during app quit")
 
     def _get_widget(self) -> _TCodeViewerWidget | None:
         try:
             widget = self.get_widget("__tcode_viewer")
-        except Exception:
+        except _RENDER_NODE_SETUP_ERRORS:
+            logger.debug("failed to read TCode viewer widget", exc_info=True)
             return None
         if not isinstance(widget, _TCodeViewerWidget):
             return None
