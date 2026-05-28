@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import sys
 import unittest
@@ -436,6 +437,24 @@ class DataFlowRoutingTests(unittest.IsolatedAsyncioTestCase):
         await _sleep_ticks(2)
 
         self.assertEqual(node.data_calls, [])
+
+    async def test_data_router_stop_flush_task_logs_unexpected_failure(self) -> None:
+        cluster = InMemoryCluster()
+        transport = InMemoryTransport(cluster=cluster)
+        bus = ServiceBus(ServiceBusConfig(service_id="svc", data_delivery="callback"), transport=transport)
+
+        async def _broken_flush() -> None:
+            raise RuntimeError("flush failed")
+
+        task = asyncio.create_task(_broken_flush())
+        await _sleep_ticks(1)
+        bus.data_router._on_data_flush_task = task
+
+        with self.assertLogs("f8pysdk.service_bus.data.router", level=logging.ERROR) as captured:
+            await bus.data_router._stop_flush_task()
+
+        self.assertIsNone(bus.data_router._on_data_flush_task)
+        self.assertTrue(any("on_data flush task stop failed" in line for line in captured.output))
 
     async def test_push_input_is_ignored_while_bus_inactive(self) -> None:
         cluster = InMemoryCluster()

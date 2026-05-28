@@ -22,6 +22,10 @@ if TYPE_CHECKING:
 
 
 log = logging.getLogger(__name__)
+_DATA_NODE_CALLBACK_ERRORS = (Exception,)
+_DATA_ROUTER_LIFECYCLE_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
+_DATA_ROUTER_SCHEDULE_ERRORS = (RuntimeError, TypeError, ValueError)
+_DATA_TRANSPORT_SUBSCRIPTION_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
 
 DataRouteTarget = tuple[str, str, F8Edge]
 DataOutRoutes = dict[tuple[str, str], tuple[DataRouteTarget, ...]]
@@ -273,7 +277,7 @@ class DataRouter:
                         value = await src.compute_output(from_port, ctx_id=ctx_id)
                     else:
                         value = None
-                except Exception as exc:
+                except _DATA_NODE_CALLBACK_ERRORS as exc:
                     log_error_once(
                         bus,
                         key=f"compute_output_failed:{from_node}:{from_port}",
@@ -330,7 +334,7 @@ class DataRouter:
                 if self.is_stale(edge, ts_i):
                     continue
                 self.push_input(to_node, to_port, value, ts_ms=ts_i, edge=edge)
-            except Exception as exc:
+            except _DATA_ROUTER_LIFECYCLE_ERRORS as exc:
                 log_error_once(
                     bus,
                     key=f"cross_data_push_failed:{to_node}:{to_port}",
@@ -406,7 +410,7 @@ class DataRouter:
                 continue
             try:
                 await sub.unsubscribe()
-            except Exception as exc:
+            except _DATA_TRANSPORT_SUBSCRIPTION_ERRORS as exc:
                 log.error("failed to unsubscribe routed key=%s", key, exc_info=exc)
 
         for key in want_keys:
@@ -477,7 +481,7 @@ class DataRouter:
                     self._flush_on_data_push_queue(),
                     name=f"service_bus:on_data_flush:{bus.service_id}",
                 )
-            except Exception as exc:
+            except _DATA_ROUTER_SCHEDULE_ERRORS as exc:
                 log_error_once(
                     bus,
                     key=f"push_on_data_schedule_failed:{to_node}:{to_port}",
@@ -619,7 +623,7 @@ class DataRouter:
                             node.on_data(port, value, ts_ms=ts_ms),  # type: ignore[misc]
                             name=f"service_bus:on_data:{node_id}:{port}",
                         )
-                    except Exception as exc:
+                    except _DATA_ROUTER_SCHEDULE_ERRORS as exc:
                         log_error_once(
                             self._bus,
                             key=f"push_on_data_schedule_failed:{node_id}:{port}",
@@ -639,5 +643,5 @@ class DataRouter:
                 await flush_task
             except asyncio.CancelledError:
                 pass
-            except Exception as exc:
+            except _DATA_ROUTER_LIFECYCLE_ERRORS as exc:
                 log.error("on_data flush task stop failed", exc_info=exc)
