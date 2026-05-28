@@ -35,6 +35,7 @@ from f8pystudio.studio_specs.registry import SERVICE_CLASS as STUDIO_SERVICE_CLA
 
 logger = logging.getLogger(__name__)
 _LOG_DOCK_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
+_MAIN_WINDOW_QT_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
 
 
 class F8StudioMainWin(
@@ -242,7 +243,7 @@ class F8StudioMainWin(
 
         try:
             self.studio_graph.set_service_bridge(self._bridge)
-        except Exception as exc:
+        except _MAIN_WINDOW_QT_ERRORS as exc:
             self._log_dock.report_exception("studio", "studio_graph.set_service_bridge failed", exc)
 
         self._runtime_state_sync = RuntimeStateSyncController(
@@ -276,16 +277,16 @@ class F8StudioMainWin(
     def prepare_before_show(self) -> None:
         try:
             self._ensure_ai_assist_sidebar()
-        except Exception as exc:
+        except _MAIN_WINDOW_QT_ERRORS as exc:
             self._log_dock.report_exception("studio", "prepare AI Assist before show failed", exc)
-            logger.error("prepare AI Assist before show failed", exc_info=exc)
+            logger.error("prepare AI Assist before show failed", exc_info=True)
 
     def stop_bridge(self) -> None:
         if self._bridge_stopped:
             return
         try:
             self._bridge.stop()
-        except Exception as exc:
+        except _MAIN_WINDOW_QT_ERRORS as exc:
             self._log_dock.report_exception("studio", "bridge.stop failed", exc)
             return
         self._bridge_stopped = True
@@ -295,8 +296,8 @@ class F8StudioMainWin(
             return
         try:
             timer.stop()
-        except RuntimeError as exc:
-            logger.debug("failed to stop timer during shutdown context=%s", context, exc_info=exc)
+        except RuntimeError:
+            logger.debug("failed to stop timer during shutdown context=%s", context, exc_info=True)
 
     def _shutdown_ai_assist_sidebar(self) -> None:
         sidebar = self._ai_assist_sidebar
@@ -305,23 +306,23 @@ class F8StudioMainWin(
             return
         try:
             sidebar.shutdown()
-        except Exception as exc:
-            logger.exception("failed to shutdown AI Assist sidebar", exc_info=exc)
+        except _MAIN_WINDOW_QT_ERRORS:
+            logger.exception("failed to shutdown AI Assist sidebar")
         try:
             sidebar.deleteLater()
-        except RuntimeError as exc:
-            logger.debug("failed to deleteLater AI Assist sidebar", exc_info=exc)
+        except RuntimeError:
+            logger.debug("failed to deleteLater AI Assist sidebar", exc_info=True)
 
     def _teardown_graph_nodes_for_exit(self) -> None:
         try:
             nodes = list(self.studio_graph.all_nodes() or [])
-        except Exception as exc:
-            logger.exception("failed to list graph nodes during shutdown", exc_info=exc)
+        except _MAIN_WINDOW_QT_ERRORS:
+            logger.exception("failed to list graph nodes during shutdown")
             return
         try:
             self.studio_graph._teardown_nodes(nodes)
-        except Exception as exc:
-            logger.exception("failed to teardown graph nodes during shutdown", exc_info=exc)
+        except _MAIN_WINDOW_QT_ERRORS:
+            logger.exception("failed to teardown graph nodes during shutdown")
 
     def _request_qt_app_quit(self) -> None:
         app = QtWidgets.QApplication.instance()
@@ -329,14 +330,14 @@ class F8StudioMainWin(
             return
         try:
             QtCore.QTimer.singleShot(0, app.quit)
-        except RuntimeError as exc:
-            logger.debug("failed to request Qt app quit during shutdown", exc_info=exc)
+        except RuntimeError:
+            logger.debug("failed to request Qt app quit during shutdown", exc_info=True)
 
     def _run_shutdown_step(self, context: str, step: Callable[[], None]) -> None:
         try:
             step()
         except Exception as exc:
-            logger.exception("shutdown step failed context=%s", str(context or "").strip(), exc_info=exc)
+            logger.exception("shutdown step failed context=%s", str(context or "").strip())
 
     def shutdown_for_app_exit(self) -> None:
         if self._shutdown_started:

@@ -73,6 +73,30 @@ class _DiscoveryLogHarness:
         self._log_dock = log_dock
 
 
+class _StopBridgeHarness:
+    stop_bridge = F8StudioMainWin.stop_bridge
+
+    class _Bridge:
+        def __init__(self) -> None:
+            self.stop_calls = 0
+
+        def stop(self) -> None:
+            self.stop_calls += 1
+            raise RuntimeError("bridge stop failed")
+
+    class _LogDock:
+        def __init__(self) -> None:
+            self.reported: list[tuple[str, str, str]] = []
+
+        def report_exception(self, channel: str, context: str, exc: Exception) -> None:
+            self.reported.append((str(channel), str(context), str(exc)))
+
+    def __init__(self) -> None:
+        self._bridge_stopped = False
+        self._bridge = self._Bridge()
+        self._log_dock = self._LogDock()
+
+
 def test_shutdown_for_app_exit_continues_after_step_failure() -> None:
     host = _ShutdownHarness()
 
@@ -139,3 +163,13 @@ def test_append_discovery_logs_reports_log_dock_failures(caplog) -> None:
     host.append_discovery_logs(timing_lines=["timing\n"], error_lines=[])
 
     assert "Failed to emit discovery logs to studio log dock" in caplog.text
+
+
+def test_stop_bridge_reports_runtime_failures_without_marking_stopped() -> None:
+    host = _StopBridgeHarness()
+
+    host.stop_bridge()
+
+    assert host._bridge.stop_calls == 1
+    assert host._bridge_stopped is False
+    assert host._log_dock.reported == [("studio", "bridge.stop failed", "bridge stop failed")]
