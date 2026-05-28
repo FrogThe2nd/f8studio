@@ -25,10 +25,12 @@ from f8pysdk.registry import Registry
 
 from ..constants import SERVICE_CLASS
 from ..recording import FORMAT_VERSION, RecordingHeader, RecordingReader, RecordingWriter
+from ._runtime_errors import OPERATOR_STATE_PUBLISH_ERRORS
 
 OPERATOR_CLASS: Final[str] = "f8.recorder"
 
 logger = logging.getLogger(__name__)
+_RECORDER_WRITE_ERRORS = (Exception,)
 
 _CONTROL_STATE_NAMES = {
     "path",
@@ -109,7 +111,7 @@ class RecorderRuntimeNode(OperatorNode):
             )
             self._state_event_count += 1
             await self._publish_recording_state()
-        except Exception as exc:
+        except _RECORDER_WRITE_ERRORS as exc:
             logger.exception("[%s:recorder] failed to record state change: %s", self.node_id, name)
             await self._set_last_error(str(exc))
 
@@ -179,7 +181,7 @@ class RecorderRuntimeNode(OperatorNode):
             )
             self._sample_count += 1
             await self._publish_recording_state()
-        except Exception as exc:
+        except _RECORDER_WRITE_ERRORS as exc:
             logger.exception("[%s:recorder] failed to record sample", self.node_id)
             await self._set_last_error(str(exc))
 
@@ -208,7 +210,7 @@ class RecorderRuntimeNode(OperatorNode):
         self._published_state_cache[field] = value
         try:
             await self.set_state(field, value)
-        except Exception:
+        except OPERATOR_STATE_PUBLISH_ERRORS:
             self._published_state_cache.pop(field, None)
             logger.exception("[%s:recorder] failed to publish state: %s", self.node_id, field)
 
