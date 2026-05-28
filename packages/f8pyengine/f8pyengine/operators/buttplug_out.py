@@ -29,6 +29,23 @@ from f8pysdk.registry import Registry
 from ..constants import SERVICE_CLASS
 
 logger = logging.getLogger(__name__)
+try:
+    from buttplug import ButtplugError as _ButtplugError
+except ImportError:
+    _ButtplugError = RuntimeError
+
+_BUTTPLUG_RUNTIME_ERRORS: tuple[type[BaseException], ...] = (
+    _ButtplugError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+)
+_BUTTPLUG_COMMAND_BUILD_ERRORS: tuple[type[BaseException], ...] = (
+    *_BUTTPLUG_RUNTIME_ERRORS,
+    TypeError,
+    ValueError,
+)
+_STATE_READ_ERRORS = (LookupError, OSError, RuntimeError, TypeError, ValueError)
 
 OPERATOR_CLASS = "f8.buttplug_out"
 
@@ -508,7 +525,7 @@ class ButtplugOutRuntimeNode(OperatorNode):
                 await self._clear_last_error()
                 if cfg.auto_scan_on_connect:
                     await self._run_scan_cycle(cfg)
-        except Exception as exc:
+        except _BUTTPLUG_RUNTIME_ERRORS as exc:
             await self._set_last_error_once("connect_failed", exc)
 
     async def _disconnect_client(self) -> None:
@@ -518,7 +535,7 @@ class ButtplugOutRuntimeNode(OperatorNode):
         try:
             if client.connected:
                 await client.disconnect()
-        except Exception as exc:
+        except _BUTTPLUG_RUNTIME_ERRORS as exc:
             await self._set_last_error_once("disconnect_failed", exc)
 
     def _bind_client_callbacks(self, client: _ButtplugClientLike) -> None:
@@ -561,7 +578,7 @@ class ButtplugOutRuntimeNode(OperatorNode):
                 await client.stop_scanning()
             await self._publish_runtime_status()
             await self._publish_device_snapshot()
-        except Exception as exc:
+        except _BUTTPLUG_RUNTIME_ERRORS as exc:
             await self._set_last_error_once("scan_failed", exc)
 
     async def _resolve_target_device(self, *, update_selection: bool) -> _DeviceLike | None:
@@ -623,7 +640,7 @@ class ButtplugOutRuntimeNode(OperatorNode):
                 value=float(value),
                 duration_ms=duration_ms if selected_output_name == _OUTPUT_POSITION_WITH_DURATION else None,
             )
-        except Exception as exc:
+        except _BUTTPLUG_COMMAND_BUILD_ERRORS as exc:
             await self._set_last_error_once("build_command_failed", exc)
             return
 
@@ -645,7 +662,7 @@ class ButtplugOutRuntimeNode(OperatorNode):
 
             await feature.run_output(command)
             await self._mark_command_sent()
-        except Exception as exc:
+        except _BUTTPLUG_RUNTIME_ERRORS as exc:
             await self._set_last_error_once(f"send_{selected_output_name}_failed", exc)
 
     async def _handle_send_position_cmd(self, *, target: _DeviceLike, exec_id: str | int) -> None:
@@ -690,7 +707,7 @@ class ButtplugOutRuntimeNode(OperatorNode):
             try:
                 await target.stop(inputs=False, outputs=True)
                 await self._mark_command_sent()
-            except Exception as exc:
+            except _BUTTPLUG_RUNTIME_ERRORS as exc:
                 await self._set_last_error_once("device_stop_failed", exc)
             return
 
@@ -742,7 +759,7 @@ class ButtplugOutRuntimeNode(OperatorNode):
         try:
             await target.stop(inputs=False, outputs=True)
             await self._mark_command_sent()
-        except Exception as exc:
+        except _BUTTPLUG_RUNTIME_ERRORS as exc:
             await self._set_last_error_once("stop_on_deactivate_failed", exc)
 
     async def _mark_command_sent(self) -> None:
@@ -859,7 +876,7 @@ class ButtplugOutRuntimeNode(OperatorNode):
 
         await self._set_last_error_message(message)
         if should_log:
-            logger.exception("[%s:buttplug_out] %s", self.node_id, message, exc_info=exc)
+            logger.error("[%s:buttplug_out] %s", self.node_id, message, exc_info=(type(exc), exc, exc.__traceback__))
 
     async def _set_last_error_message(self, message: str) -> None:
         self._last_error_message = str(message or "")
@@ -873,7 +890,7 @@ class ButtplugOutRuntimeNode(OperatorNode):
         live: Any
         try:
             live = await self.get_state_value(name)
-        except Exception as exc:
+        except _STATE_READ_ERRORS as exc:
             await self._set_last_error_once(f"read_state_{name}_failed", exc)
             live = None
         if live is not None:
