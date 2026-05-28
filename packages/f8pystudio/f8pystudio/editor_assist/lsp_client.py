@@ -13,6 +13,9 @@ from pathlib import Path
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
+_LSP_SHUTDOWN_REQUEST_ERRORS = (Exception,)
+_LSP_EXIT_NOTIFICATION_ERRORS = (Exception,)
+_LSP_STDOUT_READER_ERRORS = (Exception,)
 
 
 class LspClientError(RuntimeError):
@@ -150,11 +153,11 @@ class PythonLspClient:
 
         try:
             _ = self._request("shutdown", {})
-        except Exception:
+        except _LSP_SHUTDOWN_REQUEST_ERRORS:
             logger.exception("language server shutdown request failed")
         try:
             self._notify("exit", {})
-        except Exception:
+        except _LSP_EXIT_NOTIFICATION_ERRORS:
             logger.exception("language server exit notification failed")
 
         self._stop_event.set()
@@ -258,7 +261,7 @@ class PythonLspClient:
                     return
                 msg = json.loads(payload.decode("utf-8"))
                 self._handle_message(msg)
-            except Exception:
+            except _LSP_STDOUT_READER_ERRORS:
                 logger.exception("language server stdout reader failed")
                 return
 
