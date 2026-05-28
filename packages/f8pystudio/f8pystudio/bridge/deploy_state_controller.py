@@ -26,6 +26,9 @@ from f8pystudio.studio_specs.registry import SERVICE_CLASS
 
 logger = logging.getLogger(__name__)
 REMOTE_SERVICE_ENSURE_CONCURRENCY = 4
+_REMOTE_STATE_WATCH_APPLY_ERRORS = (Exception,)
+_REMOTE_SERVICE_ENSURE_ERRORS = (Exception,)
+_LOCAL_STATE_PUBLISH_ERRORS = (Exception,)
 
 
 class DeployStateControllerMixin:
@@ -159,7 +162,7 @@ class DeployStateControllerMixin:
         )
         try:
             await self._apply_remote_state_watches_async(compiled)
-        except Exception as exc:
+        except _REMOTE_STATE_WATCH_APPLY_ERRORS as exc:
             self._report_exception("apply remote state watches failed", exc)
 
     async def _deploy_remote_services_and_refresh_studio_async(self, compiled: CompiledRuntimeGraphs) -> None:
@@ -188,7 +191,7 @@ class DeployStateControllerMixin:
                         str(service_class),
                         local_known_service_class=previous_service_classes.get(sid),
                     )
-                except Exception as exc:
+                except _REMOTE_SERVICE_ENSURE_ERRORS as exc:
                     self._report_exception(f"ensure service available failed serviceId={sid}", exc)
                     return None
             return sid if ok else None
@@ -226,7 +229,7 @@ class DeployStateControllerMixin:
                     logger.warning("Skip local state publish for unknown field: %s.%s", node_id, field)
                     return
                 self._report_exception("publish local state failed", exc)
-            except Exception as exc:
+            except _LOCAL_STATE_PUBLISH_ERRORS as exc:
                 self._report_exception("publish local state failed", exc)
 
         self._submit_async(_do(), context=f"submit set_local_state failed nodeId={node_id}")

@@ -8,6 +8,9 @@ from f8pysdk.f8_naming import ensure_token, new_id
 
 from .command_client import CommandRequest
 
+_REMOTE_COMMAND_CALLBACK_ERRORS = (Exception,)
+_REMOTE_COMMAND_REQUEST_ERRORS = (Exception,)
+
 
 class RemoteCommandControllerMixin:
     def _on_remote_command_response(self, req_id: str, result: object, err: object) -> None:
@@ -16,7 +19,7 @@ class RemoteCommandControllerMixin:
             return
         try:
             cb(result if isinstance(result, dict) else None, str(err) if err else None)
-        except Exception as exc:
+        except _REMOTE_COMMAND_CALLBACK_ERRORS as exc:
             self._report_exception("remote command response callback failed", exc)
 
     def request_remote_command(
@@ -67,7 +70,7 @@ class RemoteCommandControllerMixin:
                     self._emit_remote_command_response_safe(str(req_id), dict(response.result), None)
                     return
                 self._emit_remote_command_response_safe(str(req_id), None, str(response.error_message or "rejected"))
-            except Exception as exc:
+            except _REMOTE_COMMAND_REQUEST_ERRORS as exc:
                 self._emit_remote_command_response_safe(str(req_id), None, f"{type(exc).__name__}: {exc}")
 
         submitted = self._submit_async(_do(), context=f"submit request_remote_command failed serviceId={service_id}")
@@ -105,7 +108,7 @@ class RemoteCommandControllerMixin:
                 if response.ok:
                     return
                 self._emit_log_line(f"command {call} failed serviceId={service_id}: {response.error_message or 'rejected'}")
-            except Exception as exc:
+            except _REMOTE_COMMAND_REQUEST_ERRORS as exc:
                 self._emit_log_line(f"command {call} failed serviceId={service_id}: {type(exc).__name__}: {exc}")
 
         self._submit_async(_do(), context=f"submit invoke_remote_command failed serviceId={service_id}")
