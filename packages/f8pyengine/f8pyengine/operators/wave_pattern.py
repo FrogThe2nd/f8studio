@@ -30,6 +30,7 @@ from f8pysdk.registry import Registry
 from f8pysdk.specs import array_schema, number_schema as helper_number_schema
 
 from ..constants import SERVICE_CLASS
+from ._runtime_errors import OPERATOR_EVAL_ERRORS, OPERATOR_MODEL_ERRORS, OPERATOR_STATE_PUBLISH_ERRORS
 from .wave_loop_sampler import LoopingLinearSampler
 
 
@@ -351,7 +352,7 @@ class WavePatternRuntimeNode(OperatorNode):
                 preview = np.full((_PREVIEW_SAMPLES,), float(preview), dtype=np.float64)
             elif preview.ndim != 1 or preview.shape[0] != _PREVIEW_SAMPLES:
                 raise ValueError("preview result must be 1D and match preview sample count")
-        except Exception as exc:
+        except OPERATOR_MODEL_ERRORS as exc:
             self._model = _make_constant_model(0.0)
             t_preview = np.linspace(0.0, float(self._max_t), num=_PREVIEW_SAMPLES, endpoint=False, dtype=np.float64)
             preview = np.zeros((_PREVIEW_SAMPLES,), dtype=np.float64)
@@ -392,13 +393,13 @@ class WavePatternRuntimeNode(OperatorNode):
                 )
                 return
             await self.clear_error()
-        except Exception:
+        except OPERATOR_STATE_PUBLISH_ERRORS:
             logger.exception("[%s:wave_pattern] failed to publish monitor error", self.node_id)
 
     async def _safe_set_state(self, field: str, value: Any) -> None:
         try:
             await self.set_state(field, value)
-        except Exception:
+        except OPERATOR_STATE_PUBLISH_ERRORS:
             logger.exception("[%s:wave_pattern] failed to publish state: %s", self.node_id, field)
 
     def _should_log_repeating_eval_error(self, sig: str, *, now_ms: int) -> bool:
@@ -432,7 +433,7 @@ class WavePatternRuntimeNode(OperatorNode):
                     wrapped_t += float(self._max_t)
                 out_arr = np.asarray(self._model(np.asarray([wrapped_t], dtype=np.float64)), dtype=np.float64)
                 out = float(out_arr[0]) if out_arr.size else 0.0
-        except Exception as exc:
+        except OPERATOR_EVAL_ERRORS as exc:
             now_ms = int(time.time() * 1000.0)
             sig = f"{type(exc).__name__}:{exc}"
             if self._should_log_repeating_eval_error(sig, now_ms=now_ms):

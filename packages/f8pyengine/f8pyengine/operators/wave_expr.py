@@ -27,6 +27,7 @@ from f8pysdk.specs import schema_type
 
 from ..constants import SERVICE_CLASS
 from ..wave_expr_lang import RESERVED_NAMES, compile_expr, eval_compiled, eval_scalar, render_expression
+from ._runtime_errors import OPERATOR_EVAL_ERRORS, OPERATOR_MODEL_ERRORS, OPERATOR_STATE_PUBLISH_ERRORS
 
 
 OPERATOR_CLASS = "f8.wave_expr"
@@ -323,7 +324,7 @@ class WaveExprRuntimeNode(OperatorNode):
                     )
             else:
                 raise ValueError("preview result must be scalar or 1D")
-        except Exception as exc:
+        except OPERATOR_MODEL_ERRORS as exc:
             self._set_last_error(f"preview eval failed: {type(exc).__name__}: {exc}")
             return
 
@@ -359,13 +360,13 @@ class WaveExprRuntimeNode(OperatorNode):
                 )
                 return
             await self.clear_error()
-        except Exception:
+        except OPERATOR_STATE_PUBLISH_ERRORS:
             logger.exception("[%s:wave_expr] failed to publish monitor error", self.node_id)
 
     async def _safe_set_state(self, field: str, value: Any) -> None:
         try:
             await self.set_state(field, value)
-        except Exception:
+        except OPERATOR_STATE_PUBLISH_ERRORS:
             logger.exception("[%s:wave_expr] failed to publish state: %s", self.node_id, field)
 
     def _should_log_repeating_eval_error(self, sig: str, *, now_ms: int) -> bool:
@@ -403,7 +404,7 @@ class WaveExprRuntimeNode(OperatorNode):
                 maxt=float(self._max_t),
                 variables=self._eval_variables,
             )
-        except Exception as exc:
+        except OPERATOR_EVAL_ERRORS as exc:
             now_ms = int(time.time() * 1000.0)
             sig = f"{type(exc).__name__}:{exc}"
             if self._should_log_repeating_eval_error(sig, now_ms=now_ms):
