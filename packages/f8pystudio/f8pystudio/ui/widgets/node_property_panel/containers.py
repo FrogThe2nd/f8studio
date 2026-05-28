@@ -11,6 +11,40 @@ from .common import _TAB_PANEL_MARGIN, _TAB_PANEL_SPACING
 
 
 logger = logging.getLogger(__name__)
+_ELIDE_LABEL_ERRORS = (RuntimeError, TypeError, ValueError)
+_MOUSE_EVENT_POSITION_ERRORS = (AttributeError, RuntimeError, TypeError)
+
+
+class _F8ElideLabel(QtWidgets.QLabel):
+    def __init__(self, text: str, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__("", parent)
+        self._full_text = str(text or "")
+        self._elide_failure_logged = False
+        self.setText(self._full_text)
+
+    def setText(self, text: str) -> None:  # type: ignore[override]
+        self._full_text = str(text or "")
+        self._update_elide()
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # type: ignore[override]
+        super().resizeEvent(event)
+        self._update_elide()
+
+    def _update_elide(self) -> None:
+        try:
+            font_metrics = QtGui.QFontMetrics(self.font())
+            available_width = max(10, int(self.width()))
+            text = font_metrics.elidedText(self._full_text, QtCore.Qt.ElideRight, available_width)
+            QtWidgets.QLabel.setText(self, text)
+        except _ELIDE_LABEL_ERRORS:
+            self._log_elide_failure_once()
+            QtWidgets.QLabel.setText(self, self._full_text)
+
+    def _log_elide_failure_once(self) -> None:
+        if self._elide_failure_logged:
+            return
+        self._elide_failure_logged = True
+        logger.debug("Failed to elide property panel label text", exc_info=True)
 
 
 class _F8StateContainer(QtWidgets.QWidget):
@@ -18,28 +52,6 @@ class _F8StateContainer(QtWidgets.QWidget):
     Node properties container widget that displays nodes properties under
     a tab in the ``NodePropWidget`` widget.
     """
-
-    class _ElideLabel(QtWidgets.QLabel):
-        def __init__(self, text: str, parent: QtWidgets.QWidget | None = None):
-            super().__init__("", parent)
-            self._full_text = str(text or "")
-            self.setText(self._full_text)
-
-        def setText(self, text: str) -> None:  # type: ignore[override]
-            self._full_text = str(text or "")
-            self._update_elide()
-
-        def resizeEvent(self, event):  # type: ignore[override]
-            super().resizeEvent(event)
-            self._update_elide()
-
-        def _update_elide(self) -> None:
-            try:
-                fm = QtGui.QFontMetrics(self.font())
-                elided = fm.elidedText(self._full_text, QtCore.Qt.ElideRight, max(10, int(self.width())))
-                super().setText(elided)
-            except Exception:
-                super().setText(self._full_text)
 
     def __init__(self, parent=None):
         super(_F8StateContainer, self).__init__(parent)
@@ -72,7 +84,7 @@ class _F8StateContainer(QtWidgets.QWidget):
             tooltip (str): custom tooltip.
         """
         label = label or name
-        label_widget = _F8StateContainer._ElideLabel(label, self)
+        label_widget = _F8ElideLabel(label, self)
         # Keep the label column bounded so value widgets (eg. sliders) remain usable
         # in narrow PropertiesBin panels.
         label_widget.setMaximumWidth(150)
@@ -129,28 +141,6 @@ class _F8StateStackContainer(QtWidgets.QWidget):
     add_state_field_requested = QtCore.Signal()
     toggle_state_field_show_on_node_requested = QtCore.Signal(str, bool)
     state_field_order_changed = QtCore.Signal(list)
-
-    class _ElideLabel(QtWidgets.QLabel):
-        def __init__(self, text: str, parent: QtWidgets.QWidget | None = None):
-            super().__init__("", parent)
-            self._full_text = str(text or "")
-            self.setText(self._full_text)
-
-        def setText(self, text: str) -> None:  # type: ignore[override]
-            self._full_text = str(text or "")
-            self._update_elide()
-
-        def resizeEvent(self, event):  # type: ignore[override]
-            super().resizeEvent(event)
-            self._update_elide()
-
-        def _update_elide(self) -> None:
-            try:
-                fm = QtGui.QFontMetrics(self.font())
-                elided = fm.elidedText(self._full_text, QtCore.Qt.ElideRight, max(10, int(self.width())))
-                super().setText(elided)
-            except Exception:
-                super().setText(self._full_text)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -223,28 +213,6 @@ class _F8LabeledStackContainer(QtWidgets.QWidget):
     State/Commands/Port without the extra state-field action buttons.
     """
 
-    class _ElideLabel(QtWidgets.QLabel):
-        def __init__(self, text: str, parent: QtWidgets.QWidget | None = None):
-            super().__init__("", parent)
-            self._full_text = str(text or "")
-            self.setText(self._full_text)
-
-        def setText(self, text: str) -> None:  # type: ignore[override]
-            self._full_text = str(text or "")
-            self._update_elide()
-
-        def resizeEvent(self, event):  # type: ignore[override]
-            super().resizeEvent(event)
-            self._update_elide()
-
-        def _update_elide(self) -> None:
-            try:
-                fm = QtGui.QFontMetrics(self.font())
-                elided = fm.elidedText(self._full_text, QtCore.Qt.ElideRight, max(10, int(self.width())))
-                super().setText(elided)
-            except Exception:
-                super().setText(self._full_text)
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self.__property_widgets: dict[str, QtWidgets.QWidget] = {}
@@ -264,7 +232,7 @@ class _F8LabeledStackContainer(QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
 
-        label_widget = _F8LabeledStackContainer._ElideLabel(label, section)
+        label_widget = _F8ElideLabel(label, section)
         font = label_widget.font()
         font.setBold(True)
         label_widget.setFont(font)
@@ -317,6 +285,7 @@ class _F8DragHandle(QtWidgets.QToolButton):
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
         self._press_pos = QtCore.QPoint()
+        self._event_position_failure_logged = False
         self.setAutoRaise(True)
         self.setText("::")
         self.setToolTip("Drag to reorder")
@@ -324,20 +293,14 @@ class _F8DragHandle(QtWidgets.QToolButton):
         self.setStyleSheet("QToolButton { padding: 0; margin: 0; }")
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:  # type: ignore[override]
-        try:
-            self._press_pos = event.pos()
-        except Exception:
-            self._press_pos = QtCore.QPoint()
+        self._press_pos = self._event_pos_or_default(event)
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:  # type: ignore[override]
         if not bool(event.buttons() & QtCore.Qt.LeftButton):
             super().mouseMoveEvent(event)
             return
-        try:
-            delta = (event.pos() - self._press_pos).manhattanLength()
-        except Exception:
-            delta = 0
+        delta = self._mouse_move_delta(event)
         if delta < QtWidgets.QApplication.startDragDistance():
             super().mouseMoveEvent(event)
             return
@@ -346,6 +309,26 @@ class _F8DragHandle(QtWidgets.QToolButton):
             parent.start_drag()
             return
         super().mouseMoveEvent(event)
+
+    def _event_pos_or_default(self, event: QtGui.QMouseEvent) -> QtCore.QPoint:
+        try:
+            return event.pos()
+        except _MOUSE_EVENT_POSITION_ERRORS:
+            self._log_event_position_failure_once()
+            return QtCore.QPoint()
+
+    def _mouse_move_delta(self, event: QtGui.QMouseEvent) -> int:
+        try:
+            return int((event.pos() - self._press_pos).manhattanLength())
+        except _MOUSE_EVENT_POSITION_ERRORS:
+            self._log_event_position_failure_once()
+            return 0
+
+    def _log_event_position_failure_once(self) -> None:
+        if self._event_position_failure_logged:
+            return
+        self._event_position_failure_logged = True
+        logger.debug("Failed to read property panel drag event position", exc_info=True)
 
 
 class _F8ReorderCard(QtWidgets.QFrame):
@@ -628,7 +611,7 @@ class _F8StateFieldRow(QtWidgets.QWidget):
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(3)
 
-        label_widget = _F8StateStackContainer._ElideLabel(label, header)
+        label_widget = _F8ElideLabel(label, header)
         label_font = label_widget.font()
         label_font.setBold(True)
         label_widget.setFont(label_font)
