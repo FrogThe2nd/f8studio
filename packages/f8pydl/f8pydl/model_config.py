@@ -7,6 +7,8 @@ from typing import Any, Literal
 from f8pysdk.codec import coerce_float, coerce_int, parse_str_list
 
 
+_MODEL_INDEX_LOAD_ERRORS = (Exception,)
+
 FlowInputOrder = Literal["prev_now", "now_prev"]
 TemporalResizeMode = Literal["direct_resize"]
 TemporalNormalization = Literal["imagenet"]
@@ -60,7 +62,7 @@ class ModelIndexItem:
 def _load_yaml(path: Path) -> dict[str, Any]:
     try:
         import yaml  # type: ignore
-    except Exception as exc:
+    except ImportError as exc:
         raise RuntimeError("Missing dependency 'pyyaml'.") from exc
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
@@ -71,7 +73,7 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 def _as_str(v: Any, *, default: str = "") -> str:
     try:
         s = str(v) if v is not None else ""
-    except Exception:
+    except (TypeError, ValueError):
         s = ""
     s = s.strip()
     return s if s else default
@@ -278,7 +280,7 @@ def build_model_index_with_errors(
     for y in discover_model_yamls(weights_dir):
         try:
             spec = load_model_spec(y)
-        except Exception as exc:
+        except _MODEL_INDEX_LOAD_ERRORS as exc:
             errors.append(
                 {
                     "path": str(y.resolve()),
