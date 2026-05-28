@@ -31,6 +31,8 @@ _LOADING_MESSAGE = "Building preview..."
 _PREVIEW_INSPECTOR_MIN_WIDTH = 260
 _PREVIEW_INSPECTOR_MAX_WIDTH = 360
 _PREVIEW_INSPECTOR_FRACTION = 0.3
+_ASSET_PREVIEW_RENDER_ERRORS = (Exception,)
+_ASSET_PREVIEW_CLEAR_ERRORS = (Exception,)
 
 
 class _PreviewNodeLike(Protocol):
@@ -302,7 +304,7 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
             return
         try:
             self._run_with_preview_updates_frozen(lambda: self._preview_graph.load_session_payload(payload))
-        except Exception as exc:
+        except _ASSET_PREVIEW_RENDER_ERRORS as exc:
             self._clear_graph()
             logger.exception("Failed to render component preview.")
             self._show_status(f"Failed to preview component.\n{exc}")
@@ -317,7 +319,7 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
             return
         try:
             self._run_with_preview_updates_frozen(lambda: self._render_variant_record_inner(record))
-        except Exception as exc:
+        except _ASSET_PREVIEW_RENDER_ERRORS as exc:
             self._clear_graph()
             logger.exception("Failed to render variant preview variant_id=%s", str(record.variantId))
             self._show_status(f"Failed to preview variant.\n{exc}")
@@ -345,7 +347,7 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
     def _clear_graph(self) -> None:
         try:
             self._preview_graph.clear_session()
-        except Exception:
+        except _ASSET_PREVIEW_CLEAR_ERRORS:
             logger.exception("Failed to clear preview graph.")
         self._preview_graph.clear_undo_history()
         self._inspector.set_node(None, force_clear=True)

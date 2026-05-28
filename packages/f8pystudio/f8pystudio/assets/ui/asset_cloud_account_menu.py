@@ -18,6 +18,10 @@ from ..common import (
 from ...ui.support.ui_icons import StudioIcon, icon_for
 from ...ui.support.ui_notifications import show_info, show_warning
 
+_ASSET_CLOUD_BROWSER_SIGN_IN_ERRORS = (Exception,)
+_ASSET_CLOUD_BROWSER_OPEN_ERRORS = (Exception,)
+_ASSET_CLOUD_MENU_ACTION_ERRORS = (Exception,)
+
 
 class AssetCloudUserLike(Protocol):
     userId: str
@@ -168,7 +172,7 @@ def prompt_asset_cloud_sign_in(*, parent: QtWidgets.QWidget, sync_client: AssetC
             code_verifier=auth_session.code_verifier,
             remember=True,
         )
-    except Exception as exc:
+    except _ASSET_CLOUD_BROWSER_SIGN_IN_ERRORS as exc:
         show_warning(parent, "Login failed", f"{exc}\n\nCloud URL: {base_url}")
         return False
     finally:
@@ -183,7 +187,7 @@ def prompt_asset_cloud_sign_in(*, parent: QtWidgets.QWidget, sync_client: AssetC
 def _open_system_browser(url: str) -> None:
     try:
         opened = webbrowser.open(str(url), new=1, autoraise=True)
-    except Exception as exc:
+    except _ASSET_CLOUD_BROWSER_OPEN_ERRORS as exc:
         raise AssetCloudBrowserAuthError(f"Could not open the system browser.\n\nOpen this URL manually:\n{url}") from exc
     if not opened:
         raise AssetCloudBrowserAuthError(f"Could not open the system browser.\n\nOpen this URL manually:\n{url}")
@@ -343,7 +347,7 @@ def _menu_callback(
 def _run_and_notify(*, parent: QtWidgets.QWidget, action: Callable[[], object], on_changed: Callable[[], None] | None) -> bool:
     try:
         action()
-    except Exception as exc:
+    except _ASSET_CLOUD_MENU_ACTION_ERRORS as exc:
         show_warning(parent, "Asset Cloud", str(exc))
         return False
     if on_changed is not None:
