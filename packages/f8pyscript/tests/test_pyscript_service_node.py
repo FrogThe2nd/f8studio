@@ -441,7 +441,7 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         node = bus.get_node("svcA")
         assert isinstance(node, PythonScriptServiceNode)
 
-        view = node._build_states_view(())
+        view = node._state_access.build_states_view(())
         self.assertTrue("my_wo" in view)
         self.assertIsNone(view.get("my_wo"))
 

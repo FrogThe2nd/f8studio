@@ -4,7 +4,6 @@ import asyncio
 import inspect
 import logging
 import time
-from enum import Enum
 from typing import Any, Callable
 
 from f8pysdk.bus import ServiceBus
@@ -17,13 +16,13 @@ from .error_reporter import PyScriptErrorReporter
 from .local_exec import PyScriptLocalExec, PyScriptPermissionContext
 from .script_context import PyScriptServiceContext
 from .script_runtime_values import (
-    PyScriptStatesView,
     ScriptOutputPorts,
     build_script_output_ports,
     extract_script_outputs,
     normalize_script_output_value,
 )
 from .script_runtime import PyScriptHookSet, PyScriptRuntimeCompiler
+from .state_access import PyScriptStateAccess, collect_readable_state_names
 from .video_latest import VideoLatestConfig, VideoLatestSubscriptions
 
 logger = logging.getLogger(__name__)
@@ -120,7 +119,6 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             data_out_ports=[str(p.name) for p in list(node.dataOutPorts or [])],
             state_fields=[str(s.name) for s in list(node.stateFields or [])],
         )
-        self._readable_state_names = self._collect_readable_state_names(node)
         self._initial_state = dict(initial_state or {})
 
         self._code = str(self._initial_state.get("code") or DEFAULT_CODE)
@@ -138,7 +136,12 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             logger=logger,
             report_error=self.report_error,
         )
-        self._self_state_writes: dict[str, Any] = {}
+        self._state_access = PyScriptStateAccess(
+            readable_state_names=collect_readable_state_names(list(node.stateFields or [])),
+            state_fields=lambda: list(self.state_fields),
+            get_cached=self.get_state_cached,
+            set_state=self.set_state,
+        )
 
         self._tick_enabled = bool(self._initial_state.get("tickEnabled") or False)
         self._tick_ms = self._coerce_tick_ms(self._initial_state.get("tickMs"), default=100)
@@ -194,23 +197,6 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         return int(time.time() * 1000.0)
 
     @staticmethod
-    def _collect_readable_state_names(node: Any) -> tuple[str, ...]:
-        out: list[str] = []
-        seen: set[str] = set()
-        for state in list(node.stateFields or []):
-            name = str(state.name or "").strip()
-            access_raw = state.access
-            if not name or name in seen:
-                continue
-            access_value = access_raw.value if isinstance(access_raw, Enum) else access_raw
-            access = str(access_value or "").strip().lower()
-            if access not in ("rw", "ro", "wo"):
-                continue
-            seen.add(name)
-            out.append(name)
-        return tuple(out)
-
-    @staticmethod
     def _coerce_tick_ms(value: Any, *, default: int) -> int:
         try:
             out = int(value)
@@ -224,10 +210,6 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
     def _log_error_deduped(self, key: str, message: str, exc: BaseException) -> None:
         self._error_reporter.log_deduped(key, message, exc)
 
-    async def _set_runtime_state(self, field: str, value: Any) -> None:
-        self._self_state_writes[str(field)] = value
-        await self.set_state(str(field), value)
-
     def _permission_context(self) -> PyScriptPermissionContext:
         return self._local_exec.permission_context()
 
@@ -235,11 +217,11 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         return PyScriptServiceContext(
             service_id=self.node_id,
             locals=self._locals,
-            state_keys=self._readable_state_names,
+            state_keys=self._state_access.readable_state_names,
             permission=self._permission_context(),
-            build_states_view=self._build_states_view,
+            build_states_view=self._state_access.build_states_view,
             emit_value=self.emit,
-            set_state_value=self._set_runtime_state,
+            set_state_value=self._state_access.set_runtime_state,
             read_state_value=self.get_state_value,
             subscribe_video_latest_value=self._video_latest.subscribe,
             get_video_latest_value=self._video_latest.get_packet,
@@ -257,18 +239,6 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
 
     def _refresh_data_out_port_cache(self) -> None:
         self._script_output_ports = build_script_output_ports(self.data_out_ports)
-
-    def _build_states_view(self, state_keys: tuple[str, ...]) -> PyScriptStatesView:
-        resolved_keys = [str(key) for key in state_keys if str(key)]
-        if not resolved_keys:
-            resolved_keys = [str(key) for key in self.state_fields if str(key)]
-        if not resolved_keys:
-            resolved_keys = [str(key) for key in self._readable_state_names if str(key)]
-        unique_keys = tuple(sorted({key for key in resolved_keys if key}))
-        snapshot: dict[str, Any] = {}
-        for key in unique_keys:
-            snapshot[str(key)] = self.get_state_cached(str(key), None)
-        return PyScriptStatesView(snapshot)
 
     def _compile_script(self, code: str) -> None:
         self._hooks = self._script_runtime.compile(code)
@@ -519,7 +489,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             self._tick_ms = self._coerce_tick_ms(value_unwrapped, default=self._tick_ms)
             return
 
-        if name in self._self_state_writes and self._self_state_writes.get(name) == value_unwrapped:
+        if self._state_access.is_self_state_write(name, value_unwrapped):
             return
 
         if self._hooks.on_state is None:
