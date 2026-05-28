@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import copy
+import enum
 from f8pysdk.codec import copy_model, dump_json, validate_as
 import json
 import logging
 import os
 from typing import Any, Callable
+
+import msgspec
 
 from qtpy import QtCore, QtWidgets
 from NodeGraphQt.base.commands import PortConnectedCmd
@@ -35,6 +38,12 @@ MISSING_SERVICE_NODE_TYPE = "svc.f8.missing.service"
 MISSING_OPERATOR_NODE_TYPE = "svc.f8.missing.operator"
 
 logger = logging.getLogger(__name__)
+
+_SESSION_NODE_WIDGET_ERRORS = (AttributeError, RuntimeError, TypeError)
+_SESSION_SPEC_PATCH_ERRORS = (TypeError, ValueError, msgspec.MsgspecError)
+_SESSION_SPEC_STRINGIFY_ERRORS = (RuntimeError, TypeError, ValueError)
+_SESSION_TEMPLATE_SPEC_ERRORS = (AttributeError, TypeError, ValueError, msgspec.MsgspecError)
+_SESSION_SPEC_VALIDATE_ERRORS = (TypeError, ValueError, msgspec.MsgspecError)
 
 
 class SessionLayoutCodecMixin:
@@ -83,7 +92,16 @@ class SessionLayoutCodecMixin:
             if isinstance(custom_data, dict):
                 for prop, value in custom_data.items():
                     node.model.set_property(prop, value)
-                    widgets = getattr(node.view, "widgets", None)
+                    try:
+                        widgets = node.view.widgets
+                    except _SESSION_NODE_WIDGET_ERRORS as exc:
+                        logger.debug(
+                            "session node widget lookup failed nodeId=%s prop=%s",
+                            node_id,
+                            prop,
+                            exc_info=exc,
+                        )
+                        continue
                     if isinstance(widgets, dict) and prop in widgets:
                         widgets[prop].set_value(value)
             nodes_by_id[node_id] = node
@@ -203,7 +221,12 @@ class SessionLayoutCodecMixin:
                     patch = {k: ov.get(k) for k in allowed_keys if k in ov}
                     try:
                         patched.append(copy_model(f, update=patch))
-                    except Exception:
+                    except _SESSION_SPEC_PATCH_ERRORS as exc:
+                        logger.debug(
+                            "failed to apply session state UI override field=%s",
+                            name,
+                            exc_info=exc,
+                        )
                         patched.append(f)
                 state_fields = patched
 
@@ -323,12 +346,11 @@ class SessionLayoutCodecMixin:
             if v is None:
                 return None
             try:
-                import enum
-
                 if isinstance(v, enum.Enum):
                     return str(v.value)
                 return str(v)
-            except Exception:
+            except _SESSION_SPEC_STRINGIFY_ERRORS as exc:
+                logger.debug("failed to stringify session spec enum value=%r", v, exc_info=exc)
                 return None
 
         errors: list[str] = []
@@ -503,7 +525,13 @@ class SessionLayoutCodecMixin:
 
             try:
                 template_spec = _coerce_spec(node_cls.SPEC_TEMPLATE)  # type: ignore[attr-defined]
-            except Exception:
+            except _SESSION_TEMPLATE_SPEC_ERRORS as exc:
+                logger.debug(
+                    "failed to coerce template spec nodeId=%s nodeType=%s",
+                    node_id,
+                    node_type,
+                    exc_info=exc,
+                )
                 template_spec = None
             session_spec_raw = node_data.get("f8_spec")
             if not isinstance(session_spec_raw, dict) or template_spec is None:
@@ -619,8 +647,8 @@ class SessionLayoutCodecMixin:
                 )
                 try:
                     node_data["f8_spec"] = dump_json(validate_as(F8OperatorSpec, merged), mode="json")
-                except Exception as e:
-                    errors.append(f"nodeId={node_id}: failed to merge operator spec: {e}")
+                except _SESSION_SPEC_VALIDATE_ERRORS as exc:
+                    errors.append(f"nodeId={node_id}: failed to merge operator spec: {exc}")
             else:
                 # Keep user metadata from persisted snapshots/variants.
                 if "label" in session_spec_raw:
@@ -671,8 +699,8 @@ class SessionLayoutCodecMixin:
                 )
                 try:
                     node_data["f8_spec"] = dump_json(validate_as(F8ServiceSpec, merged), mode="json")
-                except Exception as e:
-                    errors.append(f"nodeId={node_id}: failed to merge service spec: {e}")
+                except _SESSION_SPEC_VALIDATE_ERRORS as exc:
+                    errors.append(f"nodeId={node_id}: failed to merge service spec: {exc}")
 
         if errors:
             for msg in errors:
@@ -910,7 +938,7 @@ class SessionLayoutCodecMixin:
         self._load_session_layout_data(_extract_session_layout(payload), session_label=file_path)
 
     def _load_session_layout_data(self, layout_data: dict, *, session_label: str) -> None:
-        graph_widget = getattr(self, "widget", None)
+        graph_widget = self.widget
         viewer = self.viewer()
         widgets_to_freeze: list[QtWidgets.QWidget] = []
         if isinstance(graph_widget, QtWidgets.QWidget):
@@ -950,7 +978,7 @@ class SessionLayoutCodecMixin:
         # Session load restores connections after nodes are created/drawn, which can
         # leave inline state widgets with stale editability until the user forces a refresh.
         # Do a post-load pass to apply the "state-edge => readonly" rule.
-        if not bool(getattr(self, "_skip_post_load_viewer_refresh", False)):
+        if not bool(self._skip_post_load_viewer_refresh):
             QtCore.QTimer.singleShot(0, self._refresh_all_inline_state_read_only)
             if isinstance(viewer, F8StudioNodeViewer):
                 QtCore.QTimer.singleShot(0, lambda: viewer.refresh_auto_proxy_mode(force=True))
