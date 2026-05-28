@@ -60,6 +60,7 @@ _NODE_ACCESS_ERRORS = (AttributeError, RuntimeError, TypeError)
 _NODE_VALUE_ACCESS_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
 _QT_PROXY_ACCESS_ERRORS = (AttributeError, RuntimeError, TypeError)
 _STATE_SPEC_ERRORS = (AttributeError, TypeError, ValueError)
+_INLINE_STATE_UPDATER_ERRORS = (Exception,)
 
 
 def _node_item_id(node_item: Any) -> str:
@@ -358,7 +359,7 @@ def sync_state_inline_controls_from_graph_property(node_item: Any, node: Any, na
     if updater is not None:
         try:
             updater(value)
-        except Exception:
+        except _INLINE_STATE_UPDATER_ERRORS:
             logger.exception("inline state updater failed nodeId=%s key=%s", _node_item_id(node_item), key)
 
     if preview_updater is not None and preview_updater is not updater:
@@ -368,7 +369,7 @@ def sync_state_inline_controls_from_graph_property(node_item: Any, node: Any, na
             preview_value = None
         try:
             preview_updater(preview_value)
-        except Exception:
+        except _INLINE_STATE_UPDATER_ERRORS:
             logger.exception("inline wave preview updater failed nodeId=%s key=%s", _node_item_id(node_item), key)
 
     if pattern_updater is not None and pattern_updater is not updater:
@@ -378,7 +379,7 @@ def sync_state_inline_controls_from_graph_property(node_item: Any, node: Any, na
             points_value = None
         try:
             pattern_updater(points_value)
-        except Exception:
+        except _INLINE_STATE_UPDATER_ERRORS:
             logger.exception("inline wave pattern updater failed nodeId=%s key=%s", _node_item_id(node_item), key)
 
     refresh_state_inline_option_pools(node_item, key)

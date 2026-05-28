@@ -28,6 +28,8 @@ COMMAND_INLINE_BUTTON_STYLE = inline_command_button_qss()
 _COMMAND_SPEC_ERRORS = (AttributeError, TypeError, ValueError)
 _QT_ACCESS_ERRORS = (AttributeError, RuntimeError, TypeError)
 _QT_VALUE_ACCESS_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
+_COMMAND_UI_HANDLER_ERRORS = (Exception,)
+_COMMAND_REMOTE_STATE_ERRORS = (Exception,)
 
 
 def _node_item_id(node_item: Any) -> str:
@@ -372,7 +374,7 @@ def invoke_command(node_item: Any, cmd: Any) -> None:
         try:
             if bool(node.handle_command_ui(cmd, parent=parent, source=CommandUiSource.NODEGRAPH)):
                 return
-        except Exception:
+        except _COMMAND_UI_HANDLER_ERRORS:
             logger.exception("handle_command_ui failed nodeId=%s", _node_item_id(node_item))
     try:
         params = list(cmd.params or [])
@@ -391,7 +393,7 @@ def invoke_command(node_item: Any, cmd: Any) -> None:
                 command_input_state_field(call),
                 command_state_payload({}),
             )
-        except Exception:
+        except _COMMAND_REMOTE_STATE_ERRORS:
             logger.exception(
                 "set_remote_state failed serviceId=%s nodeId=%s call=%s",
                 sid,
@@ -410,7 +412,7 @@ def invoke_command(node_item: Any, cmd: Any) -> None:
             command_input_state_field(call),
             command_state_payload(args),
         )
-    except Exception:
+    except _COMMAND_REMOTE_STATE_ERRORS:
         logger.exception("set_remote_state failed serviceId=%s nodeId=%s call=%s", sid, node_id, call)
 
 
