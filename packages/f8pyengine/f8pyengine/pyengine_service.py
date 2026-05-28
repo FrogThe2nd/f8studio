@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from f8pysdk.app import ServiceApp
 from f8pysdk.capabilities import ExecutableNode, ServiceHookBase
@@ -17,6 +17,8 @@ from .constants import SERVICE_CLASS
 from .pyengine_node_registry import register_pyengine_specs
 
 logger = logging.getLogger(__name__)
+_SERVICE_HOOK_ERRORS = (LookupError, RuntimeError, TypeError, ValueError)
+_EXEC_NODE_REGISTRY_ERRORS = (LookupError, RuntimeError, TypeError, ValueError)
 
 
 class PyEngineService(ServiceHookBase):
@@ -46,35 +48,32 @@ class PyEngineService(ServiceHookBase):
         runtime.bus.register_rungraph_hook(self)
         runtime.bus.register_service_hook(self)
 
+    def _teardown_call(self, label: str, step: Callable[[], None]) -> None:
+        try:
+            step()
+        except _SERVICE_HOOK_ERRORS:
+            logger.exception("%s failed during teardown", label)
+
+    async def _teardown_await(self, label: str, step: Callable[[], Awaitable[None]]) -> None:
+        try:
+            await step()
+        except _SERVICE_HOOK_ERRORS:
+            logger.exception("%s failed during teardown", label)
+
     async def teardown(self, runtime: ServiceRuntime) -> None:
         executor = self._executor
         auto_sampler = self._auto_sampler
-        try:
-            runtime.bus.unregister_rungraph_hook(self)
-        except Exception:
-            logger.exception("unregister_rungraph_hook failed")
-        try:
-            runtime.bus.unregister_service_hook(self)
-        except Exception:
-            logger.exception("unregister_service_hook failed")
+        self._teardown_call("unregister_rungraph_hook", lambda: runtime.bus.unregister_rungraph_hook(self))
+        self._teardown_call("unregister_service_hook", lambda: runtime.bus.unregister_service_hook(self))
         runtime.bus.set_exec_emitter(None)
         self._runtime = None
         self._auto_sampler = None
         if auto_sampler is not None:
-            try:
-                await auto_sampler.close()
-            except Exception:
-                logger.exception("auto sampler close failed during teardown")
+            await self._teardown_await("auto sampler close", auto_sampler.close)
         if executor is None:
             return
-        try:
-            await executor.set_active(False)
-        except Exception:
-            logger.exception("set_active(False) failed during teardown")
-        try:
-            await executor.stop_all_entrypoints()
-        except Exception:
-            logger.exception("stop_all_entrypoints failed during teardown")
+        await self._teardown_await("set_active(False)", lambda: executor.set_active(False))
+        await self._teardown_await("stop_all_entrypoints", executor.stop_all_entrypoints)
 
     async def _sync_exec_nodes(self, runtime: ServiceRuntime, graph: F8RuntimeGraph) -> None:
         want: set[str] = set()
@@ -98,7 +97,7 @@ class PyEngineService(ServiceHookBase):
         for node_id in sorted(self._exec_node_ids - want):
             try:
                 executor.unregister_node(node_id)
-            except Exception:
+            except _EXEC_NODE_REGISTRY_ERRORS:
                 logger.exception("unregister exec node failed: %s", node_id)
             self._exec_node_ids.discard(node_id)
 
@@ -112,7 +111,7 @@ class PyEngineService(ServiceHookBase):
             try:
                 executor.register_node(node)
                 self._exec_node_ids.add(node_id)
-            except Exception:
+            except _EXEC_NODE_REGISTRY_ERRORS:
                 logger.exception("register exec node failed: %s", node_id)
                 continue
 
