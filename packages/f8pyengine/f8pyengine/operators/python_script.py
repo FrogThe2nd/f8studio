@@ -6,7 +6,7 @@ import logging
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
 from f8pysdk.specs import (
     F8DataPortSpec,
@@ -28,7 +28,7 @@ from f8pysdk.registry import Registry
 
 from ..constants import SERVICE_CLASS
 from ._ports import exec_out_ports
-from ._runtime_errors import OPERATOR_MODEL_ERRORS, OPERATOR_STATE_PUBLISH_ERRORS
+from ._runtime_errors import OPERATOR_MODEL_ERRORS
 from .script_utils.input_binding import (
     INPUT_MODE_INPUT_VIEW,
     INPUT_MODE_MSGSPEC_STRUCT,
@@ -37,6 +37,7 @@ from .script_utils.input_binding import (
     coerce_input_mode,
     infer_script_input_style,
 )
+from .script_utils.error_reporter import ScriptErrorReporter, ScriptMonitorErrorBus
 from .script_utils.python_editor_assist import python_script_field_editor_assist_payload
 from .script_utils.result_binding import (
     ScriptOutputPorts,
@@ -49,7 +50,6 @@ from .script_utils.state_binding import PyEngineStatesView
 from .script_utils.video_latest import VideoLatestConfig, VideoLatestSubscriptions
 
 OPERATOR_CLASS = "f8.python_script"
-_REPEATING_ERROR_LOG_INTERVAL_MS = 2000
 logger = logging.getLogger(__name__)
 
 _HOOK_AWAITABLE_SCHEDULE_ERRORS = (RuntimeError, TypeError, ValueError)
@@ -63,7 +63,6 @@ _PYTHON_SCRIPT_USER_HOOK_ERRORS = (Exception,)
 _PYTHON_SCRIPT_EMIT_ERRORS = (Exception,)
 _PYTHON_SCRIPT_OUTPUT_NORMALIZE_ERRORS = OPERATOR_MODEL_ERRORS
 _PYTHON_SCRIPT_INPUT_DECODE_ERRORS = OPERATOR_MODEL_ERRORS
-_PYTHON_SCRIPT_MONITOR_PUBLISH_ERRORS = OPERATOR_STATE_PUBLISH_ERRORS
 
 
 @dataclass(slots=True)
@@ -257,12 +256,13 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         )
         self._started = False
         self._closing = False
-        self._last_error: str | None = None
-        self._error_seq = 0
-        self._last_logged_error_fingerprint = ""
-        self._last_logged_error_ts_ms = 0
-        self._pending_monitor_error_message = ""
-        self._pending_monitor_error_fingerprint = ""
+        self._error_reporter = ScriptErrorReporter(
+            node_id=self.node_id,
+            log_context="python_script",
+            logger=logger,
+            error_code="PYTHON_SCRIPT_ERROR",
+            fingerprint_prefix="python-script",
+        )
         self._pull_error_once: set[str] = set()
         self._self_state_writes: dict[str, Any] = {}
         self._pull_cache_ctx_id: str | int | None = None
@@ -304,6 +304,14 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                 )
             )
         self._flush_pending_monitor_error()
+
+    @property
+    def _last_error(self) -> str | None:
+        return self._error_reporter.last_error
+
+    @property
+    def _error_seq(self) -> int:
+        return self._error_reporter.error_seq
 
     def __del__(self) -> None:
         # Best-effort fallback: close() is awaited by ServiceBus when nodes are unregistered,
@@ -362,74 +370,14 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             return
         self._metric_output_normalize_time_us += (time.perf_counter() - started_at) * 1_000_000.0
 
-    @staticmethod
-    def _error_fingerprint(stage: str, exc: BaseException) -> str:
-        return f"python-script:{stage}:{type(exc).__name__}:{exc}"
-
-    def _should_log_repeating_error(self, fingerprint: str, *, now_ms: int) -> bool:
-        if fingerprint != self._last_logged_error_fingerprint:
-            self._last_logged_error_fingerprint = fingerprint
-            self._last_logged_error_ts_ms = int(now_ms)
-            return True
-        elapsed_ms = int(now_ms) - int(self._last_logged_error_ts_ms)
-        if elapsed_ms < _REPEATING_ERROR_LOG_INTERVAL_MS:
-            return False
-        self._last_logged_error_ts_ms = int(now_ms)
-        return True
-
-    def _publish_monitor_error(self, *, message: str, fingerprint: str) -> None:
-        bus = self._bus
-        if bus is None:
-            self._pending_monitor_error_message = str(message)
-            self._pending_monitor_error_fingerprint = str(fingerprint)
-            return
-        try:
-            bus.report_error(
-                self.node_id,
-                "PYTHON_SCRIPT_ERROR",
-                str(message),
-                severity="error",
-                fingerprint=str(fingerprint),
-            )
-        except _PYTHON_SCRIPT_MONITOR_PUBLISH_ERRORS as report_exc:
-            logger.error("[%s:python_script] report monitor error failed", self.node_id, exc_info=report_exc)
-
     def _flush_pending_monitor_error(self) -> None:
-        message = str(self._pending_monitor_error_message)
-        fingerprint = str(self._pending_monitor_error_fingerprint)
-        if not message or not fingerprint:
-            return
-        self._publish_monitor_error(message=message, fingerprint=fingerprint)
-        if self._bus is not None:
-            self._pending_monitor_error_message = ""
-            self._pending_monitor_error_fingerprint = ""
+        self._error_reporter.flush_pending(bus=cast(ScriptMonitorErrorBus | None, self._bus))
 
     def _set_error(self, stage: str, exc: BaseException) -> None:
-        self._error_seq = int(self._error_seq) + 1
-        msg = f"{stage}: {exc}"
-        self._last_error = msg
-        fingerprint = self._error_fingerprint(stage, exc)
-        if self._should_log_repeating_error(fingerprint, now_ms=self._now_ms()):
-            logger.error("[%s:python_script] error %s", self.node_id, msg, exc_info=exc)
-        self._publish_monitor_error(message=msg, fingerprint=fingerprint)
+        self._error_reporter.set_error(stage, exc, bus=cast(ScriptMonitorErrorBus | None, self._bus))
 
     def _clear_last_error(self) -> None:
-        if not self._last_error:
-            return
-        self._last_error = None
-        self._pending_monitor_error_message = ""
-        self._pending_monitor_error_fingerprint = ""
-        bus = self._bus
-        if bus is None:
-            return
-        try:
-            bus.clear_error(self.node_id)
-        except _PYTHON_SCRIPT_MONITOR_PUBLISH_ERRORS as exc:
-            logger.error("[%s:python_script] clear monitor error failed", self.node_id, exc_info=exc)
-
-    @staticmethod
-    def _now_ms() -> int:
-        return int(time.time() * 1000.0)
+        self._error_reporter.clear_last_error(bus=cast(ScriptMonitorErrorBus | None, self._bus))
 
     @staticmethod
     def _collect_readable_state_names(node: F8RuntimeNode) -> tuple[str, ...]:
