@@ -18,6 +18,7 @@ from ...time_utils import now_ms
 from ...codec import encode_obj
 from ...zenoh_naming import zenoh_state_key
 from ..internal.command import dispatch_command_input
+from ._errors import STATE_LOCAL_DELIVERY_ERRORS, STATE_NODE_CALLBACK_ERRORS, STATE_ROUTE_PROPAGATION_ERRORS
 
 if TYPE_CHECKING:
     from ..runtime import ServiceBus
@@ -150,7 +151,7 @@ async def _route_intra_state_edges(
                 exc=exc,
             )
             continue
-        except Exception as exc:
+        except STATE_ROUTE_PROPAGATION_ERRORS as exc:
             log_error_once(
                 bus,
                 key=f"intra_state_route_unexpected_error:{to_node_s}:{to_field_s}",
@@ -198,7 +199,7 @@ async def _deliver_state_local(
         return
     try:
         await node.on_state(field_s, value, ts_ms=int(ts_ms))
-    except Exception as exc:
+    except STATE_NODE_CALLBACK_ERRORS as exc:
         log_error_once(
             bus,
             key=f"node_on_state_failed:{node_id_s}:{field_s}",
@@ -287,7 +288,7 @@ async def validate_state_update(
         raise
     except ValueError as exc:
         raise StateWriteError("INVALID_VALUE", str(exc)) from exc
-    except Exception as exc:
+    except STATE_NODE_CALLBACK_ERRORS as exc:
         raise StateWriteError("INVALID_VALUE", str(exc)) from exc
 
 
@@ -387,7 +388,7 @@ async def publish_state(
                 dict(payload),
                 publish_options,
             )
-        except Exception as exc:
+        except STATE_LOCAL_DELIVERY_ERRORS as exc:
             log.error(
                 "state persisted but local delivery failed service_id=%s node_id=%s field=%s",
                 bus.service_id,

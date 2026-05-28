@@ -11,6 +11,7 @@ from ...time_utils import now_ms
 from ...codec import decode_obj
 from ...state import StateWriteContext, StateWriteError, StateWriteOrigin, StateWriteSource
 from ..internal.logging import log_error_once
+from ._errors import STATE_ROUTE_PROPAGATION_ERRORS, STATE_TRANSPORT_ERRORS, STATE_WATCH_LIFECYCLE_ERRORS
 from .helpers import build_cross_state_meta, build_state_validation_meta, coerce_inbound_ts_ms, extract_ts_field
 from .options import StatePublishOptions
 from .store import StateStore
@@ -117,7 +118,7 @@ class StateRouter:
                     self._remote_state_watches[(peer, remote_key)] = await self._bus._transport.retained_watch(
                         remote_key, cb=_cb, with_initial=True
                     )
-                except Exception as exc:
+                except STATE_TRANSPORT_ERRORS as exc:
                     log_error_once(
                         self._bus,
                         key=f"cross_state_watch_start_failed:{peer}:{remote_key}",
@@ -140,7 +141,7 @@ class StateRouter:
             async with sem:
                 try:
                     raw = await self._bus._transport.retained_get(remote_key)
-                except Exception as exc:
+                except STATE_TRANSPORT_ERRORS as exc:
                     log_error_once(
                         self._bus,
                         key=f"cross_state_initial_get_failed:{peer}:{remote_key}",
@@ -327,7 +328,7 @@ class StateRouter:
                     message=f"cross-state apply rejected for {local_node_id_s}.{local_field_s}",
                     exc=exc,
                 )
-            except Exception as exc:
+            except STATE_ROUTE_PROPAGATION_ERRORS as exc:
                 log_error_once(
                     self._bus,
                     key=f"cross_state_apply_failed:{local_node_id_s}:{local_field_s}",
@@ -354,7 +355,7 @@ class StateRouter:
             result = closer()
             if asyncio.iscoroutine(result):
                 await result
-        except Exception as exc:
+        except STATE_WATCH_LIFECYCLE_ERRORS as exc:
             log_error_once(
                 self._bus,
                 key=f"cross_state_watch_stop_failed:{key[0]}:{key[1]}",

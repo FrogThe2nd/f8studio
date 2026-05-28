@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from ...state import StateWriteSource
+from ._errors import STATE_VALUE_COERCION_ERRORS
 
 
 _STATE_PAYLOAD_RESERVED_KEYS = frozenset(("value", "actor", "ts", "tsMs", "ts_ms", "source", "origin"))
@@ -77,7 +78,7 @@ def coerce_inbound_ts_ms(ts_raw: Any, *, default: int) -> int:
             ts = int(ts_raw.strip() or "0")
         else:
             ts = int(ts_raw)
-    except Exception:
+    except STATE_VALUE_COERCION_ERRORS:
         return int(default)
 
     if ts <= 0:
