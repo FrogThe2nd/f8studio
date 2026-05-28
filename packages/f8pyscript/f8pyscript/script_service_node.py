@@ -13,6 +13,7 @@ from f8pysdk.nodes import ServiceNode
 from .command_dispatcher import PyScriptCommandDispatcher
 from .error_reporter import PyScriptErrorReporter
 from .hook_invoker import PyScriptHookInvoker
+from .lifecycle_state import PyScriptLifecycleState
 from .local_exec import PyScriptLocalExec, PyScriptPermissionContext
 from .script_context import PyScriptServiceContext
 from .script_runtime_values import (
@@ -123,10 +124,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
 
         self._hooks = PyScriptHookSet.empty()
 
-        self._started = False
-        self._paused = False
-        self._active = True
-        self._closing = False
+        self._lifecycle = PyScriptLifecycleState()
 
         self._error_reporter = PyScriptErrorReporter(
             node_id=self.node_id,
@@ -150,7 +148,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             tick_enabled=bool(self._initial_state.get("tickEnabled") or False),
             tick_ms=PyScriptTickScheduler.coerce_tick_ms(self._initial_state.get("tickMs"), default=100),
             now_ms=self._now_ms,
-            is_closing=lambda: bool(self._closing),
+            is_closing=lambda: bool(self._lifecycle.closing),
             is_tick_allowed=self._is_tick_allowed,
             run_tick=self._run_tick,
             log_error=self._log_error_deduped,
@@ -181,7 +179,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         self._compile_and_start()
 
     def __del__(self) -> None:
-        if self._started and not self._closing:
+        if self._lifecycle.should_stop_in_destructor:
             try:
                 self._hook_invoker.invoke_sync(self._hooks.on_stop, self._hooks.on_stop_is_async, "onStop")
             except _DESTRUCTOR_CLEANUP_ERRORS as exc:
@@ -248,7 +246,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         self._hooks = self._script_runtime.compile(code)
 
     def _compile_and_start(self) -> None:
-        if self._started:
+        if self._lifecycle.started:
             self._hook_invoker.invoke_sync(self._hooks.on_stop, self._hooks.on_stop_is_async, "onStop")
         self._video_latest.shutdown_sync()
 
@@ -261,13 +259,12 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         try:
             self._compile_script(code)
         except _SCRIPT_COMPILE_ERRORS as exc:
-            self._started = False
+            self._lifecycle.mark_compile_failed()
             self._set_error("compile", exc)
             return
 
         self._hook_invoker.invoke_sync(self._hooks.on_start, self._hooks.on_start_is_async, "onStart")
-        self._started = True
-        self._paused = False
+        self._lifecycle.mark_started()
         self._tick_scheduler.ensure_task()
 
     async def _emit_outputs(self, result: Any) -> None:
@@ -284,10 +281,10 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
                 return
 
     def _is_video_latest_read_enabled(self) -> bool:
-        return bool(self._active and not self._paused)
+        return self._lifecycle.can_read_video_latest
 
     def _is_tick_allowed(self) -> bool:
-        return bool(self._started and not self._paused)
+        return self._lifecycle.can_tick
 
     async def _run_tick(self, tick_payload: dict[str, int]) -> None:
         if self._hooks.on_tick is None:
@@ -302,9 +299,8 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         await self._emit_outputs(result)
 
     async def close(self) -> None:
-        if self._closing:
+        if not self._lifecycle.begin_close():
             return
-        self._closing = True
         try:
             _, _ = await self._hook_invoker.invoke_async(
                 self._hooks.on_stop,
@@ -312,20 +308,19 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
                 True,
                 "onStop",
             )
-            self._started = False
-            self._paused = False
+            self._lifecycle.mark_stopped()
             await self._tick_scheduler.shutdown()
         finally:
             await self._video_latest.shutdown_async()
 
     async def on_lifecycle(self, active: bool, meta: dict[str, Any]) -> None:
-        self._active = bool(active)
-        if not self._started:
+        self._lifecycle.set_active(active)
+        if not self._lifecycle.started:
             return
 
-        if self._active:
-            if self._paused:
-                self._paused = False
+        if self._lifecycle.active:
+            if self._lifecycle.paused:
+                self._lifecycle.mark_resumed()
                 result, _ = await self._hook_invoker.invoke_async(
                     self._hooks.on_resume,
                     self._hooks.on_resume_is_async,
@@ -336,8 +331,8 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
                 await self._emit_outputs(result)
             return
 
-        if not self._paused:
-            self._paused = True
+        if not self._lifecycle.paused:
+            self._lifecycle.mark_paused()
             result, _ = await self._hook_invoker.invoke_async(
                 self._hooks.on_pause,
                 self._hooks.on_pause_is_async,
@@ -391,7 +386,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         await self._emit_outputs(result)
 
     async def on_data(self, port: str, value: Any, *, ts_ms: int | None = None) -> None:
-        if not self._active or self._paused:
+        if not self._lifecycle.can_handle_data:
             return
         if self._hooks.on_data is None:
             return
