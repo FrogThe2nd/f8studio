@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import logging
 import weakref
 
 from qtpy import QtCore, QtWidgets
 
-from f8pystudio.editor_assist.session import EditorSessionKey
+from f8pystudio.editor_assist.session import EditorSessionController, EditorSessionKey
 from f8pystudio.ui.components import state_editors as state_editors_module
 from f8pystudio.ui.support import monaco_editor_host as monaco_host_module
 from f8pystudio.ui.support.monaco_editor_host import MonacoEditorHostDialog, open_code_editor_window
@@ -343,6 +344,50 @@ def test_failed_save_keeps_editor_dirty_and_tab_open(monkeypatch) -> None:
     assert session_key.as_id() in host._sessions
     editor_widget.controller().set_dirty(False)
     host.close()
+
+
+def test_editor_session_logs_save_handler_failure_and_keeps_dirty(caplog) -> None:
+    _ensure_app()
+
+    def _save_handler(_code: str) -> bool:
+        raise RuntimeError("save target unavailable")
+
+    controller = EditorSessionController(
+        title="Node A",
+        code="print('a')\n",
+        language="python",
+        save_handler=_save_handler,
+    )
+    controller.set_dirty(False)
+
+    with caplog.at_level(logging.ERROR, logger="f8pystudio.editor_assist.session"):
+        assert controller.save_code("print('b')\n") is False
+
+    assert controller.dirty() is True
+    assert any("Editor save handler failed" in record.getMessage() for record in caplog.records)
+    assert all(record.exc_info is not None for record in caplog.records)
+    controller.shutdown()
+
+
+def test_editor_session_logs_target_exists_failure(caplog) -> None:
+    _ensure_app()
+
+    def _target_exists() -> bool:
+        raise RuntimeError("target lookup failed")
+
+    controller = EditorSessionController(
+        title="Node A",
+        code="print('a')\n",
+        language="python",
+        target_exists_provider=_target_exists,
+    )
+
+    with caplog.at_level(logging.ERROR, logger="f8pystudio.editor_assist.session"):
+        assert controller.target_exists() is False
+
+    assert any("Failed to check editor save target" in record.getMessage() for record in caplog.records)
+    assert all(record.exc_info is not None for record in caplog.records)
+    controller.shutdown()
 
 
 def test_close_deleted_target_prompts_and_keeps_tab_when_user_declines(monkeypatch) -> None:

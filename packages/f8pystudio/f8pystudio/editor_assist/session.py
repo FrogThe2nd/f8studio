@@ -18,6 +18,10 @@ from .workspace import EditorAssistContext
 logger = logging.getLogger(__name__)
 
 _SHARED_AI_STORE: AiProviderStore | None = None
+# Editor assist callbacks cross UI, Qt signal, and user-supplied save/context
+# providers. Keep the editor responsive, but make every boundary explicit.
+_EDITOR_ASSIST_CALLBACK_ERRORS = (Exception,)
+_EDITOR_ASSIST_BRIDGE_SHUTDOWN_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
 
 
 def shared_ai_store() -> AiProviderStore:
@@ -52,8 +56,8 @@ def resolve_assist_context(
         return assist_context
     try:
         return provider()
-    except Exception:
-        logger.exception("Failed to build editor assist context from provider")
+    except _EDITOR_ASSIST_CALLBACK_ERRORS as exc:
+        logger.exception("Failed to build editor assist context from provider", exc_info=exc)
         return assist_context
 
 
@@ -252,7 +256,7 @@ class EditorAssistContextController(QtCore.QObject):
             return
         try:
             context = provider()
-        except Exception as exc:
+        except _EDITOR_ASSIST_CALLBACK_ERRORS as exc:
             self._log_refresh_error("providerRefresh", exc)
             return
         fingerprint = assist_context_fingerprint(context)
@@ -397,8 +401,8 @@ class EditorSessionController(QtCore.QObject):
             return True
         try:
             return bool(provider())
-        except Exception:
-            logger.exception("Failed to check editor save target")
+        except _EDITOR_ASSIST_CALLBACK_ERRORS as exc:
+            logger.exception("Failed to check editor save target", exc_info=exc)
             return False
 
     def set_close_on_save(self, close_on_save: bool) -> None:
@@ -417,8 +421,8 @@ class EditorSessionController(QtCore.QObject):
         if save_handler is not None:
             try:
                 saved = save_handler(text)
-            except Exception:
-                logger.exception("Editor save handler failed")
+            except _EDITOR_ASSIST_CALLBACK_ERRORS as exc:
+                logger.exception("Editor save handler failed", exc_info=exc)
                 self.set_dirty(True)
                 return False
             if saved is False:
@@ -439,8 +443,8 @@ class EditorSessionController(QtCore.QObject):
             self._assist_bridge = None
             try:
                 bridge.shutdown()
-            except Exception:
-                logger.exception("Failed to shutdown Python editor assist bridge")
+            except _EDITOR_ASSIST_BRIDGE_SHUTDOWN_ERRORS as exc:
+                logger.exception("Failed to shutdown Python editor assist bridge", exc_info=exc)
 
     @QtCore.Slot(object)
     def _on_context_changed(self, context_obj: object) -> None:
