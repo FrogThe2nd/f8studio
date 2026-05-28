@@ -39,6 +39,10 @@ MISSING_SERVICE_NODE_TYPE = "svc.f8.missing.service"
 MISSING_OPERATOR_NODE_TYPE = "svc.f8.missing.operator"
 LAUNCH_READY_FILE_ENV = "F8STUDIO_LAUNCH_READY_FILE"
 LAUNCH_DISMISS_FILE_ENV = "F8STUDIO_LAUNCH_DISMISS_FILE"
+_LAUNCHER_SIGNAL_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
+_PLUGIN_REGISTRATION_ERRORS = (Exception,)
+_QT_APP_SETUP_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
+_QT_SHUTDOWN_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
 
 
 class PyStudioProgram:
@@ -54,7 +58,7 @@ class PyStudioProgram:
         try:
             signal_file.parent.mkdir(parents=True, exist_ok=True)
             signal_file.write_text(str(content), encoding="utf-8")
-        except Exception:
+        except _LAUNCHER_SIGNAL_ERRORS:
             logger.exception("Failed to write launcher signal: env=%s path=%s", env_name, signal_file)
 
     @classmethod
@@ -128,7 +132,7 @@ class PyStudioProgram:
             for op_reg in manifest.operators:
                 try:
                     out_reg = op_reg.register(registry)
-                except Exception:
+                except _PLUGIN_REGISTRATION_ERRORS:
                     logger.exception("Operator registration failed in plugin '%s'", manifest.plugin_id)
                     continue
                 if out_reg is not registry:
@@ -251,7 +255,7 @@ class PyStudioProgram:
 
         try:
             QtCore.QCoreApplication.setAttribute(QtCore.Qt.AA_ShareOpenGLContexts, True)  # type: ignore[attr-defined]
-        except Exception:
+        except _QT_APP_SETUP_ERRORS:
             logger.exception("Failed to set Qt shared OpenGL context attribute")
 
         app = QtWidgets.QApplication([])
@@ -301,7 +305,7 @@ class PyStudioProgram:
         finally:
             try:
                 mainwin.shutdown_for_app_exit()
-            except Exception:
+            except _QT_SHUTDOWN_ERRORS:
                 logger.exception("failed to shutdown main window after Qt loop exit")
             try:
                 mainwin.deleteLater()
