@@ -31,6 +31,7 @@ from f8pysdk.registry import Registry
 from f8pysdk.specs import array_schema, number_schema as helper_number_schema
 
 from ..constants import SERVICE_CLASS
+from ._runtime_errors import OPERATOR_EVAL_ERRORS, OPERATOR_STATE_PUBLISH_ERRORS
 from .wave_loop_sampler import LoopingLinearSampler
 
 OPERATOR_CLASS = "f8.wave_funscript"
@@ -503,13 +504,13 @@ class WaveFunscriptRuntimeNode(OperatorNode):
                 )
                 return
             await self.clear_error()
-        except Exception:
+        except OPERATOR_STATE_PUBLISH_ERRORS:
             logger.exception("[%s:wave_funscript] failed to publish monitor error", self.node_id)
 
     async def _safe_set_state(self, field: str, value: Any) -> None:
         try:
             await self.set_state(field, value)
-        except Exception:
+        except OPERATOR_STATE_PUBLISH_ERRORS:
             logger.exception("[%s:wave_funscript] failed to publish state: %s", self.node_id, field)
 
     def _should_log_repeating_eval_error(self, sig: str, *, now_ms: int) -> bool:
@@ -533,7 +534,7 @@ class WaveFunscriptRuntimeNode(OperatorNode):
             return self._last_output
         try:
             out = self._linear_sampler.sample(float(t_value)) if self._use_linear_sampler_for_output else float(np.asarray(self._interp_model(np.asarray([math.fmod(float(t_value), float(self._max_t)) if math.fmod(float(t_value), float(self._max_t)) >= 0.0 else math.fmod(float(t_value), float(self._max_t)) + float(self._max_t)], dtype=np.float64)), dtype=np.float64)[0])
-        except Exception as exc:
+        except OPERATOR_EVAL_ERRORS as exc:
             now_ms = int(time.time() * 1000.0)
             sig = f"{type(exc).__name__}:{exc}"
             if self._should_log_repeating_eval_error(sig, now_ms=now_ms):
