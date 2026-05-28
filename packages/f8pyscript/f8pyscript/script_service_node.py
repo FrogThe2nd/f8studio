@@ -39,6 +39,9 @@ _HOOK_AWAITABLE_SCHEDULE_ERRORS = (RuntimeError, TypeError, ValueError)
 _MONITOR_REPORT_ERRORS = (LookupError, OSError, RuntimeError, TypeError, ValueError)
 _SCRIPT_OUTPUT_ERRORS = (LookupError, OSError, RuntimeError, TypeError, ValueError)
 _VIDEO_TRANSPORT_ERRORS = (BufferError, LookupError, OSError, RuntimeError, TypeError, ValueError)
+_SCRIPT_COMPILE_ERRORS = (Exception,)
+_SCRIPT_USER_HOOK_ERRORS = (Exception,)
+_SCRIPT_TICK_LOOP_ERRORS = (Exception,)
 
 
 DEFAULT_CODE = (
@@ -799,7 +802,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
 
         try:
             self._compile_script(code)
-        except Exception as exc:
+        except _SCRIPT_COMPILE_ERRORS as exc:
             self._started = False
             self._set_error("compile", exc)
             return
@@ -824,7 +827,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
                 self._schedule_sync_hook_awaitable(stage, result)
                 return None
             return result
-        except Exception as exc:
+        except _SCRIPT_USER_HOOK_ERRORS as exc:
             self._set_error(stage, exc)
             return None
 
@@ -848,7 +851,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             if inspect.isawaitable(result):
                 return await result, True
             return result, False
-        except Exception as exc:
+        except _SCRIPT_USER_HOOK_ERRORS as exc:
             self._set_error(stage, exc)
             raise
 
@@ -1076,7 +1079,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
                     next_deadline += interval_s
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:
+            except _SCRIPT_TICK_LOOP_ERRORS as exc:
                 self._log_error_deduped("tick_loop", "tick loop failed", exc)
                 await asyncio.sleep(0.05)
 
