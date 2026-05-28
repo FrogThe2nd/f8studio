@@ -11,6 +11,10 @@ from ..ui.support.ui_notifications import show_warning
 
 logger = logging.getLogger(__name__)
 
+_NODE_TEXT_GRAPH_LOOKUP_ERRORS = (RuntimeError, TypeError, ValueError)
+_NODE_TEXT_PROPERTY_READ_ERRORS = (RuntimeError, TypeError, ValueError)
+_NODE_TEXT_PROPERTY_WRITE_ERRORS = (RuntimeError, TypeError, ValueError)
+
 
 class NodeTextPropertyNode(Protocol):
     def get_property(self, name: str) -> object: ...
@@ -52,8 +56,8 @@ def resolve_node(graph: NodeTextGraph | None, node_id: str) -> NodeTextPropertyN
         return None
     try:
         return graph.get_node_by_id(nid)
-    except Exception:
-        logger.exception("graph.get_node_by_id failed nodeId=%s", nid)
+    except _NODE_TEXT_GRAPH_LOOKUP_ERRORS as exc:
+        logger.exception("graph.get_node_by_id failed nodeId=%s", nid, exc_info=exc)
         return None
 
 
@@ -66,8 +70,8 @@ def get_node_text(graph: NodeTextGraph | None, node_id: str, field_name: str) ->
         value = node.get_property(key)
     except KeyError:
         return ""
-    except Exception:
-        logger.exception("node.get_property failed nodeId=%s field=%s", str(node_id or ""), key)
+    except _NODE_TEXT_PROPERTY_READ_ERRORS as exc:
+        logger.exception("node.get_property failed nodeId=%s field=%s", str(node_id or ""), key, exc_info=exc)
         return ""
     return "" if value is None else str(value)
 
@@ -81,8 +85,13 @@ def node_text_target_exists(graph: NodeTextGraph | None, node_id: str, field_nam
         _ = node.get_property(key)
     except KeyError:
         return False
-    except Exception:
-        logger.exception("node.get_property failed while checking text target nodeId=%s field=%s", str(node_id or ""), key)
+    except _NODE_TEXT_PROPERTY_READ_ERRORS as exc:
+        logger.exception(
+            "node.get_property failed while checking text target nodeId=%s field=%s",
+            str(node_id or ""),
+            key,
+            exc_info=exc,
+        )
         return False
     return True
 
@@ -116,8 +125,8 @@ def set_node_text(
             f"Target field does not exist on node.\nnodeId={nid}\nfield={key}",
         )
         return False
-    except Exception as exc:
-        logger.exception("node.get_property failed before set nodeId=%s field=%s", nid, key)
+    except _NODE_TEXT_PROPERTY_READ_ERRORS as exc:
+        logger.exception("node.get_property failed before set nodeId=%s field=%s", nid, key, exc_info=exc)
         show_warning(
             warning_parent,
             "Code Save Failed",
@@ -128,8 +137,8 @@ def set_node_text(
     value = str(text or "")
     try:
         node.set_property(key, value, push_undo=bool(push_undo))
-    except Exception as exc:
-        logger.exception("node.set_property failed nodeId=%s field=%s", nid, key)
+    except _NODE_TEXT_PROPERTY_WRITE_ERRORS as exc:
+        logger.exception("node.set_property failed nodeId=%s field=%s", nid, key, exc_info=exc)
         show_warning(
             warning_parent,
             "Code Save Failed",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from f8pystudio.nodegraph import node_text_fields
@@ -36,6 +37,24 @@ class _TextGraph:
         if str(node_id or "") != "nodeA":
             return None
         return self.node
+
+
+class _FailingLookupGraph:
+    def get_node_by_id(self, node_id: str) -> _TextNode | None:
+        _ = node_id
+        raise RuntimeError("graph wrapper deleted")
+
+
+class _FailingPropertyNode(_TextNode):
+    def get_property(self, name: str) -> Any:
+        _ = name
+        raise RuntimeError("node item deleted")
+
+    def set_property(self, name: str, value: Any, *, push_undo: bool = True) -> None:
+        _ = name
+        _ = value
+        _ = push_undo
+        raise RuntimeError("node item deleted")
 
 
 def test_set_node_text_resolves_current_node_by_id_after_replacement() -> None:
@@ -91,3 +110,35 @@ def test_node_text_target_missing_after_delete_reports_failure(monkeypatch) -> N
             "Target node/field not found.\nnodeId=nodeA\nfield=code",
         )
     ]
+
+
+def test_node_text_lookup_failure_logs_and_reports_missing(caplog) -> None:
+    graph = _FailingLookupGraph()
+
+    with caplog.at_level(logging.ERROR, logger="f8pystudio.nodegraph.node_text_fields"):
+        assert get_node_text(graph, "nodeA", "code") == ""
+
+    assert any("graph.get_node_by_id failed nodeId=nodeA" in record.getMessage() for record in caplog.records)
+    assert all(record.exc_info is not None for record in caplog.records)
+
+
+def test_set_node_text_property_failures_warn(monkeypatch, caplog) -> None:
+    graph = _TextGraph(_FailingPropertyNode(code="live\n"))
+    warnings: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        node_text_fields,
+        "show_warning",
+        lambda _parent, title, message: warnings.append((str(title), str(message))),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="f8pystudio.nodegraph.node_text_fields"):
+        assert set_node_text(graph, "nodeA", "code", "updated\n", warning_parent=None) is False
+
+    assert warnings == [
+        (
+            "Code Save Failed",
+            "Failed to validate save target.\nnodeId=nodeA\nfield=code\nerror=RuntimeError: node item deleted",
+        )
+    ]
+    assert any("node.get_property failed before set nodeId=nodeA field=code" in record.getMessage() for record in caplog.records)
+    assert all(record.exc_info is not None for record in caplog.records)
