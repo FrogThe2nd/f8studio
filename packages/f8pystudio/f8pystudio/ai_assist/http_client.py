@@ -22,6 +22,10 @@ from .registry import ProviderApiMode, ProviderConfig, ProviderProtocol
 
 logger = logging.getLogger(__name__)
 
+# Qt signal handlers and caller-provided callbacks are UI extension boundaries.
+_AI_REPLY_HANDLER_ERRORS = (Exception,)
+_AI_USER_CALLBACK_ERRORS = (Exception,)
+
 # Type aliases
 OnChunk = Callable[[str], None]          # streaming delta text
 OnDone = Callable[[str, str | None], None]   # full text, error or None
@@ -578,7 +582,7 @@ class AiHttpClient(QtCore.QObject):
                 on_result(text, None)
             else:
                 on_result("", "Reply was closed prematurely")
-        except Exception as exc:
+        except _AI_REPLY_HANDLER_ERRORS as exc:
             logger.exception("_on_non_stream_reply: unexpected error")
             on_result("", str(exc))
         finally:
@@ -628,7 +632,7 @@ class AiHttpClient(QtCore.QObject):
             if reply.isOpen() and reply.isReadable():
                 state.feed(bytes(reply.readAll()))
             state.finish(None)
-        except Exception as exc:
+        except _AI_REPLY_HANDLER_ERRORS as exc:
             logger.exception("_on_stream_done: unexpected error")
             state.finish(str(exc))
         finally:
@@ -724,7 +728,7 @@ class _StreamState:
                     self._full_text += delta
                     try:
                         self._on_chunk(delta)
-                    except Exception:
+                    except _AI_USER_CALLBACK_ERRORS:
                         logger.exception("on_chunk callback raised")
 
     def finish(self, error: str | None) -> None:
@@ -734,7 +738,7 @@ class _StreamState:
         final_error = str(error or self._error or "") or None
         try:
             self._on_done(self._full_text, final_error)
-        except Exception:
+        except _AI_USER_CALLBACK_ERRORS:
             logger.exception("on_done callback raised")
 
     def _extract_delta(self, payload_str: str) -> str:
