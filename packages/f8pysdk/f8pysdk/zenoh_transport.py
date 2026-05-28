@@ -21,6 +21,21 @@ log = logging.getLogger(__name__)
 # first state/data sample immediately after a watch is installed.
 _SUBSCRIPTION_SETTLE_S = 0.01
 _QUERYABLE_SETTLE_S = 0.05
+_ZENOH_LIFECYCLE_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
+_ZENOH_QUERY_ERRORS = (OSError, RuntimeError, TimeoutError, TypeError, ValueError)
+_ZENOH_PUMP_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
+_TRANSPORT_CALLBACK_ERRORS = (Exception,)
+
+
+def _zenoh_error_types() -> tuple[type[BaseException], ...]:
+    try:
+        import zenoh  # type: ignore[import-not-found]
+    except ImportError:
+        return (RuntimeError,)
+    error_type = zenoh.ZError
+    if isinstance(error_type, type) and issubclass(error_type, BaseException):
+        return (error_type,)
+    return (RuntimeError,)
 
 
 @dataclass(frozen=True)
@@ -56,7 +71,7 @@ class _ZenohSubscriptionHandle:
                 pass
         try:
             self._declaration.undeclare()
-        except Exception as exc:
+        except (*_ZENOH_LIFECYCLE_ERRORS, *_zenoh_error_types()) as exc:
             log.debug("zenoh undeclare subscription failed", exc_info=exc)
 
     async def stop(self) -> None:
@@ -156,7 +171,7 @@ class ZenohTransport:
             for publisher in list(self._state_publishers.values()):
                 try:
                     publisher.undeclare()
-                except Exception as exc:
+                except (*_ZENOH_LIFECYCLE_ERRORS, *_zenoh_error_types()) as exc:
                     log.debug("zenoh retained state publisher undeclare failed", exc_info=exc)
             self._state_publishers.clear()
 
@@ -165,7 +180,7 @@ class ZenohTransport:
             if token is not None:
                 try:
                     token.undeclare()
-                except Exception as exc:
+                except (*_ZENOH_LIFECYCLE_ERRORS, *_zenoh_error_types()) as exc:
                     log.debug("zenoh liveliness undeclare failed", exc_info=exc)
 
             session = self._session
@@ -238,7 +253,7 @@ class ZenohTransport:
     ) -> bytes | None:
         try:
             return await self.query_once(key, payload, timeout=timeout, raise_on_error=True)
-        except Exception as exc:
+        except (*_ZENOH_QUERY_ERRORS, *_zenoh_error_types()) as exc:
             if raise_on_error:
                 raise
             log.debug("zenoh query request failed key=%s", key, exc_info=exc)
@@ -370,10 +385,14 @@ class ZenohTransport:
                     await asyncio.sleep(0.001)
                     continue
                 if cb is not None:
-                    await cb(key_converter(str(sample.key_expr)), bytes(sample.payload))
+                    try:
+                        await cb(key_converter(str(sample.key_expr)), bytes(sample.payload))
+                    except _TRANSPORT_CALLBACK_ERRORS as exc:
+                        log.error("zenoh subscriber callback failed key_expr=%s", key_expr, exc_info=exc)
+                        await asyncio.sleep(0.05)
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:
+            except (*_ZENOH_PUMP_ERRORS, *_zenoh_error_types()) as exc:
                 log.error("zenoh subscriber pump failed key_expr=%s", key_expr, exc_info=exc)
                 await asyncio.sleep(0.05)
 
@@ -387,7 +406,7 @@ class ZenohTransport:
                 payload = bytes(query.payload) if query.payload is not None else b""
                 try:
                     response = await handler(payload)
-                except Exception as exc:
+                except _TRANSPORT_CALLBACK_ERRORS as exc:
                     log.error("zenoh queryable handler failed key_expr=%s", key_expr, exc_info=exc)
                     await asyncio.to_thread(_reply_query_error, query, b"query handler failed")
                     continue
@@ -397,7 +416,7 @@ class ZenohTransport:
                 await asyncio.to_thread(_reply_query_ok, query, bytes(response))
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:
+            except (*_ZENOH_PUMP_ERRORS, *_zenoh_error_types()) as exc:
                 log.error("zenoh queryable pump failed key_expr=%s", key_expr, exc_info=exc)
                 await asyncio.sleep(0.05)
 

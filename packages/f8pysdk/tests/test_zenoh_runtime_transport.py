@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 from typing import Any
 
@@ -294,3 +295,104 @@ def test_zenoh_transport_state_watch_get_and_request_roundtrip() -> None:
             await a.close()
 
     asyncio.run(_run())
+
+
+def test_zenoh_subscriber_pump_logs_callback_failure_and_continues(caplog) -> None:
+    class _Sample:
+        def __init__(self, key_expr: str, payload: bytes) -> None:
+            self.key_expr = key_expr
+            self.payload = payload
+
+    class _Declaration:
+        def __init__(self) -> None:
+            self._samples = [_Sample("f8/test/a", b"bad"), _Sample("f8/test/b", b"good")]
+
+        def try_recv(self) -> _Sample | None:
+            if self._samples:
+                return self._samples.pop(0)
+            return None
+
+    async def _run() -> list[tuple[str, bytes]]:
+        seen: list[tuple[str, bytes]] = []
+        transport = ZenohTransport(ZenohTransportConfig(service_id="svc_demo"))
+
+        async def _callback(key: str, payload: bytes) -> None:
+            seen.append((key, payload))
+            if payload == b"bad":
+                raise RuntimeError("callback failed")
+
+        task = asyncio.create_task(
+            transport._pump_subscriber(
+                _Declaration(),
+                key_expr="f8/test/**",
+                cb=_callback,
+                key_converter=lambda item: item,
+            )
+        )
+        try:
+            for _ in range(100):
+                if seen == [("f8/test/a", b"bad"), ("f8/test/b", b"good")]:
+                    break
+                await asyncio.sleep(0.01)
+            return seen
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    with caplog.at_level(logging.ERROR, logger="f8pysdk.zenoh_transport"):
+        seen = asyncio.run(_run())
+
+    assert seen == [("f8/test/a", b"bad"), ("f8/test/b", b"good")]
+    assert "zenoh subscriber callback failed key_expr=f8/test/**" in caplog.text
+
+
+def test_zenoh_queryable_pump_replies_error_when_handler_fails(caplog) -> None:
+    class _Query:
+        key_expr = "f8/test/query"
+        payload = b"request"
+
+        def __init__(self) -> None:
+            self.error_replies: list[bytes] = []
+
+        def reply_err(self, payload: bytes, **kwargs: Any) -> None:
+            _ = kwargs
+            self.error_replies.append(bytes(payload))
+
+    class _Declaration:
+        def __init__(self, query: _Query) -> None:
+            self._queries = [query]
+
+        def try_recv(self) -> _Query | None:
+            if self._queries:
+                return self._queries.pop(0)
+            return None
+
+    async def _run(query: _Query) -> list[bytes]:
+        transport = ZenohTransport(ZenohTransportConfig(service_id="svc_demo"))
+
+        async def _handler(_payload: bytes) -> bytes:
+            raise RuntimeError("handler failed")
+
+        task = asyncio.create_task(
+            transport._pump_queryable(
+                _Declaration(query),
+                key_expr="f8/test/query",
+                handler=_handler,
+            )
+        )
+        try:
+            for _ in range(100):
+                if query.error_replies:
+                    break
+                await asyncio.sleep(0.01)
+            return list(query.error_replies)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    query = _Query()
+    with caplog.at_level(logging.ERROR, logger="f8pysdk.zenoh_transport"):
+        replies = asyncio.run(_run(query))
+
+    assert replies == [b"query handler failed"]
+    assert "zenoh queryable handler failed key_expr=f8/test/query" in caplog.text
