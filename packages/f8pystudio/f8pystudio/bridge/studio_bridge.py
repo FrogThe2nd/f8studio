@@ -65,6 +65,7 @@ STARTUP_GATE_TIMEOUT_S = 6.0
 RUNGRAPH_ENDPOINT_READY_TIMEOUT_S = 15.0
 _QT_SIGNAL_ERRORS = (RuntimeError, TypeError)
 _ASYNC_SUBMIT_ERRORS = (RuntimeError, TypeError)
+_STARTUP_PREFLIGHT_ERRORS = (Exception,)
 _FUTURE_RESULT_ERRORS = (
     concurrent.futures.CancelledError,
     RuntimeError,
@@ -165,11 +166,11 @@ class PyStudioServiceBridge(
 
         try:
             self._remote_command_response.connect(self._on_remote_command_response)  # type: ignore[attr-defined]
-        except Exception as exc:
+        except _QT_SIGNAL_ERRORS as exc:
             self._report_exception("connect remote_command_response failed", exc)
         try:
             self._restart_service_after_guard.connect(self._on_restart_service_after_guard)  # type: ignore[attr-defined]
-        except Exception as exc:
+        except _QT_SIGNAL_ERRORS as exc:
             self._report_exception("connect restart_service_after_guard failed", exc)
 
     def _build_rungraph_config(self) -> RungraphDeployConfig:
@@ -311,7 +312,7 @@ class PyStudioServiceBridge(
     async def _run_startup_sequence_async(self) -> str | None:
         try:
             startup_blocked_message = await self._run_startup_preflight_async()
-        except Exception:
+        except _STARTUP_PREFLIGHT_ERRORS:
             self._startup_preflight_message = None
             self._startup_preflight_ready.set()
             raise
