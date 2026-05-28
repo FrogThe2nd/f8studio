@@ -639,8 +639,8 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         await node.on_state("code", code, ts_ms=1)
         await asyncio.sleep(0.05)
 
-        self.assertFalse(bool(node._hook_on_data_is_async))
-        self.assertTrue(bool(node._hook_on_command_is_async))
+        self.assertFalse(bool(node._hooks.on_data_is_async))
+        self.assertTrue(bool(node._hooks.on_command_is_async))
 
         invoke_ctx_a = node._build_invoke_ctx()
         invoke_ctx_b = node._build_invoke_ctx()
