@@ -32,6 +32,14 @@ from .weights_downloader import ensure_onnx_file, onnx_file_matches_sha256
 _MISSING_VIDEO_INPUT_GRACE_S = 2.0
 
 
+_DL_OPTFLOW_ONNX_PROVIDER_ERRORS = (ImportError, RuntimeError, TypeError, ValueError)
+# ONNX/runtime/video-source/Zenoh writer calls cross third-party runtime
+# boundaries; keep the service loop alive and report details through state.
+_DL_OPTFLOW_DOWNLOAD_ERRORS = (Exception,)
+_DL_OPTFLOW_RUNTIME_BOUNDARY_ERRORS = (Exception,)
+_DL_OPTFLOW_WRITER_ERRORS = (Exception,)
+
+
 def _default_weights_dir() -> Path:
     return default_weights_dir()
 
@@ -581,7 +589,7 @@ class OnnxOptflowServiceNode(ServiceNode):
                 import onnxruntime as ort  # type: ignore
 
                 available = list(ort.get_available_providers())  # type: ignore[attr-defined]
-            except Exception as exc:
+            except _DL_OPTFLOW_ONNX_PROVIDER_ERRORS as exc:
                 available = []
                 warn_parts.append(f"Failed to query ORT available providers: {type(exc).__name__}: {exc}")
             active_l = {str(p).lower() for p in (providers or [])}
@@ -650,7 +658,7 @@ class OnnxOptflowServiceNode(ServiceNode):
                 timeout_s=300.0,
             )
             self._download_retry_at_monotonic = 0.0
-        except Exception as exc:
+        except _DL_OPTFLOW_DOWNLOAD_ERRORS as exc:
             self._download_retry_at_monotonic = time.monotonic() + 30.0
             raise RuntimeError(
                 f"Auto-download failed for model={spec.model_id!r} path={spec.onnx_path}: "
@@ -722,7 +730,7 @@ class OnnxOptflowServiceNode(ServiceNode):
 
                 try:
                     await self._ensure_runtime()
-                except Exception as exc:
+                except _DL_OPTFLOW_RUNTIME_BOUNDARY_ERRORS as exc:
                     await self._record_exception(where="ensure_runtime", exc=exc)
                     await asyncio.sleep(0.1)
                     continue
@@ -735,7 +743,7 @@ class OnnxOptflowServiceNode(ServiceNode):
                 t0 = time.perf_counter()
                 try:
                     frame = source.read_latest(stream_key=input_stream_key, timeout_ms=10)
-                except Exception as exc:
+                except _DL_OPTFLOW_RUNTIME_BOUNDARY_ERRORS as exc:
                     await self._record_exception(where="open_video_source", exc=exc)
                     await asyncio.sleep(0.1)
                     continue
@@ -801,7 +809,7 @@ class OnnxOptflowServiceNode(ServiceNode):
                             current_frame.tensor,
                             output_size_hw=(height, width),
                         )
-                    except Exception as exc:
+                    except _DL_OPTFLOW_RUNTIME_BOUNDARY_ERRORS as exc:
                         if self._should_fallback_to_cpu(exc):
                             await self._fallback_to_cpu_after_gpu_error(exc=exc)
                             await asyncio.sleep(0.1)
@@ -818,7 +826,7 @@ class OnnxOptflowServiceNode(ServiceNode):
                         payload=flow_payload,
                         ts_ms=frame_ts_ms,
                     )
-                except Exception as exc:
+                except _DL_OPTFLOW_WRITER_ERRORS as exc:
                     await self._record_exception(where="publish_flow_zenoh", exc=exc)
                     await asyncio.sleep(0.1)
                     continue
@@ -835,6 +843,6 @@ class OnnxOptflowServiceNode(ServiceNode):
                 _ = t_infer1
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:
+            except _DL_OPTFLOW_RUNTIME_BOUNDARY_ERRORS as exc:
                 await self._record_exception(where="loop", exc=exc)
                 await asyncio.sleep(0.1)
