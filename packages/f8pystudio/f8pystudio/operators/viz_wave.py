@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from typing import Any
 
@@ -29,6 +30,11 @@ from ._viz_base import StudioVizRuntimeNodeBase, viz_sampling_state_fields
 
 OPERATOR_CLASS = "f8.viz.wave"
 RENDERER_CLASS = "viz_wave"
+
+logger = logging.getLogger(__name__)
+
+_STATE_READ_ERRORS = (RuntimeError, OSError, TypeError, ValueError)
+_NUMERIC_PARSE_ERRORS = (TypeError, ValueError, OverflowError)
 
 
 class VizWaveRuntimeNode(StudioVizRuntimeNodeBase):
@@ -65,19 +71,17 @@ class VizWaveRuntimeNode(StudioVizRuntimeNodeBase):
         return
 
     async def close(self) -> None:
+        task = self._refresh_task
+        self._refresh_task = None
+        self._scheduled_refresh_ms = None
+        if task is None:
+            return
+
+        task.cancel()
         try:
-            t = self._refresh_task
-            self._refresh_task = None
-            self._scheduled_refresh_ms = None
-            if t is None:
-                return
-            t.cancel()
-        except (AttributeError, RuntimeError, TypeError):
-            pass
-        try:
-            await asyncio.gather(t, return_exceptions=True)
-        except (RuntimeError, TypeError):
-            pass
+            await asyncio.gather(task, return_exceptions=True)
+        except RuntimeError:
+            logger.debug("Viz wave refresh task close failed node_id=%s", self.node_id, exc_info=True)
 
     async def on_data(self, port: str, value: Any, *, ts_ms: int | None = None) -> None:
         # Timeseries supports arbitrary editable data-in ports.
@@ -199,20 +203,10 @@ class VizWaveRuntimeNode(StudioVizRuntimeNodeBase):
         self._dirty = False
 
     async def _get_int_state(self, name: str, *, default: int, minimum: int, maximum: int) -> int:
-        v = None
-        try:
-            v = await self.get_state_value(name)
-        except Exception:
-            v = None
-        if v is None:
-            try:
-                v = self._initial_state.get(name)
-            except Exception:
-                v = None
-
+        v = await self._config_state_value(name)
         try:
             out = int(v) if v is not None else int(default)
-        except Exception:
+        except _NUMERIC_PARSE_ERRORS:
             out = int(default)
         if out < minimum:
             out = minimum
@@ -221,43 +215,37 @@ class VizWaveRuntimeNode(StudioVizRuntimeNodeBase):
         return out
 
     async def _get_bool_state(self, name: str, *, default: bool) -> bool:
-        v = None
-        try:
-            v = await self.get_state_value(name)
-        except Exception:
-            v = None
-        if v is None:
-            try:
-                v = self._initial_state.get(name)
-            except Exception:
-                v = None
-        try:
-            return bool(v) if v is not None else bool(default)
-        except Exception:
-            return bool(default)
+        v = await self._config_state_value(name)
+        return bool(v) if v is not None else bool(default)
 
     async def _get_float_state_optional(self, name: str) -> float | None:
-        v = None
-        try:
-            v = await self.get_state_value(name)
-        except Exception:
-            v = None
-        if v is None:
-            try:
-                v = self._initial_state.get(name)
-            except Exception:
-                v = None
+        v = await self._config_state_value(name)
         if v is None:
             return None
         if isinstance(v, str) and not v.strip():
             return None
         try:
             out = float(v)
-        except Exception:
+        except _NUMERIC_PARSE_ERRORS:
             return None
         if out != out:  # NaN
             return None
         return out
+
+    async def _config_state_value(self, name: str) -> Any:
+        try:
+            value = await self.get_state_value(name)
+        except _STATE_READ_ERRORS:
+            logger.debug(
+                "Viz wave state read failed; falling back to initial state node_id=%s field=%s",
+                self.node_id,
+                name,
+                exc_info=True,
+            )
+            value = None
+        if value is not None:
+            return value
+        return self._initial_state.get(name)
 
     def _prune_points(self, *, window_ms: int, buffer_limit: int, now_ms: int) -> bool:
         changed = False
