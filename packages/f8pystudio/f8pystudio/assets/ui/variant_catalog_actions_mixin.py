@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+import logging
+from typing import TYPE_CHECKING, Any, Callable, TypeVar
 
 from qtpy import QtWidgets
 
@@ -27,6 +28,10 @@ from ..variants.variant_repository import (
 from ...ui.support.ui_notifications import show_info, show_warning
 from .project_asset_dialogs import AssetOverwriteChoice, AssetOverwriteMetaDialog
 from .catalog_hosts import VariantCatalogActionsHost
+
+
+logger = logging.getLogger(__name__)
+_T = TypeVar("_T")
 
 
 if TYPE_CHECKING:
@@ -68,6 +73,20 @@ class VariantCatalogActionsMixin(_VariantCatalogActionsMixinBase):
         if saved_entry is None:
             raise ValueError("Failed to save variant draft.")
         return saved_entry
+
+    def _run_catalog_action(
+        self,
+        *,
+        warning_title: str,
+        log_context: str,
+        action: Callable[[], _T],
+    ) -> tuple[bool, _T | None]:
+        try:
+            return True, action()
+        except Exception as exc:
+            logger.exception("Variant catalog action failed: %s", log_context)
+            show_warning(self, warning_title, str(exc))
+            return False, None
 
     def _find_selected_base_node(self) -> Any | None:
         graph = self._graph
@@ -315,11 +334,15 @@ class VariantCatalogActionsMixin(_VariantCatalogActionsMixinBase):
         prompt = f"Delete remote variant '{selected_entry.record.name}'?"
         if QtWidgets.QMessageBox.question(self, title, prompt) != QtWidgets.QMessageBox.StandardButton.Yes:
             return
-        try:
-            if has_owned_remote and remote_entry is not None:
-                self._sync_client.delete_variant(str(remote_entry.record.variantId))
-        except Exception as exc:
-            show_warning(self, "Delete failed", str(exc))
+        if has_owned_remote and remote_entry is not None:
+            deleted, _result = self._run_catalog_action(
+                warning_title="Delete failed",
+                log_context=f"delete remote variant variantId={remote_entry.record.variantId}",
+                action=lambda: self._sync_client.delete_variant(str(remote_entry.record.variantId)),
+            )
+            if not deleted:
+                return
+        else:
             return
         self._rebuild_browser_after_remote_asset_changed()
 
@@ -335,11 +358,14 @@ class VariantCatalogActionsMixin(_VariantCatalogActionsMixinBase):
             return None
         source_entry = selected_entry
         if source_entry.source != F8VariantSourceKind.local and not source_entry.hasCachedContent:
-            try:
-                source_entry = self._sync_client.cache_variant_content(str(source_entry.record.variantId))
-            except Exception as exc:
-                show_warning(self, "Load failed", str(exc))
+            loaded, cached_entry = self._run_catalog_action(
+                warning_title="Load failed",
+                log_context=f"cache variant content variantId={source_entry.record.variantId}",
+                action=lambda: self._sync_client.cache_variant_content(str(source_entry.record.variantId)),
+            )
+            if not loaded or cached_entry is None:
                 return None
+            source_entry = cached_entry
         record = source_entry.record
         origin_kind = F8VariantDraftOriginKind.copy_remote
         publish_target_asset_id = None
@@ -406,11 +432,14 @@ class VariantCatalogActionsMixin(_VariantCatalogActionsMixinBase):
             return entry
         hydrated_entry = entry
         if hydrated_entry.source != F8VariantSourceKind.local and record is None and not hydrated_entry.hasCachedContent:
-            try:
-                hydrated_entry = self._sync_client.cache_variant_content(str(hydrated_entry.record.variantId))
-            except Exception as exc:
-                show_warning(self, "Load failed", str(exc))
+            loaded, cached_entry = self._run_catalog_action(
+                warning_title="Load failed",
+                log_context=f"cache variant content variantId={hydrated_entry.record.variantId}",
+                action=lambda: self._sync_client.cache_variant_content(str(hydrated_entry.record.variantId)),
+            )
+            if not loaded or cached_entry is None:
                 return None
+            hydrated_entry = cached_entry
         publish_target_asset_id: str | None = None
         publish_base_remote_version_number: int | None = None
         origin_kind = F8VariantDraftOriginKind.copy_remote
@@ -444,11 +473,14 @@ class VariantCatalogActionsMixin(_VariantCatalogActionsMixinBase):
         if selected_entry is None:
             return
         if selected_entry.source != F8VariantSourceKind.local and not variant_entry_is_installed(selected_entry):
-            try:
-                selected_entry = self._sync_client.hydrate_variant(str(selected_entry.record.variantId))
-            except Exception as exc:
-                show_warning(self, "Load failed", str(exc))
+            loaded, hydrated_entry = self._run_catalog_action(
+                warning_title="Load failed",
+                log_context=f"hydrate variant for create variantId={selected_entry.record.variantId}",
+                action=lambda: self._sync_client.hydrate_variant(str(selected_entry.record.variantId)),
+            )
+            if not loaded or hydrated_entry is None:
                 return
+            selected_entry = hydrated_entry
         graph = self._graph
         if graph is None:
             return
@@ -468,33 +500,44 @@ class VariantCatalogActionsMixin(_VariantCatalogActionsMixinBase):
         selected_path = str(path or "").strip()
         if not selected_path:
             return
-        try:
-            payload = read_variant_asset_file(selected_path)
-            current_base_type = str(self._get_current_base_node_type() or "").strip()
-            imported_base_type = str(payload.record.baseNodeType or "").strip()
-            if current_base_type and imported_base_type != current_base_type:
-                raise ValueError(
-                    f"Variant base node type mismatch: expected {current_base_type}, got {imported_base_type}."
-                )
-            imported = import_from_json(selected_path)
-        except Exception as exc:
-            show_warning(self, "Import failed", str(exc))
+        imported, imported_record = self._import_variant_asset(selected_path)
+        if not imported or imported_record is None:
             return
         self._rebuild_browser_after_draft_changed(
-            preserve_variant_id=str(imported.variantId)
+            preserve_variant_id=str(imported_record.variantId)
         )
-        show_info(self, "Imported", f"Imported variant:\n{imported.name}")
+        show_info(self, "Imported", f"Imported variant:\n{imported_record.name}")
+
+    def _import_variant_asset(self, selected_path: str) -> tuple[bool, F8VariantRecord | None]:
+        return self._run_catalog_action(
+            warning_title="Import failed",
+            log_context=f"import variant asset path={selected_path}",
+            action=lambda: self._read_and_import_variant_asset(selected_path),
+        )
+
+    def _read_and_import_variant_asset(self, selected_path: str) -> F8VariantRecord:
+        payload = read_variant_asset_file(selected_path)
+        current_base_type = str(self._get_current_base_node_type() or "").strip()
+        imported_base_type = str(payload.record.baseNodeType or "").strip()
+        if current_base_type and imported_base_type != current_base_type:
+            raise ValueError(
+                f"Variant base node type mismatch: expected {current_base_type}, got {imported_base_type}."
+            )
+        return import_from_json(selected_path)
 
     def _on_export_clicked(self) -> None:
         selected_entry = self._selected_entry()
         if selected_entry is None:
             return
         if selected_entry.source != F8VariantSourceKind.local and not variant_entry_is_installed(selected_entry):
-            try:
-                selected_entry = self._sync_client.hydrate_variant(str(selected_entry.record.variantId))
-            except Exception as exc:
-                show_warning(self, "Export failed", str(exc))
+            loaded, hydrated_entry = self._run_catalog_action(
+                warning_title="Export failed",
+                log_context=f"hydrate variant for export variantId={selected_entry.record.variantId}",
+                action=lambda: self._sync_client.hydrate_variant(str(selected_entry.record.variantId)),
+            )
+            if not loaded or hydrated_entry is None:
                 return
+            selected_entry = hydrated_entry
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
             self,
             "Export Variant Asset JSON",
@@ -504,9 +547,11 @@ class VariantCatalogActionsMixin(_VariantCatalogActionsMixinBase):
         selected_path = str(path or "").strip()
         if not selected_path:
             return
-        try:
-            out = export_to_json(str(selected_entry.record.variantId), selected_path)
-        except Exception as exc:
-            show_warning(self, "Export failed", str(exc))
+        exported, out = self._run_catalog_action(
+            warning_title="Export failed",
+            log_context=f"export variant variantId={selected_entry.record.variantId} path={selected_path}",
+            action=lambda: export_to_json(str(selected_entry.record.variantId), selected_path),
+        )
+        if not exported or out is None:
             return
         show_info(self, "Exported", f"Saved:\n{out}")

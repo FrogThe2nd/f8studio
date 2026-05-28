@@ -42,6 +42,7 @@ from f8pystudio.assets.components.component_models import (
 from f8pystudio.assets.variants.variant_models import (
     F8VariantDraftOriginKind,
     F8VariantEntry,
+    F8VariantRemoteRequestError,
     F8VariantRemoteUser,
     F8VariantSourceKind,
     F8VariantVisibility,
@@ -2135,6 +2136,69 @@ def test_component_catalog_remote_load_failure_reports_context(monkeypatch, capl
 
     assert warning_messages == [("Load failed", "download failed")]
     assert "load remote component" in caplog.text
+
+    dialog.close()
+
+
+def test_variant_catalog_remote_load_failure_reports_context(monkeypatch, caplog, tmp_path: Path) -> None:
+    _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "variant-load-fail.ini"), QtCore.QSettings.IniFormat)
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=tmp_path / "assets.db"),
+        remote_provider=RemoteCacheProvider(db_path=tmp_path / "assets.db"),
+    )
+    remote_entry = F8VariantEntry(
+        record=F8VariantRecord(
+            variantId="remote-load-fail",
+            kind=F8VariantKind.service,
+            baseNodeType="svc.preview.service",
+            serviceClass="svc.preview.service",
+            operatorClass=None,
+            name="Remote Load Fail",
+            description="",
+            tags=[],
+            spec={"label": "Remote Load Fail"},
+            createdAt=variant_now_iso(),
+            updatedAt=variant_now_iso(),
+        ),
+        source=F8VariantSourceKind.remote_private,
+        visibility=F8VariantVisibility.private,
+        ownerUserId="u1",
+        ownerDisplayName="User One",
+        remoteVersionNumber=1,
+        installed=False,
+        hasCachedContent=False,
+    )
+    warning_messages: list[tuple[str, str]] = []
+
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
+    dialog = VariantCatalogDialog(
+        parent=None,
+        base_node_type="svc.preview.variant",
+        base_node_name="Preview Variant",
+        node_graph=None,
+    )
+    dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
+    monkeypatch.setattr(dialog, "_selected_entry", lambda: remote_entry)
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "cache_variant_content",
+        lambda _variant_id: (_ for _ in ()).throw(
+            F8VariantRemoteRequestError("download failed", status_code=503)
+        ),
+    )
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.variant_catalog_actions_mixin.show_warning",
+        lambda _parent, title, message: warning_messages.append((str(title), str(message))),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="f8pystudio.assets.ui.variant_catalog_actions_mixin"):
+        duplicated = dialog._duplicate_selected_variant_as_local()
+
+    assert duplicated is None
+    assert warning_messages == [("Load failed", "download failed")]
+    assert "cache variant content" in caplog.text
 
     dialog.close()
 
