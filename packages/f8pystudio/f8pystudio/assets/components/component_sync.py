@@ -9,6 +9,7 @@ import socket
 from typing import cast
 from urllib import error, parse, request
 
+import msgspec
 from qtpy import QtCore
 
 from f8pysdk.codec import copy_model, validate_as
@@ -61,6 +62,10 @@ from .component_models import (
 )
 
 logger = logging.getLogger(__name__)
+_COMPONENT_HTTP_DECODE_ERRORS = (zlib.error,)
+_COMPONENT_REMOTE_ENTRY_PARSE_ERRORS = (KeyError, TypeError, ValueError, msgspec.ValidationError)
+# Upload recovery runs after a network write may already have mutated remote state.
+_COMPONENT_UPLOAD_RECOVERY_ERRORS = (Exception,)
 
 
 @dataclass(frozen=True)
@@ -506,13 +511,14 @@ class ComponentSyncClient:
         except F8ComponentRemoteConflictError as exc:
             _ = self._catalog_service.mark_conflict(str(entry.record.componentId), remote_version_number=exc.remote_version_number)
             raise
-        except Exception as exc:
+        except _COMPONENT_UPLOAD_RECOVERY_ERRORS as exc:
             recovered_entry = self._recover_uploaded_entry(entry)
             if recovered_entry is not None:
                 logger.warning(
                     "Component upload raised after remote write; recovered via follow-up fetch component_id=%s error=%s",
                     str(entry.record.componentId),
                     str(exc),
+                    exc_info=exc,
                 )
                 return recovered_entry
             raise
@@ -712,7 +718,7 @@ class ComponentSyncClient:
                 content_encoding = exc.headers.get("Content-Encoding", "").lower()
                 try:
                     body_text = decode_http_response_text(response_bytes, content_encoding=content_encoding)
-                except Exception:
+                except _COMPONENT_HTTP_DECODE_ERRORS:
                     logger.exception("Failed to decode component cloud error response")
                     body_text = response_bytes.decode("utf-8", errors="replace")
                 payload_obj = _try_parse_json_object(body_text)
@@ -763,7 +769,7 @@ class ComponentSyncClient:
             return None
         try:
             return self.install_component(component_id)
-        except Exception:
+        except _COMPONENT_UPLOAD_RECOVERY_ERRORS:
             logger.exception("Component upload recovery fetch failed component_id=%s", component_id)
             return None
 
@@ -928,7 +934,7 @@ def _page_from_asset_payload(payload: JsonObject) -> F8ComponentRemoteListPage:
             continue
         try:
             entry = _entry_from_asset_payload(json_object_from_value(cast(object, item)))
-        except Exception:
+        except _COMPONENT_REMOTE_ENTRY_PARSE_ERRORS:
             logger.exception("Ignoring invalid component entry in list response")
             continue
         if not str(entry.record.componentId).strip():

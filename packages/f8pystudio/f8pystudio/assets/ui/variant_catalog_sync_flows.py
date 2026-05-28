@@ -33,6 +33,8 @@ else:
 
 logger = logging.getLogger(__name__)
 _VariantSyncResult = TypeVar("_VariantSyncResult")
+_VARIANT_CATALOG_SYNC_ACTION_ERRORS = (Exception,)
+_VARIANT_PUBLISH_ACTION_ERRORS = (Exception,)
 
 
 @dataclass(frozen=True)
@@ -50,7 +52,7 @@ class VariantCatalogSyncFlowsMixin(_VariantCatalogSyncFlowsMixinBase):
     ) -> _VariantSyncResult | None:
         try:
             return action()
-        except Exception as exc:
+        except _VARIANT_CATALOG_SYNC_ACTION_ERRORS as exc:
             logger.exception("variant catalog sync action failed title=%s", failure_title, exc_info=exc)
             show_warning(self, failure_title, str(exc))
             return None
@@ -77,7 +79,7 @@ class VariantCatalogSyncFlowsMixin(_VariantCatalogSyncFlowsMixinBase):
                 return _VariantPublishResult(entry=replacement, created_replacement=True)
             show_warning(self, "Publish failed", str(exc))
             return None
-        except Exception as exc:
+        except _VARIANT_PUBLISH_ACTION_ERRORS as exc:
             logger.exception("variant publish action failed target=%s", target_asset_id, exc_info=exc)
             show_warning(self, "Publish failed", str(exc))
             return None
@@ -153,7 +155,7 @@ class VariantCatalogSyncFlowsMixin(_VariantCatalogSyncFlowsMixinBase):
                 return _VariantPublishResult(entry=replacement, created_replacement=True)
             show_warning(self, "Publish failed", str(exc))
             return None
-        except Exception as exc:
+        except _VARIANT_PUBLISH_ACTION_ERRORS as exc:
             logger.exception("failed to load publish target variant target=%s", target_asset_id, exc_info=exc)
             show_warning(self, "Publish failed", str(exc))
             return None
@@ -181,7 +183,7 @@ class VariantCatalogSyncFlowsMixin(_VariantCatalogSyncFlowsMixinBase):
                 return _VariantPublishResult(entry=replacement, created_replacement=True)
             show_warning(self, "Publish failed", str(exc))
             return None
-        except Exception as exc:
+        except _VARIANT_PUBLISH_ACTION_ERRORS as exc:
             logger.exception("failed to cache publish target variant target=%s", target_asset_id, exc_info=exc)
             show_warning(self, "Publish failed", str(exc))
             return None

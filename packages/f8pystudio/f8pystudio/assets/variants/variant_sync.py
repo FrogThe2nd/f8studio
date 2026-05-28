@@ -58,6 +58,9 @@ from .variant_models import (
 from f8pysdk.specs import F8VariantRecord
 
 logger = logging.getLogger(__name__)
+_VARIANT_HTTP_DECODE_ERRORS = (zlib.error,)
+# Upload recovery runs after a network write may already have mutated remote state.
+_VARIANT_UPLOAD_RECOVERY_ERRORS = (Exception,)
 
 
 @dataclass(frozen=True)
@@ -662,13 +665,14 @@ class VariantSyncClient:
         except F8VariantRemoteConflictError as exc:
             _ = self._catalog_service.mark_conflict(str(entry.record.variantId), remote_version_number=exc.remote_version_number)
             raise
-        except Exception as exc:
+        except _VARIANT_UPLOAD_RECOVERY_ERRORS as exc:
             recovered_entry = self._recover_uploaded_entry(entry)
             if recovered_entry is not None:
                 logger.warning(
                     "Variant upload raised after remote write; recovered via follow-up fetch variant_id=%s error=%s",
                     str(entry.record.variantId),
                     str(exc),
+                    exc_info=exc,
                 )
                 return recovered_entry
             raise
@@ -738,7 +742,7 @@ class VariantSyncClient:
                 raw_bytes = response_like.read()
                 try:
                     raw_body = decode_http_response_text(raw_bytes, content_encoding=str(content_encoding or ""))
-                except Exception:
+                except _VARIANT_HTTP_DECODE_ERRORS:
                     logger.exception("Failed to decode variant cloud response")
                     raw_body = raw_bytes.decode("utf-8", errors="replace")
                 logger.debug(
@@ -764,7 +768,7 @@ class VariantSyncClient:
                 body_bytes = exc.read()
                 try:
                     body_text = decode_http_response_text(body_bytes, content_encoding=str(content_encoding or ""))
-                except Exception:
+                except _VARIANT_HTTP_DECODE_ERRORS:
                     body_text = body_bytes.decode("utf-8", errors="replace")
                 logger.warning(
                     "Variant cloud %s %s failed status=%s body=%s",
@@ -822,7 +826,7 @@ class VariantSyncClient:
             return None
         try:
             return self.install_variant(variant_id)
-        except Exception:
+        except _VARIANT_UPLOAD_RECOVERY_ERRORS:
             logger.exception("Variant upload recovery fetch failed variant_id=%s", variant_id)
             return None
 
