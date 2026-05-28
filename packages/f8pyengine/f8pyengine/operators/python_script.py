@@ -502,6 +502,48 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         self._hooks.on_state_maybe_awaitable = False
         return result
 
+    async def _call_on_msg_hook(self, inputs_obj: Any, *, exec_in: str | None) -> tuple[bool, Any]:
+        fn = self._hooks.on_msg
+        if not callable(fn):
+            return False, None
+        try:
+            invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
+            result = fn(invoke_ctx, inputs_obj)
+            t0 = self._metrics_start()
+            result = await self._await_msg_result(result)
+            self._metrics_add_hook_time(t0)
+            return True, result
+        except _PYTHON_SCRIPT_USER_HOOK_ERRORS as exc:
+            self._set_error("onMsg", exc)
+            return False, None
+
+    async def _call_on_exec_hook(self, inputs_obj: Any, *, exec_in: str | None) -> tuple[bool, Any]:
+        fn = self._hooks.on_exec
+        if not callable(fn):
+            return False, None
+        try:
+            invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
+            result = fn(invoke_ctx, str(exec_in or ""), inputs_obj)
+            t0 = self._metrics_start()
+            result = await self._await_exec_result(result)
+            self._metrics_add_hook_time(t0)
+            return True, result
+        except _PYTHON_SCRIPT_USER_HOOK_ERRORS as exc:
+            self._set_error("onExec", exc)
+            return False, None
+
+    async def _call_on_state_hook(self, field: str, value: Any, ts_ms: int | None) -> None:
+        fn = self._hooks.on_state
+        if not callable(fn):
+            return
+        try:
+            result = fn(self._ctx, field, value, ts_ms)
+            t0 = self._metrics_start()
+            result = await self._await_state_result(result)
+            self._metrics_add_hook_time(t0)
+        except _PYTHON_SCRIPT_USER_HOOK_ERRORS as exc:
+            self._set_error("onState", exc)
+
     def _build_states_view(self, state_keys: tuple[str, ...]) -> PyEngineStatesView:
         resolved_keys = [str(key) for key in state_keys if str(key)]
         if not resolved_keys:
@@ -657,16 +699,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         if name in self._self_state_writes and self._self_state_writes.get(name) == value:
             return
 
-        fn = self._hooks.on_state
-        if not callable(fn):
-            return
-        try:
-            r = fn(self._ctx, name, value, ts_ms)
-            t0 = self._metrics_start()
-            r = await self._await_state_result(r)
-            self._metrics_add_hook_time(t0)
-        except _PYTHON_SCRIPT_USER_HOOK_ERRORS as exc:
-            self._set_error("onState", exc)
+        await self._call_on_state_hook(name, value, ts_ms)
 
     async def validate_state(self, field: str, value: Any, *, ts_ms: int, meta: dict[str, Any]) -> Any:
         del ts_ms, meta
@@ -717,41 +750,26 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         return outputs.get(out_port)
 
     async def _run_on_exec(self, inputs: dict[str, Any], *, exec_in: str | None) -> list[str]:
-        fn = self._hooks.on_exec
-        if callable(fn):
+        if callable(self._hooks.on_exec):
             inputs_obj = self._decode_inputs(inputs, stage="onExec")
             if inputs_obj is None:
                 return list(self._exec_out_ports)
-            try:
-                invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
-                r = fn(invoke_ctx, str(exec_in or ""), inputs_obj)
-                t0 = self._metrics_start()
-                r = await self._await_exec_result(r)
-                self._metrics_add_hook_time(t0)
-            except _PYTHON_SCRIPT_USER_HOOK_ERRORS as exc:
-                self._set_error("onExec", exc)
+            hook_ok, result = await self._call_on_exec_hook(inputs_obj, exec_in=exec_in)
+            if not hook_ok:
                 return list(self._exec_out_ports)
-            out_ports = await self._apply_result(r)
+            out_ports = await self._apply_result(result)
             return out_ports if out_ports is not None else list(self._exec_out_ports)
 
         await self._run_on_msg(inputs, exec_in=exec_in)
         return list(self._exec_out_ports)
 
     async def _compute_outputs_for_pull(self, inputs: dict[str, Any], *, exec_in: str | None) -> dict[str, Any]:
-        fn_msg = self._hooks.on_msg
-        fn_exec = self._hooks.on_exec
         inputs_obj = self._decode_inputs(inputs, stage="compute")
         if inputs_obj is None:
             return {}
-        if self._hooks.on_msg_only_mode and callable(fn_msg):
-            try:
-                invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
-                result = fn_msg(invoke_ctx, inputs_obj)
-                t0 = self._metrics_start()
-                result = await self._await_msg_result(result)
-                self._metrics_add_hook_time(t0)
-            except _PYTHON_SCRIPT_USER_HOOK_ERRORS as exc:
-                self._set_error("onMsg", exc)
+        if self._hooks.on_msg_only_mode and callable(self._hooks.on_msg):
+            hook_ok, result = await self._call_on_msg_hook(inputs_obj, exec_in=exec_in)
+            if not hook_ok:
                 return {}
             try:
                 return self._extract_outputs(result)
@@ -759,15 +777,9 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                 self._set_error("onMsg", exc)
                 return {}
 
-        if callable(fn_exec):
-            try:
-                invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
-                result = fn_exec(invoke_ctx, str(exec_in or ""), inputs_obj)
-                t0 = self._metrics_start()
-                result = await self._await_exec_result(result)
-                self._metrics_add_hook_time(t0)
-            except _PYTHON_SCRIPT_USER_HOOK_ERRORS as exc:
-                self._set_error("onExec", exc)
+        if callable(self._hooks.on_exec):
+            hook_ok, result = await self._call_on_exec_hook(inputs_obj, exec_in=exec_in)
+            if not hook_ok:
                 return {}
             try:
                 return self._extract_outputs(result)
@@ -775,16 +787,10 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                 self._set_error("onExec", exc)
                 return {}
 
-        if not callable(fn_msg):
+        if not callable(self._hooks.on_msg):
             return {}
-        try:
-            invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
-            result = fn_msg(invoke_ctx, inputs_obj)
-            t0 = self._metrics_start()
-            result = await self._await_msg_result(result)
-            self._metrics_add_hook_time(t0)
-        except _PYTHON_SCRIPT_USER_HOOK_ERRORS as exc:
-            self._set_error("onMsg", exc)
+        hook_ok, result = await self._call_on_msg_hook(inputs_obj, exec_in=exec_in)
+        if not hook_ok:
             return {}
         try:
             return self._extract_outputs(result)
@@ -860,16 +866,10 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         inputs_obj = self._decode_inputs(inputs, stage="onMsg")
         if inputs_obj is None:
             return
-        try:
-            invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
-            r = fn(invoke_ctx, inputs_obj)
-            t0 = self._metrics_start()
-            r = await self._await_msg_result(r)
-            self._metrics_add_hook_time(t0)
-        except _PYTHON_SCRIPT_USER_HOOK_ERRORS as exc:
-            self._set_error("onMsg", exc)
+        hook_ok, result = await self._call_on_msg_hook(inputs_obj, exec_in=exec_in)
+        if not hook_ok:
             return
-        await self._apply_result(r)
+        await self._apply_result(result)
 
     async def _apply_result(self, r: Any) -> list[str] | None:
         """
