@@ -35,6 +35,7 @@ from f8pysdk.video_transport import (
 
 from ..constants import SERVICE_CLASS
 from ._ports import exec_out_ports
+from ._runtime_errors import OPERATOR_MODEL_ERRORS, OPERATOR_STATE_PUBLISH_ERRORS
 from .script_utils.input_binding import (
     INPUT_MODE_INPUT_VIEW,
     INPUT_MODE_MSGSPEC_STRUCT,
@@ -53,6 +54,19 @@ _REPEATING_ERROR_LOG_INTERVAL_MS = 2000
 logger = logging.getLogger(__name__)
 
 _HOOK_AWAITABLE_SCHEDULE_ERRORS = (RuntimeError, TypeError, ValueError)
+
+# User scripts and external transports can raise arbitrary ordinary exceptions.
+# Keep these runtime sandbox boundaries broad, named, logged, and behavior-preserving.
+_PYTHON_SCRIPT_DESTRUCTOR_HOOK_ERRORS = (Exception,)
+_PYTHON_SCRIPT_VIDEO_CLEANUP_ERRORS = (Exception,)
+_PYTHON_SCRIPT_VIDEO_SUBSCRIPTION_ERRORS = (Exception,)
+_PYTHON_SCRIPT_INPUT_PULL_ERRORS = (Exception,)
+_PYTHON_SCRIPT_USER_HOOK_ERRORS = (Exception,)
+_PYTHON_SCRIPT_EMIT_ERRORS = (Exception,)
+_PYTHON_SCRIPT_OUTPUT_NORMALIZE_ERRORS = OPERATOR_MODEL_ERRORS
+_PYTHON_SCRIPT_INPUT_DECODE_ERRORS = OPERATOR_MODEL_ERRORS
+_PYTHON_SCRIPT_MONITOR_PUBLISH_ERRORS = OPERATOR_STATE_PUBLISH_ERRORS
+
 
 @dataclass
 class _LatestVideoSubscription:
@@ -356,11 +370,11 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         try:
             if self._started and not self._closing:
                 self._invoke_hook_sync("onStop")
-        except Exception as exc:
+        except _PYTHON_SCRIPT_DESTRUCTOR_HOOK_ERRORS as exc:
             logger.error("[%s:python_script] __del__ onStop failed", self.node_id, exc_info=exc)
         try:
             self._shutdown_video_subscriptions_sync()
-        except Exception as exc:
+        except _PYTHON_SCRIPT_VIDEO_CLEANUP_ERRORS as exc:
             logger.error("[%s:python_script] __del__ video cleanup failed", self.node_id, exc_info=exc)
 
     async def close(self) -> None:
@@ -436,7 +450,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                 severity="error",
                 fingerprint=str(fingerprint),
             )
-        except Exception as report_exc:
+        except _PYTHON_SCRIPT_MONITOR_PUBLISH_ERRORS as report_exc:
             logger.error("[%s:python_script] report monitor error failed", self.node_id, exc_info=report_exc)
 
     def _flush_pending_monitor_error(self) -> None:
@@ -469,7 +483,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             return
         try:
             bus.clear_error(self.node_id)
-        except Exception as exc:
+        except _PYTHON_SCRIPT_MONITOR_PUBLISH_ERRORS as exc:
             logger.error("[%s:python_script] clear monitor error failed", self.node_id, exc_info=exc)
 
     @staticmethod
@@ -608,7 +622,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             return
         try:
             reader.close()
-        except Exception as exc:
+        except _PYTHON_SCRIPT_VIDEO_CLEANUP_ERRORS as exc:
             logger.error(
                 "[%s:python_script] video reader close failed key=%s",
                 self.node_id,
@@ -670,7 +684,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             if sub.reader is None:
                 try:
                     sub.reader = self._open_video_sub_reader(sub)
-                except Exception as exc:
+                except _PYTHON_SCRIPT_VIDEO_SUBSCRIPTION_ERRORS as exc:
                     self._log_video_sub_error(sub, "open", exc)
                     await asyncio.sleep(0.2)
                     continue
@@ -719,7 +733,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                     frame.release()
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:
+            except _PYTHON_SCRIPT_VIDEO_SUBSCRIPTION_ERRORS as exc:
                 self._log_video_sub_error(sub, "read", exc)
                 self._close_video_sub_reader(sub)
                 await asyncio.sleep(0.2)
@@ -746,7 +760,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         for in_port in self._data_in_port_names:
             try:
                 inputs[in_port] = await self.pull(in_port, ctx_id=ctx_id)
-            except Exception as exc:
+            except _PYTHON_SCRIPT_INPUT_PULL_ERRORS as exc:
                 error_key = f"{in_port}:{type(exc).__name__}:{exc}"
                 if error_key not in self._pull_error_once:
                     self._pull_error_once.add(error_key)
@@ -890,7 +904,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             if inspect.isawaitable(r):
                 self._schedule_sync_hook_awaitable(name, r)
             self._metrics_add_hook_time(t0)
-        except Exception as exc:
+        except _PYTHON_SCRIPT_USER_HOOK_ERRORS as exc:
             self._set_error(name, exc)
         finally:
             if name == "onStart":
@@ -912,7 +926,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             if inspect.isawaitable(r):
                 await r
             self._metrics_add_hook_time(t0)
-        except Exception as exc:
+        except _PYTHON_SCRIPT_USER_HOOK_ERRORS as exc:
             self._set_error(name, exc)
         finally:
             if name == "onStart":
@@ -946,7 +960,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             t0 = self._metrics_start()
             r = await self._await_state_result(r)
             self._metrics_add_hook_time(t0)
-        except Exception as exc:
+        except _PYTHON_SCRIPT_USER_HOOK_ERRORS as exc:
             self._set_error("onState", exc)
 
     async def validate_state(self, field: str, value: Any, *, ts_ms: int, meta: dict[str, Any]) -> Any:
@@ -1009,7 +1023,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                 t0 = self._metrics_start()
                 r = await self._await_exec_result(r)
                 self._metrics_add_hook_time(t0)
-            except Exception as exc:
+            except _PYTHON_SCRIPT_USER_HOOK_ERRORS as exc:
                 self._set_error("onExec", exc)
                 return list(self._exec_out_ports)
             out_ports = await self._apply_result(r)
@@ -1031,7 +1045,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                 t0 = self._metrics_start()
                 result = await self._await_msg_result(result)
                 self._metrics_add_hook_time(t0)
-            except Exception as exc:
+            except _PYTHON_SCRIPT_USER_HOOK_ERRORS as exc:
                 self._set_error("onMsg", exc)
                 return {}
             try:
@@ -1047,7 +1061,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                 t0 = self._metrics_start()
                 result = await self._await_exec_result(result)
                 self._metrics_add_hook_time(t0)
-            except Exception as exc:
+            except _PYTHON_SCRIPT_USER_HOOK_ERRORS as exc:
                 self._set_error("onExec", exc)
                 return {}
             try:
@@ -1064,7 +1078,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             t0 = self._metrics_start()
             result = await self._await_msg_result(result)
             self._metrics_add_hook_time(t0)
-        except Exception as exc:
+        except _PYTHON_SCRIPT_USER_HOOK_ERRORS as exc:
             self._set_error("onMsg", exc)
             return {}
         try:
@@ -1129,7 +1143,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         output_port = str(port)
         try:
             await self.emit(output_port, value)
-        except Exception as exc:
+        except _PYTHON_SCRIPT_EMIT_ERRORS as exc:
             self._set_error(f"{stage}:emit:{output_port}", exc)
             return False
         return True
@@ -1147,7 +1161,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             t0 = self._metrics_start()
             r = await self._await_msg_result(r)
             self._metrics_add_hook_time(t0)
-        except Exception as exc:
+        except _PYTHON_SCRIPT_USER_HOOK_ERRORS as exc:
             self._set_error("onMsg", exc)
             return
         await self._apply_result(r)
@@ -1189,7 +1203,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                 t0 = self._metrics_start()
                 out_value = normalize_script_output_value(r)
                 self._metrics_add_output_norm_time(t0)
-            except Exception as exc:
+            except _PYTHON_SCRIPT_OUTPUT_NORMALIZE_ERRORS as exc:
                 self._set_error("result:normalize:out", exc)
                 return None
             _ = await self._emit_script_output("out", out_value, stage="result")
@@ -1205,7 +1219,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             decoded = self._input_binding.decode(inputs)
             self._metrics_add_decode_time(t0)
             return decoded
-        except Exception as exc:
+        except _PYTHON_SCRIPT_INPUT_DECODE_ERRORS as exc:
             self._metric_input_decode_errors += 1
             logger.debug(
                 "[%s:python_script] input decode failed mode=%s sample_types=%s",
