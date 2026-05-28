@@ -13,6 +13,8 @@ from f8pysdk.capabilities import ClosableNode
 from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
 
+from .expr_error_reporter import PyExprErrorReporter
+
 try:
     import numpy as np  # type: ignore
 except ModuleNotFoundError:
@@ -275,13 +277,12 @@ class PythonExprServiceNode(ServiceNode, ClosableNode):
         )
         self._compiled: CodeType | None = None
         self._compile_error: str | None = None
-        self._last_error: str = ""
+        self._error_reporter = PyExprErrorReporter(
+            report_error=self.report_error,
+            clear_error=self.clear_error,
+        )
         self._latest_inputs: dict[str, Any] = {}
         self._active = True
-        self._warn_unmatched_sig: str = ""
-        self._warn_unmatched_ts_ms = 0
-        self._eval_error_sig: str = ""
-        self._eval_error_ts_ms = 0
         self._recompile()
 
     async def close(self) -> None:
@@ -351,45 +352,9 @@ class PythonExprServiceNode(ServiceNode, ClosableNode):
     def _now_ms() -> int:
         return int(time.time() * 1000.0)
 
-    async def _set_last_error(self, message: str) -> None:
-        self._last_error = str(message)
-        await self.report_error(
-            "PYEXPR_ERROR",
-            self._last_error,
-            severity="error",
-            fingerprint=f"pyexpr:{self._last_error}",
-        )
-
-    async def _clear_last_error(self) -> None:
-        if not self._last_error:
-            return
-        self._last_error = ""
-        await self.clear_error()
-
-    def _should_log_error(self, sig: str, *, kind: str, now_ms: int) -> bool:
-        if kind == "eval":
-            if sig != self._eval_error_sig:
-                self._eval_error_sig = sig
-                self._eval_error_ts_ms = int(now_ms)
-                return True
-            if (int(now_ms) - int(self._eval_error_ts_ms)) >= 5000:
-                self._eval_error_ts_ms = int(now_ms)
-                return True
-            return False
-        if kind == "unmatched":
-            if sig != self._warn_unmatched_sig:
-                self._warn_unmatched_sig = sig
-                self._warn_unmatched_ts_ms = int(now_ms)
-                return True
-            if (int(now_ms) - int(self._warn_unmatched_ts_ms)) >= 5000:
-                self._warn_unmatched_ts_ms = int(now_ms)
-                return True
-            return False
-        return True
-
     async def _eval_latest(self) -> Any:
         if self._compiled is None:
-            await self._set_last_error(self._compile_error or "invalid expression")
+            await self._error_reporter.set_error(self._compile_error or "invalid expression")
             return None
         try:
             out = _safe_eval_compiled(
@@ -402,11 +367,11 @@ class PythonExprServiceNode(ServiceNode, ClosableNode):
         except Exception as exc:
             now_ms = self._now_ms()
             sig = f"{type(exc).__name__}:{exc}"
-            if self._should_log_error(sig, kind="eval", now_ms=now_ms):
+            if self._error_reporter.should_log_eval_error(sig, now_ms=now_ms):
                 logger.warning("[%s:pyexpr] eval failed: %s", self.node_id, exc)
-            await self._set_last_error(f"eval: {exc}")
+            await self._error_reporter.set_error(f"eval: {exc}")
             return None
-        await self._clear_last_error()
+        await self._error_reporter.clear_error()
         return out
 
     def _default_output_port(self) -> str | None:
@@ -424,7 +389,7 @@ class PythonExprServiceNode(ServiceNode, ClosableNode):
                 if out_port not in self.data_out_ports:
                     now_ms = self._now_ms()
                     sig = f"unmatched:{out_port}"
-                    if self._should_log_error(sig, kind="unmatched", now_ms=now_ms):
+                    if self._error_reporter.should_log_unmatched_output(sig, now_ms=now_ms):
                         logger.warning("[%s:pyexpr] unpack output key has no port: %s", self.node_id, out_port)
                     continue
                 matched = True
