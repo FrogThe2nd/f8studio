@@ -65,3 +65,31 @@ def test_toolbar_starts_service_with_compiled_graph() -> None:
 
     assert bridge.start_calls == [("svcA", "f8.tests.service", compiled)]
     toolbar.close()
+
+
+def test_toolbar_running_state_failure_is_logged_once(monkeypatch) -> None:
+    _ensure_app()
+
+    class _Bridge:
+        def request_service_status(self, service_id: str) -> None:
+            assert service_id == "svcA"
+
+        def is_service_running(self, service_id: str) -> bool:
+            assert service_id == "svcA"
+            raise RuntimeError("running state unavailable")
+
+    debug_messages: list[str] = []
+
+    def _debug(message: str, *args: object, **kwargs: object) -> None:
+        assert kwargs.get("exc_info") is not None
+        debug_messages.append(str(message))
+
+    monkeypatch.setattr("f8pystudio.nodegraph.service_process_toolbar.logger.debug", _debug)
+    toolbar = ServiceProcessToolbar(service_id="svcA", get_bridge=lambda: _Bridge(), get_node=lambda: object())
+    toolbar.refresh()
+    toolbar.refresh()
+
+    assert toolbar._btn_stop.isEnabled() is False
+    assert toolbar._btn_sync.isEnabled() is False
+    assert sum("Service toolbar failed to refresh running state" in message for message in debug_messages) == 1
+    toolbar.close()

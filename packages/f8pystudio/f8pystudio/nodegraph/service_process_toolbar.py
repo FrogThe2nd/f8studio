@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+from typing import Any, Callable, TypeVar
 
 from qtpy import QtCore, QtWidgets
 
@@ -14,6 +14,7 @@ from .service_bridge_protocol import ServiceBridge
 
 logger = logging.getLogger(__name__)
 _QT_WIDGET_ERRORS = (AttributeError, RuntimeError, TypeError)
+_T = TypeVar("_T")
 
 
 class ServiceProcessToolbar(QtWidgets.QWidget):
@@ -118,6 +119,13 @@ class ServiceProcessToolbar(QtWidgets.QWidget):
         self._debug_once_keys.add(key)
         logger.debug(message, *args, exc_info=exc)
 
+    def _guarded_value(self, key: str, message: str, default: _T, read_value: Callable[[], _T]) -> _T:
+        try:
+            return read_value()
+        except Exception as exc:
+            self._debug_once(key, message, self._service_id, exc=exc)
+            return default
+
     def _set_process_buttons_enabled(
         self,
         *,
@@ -176,19 +184,23 @@ class ServiceProcessToolbar(QtWidgets.QWidget):
         self.refresh()
 
     def _bridge(self) -> ServiceBridge | None:
-        try:
-            b = self._get_bridge()
-            return b if b is not None else None
-        except Exception as exc:
-            self._debug_once("get_bridge_failed", "Service toolbar bridge provider failed service_id=%s", self._service_id, exc=exc)
-            return None
+        bridge = self._guarded_value(
+            "get_bridge_failed",
+            "Service toolbar bridge provider failed service_id=%s",
+            None,
+            self._get_bridge,
+        )
+        return bridge if bridge is not None else None
 
     def _node(self) -> Any | None:
-        try:
-            return self._get_node() if self._get_node is not None else None
-        except Exception as exc:
-            self._debug_once("get_node_failed", "Service toolbar node provider failed service_id=%s", self._service_id, exc=exc)
+        if self._get_node is None:
             return None
+        return self._guarded_value(
+            "get_node_failed",
+            "Service toolbar node provider failed service_id=%s",
+            None,
+            self._get_node,
+        )
 
     def _node_item(self) -> Any | None:
         """
@@ -256,25 +268,33 @@ class ServiceProcessToolbar(QtWidgets.QWidget):
         bridge = self._bridge()
         if bridge is None:
             return False
-        try:
-            return bool(bridge.is_service_running(self._service_id))
-        except Exception as exc:
-            self._debug_once("is_running_failed", "Service toolbar failed to read running state service_id=%s", self._service_id, exc=exc)
-            return False
+        return self._guarded_value(
+            "is_running_failed",
+            "Service toolbar failed to read running state service_id=%s",
+            False,
+            lambda: bool(bridge.is_service_running(self._service_id)),
+        )
 
     def _service_class(self) -> str:
-        try:
-            return str(self._get_service_class() or "") if self._get_service_class is not None else ""
-        except Exception as exc:
-            self._debug_once("get_service_class_failed", "Service toolbar service-class provider failed service_id=%s", self._service_id, exc=exc)
+        if self._get_service_class is None:
             return ""
+        value = self._guarded_value(
+            "get_service_class_failed",
+            "Service toolbar service-class provider failed service_id=%s",
+            "",
+            self._get_service_class,
+        )
+        return str(value or "")
 
     def _compiled_graphs(self) -> Any | None:
-        try:
-            return self._get_compiled_graphs() if self._get_compiled_graphs is not None else None
-        except Exception as exc:
-            self._debug_once("get_compiled_graphs_failed", "Service toolbar compiled-graphs provider failed service_id=%s", self._service_id, exc=exc)
+        if self._get_compiled_graphs is None:
             return None
+        return self._guarded_value(
+            "get_compiled_graphs_failed",
+            "Service toolbar compiled-graphs provider failed service_id=%s",
+            None,
+            self._get_compiled_graphs,
+        )
 
     @QtCore.Slot()
     def refresh(self) -> None:
@@ -345,18 +365,20 @@ class ServiceProcessToolbar(QtWidgets.QWidget):
             bridge.request_service_status(sid)
         except _QT_WIDGET_ERRORS as exc:
             self._debug_once("request_status_failed", "Service toolbar status request failed service_id=%s", sid, exc=exc)
-        try:
-            running = bool(bridge.is_service_running(self._service_id))
-        except Exception as exc:
-            self._debug_once("refresh_running_failed", "Service toolbar failed to refresh running state service_id=%s", sid, exc=exc)
-            running = False
+        running = self._guarded_value(
+            "refresh_running_failed",
+            "Service toolbar failed to refresh running state service_id=%s",
+            False,
+            lambda: bool(bridge.is_service_running(self._service_id)),
+        )
         active = None
         if running:
-            try:
-                active = bridge.get_cached_service_active(sid)
-            except Exception as exc:
-                self._debug_once("refresh_active_failed", "Service toolbar failed to refresh active state service_id=%s", sid, exc=exc)
-                active = None
+            active = self._guarded_value(
+                "refresh_active_failed",
+                "Service toolbar failed to refresh active state service_id=%s",
+                None,
+                lambda: bridge.get_cached_service_active(sid),
+            )
 
         if not running:
             self._btn_toggle.setIcon(self._play_icon)
