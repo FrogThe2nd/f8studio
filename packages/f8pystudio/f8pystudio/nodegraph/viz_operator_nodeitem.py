@@ -6,6 +6,8 @@ from NodeGraphQt.constants import NodeEnum, PortEnum
 
 from .operator_basenode import F8StudioOperatorNodeItem
 
+_VIZ_BACKEND_STATE_LAYOUT_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
+
 
 def _required_non_state_port_region_height(*, port_height: float, in_count: int, out_count: int) -> float:
     max_count = max(0, int(in_count), int(out_count))
@@ -93,7 +95,7 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
         try:
             node = self._backend_node()
             eff_states = list(node.effective_state_fields() or []) if node is not None else []
-        except Exception:
+        except _VIZ_BACKEND_STATE_LAYOUT_ERRORS:
             eff_states = []
         for s in eff_states:
             nm = self._state_field_name_if_visible(s)
@@ -309,17 +311,17 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
         else:
             try:
                 spec = node.spec
-            except Exception:
+            except _VIZ_BACKEND_STATE_LAYOUT_ERRORS:
                 spec = None
         try:
             eff_states = list(node.effective_state_fields() or []) if node is not None else []
-        except Exception:
+        except _VIZ_BACKEND_STATE_LAYOUT_ERRORS:
             if spec is None:
                 eff_states = []
             else:
                 try:
                     eff_states = list(spec.stateFields or [])
-                except Exception:
+                except _VIZ_BACKEND_STATE_LAYOUT_ERRORS:
                     eff_states = []
 
         state_names: list[str] = []

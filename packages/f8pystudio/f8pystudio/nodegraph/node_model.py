@@ -2,6 +2,7 @@ from __future__ import annotations
 from f8pysdk.codec import dump_json, validate_as
 import json
 import logging
+from typing import Protocol
 
 import msgspec
 
@@ -13,6 +14,23 @@ from ..assets.variants.variant_metadata import normalize_variant_sys_metadata, v
 
 
 logger = logging.getLogger(__name__)
+_NODE_SPEC_SYNC_ERRORS = (Exception,)
+_NODE_PROPERTY_SIGNAL_ERRORS = (Exception,)
+_NODE_VARIANT_REF_PARSE_ERRORS = (KeyError, TypeError, ValueError, msgspec.ValidationError)
+
+
+class _OwnerPropertyChangedSignal(Protocol):
+    def emit(self, node: object, name: str, value: object) -> None: ...
+
+
+class _OwnerGraph(Protocol):
+    property_changed: _OwnerPropertyChangedSignal | None
+
+
+class _OwnerNode(Protocol):
+    graph: _OwnerGraph | None
+
+    def sync_from_spec(self) -> None: ...
 
 
 class F8StudioNodeModel(NodeModel):
@@ -32,7 +50,7 @@ class F8StudioNodeModel(NodeModel):
         self.f8_sys = {}
         self.f8_ui_overrides = {}
         self.f8_ui_state = {}
-        self._owner_node: object | None = None
+        self._owner_node: _OwnerNode | None = None
 
     @staticmethod
     def _coerce_spec(value: object) -> F8OperatorSpec | F8ServiceSpec | None:
@@ -52,8 +70,8 @@ class F8StudioNodeModel(NodeModel):
                 owner = self._owner_node
                 if owner is not None:
                     try:
-                        owner.sync_from_spec()  # type: ignore[attr-defined]
-                    except Exception:
+                        owner.sync_from_spec()
+                    except _NODE_SPEC_SYNC_ERRORS:
                         logger.exception("Failed to sync node after f8_spec update.")
             self._emit_owner_property_changed("f8_spec", self.f8_spec)
             return
@@ -69,8 +87,8 @@ class F8StudioNodeModel(NodeModel):
                 owner = self._owner_node
                 if owner is not None:
                     try:
-                        owner.sync_from_spec()  # type: ignore[attr-defined]
-                    except Exception:
+                        owner.sync_from_spec()
+                    except _NODE_SPEC_SYNC_ERRORS:
                         logger.exception("Failed to sync node after f8_ui_overrides update.")
             self._emit_owner_property_changed("f8_ui_overrides", self.f8_ui_overrides)
             return
@@ -101,21 +119,15 @@ class F8StudioNodeModel(NodeModel):
         owner = self._owner_node
         if owner is None:
             return
-        try:
-            graph = owner.graph  # type: ignore[attr-defined]
-        except AttributeError:
-            return
+        graph = owner.graph
         if graph is None:
             return
-        try:
-            signal = graph.property_changed  # type: ignore[attr-defined]
-        except AttributeError:
-            return
+        signal = graph.property_changed
         if signal is None:
             return
         try:
             signal.emit(owner, str(name or ""), value)
-        except Exception:
+        except _NODE_PROPERTY_SIGNAL_ERRORS:
             logger.exception("Failed to emit property_changed for system property: %s", str(name or ""))
 
     @property
@@ -269,7 +281,7 @@ class F8StudioNodeModel(NodeModel):
             return None
         try:
             return variant_ref_from_dict(raw)
-        except Exception:
+        except _NODE_VARIANT_REF_PARSE_ERRORS:
             return None
 
     @variantRef.setter

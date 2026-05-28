@@ -6,6 +6,8 @@ from qtpy import QtCore, QtGui, QtWidgets
 
 
 logger = logging.getLogger(__name__)
+_MISSING_BADGE_NODE_ACCESS_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
+_MISSING_BADGE_ICON_ERRORS = (Exception,)
 
 
 class MissingBadgeMixin:
@@ -39,19 +41,19 @@ class MissingBadgeMixin:
     def _missing_badge_info(self) -> tuple[bool, str]:
         try:
             node = self._backend_node()
-        except Exception:
+        except _MISSING_BADGE_NODE_ACCESS_ERRORS:
             return False, ""
         if node is None:
             return False, ""
         try:
             missing_locked = bool(node.is_missing_locked())
-        except Exception:
+        except _MISSING_BADGE_NODE_ACCESS_ERRORS:
             return False, ""
         if not missing_locked:
             return False, ""
         try:
             missing_type = str(node.missing_type() or "").strip()
-        except Exception:
+        except _MISSING_BADGE_NODE_ACCESS_ERRORS:
             missing_type = ""
         if missing_type:
             return True, f"missing {missing_type}"
@@ -68,7 +70,7 @@ class MissingBadgeMixin:
             try:
                 self._missing_badge_item.setPixmap(self._missing_badge_pixmap())
                 self._missing_badge_icon_error_logged = False
-            except Exception:
+            except _MISSING_BADGE_ICON_ERRORS:
                 if not self._missing_badge_icon_error_logged:
                     logger.exception("Failed to build missing badge icon.")
                     self._missing_badge_icon_error_logged = True
