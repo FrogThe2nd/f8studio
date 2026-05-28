@@ -12,6 +12,9 @@ from ..components.component_models import (
     F8ComponentEntry,
     F8ComponentLocalVersionSummary,
     F8ComponentRecord,
+    F8ComponentRemoteAuthError,
+    F8ComponentRemoteConflictError,
+    F8ComponentRemoteRequestError,
     F8ComponentRemoteVersionEntry,
     F8ComponentSourceKind,
     F8ComponentVisibility,
@@ -32,6 +35,16 @@ if TYPE_CHECKING:
     _ComponentCatalogVersionFlowsMixinBase = ComponentCatalogVersionHost
 else:
     _ComponentCatalogVersionFlowsMixinBase = object
+
+
+_COMPONENT_VERSION_REMOTE_ERRORS = (
+    F8ComponentRemoteAuthError,
+    F8ComponentRemoteConflictError,
+    F8ComponentRemoteRequestError,
+    OSError,
+    ValueError,
+)
+_COMPONENT_VERSION_LOCAL_SAVE_ERRORS = (OSError, ValueError)
 
 
 class ComponentCatalogVersionFlowsMixin(_ComponentCatalogVersionFlowsMixinBase):
@@ -66,7 +79,7 @@ class ComponentCatalogVersionFlowsMixin(_ComponentCatalogVersionFlowsMixinBase):
     def _show_remote_history(self, entry: F8ComponentEntry) -> None:
         try:
             history = self._sync_client.list_component_versions(str(entry.record.componentId))
-        except Exception as exc:
+        except _COMPONENT_VERSION_REMOTE_ERRORS as exc:
             show_warning(self, "History failed", str(exc))
             return
         if not history.versions:
@@ -108,7 +121,7 @@ class ComponentCatalogVersionFlowsMixin(_ComponentCatalogVersionFlowsMixinBase):
             historical_entry = self._sync_client.get_component_version(
                 str(entry.record.componentId), int(version_number)
             )
-        except Exception as exc:
+        except _COMPONENT_VERSION_REMOTE_ERRORS as exc:
             show_warning(self, "Load version failed", str(exc))
             return
         metadata_dialog = ProjectAssetMetaDialog(
@@ -131,7 +144,11 @@ class ComponentCatalogVersionFlowsMixin(_ComponentCatalogVersionFlowsMixinBase):
             createdAt=timestamp,
             updatedAt=timestamp,
         )
-        upsert_component(local_record)
+        try:
+            upsert_component(local_record)
+        except _COMPONENT_VERSION_LOCAL_SAVE_ERRORS as exc:
+            show_warning(self, "Save failed", str(exc))
+            return
         show_info(self, "Saved", f"Saved local component from v{int(version_number)}:\n{local_record.name}")
         self._rebuild_browser_after_draft_changed(
             preserve_component_id=str(local_record.componentId)
@@ -144,7 +161,7 @@ class ComponentCatalogVersionFlowsMixin(_ComponentCatalogVersionFlowsMixinBase):
             historical_entry = self._sync_client.get_component_version(
                 str(entry.record.componentId), int(version_number)
             )
-        except Exception as exc:
+        except _COMPONENT_VERSION_REMOTE_ERRORS as exc:
             show_warning(self, "Load version failed", str(exc))
             return
         metadata_dialog = ProjectAssetMetaDialog(
@@ -182,7 +199,7 @@ class ComponentCatalogVersionFlowsMixin(_ComponentCatalogVersionFlowsMixinBase):
                 visibility=visibility,
                 version_number=int(version_number),
             )
-        except Exception as exc:
+        except _COMPONENT_VERSION_REMOTE_ERRORS as exc:
             show_warning(self, "Fork failed", str(exc))
             return
         show_info(self, "Forked", f"Created remote fork from v{int(version_number)}:\n{created.record.name}")
@@ -215,6 +232,6 @@ class ComponentCatalogVersionFlowsMixin(_ComponentCatalogVersionFlowsMixinBase):
             return entry
         try:
             return self._sync_client.hydrate_component(str(entry.record.componentId))
-        except Exception as exc:
+        except _COMPONENT_VERSION_REMOTE_ERRORS as exc:
             show_warning(self, f"{operation_name} failed", str(exc))
             return None
