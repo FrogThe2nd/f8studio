@@ -19,6 +19,8 @@ from ..ui.support.webengine_utils import (
 
 logger = logging.getLogger(__name__)
 
+_QT_LIFECYCLE_ERRORS = (AttributeError, RuntimeError, TypeError)
+
 
 class _ViewerHandle(Protocol):
     def apply_scene(self, payload: dict[str, Any]) -> None: ...
@@ -284,19 +286,20 @@ class _Skeleton3DViewerWindow(QtWidgets.QDialog):
         page = None
         try:
             page = view.page()
-        except (AttributeError, RuntimeError, TypeError):
+        except _QT_LIFECYCLE_ERRORS:
+            logger.debug("failed to read Skeleton3D web view page during release", exc_info=True)
             page = None
 
         try:
             view.loadFinished.disconnect(self._on_page_loaded)  # type: ignore[attr-defined]
-        except (TypeError, RuntimeError):
-            pass
+        except _QT_LIFECYCLE_ERRORS:
+            logger.debug("failed to disconnect Skeleton3D loadFinished signal", exc_info=True)
 
         if page is not None:
             try:
                 page.renderProcessTerminated.disconnect(self._on_render_process_terminated)  # type: ignore[attr-defined]
-            except (TypeError, RuntimeError):
-                pass
+            except _QT_LIFECYCLE_ERRORS:
+                logger.debug("failed to disconnect Skeleton3D renderProcessTerminated signal", exc_info=True)
 
         try:
             view.stop()
@@ -310,8 +313,8 @@ class _Skeleton3DViewerWindow(QtWidgets.QDialog):
 
         try:
             self._layout.removeWidget(view)
-        except (AttributeError, RuntimeError, TypeError):
-            pass
+        except _QT_LIFECYCLE_ERRORS:
+            logger.debug("failed to remove Skeleton3D web view from layout", exc_info=True)
 
         try:
             view.deleteLater()
@@ -325,7 +328,7 @@ class _Skeleton3DViewerWindow(QtWidgets.QDialog):
             return
         try:
             self.setParent(parent, self.windowFlags())
-        except Exception:
+        except _QT_LIFECYCLE_ERRORS:
             logger.exception("failed to bind Skeleton3D viewer parent")
 
     def apply_scene(self, payload: dict[str, Any]) -> None:
@@ -425,8 +428,8 @@ class _Skeleton3DControlPane(QtWidgets.QWidget):
     def set_open_handler(self, on_open_clicked: Callable[[], None]) -> None:
         try:
             self._open_button.clicked.disconnect()
-        except (AttributeError, RuntimeError, TypeError):
-            pass
+        except _QT_LIFECYCLE_ERRORS:
+            logger.debug("failed to disconnect previous Skeleton3D open handler", exc_info=True)
         self._open_button.clicked.connect(on_open_clicked)  # type: ignore[arg-type]
 
     def set_window_open(self, is_open: bool) -> None:
@@ -483,7 +486,7 @@ class VizThreeDRenderNode(F8StudioOperatorBaseNode):
             widget = _Skeleton3DWidget(self.view, name="__skeleton3d", label="")
             self.add_ephemeral_widget(widget)
             widget.set_open_handler(self._open_viewer)
-        except Exception:
+        except _QT_LIFECYCLE_ERRORS:
             logger.exception("failed to init skeleton3d widget")
         self._bind_app_quit_hook()
 
@@ -496,7 +499,7 @@ class VizThreeDRenderNode(F8StudioOperatorBaseNode):
         try:
             app.aboutToQuit.connect(self._on_app_about_to_quit)  # type: ignore[attr-defined]
             self._app_quit_hook_bound = True
-        except Exception:
+        except _QT_LIFECYCLE_ERRORS:
             logger.exception("failed to bind Skeleton3D app quit hook")
 
     def _unbind_app_quit_hook(self) -> None:
@@ -508,8 +511,8 @@ class VizThreeDRenderNode(F8StudioOperatorBaseNode):
             return
         try:
             app.aboutToQuit.disconnect(self._on_app_about_to_quit)  # type: ignore[attr-defined]
-        except (TypeError, RuntimeError):
-            pass
+        except _QT_LIFECYCLE_ERRORS:
+            logger.debug("failed to unbind Skeleton3D app quit hook", exc_info=True)
         self._app_quit_hook_bound = False
 
     def _on_app_about_to_quit(self) -> None:
@@ -518,7 +521,7 @@ class VizThreeDRenderNode(F8StudioOperatorBaseNode):
             return
         try:
             window.force_shutdown()
-        except Exception:
+        except _QT_LIFECYCLE_ERRORS:
             logger.exception("failed to shutdown Skeleton3D viewer during app quit")
 
     def on_graph_teardown(self) -> None:
@@ -531,13 +534,14 @@ class VizThreeDRenderNode(F8StudioOperatorBaseNode):
             return
         try:
             window.force_shutdown()
-        except Exception:
+        except _QT_LIFECYCLE_ERRORS:
             logger.exception("failed to shutdown Skeleton3D viewer during node teardown")
 
     def _get_widget(self) -> _Skeleton3DWidget | None:
         try:
             widget = self.get_widget("__skeleton3d")
-        except Exception:
+        except _QT_LIFECYCLE_ERRORS:
+            logger.debug("failed to fetch Skeleton3D embedded widget", exc_info=True)
             return None
         if not isinstance(widget, _Skeleton3DWidget):
             return None
@@ -568,7 +572,8 @@ class VizThreeDRenderNode(F8StudioOperatorBaseNode):
     def _viewer_window_title(self) -> str:
         try:
             node_name = str(self.name() or "").strip()
-        except Exception:
+        except _QT_LIFECYCLE_ERRORS:
+            logger.debug("failed to read Skeleton3D node name for viewer title", exc_info=True)
             node_name = ""
         if node_name:
             return node_name

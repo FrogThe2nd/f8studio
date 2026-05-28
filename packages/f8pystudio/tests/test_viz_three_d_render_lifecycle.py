@@ -19,11 +19,14 @@ def _ensure_app() -> QtWidgets.QApplication:
 class _FakeSignal:
     def __init__(self) -> None:
         self._callbacks: list[Any] = []
+        self.disconnect_error: Exception | None = None
 
     def connect(self, callback: Any) -> None:
         self._callbacks.append(callback)
 
     def disconnect(self, callback: Any) -> None:
+        if self.disconnect_error is not None:
+            raise self.disconnect_error
         kept: list[Any] = []
         for registered in self._callbacks:
             if registered is callback:
@@ -85,6 +88,18 @@ class _FakeWebView(QtWidgets.QWidget):
     def deleteLater(self) -> None:
         self.deleted = True
         super().deleteLater()
+
+
+class _FakeLayout:
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error = error
+        self.remove_calls = 0
+
+    def removeWidget(self, widget: Any) -> None:
+        _ = widget
+        self.remove_calls += 1
+        if self.error is not None:
+            raise self.error
 
 
 def _new_window() -> tuple[_Skeleton3DViewerWindow, list[bool], list[str]]:
@@ -158,6 +173,26 @@ def test_render_process_termination_reports_status_and_releases_view(caplog) -> 
     assert open_states == [True, False]
 
 
+def test_release_web_view_logs_signal_and_layout_fallbacks(caplog) -> None:
+    _ensure_app()
+    window, _open_states, _statuses = _new_window()
+    view = _FakeWebView(window)
+    view.loadFinished.disconnect_error = TypeError("not connected")
+    view.page().renderProcessTerminated.disconnect_error = TypeError("not connected")
+    layout = _FakeLayout(error=RuntimeError("layout deleted"))
+    window._view = view
+    window._layout = layout  # type: ignore[assignment]
+
+    with caplog.at_level(logging.DEBUG, logger="f8pystudio.render_nodes.viz_three_d"):
+        window._release_web_view(reason="test")
+
+    assert window._view is None
+    assert layout.remove_calls == 1
+    assert "failed to disconnect Skeleton3D loadFinished signal" in caplog.text
+    assert "failed to disconnect Skeleton3D renderProcessTerminated signal" in caplog.text
+    assert "failed to remove Skeleton3D web view from layout" in caplog.text
+
+
 class _FakePresenter:
     def __init__(self) -> None:
         self.detach_calls = 0
@@ -214,3 +249,18 @@ def test_render_node_world_up_command_applies_without_reopen() -> None:
     )
 
     assert node._presenter.world_up_values == ["+z"]
+
+
+def test_render_node_widget_lookup_failure_is_logged(caplog) -> None:
+    node = VizThreeDRenderNode.__new__(VizThreeDRenderNode)
+
+    def _get_widget(_name: str) -> None:
+        raise RuntimeError("node graph item deleted")
+
+    node.get_widget = _get_widget  # type: ignore[method-assign]
+
+    with caplog.at_level(logging.DEBUG, logger="f8pystudio.render_nodes.viz_three_d"):
+        widget = VizThreeDRenderNode._get_widget(node)
+
+    assert widget is None
+    assert "failed to fetch Skeleton3D embedded widget" in caplog.text
