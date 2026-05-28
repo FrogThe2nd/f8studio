@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import math
 import os
 import threading
@@ -10,6 +11,8 @@ from copy import deepcopy
 from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
+
+import msgspec
 
 from .codec import dump_json, encode_obj, validate_as
 from .generated import (
@@ -42,6 +45,13 @@ _MONITOR_SNAPSHOT_SCHEMA_DICT: dict[str, object] | None = None
 MonitorErrorSeverity = Literal["info", "warning", "error", "critical"]
 _MONITOR_ERROR_SEVERITIES: frozenset[str] = frozenset({"info", "warning", "error", "critical"})
 _ERROR_REPEAT_PUBLISH_INTERVAL_MS = 1000
+
+logger = logging.getLogger(__name__)
+
+_MONITOR_SCHEMA_PARSE_ERRORS = (TypeError, ValueError, msgspec.MsgspecError)
+_MONITOR_GPU_SHUTDOWN_ERRORS = (OSError, RuntimeError)
+_MONITOR_SNAPSHOT_BUILD_ERRORS = (AttributeError, OSError, RuntimeError, TypeError, ValueError, msgspec.MsgspecError)
+_MONITOR_SNAPSHOT_PUBLISH_ERRORS = (AttributeError, OSError, RuntimeError, TypeError, ValueError, msgspec.MsgspecError)
 
 
 class MonitorContractError(ValueError):
@@ -255,7 +265,7 @@ def validate_describe_monitor_contract(payload: dict[str, Any]) -> None:
                 mode="json",
                 by_alias=True,
             )
-        except Exception as exc:
+        except _MONITOR_SCHEMA_PARSE_ERRORS as exc:
             raise MonitorContractError(f"`monitor` valueSchema is invalid: {type(exc).__name__}: {exc}") from exc
         if parsed_schema != expected_schema:
             raise MonitorContractError("`monitor` valueSchema must match F8MonitorSnapshot schema")
@@ -385,8 +395,8 @@ class _GpuSampler:
         if self._initialized and self._nvml is not None:
             try:
                 self._nvml.nvmlShutdown()
-            except (OSError, RuntimeError):
-                pass
+            except _MONITOR_GPU_SHUTDOWN_ERRORS as exc:
+                logger.debug("monitor gpu sampler shutdown failed", exc_info=exc)
         self._initialized = False
         self._nvml = None
 
@@ -885,7 +895,7 @@ class MonitorCollector:
         ts = int(now_ms())
         try:
             snapshot = self._build_snapshot(ts_ms=ts)
-        except Exception as exc:
+        except _MONITOR_SNAPSHOT_BUILD_ERRORS as exc:
             self._record_monitor_internal_error(
                 code="MONITOR_BUILD_ERROR",
                 message=f"{type(exc).__name__}: {exc}",
@@ -896,7 +906,7 @@ class MonitorCollector:
             self._latest = snapshot
         try:
             await self._publish_snapshot(snapshot)
-        except Exception as exc:
+        except _MONITOR_SNAPSHOT_PUBLISH_ERRORS as exc:
             self._record_monitor_internal_error(
                 code="MONITOR_PUBLISH_ERROR",
                 message=f"{type(exc).__name__}: {exc}",
@@ -923,7 +933,7 @@ class MonitorCollector:
             ts = int(now_ms())
             try:
                 snapshot = self._build_snapshot(ts_ms=ts)
-            except Exception as exc:
+            except _MONITOR_SNAPSHOT_BUILD_ERRORS as exc:
                 self._record_monitor_internal_error(
                     code="MONITOR_BUILD_ERROR",
                     message=f"{type(exc).__name__}: {exc}",
@@ -934,7 +944,7 @@ class MonitorCollector:
                 self._latest = snapshot
             try:
                 await self._publish_snapshot(snapshot)
-            except Exception as exc:
+            except _MONITOR_SNAPSHOT_PUBLISH_ERRORS as exc:
                 self._record_monitor_internal_error(
                     code="MONITOR_PUBLISH_ERROR",
                     message=f"{type(exc).__name__}: {exc}",

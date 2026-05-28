@@ -34,6 +34,24 @@ class _FakeDataRouter:
         return self._depth
 
 
+class _FlakyDataRouter:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def queue_depth(self) -> int:
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("queue unavailable")
+        return 3
+
+
+class _FailingTransport:
+    async def publish(self, key: str, payload: bytes) -> None:
+        _ = key
+        _ = payload
+        raise OSError("publish unavailable")
+
+
 class _FakeBus:
     def __init__(self) -> None:
         self.service_id = "svcA"
@@ -167,6 +185,32 @@ class MonitorCollectorTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await collector.stop()
         self.assertGreaterEqual(len(bus._transport.published), 1)
+
+    async def test_publish_once_records_build_failure(self) -> None:
+        bus = _FakeBus()
+        bus.data_router = _FlakyDataRouter()
+        collector = MonitorCollector(
+            bus, MonitorCollectorConfig(enabled=True, interval_ms=200, window_ms=2000, gpu_enabled=False)
+        )
+
+        await collector._publish_once()
+        snapshot = collector._build_snapshot(ts_ms=int(now_ms()))
+
+        self.assertEqual(str(snapshot.error.lastCode), "MONITOR_BUILD_ERROR")
+        self.assertIn("RuntimeError: queue unavailable", str(snapshot.error.lastMessage))
+
+    async def test_publish_once_records_publish_failure(self) -> None:
+        bus = _FakeBus()
+        bus._transport = _FailingTransport()
+        collector = MonitorCollector(
+            bus, MonitorCollectorConfig(enabled=True, interval_ms=200, window_ms=2000, gpu_enabled=False)
+        )
+
+        await collector._publish_once()
+        snapshot = collector._build_snapshot(ts_ms=int(now_ms()))
+
+        self.assertEqual(str(snapshot.error.lastCode), "MONITOR_PUBLISH_ERROR")
+        self.assertIn("OSError: publish unavailable", str(snapshot.error.lastMessage))
 
     async def test_repeated_error_publish_is_throttled_to_summary(self) -> None:
         bus = _FakeBus()
