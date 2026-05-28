@@ -34,6 +34,9 @@ from ..constants import SERVICE_CLASS
 
 OPERATOR_CLASS = "f8.udp_in"
 logger = logging.getLogger(__name__)
+_UDP_DRAIN_LOOP_ERRORS = (Exception,)
+_UDP_EXEC_EMIT_ERRORS = (Exception,)
+_UDP_EMIT_TASK_STOP_ERRORS = (Exception,)
 
 _EXEC_PACKET_CACHE_MIN = 256
 
@@ -398,7 +401,7 @@ class UdpInRuntimeNode(OperatorNode, EntrypointNode):
                 self._request_exec_emit(exec_id=exec_id)
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:
+            except _UDP_DRAIN_LOOP_ERRORS as exc:
                 logger.exception("[%s:udp_in] drain loop failed", self.node_id, exc_info=exc)
 
     def _decode_packet(self, *, rx_ts_ms: int, raw: bytes, addr: tuple[str, int]) -> _PacketRecord:
@@ -508,7 +511,7 @@ class UdpInRuntimeNode(OperatorNode, EntrypointNode):
                         continue
                     try:
                         await ctx.emit_exec("packet", exec_id=exec_id)
-                    except Exception as exc:
+                    except _UDP_EXEC_EMIT_ERRORS as exc:
                         logger.exception("[%s:udp_in] emit exec failed", self.node_id, exc_info=exc)
         except asyncio.CancelledError:
             raise
@@ -527,7 +530,7 @@ class UdpInRuntimeNode(OperatorNode, EntrypointNode):
             await task
         except asyncio.CancelledError:
             return
-        except Exception as exc:
+        except _UDP_EMIT_TASK_STOP_ERRORS as exc:
             logger.exception("[%s:udp_in] stop emit task failed", self.node_id, exc_info=exc)
 
 UdpInRuntimeNode.SPEC = F8OperatorSpec(
