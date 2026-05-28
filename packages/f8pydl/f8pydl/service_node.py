@@ -36,6 +36,14 @@ def _resolve_path_from_cwd_or_repo(raw: str) -> Path:
     return resolve_path_from_cwd_or_repo(raw)
 
 
+_DL_MODEL_METADATA_ERRORS = (FileNotFoundError, OSError, RuntimeError, TypeError, ValueError)
+_DL_ONNX_PROVIDER_ERRORS = (ImportError, RuntimeError, TypeError, ValueError)
+# ONNX/runtime/video-source calls cross third-party native/runtime boundaries;
+# keep the loop alive and report details through the service error channel.
+_DL_DOWNLOAD_ERRORS = (Exception,)
+_DL_RUNTIME_BOUNDARY_ERRORS = (Exception,)
+
+
 @dataclass(frozen=True)
 class _TemporalBufferedFrame:
     prepared_frame: Any
@@ -445,7 +453,7 @@ class OnnxVisionServiceNode(ServiceNode):
         try:
             yaml_path = self._resolve_model_yaml()
             spec = load_model_spec(yaml_path)
-        except Exception:
+        except _DL_MODEL_METADATA_ERRORS:
             await self.set_state("modelClasses", [], force_publish=force_publish)
             await self.set_state("enabledClasses", [], force_publish=force_publish)
             return
@@ -717,7 +725,7 @@ class OnnxVisionServiceNode(ServiceNode):
                 import onnxruntime as ort  # type: ignore
 
                 available = list(ort.get_available_providers())  # type: ignore[attr-defined]
-            except Exception as exc:
+            except _DL_ONNX_PROVIDER_ERRORS as exc:
                 available = []
                 warn_parts.append(f"Failed to query ORT available providers: {type(exc).__name__}: {exc}")
             active_l = {str(p).lower() for p in (providers or [])}
@@ -801,7 +809,7 @@ class OnnxVisionServiceNode(ServiceNode):
                 timeout_s=300.0,
             )
             self._download_retry_at_monotonic = 0.0
-        except Exception as exc:
+        except _DL_DOWNLOAD_ERRORS as exc:
             self._download_retry_at_monotonic = time.monotonic() + 30.0
             raise RuntimeError(
                 f"Auto-download failed for model={spec.model_id!r} path={spec.onnx_path}: "
@@ -822,7 +830,7 @@ class OnnxVisionServiceNode(ServiceNode):
 
                 try:
                     await self._ensure_runtime()
-                except Exception as exc:
+                except _DL_RUNTIME_BOUNDARY_ERRORS as exc:
                     await self._record_exception(where="ensure_runtime", exc=exc)
                     await asyncio.sleep(0.1)
                     continue
@@ -843,7 +851,7 @@ class OnnxVisionServiceNode(ServiceNode):
                 t0 = time.perf_counter()
                 try:
                     frame = source.read_latest(stream_key=video_stream_key, timeout_ms=10)
-                except Exception as exc:
+                except _DL_RUNTIME_BOUNDARY_ERRORS as exc:
                     await self._record_exception(where="open_video_source", exc=exc)
                     await asyncio.sleep(0.1)
                     continue
@@ -959,7 +967,7 @@ class OnnxVisionServiceNode(ServiceNode):
                 _ = t0
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:
+            except _DL_RUNTIME_BOUNDARY_ERRORS as exc:
                 await self._record_exception(where="loop", exc=exc)
                 await asyncio.sleep(0.1)
 
