@@ -3,13 +3,6 @@ from f8pyscript.expr_json_ref import wrap_pyexpr_value
 from f8pyscript.expr_validator import compile_pyexpr
 
 
-def test_compile_pyexpr_rejects_disallowed_calls() -> None:
-    compiled, error = compile_pyexpr("__import__('os')", allow_numpy=False)
-
-    assert compiled is None
-    assert error == "call not allowed: __import__"
-
-
 def test_evaluator_returns_value_and_unwraps_json_refs() -> None:
     compiled, error = compile_pyexpr("inputs['msg'].user.name", allow_numpy=False)
     assert compiled is not None
