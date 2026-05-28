@@ -38,7 +38,12 @@ from .script_utils.input_binding import (
     infer_script_input_style,
 )
 from .script_utils.python_editor_assist import python_script_field_editor_assist_payload
-from .script_utils.result_binding import normalize_script_output_value, normalize_script_output_value_fast
+from .script_utils.result_binding import (
+    ScriptOutputPorts,
+    extract_script_outputs,
+    normalize_script_output_value,
+    normalize_script_output_value_fast,
+)
 from .script_utils.script_runtime import HookSet, ScriptRuntimeCompiler
 from .script_utils.state_binding import PyEngineStatesView
 from .script_utils.video_latest import VideoLatestConfig, VideoLatestSubscriptions
@@ -460,6 +465,13 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             self._single_data_out_port = None
         self._has_out_port = "out" in self._data_out_port_set
 
+    def _output_ports_binding(self) -> ScriptOutputPorts:
+        return ScriptOutputPorts(
+            data_out_ports=frozenset(self._data_out_port_set),
+            single_data_out_port=self._single_data_out_port,
+            has_out_port=self._has_out_port,
+        )
+
     async def _pull_inputs_for_context(self, ctx_id: str | int | None) -> dict[str, Any]:
         inputs: dict[str, Any] = {}
         for in_port in self._data_in_port_names:
@@ -799,56 +811,17 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             return {}
 
     def _extract_outputs(self, result: Any) -> dict[str, Any]:
-        if result is None:
-            return {}
+        return extract_script_outputs(
+            result,
+            ports=self._output_ports_binding(),
+            normalize_one=self._normalize_script_output_value_fast,
+        )
 
-        data_out_ports = self._data_out_port_set
-        outputs: dict[str, Any] = {}
-        if isinstance(result, dict):
-            raw_outputs = result.get("outputs")
-            if isinstance(raw_outputs, dict):
-                single_out_port = self._single_data_out_port
-                if single_out_port is not None and len(raw_outputs) == 1:
-                    value = raw_outputs.get(single_out_port, None)
-                    if single_out_port in raw_outputs:
-                        t0 = self._metrics_start()
-                        normalized = normalize_script_output_value_fast(value)
-                        self._metrics_add_output_norm_time(t0)
-                        return {single_out_port: normalized}
-                # Fast-path for dominant script pattern: {"outputs": {"tcode": value}}.
-                if len(raw_outputs) == 1:
-                    for raw_key, raw_value in raw_outputs.items():
-                        if isinstance(raw_key, str):
-                            if raw_key in data_out_ports:
-                                t0 = self._metrics_start()
-                                normalized = normalize_script_output_value_fast(raw_value)
-                                self._metrics_add_output_norm_time(t0)
-                                return {raw_key: normalized}
-                            return {}
-                        key_s = str(raw_key)
-                        if key_s in data_out_ports:
-                            t0 = self._metrics_start()
-                            normalized = normalize_script_output_value_fast(raw_value)
-                            self._metrics_add_output_norm_time(t0)
-                            return {key_s: normalized}
-                        return {}
-                for k, v in raw_outputs.items():
-                    k_s = str(k)
-                    if k_s in data_out_ports:
-                        t0 = self._metrics_start()
-                        outputs[k_s] = normalize_script_output_value_fast(v)
-                        self._metrics_add_output_norm_time(t0)
-                return outputs
-
-            if "outputs" in result:
-                raise ValueError("script return field 'outputs' must be a dict")
-            raise ValueError("script dict return must include an 'outputs' dict")
-
-        if "out" in data_out_ports:
-            t0 = self._metrics_start()
-            outputs["out"] = normalize_script_output_value_fast(result)
-            self._metrics_add_output_norm_time(t0)
-        return outputs
+    def _normalize_script_output_value_fast(self, value: Any) -> Any:
+        t0 = self._metrics_start()
+        normalized = normalize_script_output_value_fast(value)
+        self._metrics_add_output_norm_time(t0)
+        return normalized
 
     async def _emit_script_output(self, port: str, value: Any, *, stage: str) -> bool:
         output_port = str(port)
