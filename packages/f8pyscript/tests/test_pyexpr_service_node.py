@@ -17,8 +17,9 @@ from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 from f8pysdk.time_utils import now_ms  # noqa: E402
 
 from f8pyscript.constants import EXPR_SERVICE_CLASS  # noqa: E402
+from f8pyscript.expr_evaluator import np  # noqa: E402
 from f8pyscript.expr_node_registry import create_pyexpr_registry  # noqa: E402
-from f8pyscript.expr_service_node import PythonExprServiceNode, np  # noqa: E402
+from f8pyscript.expr_service_node import PythonExprServiceNode  # noqa: E402
 from f8pyscript.main_expr import build_app  # noqa: E402
 
 
