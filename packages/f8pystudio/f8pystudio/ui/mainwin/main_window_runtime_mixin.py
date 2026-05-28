@@ -23,7 +23,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _BRIDGE_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
+_BRIDGE_SERVICE_CONTROL_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
+_NODEGRAPH_MUTATION_ERRORS = (AttributeError, KeyError, RuntimeError, TypeError, ValueError)
 _NODEGRAPH_VIEW_ERRORS = (AttributeError, KeyError, RuntimeError, TypeError, ValueError)
+_PLACEMENT_CANCEL_ERRORS = (AttributeError, RuntimeError, TypeError)
 
 
 class MainWindowRuntimeMixin:
@@ -87,7 +90,7 @@ class MainWindowRuntimeMixin:
 
         try:
             self.studio_graph.clear_session()
-        except Exception as exc:
+        except _NODEGRAPH_MUTATION_ERRORS as exc:
             self._log_dock.report_exception("studio", "clear all nodes failed", exc)
             show_warning(self, "Clear all nodes failed", str(exc))
             return
@@ -118,7 +121,7 @@ class MainWindowRuntimeMixin:
         )
         try:
             self._bridge.stop_all_services()
-        except Exception as exc:
+        except _BRIDGE_SERVICE_CONTROL_ERRORS as exc:
             self._log_dock.report_exception("studio", "stop all services failed", exc)
             return
         normalized_ids = sorted(str(service_id) for service_id in declared_service_ids)
@@ -175,7 +178,8 @@ class MainWindowRuntimeMixin:
                 return
             if viewer.is_node_placement_active():
                 self.studio_graph.cancel_node_placement()
-        except (AttributeError, RuntimeError, TypeError):
+        except _PLACEMENT_CANCEL_ERRORS:
+            logger.debug("Failed to cancel active graph/node placement from escape shortcut", exc_info=True)
             return
 
     def _on_runtime_state_updated(
@@ -249,7 +253,7 @@ class MainWindowRuntimeMixin:
         try:
             self._append_compile_warnings(compiled)
             self._bridge.sync_studio_runtime(compiled)
-        except Exception as exc:
+        except _BRIDGE_SERVICE_CONTROL_ERRORS as exc:
             self._log_dock.report_exception("studio", "studio runtime sync failed", exc)
 
     def _compile_runtime_graphs_for_action(
@@ -300,7 +304,7 @@ class MainWindowRuntimeMixin:
             try:
                 if self._bridge.is_service_running(service_id):
                     running_service_ids.append(service_id)
-            except Exception as exc:
+            except _BRIDGE_SERVICE_CONTROL_ERRORS as exc:
                 self._log_dock.report_exception("studio", f"auto deploy status check failed ({service_id})", exc)
 
         if not running_service_ids:
@@ -314,7 +318,7 @@ class MainWindowRuntimeMixin:
         for service_id in running_service_ids:
             try:
                 self._bridge.deploy_service_rungraph(service_id, compiled=compiled)
-            except Exception as exc:
+            except _BRIDGE_SERVICE_CONTROL_ERRORS as exc:
                 self._log_dock.report_exception("studio", f"auto deploy failed ({service_id})", exc)
         return current_undo_index, fingerprint
 
