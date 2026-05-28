@@ -15,7 +15,8 @@ from f8pysdk.specs import (
 from f8pysdk.registry import Registry, RuntimeNodeRegistry, create_runtime_node_registry, shared_runtime_node_registry
 
 from .constants import EXPR_SERVICE_CLASS
-from .expr_service_node import DEFAULT_CODE, PythonExprServiceNode
+from .expr_service_node import PythonExprServiceNode
+from .expr_templates import DEFAULT_CODE
 
 
 def register_expr_specs(registry: Registry) -> Registry:
