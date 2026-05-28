@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-import os
 import time
 from dataclasses import dataclass, replace
 from enum import Enum
@@ -15,6 +14,7 @@ from f8pysdk.codec import unwrap_json_value
 from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
 
+from .local_exec import PyScriptLocalExec, PyScriptPermissionContext
 from .script_runtime_values import (
     PyScriptStatesView,
     ScriptOutputPorts,
@@ -113,14 +113,6 @@ DEFAULT_CODE = (
 
 
 @dataclass(slots=True)
-class PyScriptPermissionContext:
-    local_exec_granted: bool
-    expires_ts_ms: int | None
-    grant_ts_ms: int
-    session_id: str
-
-
-@dataclass(slots=True)
 class PyScriptServiceContext:
     _node: "PythonScriptServiceNode"
     service_id: str
@@ -202,10 +194,10 @@ class PyScriptServiceContext:
         cwd: str | None = None,
         env: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return await self._node._exec_local(
+        return await self._node._local_exec.exec_local(
             command,
             args,
-            timeoutMs=timeout_ms,
+            timeout_ms=timeout_ms,
             cwd=cwd,
             env=env,
         )
@@ -247,11 +239,8 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             read_enabled=self._is_video_latest_read_enabled,
         )
 
-        self._local_exec_granted = False
-        self._grant_session_id = ""
-        self._grant_ts_ms = 0
-        self._grant_expires_ts_ms: int | None = None
-        self._script_runtime = PyScriptRuntimeCompiler(is_local_exec_allowed=self._is_local_exec_allowed)
+        self._local_exec = PyScriptLocalExec(node_id=self.node_id, now_ms=self._now_ms)
+        self._script_runtime = PyScriptRuntimeCompiler(is_local_exec_allowed=self._local_exec.is_allowed)
 
         self._script_output_ports = ScriptOutputPorts(
             data_out_ports=frozenset(),
@@ -352,96 +341,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         await self.set_state(str(field), value)
 
     def _permission_context(self) -> PyScriptPermissionContext:
-        allowed = self._is_local_exec_allowed()
-        return PyScriptPermissionContext(
-            local_exec_granted=bool(allowed),
-            expires_ts_ms=int(self._grant_expires_ts_ms) if self._grant_expires_ts_ms is not None else None,
-            grant_ts_ms=int(self._grant_ts_ms or 0),
-            session_id=str(self._grant_session_id or ""),
-        )
-
-    def _permission_view(self) -> dict[str, Any]:
-        permission = self._permission_context()
-        return {
-            "localExecGranted": bool(permission.local_exec_granted),
-            "expiresTsMs": permission.expires_ts_ms,
-            "grantTsMs": int(permission.grant_ts_ms),
-            "sessionId": str(permission.session_id),
-        }
-
-    def _is_local_exec_allowed(self) -> bool:
-        if not self._local_exec_granted:
-            return False
-        expiry = self._grant_expires_ts_ms
-        if expiry is not None and self._now_ms() > int(expiry):
-            self._local_exec_granted = False
-            self._grant_expires_ts_ms = None
-            return False
-        return True
-
-    async def _exec_local(
-        self,
-        command: str,
-        args: list[str] | tuple[str, ...] | None = None,
-        *,
-        timeoutMs: int | None = None,
-        cwd: str | None = None,
-        env: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        if not self._is_local_exec_allowed():
-            raise PermissionError("local execution is not granted")
-
-        cmd = str(command or "").strip()
-        if not cmd:
-            raise ValueError("exec_local command is empty")
-
-        argv = [cmd]
-        if args is not None:
-            for item in list(args):
-                argv.append(str(item))
-
-        run_cwd = str(cwd).strip() if cwd is not None else None
-        proc_env: dict[str, str] | None = None
-        if env is not None:
-            proc_env = dict(os.environ)
-            for key, value in dict(env).items():
-                proc_env[str(key)] = str(value)
-
-        logger.info("[%s:pyscript] exec_local command=%s args=%s", self.node_id, cmd, argv[1:])
-        proc = await asyncio.create_subprocess_exec(
-            *argv,
-            cwd=run_cwd,
-            env=proc_env,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-
-        timeout_s: float | None
-        if timeoutMs is None:
-            timeout_s = None
-        else:
-            timeout_s = max(0.001, float(timeoutMs) / 1000.0)
-
-        try:
-            if timeout_s is None:
-                stdout_raw, stderr_raw = await proc.communicate()
-            else:
-                stdout_raw, stderr_raw = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
-        except asyncio.TimeoutError as exc:
-            proc.kill()
-            await proc.wait()
-            raise TimeoutError(f"exec_local timeout command={cmd}") from exc
-
-        stdout_text = (stdout_raw or b"").decode("utf-8", errors="replace")
-        stderr_text = (stderr_raw or b"").decode("utf-8", errors="replace")
-        return {
-            "ok": bool(proc.returncode == 0),
-            "returncode": int(proc.returncode or 0),
-            "stdout": stdout_text,
-            "stderr": stderr_text,
-            "command": cmd,
-            "args": argv[1:],
-        }
+        return self._local_exec.permission_context()
 
     def _build_ctx(self) -> PyScriptServiceContext:
         return PyScriptServiceContext(
@@ -764,26 +664,12 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             raise ValueError("empty command name")
 
         if call == "grant_local_exec":
-            ttl_ms_raw = call_args.get("ttlMs")
-            ttl_ms: int | None
-            if ttl_ms_raw is None:
-                ttl_ms = None
-            else:
-                try:
-                    ttl_ms = max(1, int(ttl_ms_raw))
-                except (TypeError, ValueError) as exc:
-                    raise ValueError("ttlMs must be an integer") from exc
-
-            self._local_exec_granted = True
-            self._grant_ts_ms = self._now_ms()
-            self._grant_session_id = str(call_meta.get("reqId") or call_meta.get("sessionId") or self._grant_ts_ms)
-            self._grant_expires_ts_ms = (self._grant_ts_ms + ttl_ms) if ttl_ms is not None else None
-            return {"ok": True, "result": self._permission_view()}
+            ttl_ms = self._local_exec.coerce_ttl_ms(call_args.get("ttlMs"))
+            session_id = call_meta.get("reqId") or call_meta.get("sessionId")
+            return self._local_exec.grant(ttl_ms=ttl_ms, session_id=session_id)
 
         if call == "revoke_local_exec":
-            self._local_exec_granted = False
-            self._grant_expires_ts_ms = None
-            return {"ok": True, "result": self._permission_view()}
+            return self._local_exec.revoke()
 
         if self._hooks.on_command is None:
             raise ValueError(f"unknown command: {call}")
