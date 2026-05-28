@@ -10,6 +10,7 @@ from f8pysdk.codec import unwrap_json_value
 from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
 
+from .command_dispatcher import PyScriptCommandDispatcher
 from .error_reporter import PyScriptErrorReporter
 from .hook_invoker import PyScriptHookInvoker
 from .local_exec import PyScriptLocalExec, PyScriptPermissionContext
@@ -18,7 +19,6 @@ from .script_runtime_values import (
     ScriptOutputPorts,
     build_script_output_ports,
     extract_script_outputs,
-    normalize_script_output_value,
 )
 from .script_runtime import PyScriptHookSet, PyScriptRuntimeCompiler
 from .state_access import PyScriptStateAccess, collect_readable_state_names
@@ -163,6 +163,10 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         )
 
         self._local_exec = PyScriptLocalExec(node_id=self.node_id, now_ms=self._now_ms)
+        self._command_dispatcher = PyScriptCommandDispatcher(
+            local_exec=self._local_exec,
+            run_script_command=self._run_script_command,
+        )
         self._script_runtime = PyScriptRuntimeCompiler(is_local_exec_allowed=self._local_exec.is_allowed)
 
         self._script_output_ports = ScriptOutputPorts(
@@ -404,20 +408,9 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         await self._emit_outputs(result)
 
     async def on_command(self, name: str, args: dict[str, Any] | None = None, *, meta: dict[str, Any] | None = None) -> Any:
-        call = str(name or "").strip()
-        call_args = dict(args or {})
-        call_meta = dict(meta or {})
-        if not call:
-            raise ValueError("empty command name")
+        return await self._command_dispatcher.dispatch(name, args, meta=meta)
 
-        if call == "grant_local_exec":
-            ttl_ms = self._local_exec.coerce_ttl_ms(call_args.get("ttlMs"))
-            session_id = call_meta.get("reqId") or call_meta.get("sessionId")
-            return self._local_exec.grant(ttl_ms=ttl_ms, session_id=session_id)
-
-        if call == "revoke_local_exec":
-            return self._local_exec.revoke()
-
+    async def _run_script_command(self, call: str, call_args: dict[str, Any], call_meta: dict[str, Any]) -> Any:
         if self._hooks.on_command is None:
             raise ValueError(f"unknown command: {call}")
 
@@ -430,4 +423,4 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             call_args,
             call_meta,
         )
-        return {"ok": True, "result": normalize_script_output_value(result)}
+        return result
