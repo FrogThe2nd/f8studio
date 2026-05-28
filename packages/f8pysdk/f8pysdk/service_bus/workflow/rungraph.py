@@ -47,6 +47,28 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 _STREAM_PAYLOAD_KINDS = {"bytes", "video_frame", "audio_chunk"}
+_RUNGRAPH_VALIDATION_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError, msgspec.MsgspecError)
+_RUNGRAPH_STATE_READ_ERRORS = (
+    AttributeError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+    msgspec.MsgspecError,
+)
+_RUNGRAPH_STATE_PUBLISH_ERRORS = (
+    AttributeError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+    msgspec.MsgspecError,
+)
+# Rungraph hooks are extension/component code. Keep graph deployment alive,
+# but preserve a traceback with hook phase and class context.
+_RUNGRAPH_HOOK_ERRORS = (Exception,)
 
 
 def _is_unset(value: object) -> bool:
@@ -163,7 +185,7 @@ async def _read_state_for_rungraph_or_none(
 ) -> StateRead | None:
     try:
         return await bus.get_state(node_id, field)
-    except Exception as exc:
+    except _RUNGRAPH_STATE_READ_ERRORS as exc:
         log_error_once(bus, key=error_key, message=error_message, exc=exc)
         return None
 
@@ -196,7 +218,7 @@ async def _publish_state_for_rungraph_or_false(
             deliver_local=deliver_local,
             options=options,
         )
-    except Exception as exc:
+    except _RUNGRAPH_STATE_PUBLISH_ERRORS as exc:
         log_error_once(bus, key=error_key, message=error_message, exc=exc)
         return False
     return True
@@ -265,7 +287,7 @@ async def apply_rungraph(bus: "ServiceBus", graph: F8RuntimeGraph) -> bool:
     """
     try:
         await validate_rungraph_or_raise(bus, graph)
-    except Exception as exc:
+    except _RUNGRAPH_VALIDATION_ERRORS as exc:
         _log_rungraph_error_once(
             bus,
             "rungraph_validate_failed",
@@ -317,8 +339,7 @@ async def apply_rungraph(bus: "ServiceBus", graph: F8RuntimeGraph) -> bool:
             r = hook.on_rungraph(graph)
             if asyncio.iscoroutine(r):
                 await r
-        except Exception as exc:
-            # This is a boundary for user hook code; don't crash the bus.
+        except _RUNGRAPH_HOOK_ERRORS as exc:
             _log_rungraph_error_once(
                 bus,
                 f"rungraph_hook_failed:{hook.__class__.__name__}",
@@ -645,8 +666,10 @@ async def validate_rungraph_or_raise(bus: "ServiceBus", graph: F8RuntimeGraph) -
             r = hook.validate_rungraph(graph)
             if asyncio.iscoroutine(r):
                 await r
-        except Exception as exc:
-            raise ValueError(str(exc)) from exc
+        except _RUNGRAPH_HOOK_ERRORS as exc:
+            raise ValueError(
+                f"rungraph hook validation failed: {hook.__class__.__name__}.validate_rungraph: {exc}"
+            ) from exc
 
 
 async def rebuild_routes(bus: "ServiceBus") -> None:
