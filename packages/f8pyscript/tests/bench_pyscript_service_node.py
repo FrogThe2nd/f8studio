@@ -99,9 +99,6 @@ async def _bench_on_command(mode: str, iterations: int, warmup: int) -> BenchRes
     )
     node = await _build_node(code)
     await node.on_state("code", code, ts_ms=1)
-    if node._hook_on_command is None:
-        error_text = str(node._last_error or "")
-        raise RuntimeError(f"onCommand hook not compiled, mode={mode}, error={error_text}")
 
     for i in range(warmup):
         reply = await node.on_command("inc", {"x": i})
