@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from typing import Any
@@ -23,13 +22,13 @@ from .script_runtime_values import (
 )
 from .script_runtime import PyScriptHookSet, PyScriptRuntimeCompiler
 from .state_access import PyScriptStateAccess, collect_readable_state_names
+from .tick_scheduler import PyScriptTickScheduler
 from .video_latest import VideoLatestConfig, VideoLatestSubscriptions
 
 logger = logging.getLogger(__name__)
 _DESTRUCTOR_CLEANUP_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
 _SCRIPT_OUTPUT_ERRORS = (LookupError, OSError, RuntimeError, TypeError, ValueError)
 _SCRIPT_COMPILE_ERRORS = (Exception,)
-_SCRIPT_TICK_LOOP_ERRORS = (Exception,)
 
 
 DEFAULT_CODE = (
@@ -146,10 +145,16 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             set_error=self._set_error,
         )
 
-        self._tick_enabled = bool(self._initial_state.get("tickEnabled") or False)
-        self._tick_ms = self._coerce_tick_ms(self._initial_state.get("tickMs"), default=100)
-        self._tick_task: asyncio.Task[object] | None = None
-        self._tick_seq = 0
+        self._tick_scheduler = PyScriptTickScheduler(
+            node_id=self.node_id,
+            tick_enabled=bool(self._initial_state.get("tickEnabled") or False),
+            tick_ms=PyScriptTickScheduler.coerce_tick_ms(self._initial_state.get("tickMs"), default=100),
+            now_ms=self._now_ms,
+            is_closing=lambda: bool(self._closing),
+            is_tick_allowed=self._is_tick_allowed,
+            run_tick=self._run_tick,
+            log_error=self._log_error_deduped,
+        )
 
         self._video_latest = VideoLatestSubscriptions(
             node_id=self.node_id,
@@ -198,14 +203,6 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
     @staticmethod
     def _now_ms() -> int:
         return int(time.time() * 1000.0)
-
-    @staticmethod
-    def _coerce_tick_ms(value: Any, *, default: int) -> int:
-        try:
-            out = int(value)
-        except (TypeError, ValueError):
-            out = int(default)
-        return max(1, out)
 
     def _set_error(self, stage: str, exc: BaseException) -> None:
         self._error_reporter.set_error(stage, exc)
@@ -267,7 +264,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         self._hook_invoker.invoke_sync(self._hooks.on_start, self._hooks.on_start_is_async, "onStart")
         self._started = True
         self._paused = False
-        self._ensure_tick_task()
+        self._tick_scheduler.ensure_task()
 
     async def _emit_outputs(self, result: Any) -> None:
         try:
@@ -285,67 +282,20 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
     def _is_video_latest_read_enabled(self) -> bool:
         return bool(self._active and not self._paused)
 
-    def _ensure_tick_task(self) -> None:
-        if self._tick_task is not None and not self._tick_task.done():
+    def _is_tick_allowed(self) -> bool:
+        return bool(self._started and not self._paused)
+
+    async def _run_tick(self, tick_payload: dict[str, int]) -> None:
+        if self._hooks.on_tick is None:
             return
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return
-        self._tick_task = loop.create_task(self._tick_loop(), name=f"pyscript:tick:{self.node_id}")
-
-    async def _tick_loop(self) -> None:
-        last_tick_ts = self._now_ms()
-        next_deadline = time.monotonic()
-        while not self._closing:
-            try:
-                if not self._started or self._paused or not self._tick_enabled:
-                    next_deadline = time.monotonic()
-                    await asyncio.sleep(0.05)
-                    continue
-
-                now_mono = time.monotonic()
-                wait_s = next_deadline - now_mono
-                if wait_s > 0:
-                    await asyncio.sleep(wait_s)
-
-                # Re-check lifecycle gates after sleep to avoid a late extra tick
-                # when pause/deactivate arrives during the wait interval.
-                if not self._started or self._paused or not self._tick_enabled:
-                    next_deadline = time.monotonic()
-                    continue
-
-                current_ts_ms = self._now_ms()
-                delta_ms = max(0, current_ts_ms - last_tick_ts)
-                last_tick_ts = current_ts_ms
-                self._tick_seq += 1
-                tick_payload = {
-                    "seq": int(self._tick_seq),
-                    "tsMs": int(current_ts_ms),
-                    "deltaMs": int(delta_ms),
-                }
-
-                if self._hooks.on_tick is not None:
-                    result, self._hooks.on_tick_maybe_awaitable = await self._hook_invoker.invoke_async(
-                        self._hooks.on_tick,
-                        self._hooks.on_tick_is_async,
-                        self._hooks.on_tick_maybe_awaitable,
-                        "onTick",
-                        tick_payload,
-                    )
-                    await self._emit_outputs(result)
-
-                interval_s = max(0.001, float(self._tick_ms) / 1000.0)
-                now_after = time.monotonic()
-                if next_deadline <= now_after:
-                    next_deadline = now_after + interval_s
-                else:
-                    next_deadline += interval_s
-            except asyncio.CancelledError:
-                raise
-            except _SCRIPT_TICK_LOOP_ERRORS as exc:
-                self._log_error_deduped("tick_loop", "tick loop failed", exc)
-                await asyncio.sleep(0.05)
+        result, self._hooks.on_tick_maybe_awaitable = await self._hook_invoker.invoke_async(
+            self._hooks.on_tick,
+            self._hooks.on_tick_is_async,
+            self._hooks.on_tick_maybe_awaitable,
+            "onTick",
+            tick_payload,
+        )
+        await self._emit_outputs(result)
 
     async def close(self) -> None:
         if self._closing:
@@ -360,11 +310,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             )
             self._started = False
             self._paused = False
-            tick_task = self._tick_task
-            self._tick_task = None
-            if tick_task is not None and not tick_task.done():
-                tick_task.cancel()
-                await asyncio.gather(tick_task, return_exceptions=True)
+            await self._tick_scheduler.shutdown()
         finally:
             await self._video_latest.shutdown_async()
 
@@ -406,7 +352,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         if name == "tickEnabled":
             return bool(value_unwrapped)
         if name == "tickMs":
-            return self._coerce_tick_ms(value_unwrapped, default=self._tick_ms)
+            return PyScriptTickScheduler.coerce_tick_ms(value_unwrapped, default=self._tick_scheduler.tick_ms)
         return value_unwrapped
 
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
@@ -418,11 +364,10 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             self._compile_and_start()
             return
         if name == "tickEnabled":
-            self._tick_enabled = bool(value_unwrapped)
-            self._ensure_tick_task()
+            self._tick_scheduler.set_enabled(bool(value_unwrapped))
             return
         if name == "tickMs":
-            self._tick_ms = self._coerce_tick_ms(value_unwrapped, default=self._tick_ms)
+            self._tick_scheduler.set_tick_ms(value_unwrapped)
             return
 
         if self._state_access.is_self_state_write(name, value_unwrapped):
