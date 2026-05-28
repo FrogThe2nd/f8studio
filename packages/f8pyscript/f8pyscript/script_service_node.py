@@ -4,7 +4,6 @@ import asyncio
 import inspect
 import logging
 import time
-from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any, Callable
 
@@ -16,6 +15,7 @@ from f8pysdk.nodes import ServiceNode
 
 from .error_reporter import PyScriptErrorReporter
 from .local_exec import PyScriptLocalExec, PyScriptPermissionContext
+from .script_context import PyScriptServiceContext
 from .script_runtime_values import (
     PyScriptStatesView,
     ScriptOutputPorts,
@@ -110,97 +110,6 @@ DEFAULT_CODE = (
     "#         return {'ok': True, 'result': {'pong': True}}\n"
     "#     return {'ok': False, 'error': f'unknown command: {name}'}\n"
 )
-
-
-@dataclass(slots=True)
-class PyScriptServiceContext:
-    _node: "PythonScriptServiceNode"
-    service_id: str
-    locals: dict[str, Any]
-    _state_keys: tuple[str, ...]
-    permission: PyScriptPermissionContext
-
-    def with_permission(self, permission: PyScriptPermissionContext) -> "PyScriptServiceContext":
-        return replace(self, permission=permission)
-
-    @property
-    def states(self) -> PyScriptStatesView:
-        return self._node._build_states_view(self._state_keys)
-
-    def log(self, message: object) -> None:
-        logger.info("[%s:pyscript] %s", self.service_id, str(message))
-
-    async def emit_async(self, port: str, value: Any) -> None:
-        await self._node.emit(str(port), value)
-
-    def emit(self, port: str, value: Any) -> None:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError as exc:
-            logger.error("[%s:pyscript] emit without running loop", self.service_id, exc_info=exc)
-            return
-        loop.create_task(self.emit_async(str(port), value), name=f"pyscript:emit:{self.service_id}:{port}")
-
-    async def set_state_async(self, field: str, value: Any) -> None:
-        await self._node._set_runtime_state(str(field), value)
-
-    def set_state(self, field: str, value: Any) -> None:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError as exc:
-            logger.error("[%s:pyscript] set_state without running loop", self.service_id, exc_info=exc)
-            return
-        loop.create_task(
-            self.set_state_async(str(field), value),
-            name=f"pyscript:set_state:{self.service_id}:{field}",
-        )
-
-    async def read_state(self, field: str) -> Any:
-        return await self._node.get_state_value(str(field))
-
-    def subscribe_video_latest(
-        self,
-        key: str,
-        *,
-        stream_key: str = "",
-        decode: str = "auto",
-    ) -> None:
-        key_name = str(key or "").strip()
-        stream_key_text = str(stream_key or "").strip()
-        if not key_name:
-            return
-        if not stream_key_text:
-            return
-        self._node._video_latest.subscribe(key_name, stream_key=stream_key_text, decode=decode)
-
-    def get_video_latest(self, key: str) -> dict[str, Any] | None:
-        key_name = str(key or "").strip()
-        if not key_name:
-            return None
-        return self._node._video_latest.get_packet(key_name)
-
-    def unsubscribe_video_latest(self, key: str) -> None:
-        self._node._video_latest.unsubscribe_sync(str(key or "").strip())
-
-    def list_video_latest_subscriptions(self) -> list[dict[str, Any]]:
-        return self._node._video_latest.list_status()
-
-    async def exec_local(
-        self,
-        command: str,
-        args: list[str] | tuple[str, ...] | None = None,
-        *,
-        timeout_ms: int | None = None,
-        cwd: str | None = None,
-        env: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        return await self._node._local_exec.exec_local(
-            command,
-            args,
-            timeout_ms=timeout_ms,
-            cwd=cwd,
-            env=env,
-        )
 
 
 class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
@@ -324,11 +233,19 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
 
     def _build_ctx(self) -> PyScriptServiceContext:
         return PyScriptServiceContext(
-            _node=self,
             service_id=self.node_id,
             locals=self._locals,
-            _state_keys=self._readable_state_names,
+            state_keys=self._readable_state_names,
             permission=self._permission_context(),
+            build_states_view=self._build_states_view,
+            emit_value=self.emit,
+            set_state_value=self._set_runtime_state,
+            read_state_value=self.get_state_value,
+            subscribe_video_latest_value=self._video_latest.subscribe,
+            get_video_latest_value=self._video_latest.get_packet,
+            unsubscribe_video_latest_value=self._video_latest.unsubscribe_sync,
+            list_video_latest_values=self._video_latest.list_status,
+            exec_local_value=self._local_exec.exec_local,
         )
 
     def _build_invoke_ctx(self) -> PyScriptServiceContext:
