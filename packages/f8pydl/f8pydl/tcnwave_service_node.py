@@ -29,6 +29,11 @@ _VR_FOCUS_TOP = 0.20
 _VR_FOCUS_BOTTOM = 0.0
 _VR_FOCUS_LEFT = 0.10
 _VR_FOCUS_RIGHT = 0.10
+_DL_TCN_ONNX_PROVIDER_ERRORS = (ImportError, RuntimeError, TypeError, ValueError)
+# ONNX/runtime/video-source calls cross third-party runtime boundaries; keep
+# the service loop alive and report details through state.
+_DL_TCN_DOWNLOAD_ERRORS = (Exception,)
+_DL_TCN_RUNTIME_BOUNDARY_ERRORS = (Exception,)
 
 
 def apply_vr_focus_crop(frame: Any) -> Any:
@@ -619,7 +624,7 @@ class OnnxTcnWaveServiceNode(ServiceNode):
                 timeout_s=300.0,
             )
             self._download_retry_at_monotonic = 0.0
-        except Exception as exc:
+        except _DL_TCN_DOWNLOAD_ERRORS as exc:
             self._download_retry_at_monotonic = time.monotonic() + 30.0
             raise RuntimeError(
                 f"Auto-download failed for model={spec.model_id!r} path={spec.onnx_path}: "
@@ -669,7 +674,7 @@ class OnnxTcnWaveServiceNode(ServiceNode):
                 import onnxruntime as ort  # type: ignore
 
                 available = list(ort.get_available_providers())  # type: ignore[attr-defined]
-            except Exception as exc:
+            except _DL_TCN_ONNX_PROVIDER_ERRORS as exc:
                 available = []
                 warning_parts.append(f"Failed to query ORT available providers: {type(exc).__name__}: {exc}")
             active_lower = {str(item).lower() for item in (providers or [])}
@@ -699,7 +704,7 @@ class OnnxTcnWaveServiceNode(ServiceNode):
 
                 try:
                     await self._ensure_runtime()
-                except Exception as exc:
+                except _DL_TCN_RUNTIME_BOUNDARY_ERRORS as exc:
                     await self._record_exception(where="ensure_runtime", exc=exc)
                     await asyncio.sleep(0.1)
                     continue
@@ -718,7 +723,7 @@ class OnnxTcnWaveServiceNode(ServiceNode):
                 t0 = time.perf_counter()
                 try:
                     frame = source.read_latest(stream_key=video_stream_key, timeout_ms=10)
-                except Exception as exc:
+                except _DL_TCN_RUNTIME_BOUNDARY_ERRORS as exc:
                     await self._record_exception(where="open_video_source", exc=exc)
                     await asyncio.sleep(0.1)
                     continue
@@ -819,7 +824,7 @@ class OnnxTcnWaveServiceNode(ServiceNode):
                 _ = t_infer1
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:
+            except _DL_TCN_RUNTIME_BOUNDARY_ERRORS as exc:
                 await self._record_exception(where="loop", exc=exc)
                 await asyncio.sleep(0.1)
 
