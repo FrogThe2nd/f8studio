@@ -7,7 +7,6 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
-import numpy as np
 
 from f8pysdk.specs import (
     F8DataPortSpec,
@@ -26,12 +25,6 @@ from f8pysdk.capabilities import ClosableNode
 from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import OperatorNode
 from f8pysdk.registry import Registry
-from f8pysdk.video_transport import VIDEO_FORMAT_BGRA32, VIDEO_FORMAT_FLOW2_F16
-from f8pysdk.video_transport import (
-    LatestVideoFrame,
-    LatestVideoFrameTransport,
-    ZenohLatestVideoFrameTransport,
-)
 
 from ..constants import SERVICE_CLASS
 from ._ports import exec_out_ports
@@ -48,6 +41,7 @@ from .script_utils.python_editor_assist import python_script_field_editor_assist
 from .script_utils.result_binding import normalize_script_output_value, normalize_script_output_value_fast
 from .script_utils.script_runtime import HookSet, ScriptRuntimeCompiler
 from .script_utils.state_binding import PyEngineStatesView
+from .script_utils.video_latest import VideoLatestConfig, VideoLatestSubscriptions
 
 OPERATOR_CLASS = "f8.python_script"
 _REPEATING_ERROR_LOG_INTERVAL_MS = 2000
@@ -59,40 +53,12 @@ _HOOK_AWAITABLE_SCHEDULE_ERRORS = (RuntimeError, TypeError, ValueError)
 # Keep these runtime sandbox boundaries broad, named, logged, and behavior-preserving.
 _PYTHON_SCRIPT_DESTRUCTOR_HOOK_ERRORS = (Exception,)
 _PYTHON_SCRIPT_VIDEO_CLEANUP_ERRORS = (Exception,)
-_PYTHON_SCRIPT_VIDEO_SUBSCRIPTION_ERRORS = (Exception,)
 _PYTHON_SCRIPT_INPUT_PULL_ERRORS = (Exception,)
 _PYTHON_SCRIPT_USER_HOOK_ERRORS = (Exception,)
 _PYTHON_SCRIPT_EMIT_ERRORS = (Exception,)
 _PYTHON_SCRIPT_OUTPUT_NORMALIZE_ERRORS = OPERATOR_MODEL_ERRORS
 _PYTHON_SCRIPT_INPUT_DECODE_ERRORS = OPERATOR_MODEL_ERRORS
 _PYTHON_SCRIPT_MONITOR_PUBLISH_ERRORS = OPERATOR_STATE_PUBLISH_ERRORS
-
-
-@dataclass
-class _LatestVideoSubscription:
-    key: str
-    stream_key: str
-    decode_mode: str
-    reader: LatestVideoFrameTransport | None = None
-    task: asyncio.Task[object] | None = None
-    latest_packet: dict[str, Any] | None = None
-    last_frame_id: int = 0
-    last_error_sig: str | None = None
-    last_error_ts_ms: int = 0
-    error_count: int = 0
-
-
-def _video_subscription_source_metadata(sub: _LatestVideoSubscription) -> dict[str, Any]:
-    return {"key": sub.key, "transport": "zenoh", "streamKey": sub.stream_key}
-
-
-def _video_subscription_status_metadata(sub: _LatestVideoSubscription) -> dict[str, Any]:
-    metadata = _video_subscription_source_metadata(sub)
-    metadata["decodeMode"] = sub.decode_mode
-    metadata["hasPacket"] = sub.latest_packet is not None
-    metadata["lastFrameId"] = int(sub.last_frame_id)
-    metadata["errorCount"] = int(sub.error_count)
-    return metadata
 
 
 @dataclass(slots=True)
@@ -168,49 +134,19 @@ class PyEngineContext:
             return
         if not stream_key_text:
             return
-        decode_mode = self._node._normalize_decode_mode(decode)
-        self._node._unsubscribe_video_latest_sync(key_name)
-        sub = _LatestVideoSubscription(
-            key=key_name,
-            stream_key=stream_key_text,
-            decode_mode=decode_mode,
-        )
-        self._node._video_subscriptions[key_name] = sub
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError as exc:
-            sub.task = None
-            logger.error(
-                "[%s:python_script] subscribe_video_latest without running loop",
-                self.node_id,
-                exc_info=(type(exc), exc, exc.__traceback__),
-            )
-            return
-        sub.task = loop.create_task(
-            self._node._run_video_latest_subscription(key_name),
-            name=f"python_script:video_sub:{self.node_id}:{key_name}",
-        )
+        self._node._video_latest.subscribe(key_name, stream_key=stream_key_text, decode=decode)
 
     def get_video_latest(self, key: str) -> dict[str, Any] | None:
         key_name = str(key or "").strip()
         if not key_name:
             return None
-        sub = self._node._video_subscriptions.get(key_name)
-        if sub is None:
-            return None
-        return self._node._copy_packet_for_script(sub.latest_packet)
+        return self._node._video_latest.get_packet(key_name)
 
     def unsubscribe_video_latest(self, key: str) -> None:
-        self._node._unsubscribe_video_latest_sync(str(key or "").strip())
+        self._node._video_latest.unsubscribe_sync(str(key or "").strip())
 
     def list_video_latest_subscriptions(self) -> list[dict[str, Any]]:
-        items: list[dict[str, Any]] = []
-        for key_name in sorted(self._node._video_subscriptions.keys()):
-            sub = self._node._video_subscriptions.get(key_name)
-            if sub is None:
-                continue
-            items.append(_video_subscription_status_metadata(sub))
-        return items
+        return self._node._video_latest.list_status()
 
 
 DEFAULT_CODE = (
@@ -327,11 +263,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         self._pull_cache_ctx_id: str | int | None = None
         self._pull_cache_outputs: dict[str, Any] = {}
         self._state_key_hint_logged = False
-        self._video_subscriptions: dict[str, _LatestVideoSubscription] = {}
-        self._zenoh_config_path: str | None = None
-        self._zenoh_connect: tuple[str, ...] = ()
-        self._zenoh_listen: tuple[str, ...] = ()
-        self._zenoh_shm_pool_bytes = 256 * 1024 * 1024
+        self._video_latest = VideoLatestSubscriptions(node_id=self.node_id, log_context="python_script")
         self._data_out_port_set: set[str] = set()
         self._data_in_port_names: tuple[str, ...] = tuple(str(name) for name in self.data_in_ports)
         self._single_data_out_port: str | None = None
@@ -358,10 +290,14 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         super().attach(bus)
         if isinstance(bus, ServiceBus):
             cfg = bus.config
-            self._zenoh_config_path = cfg.zenoh_config_path
-            self._zenoh_connect = cfg.zenoh_connect
-            self._zenoh_listen = cfg.zenoh_listen
-            self._zenoh_shm_pool_bytes = cfg.zenoh_shm_pool_bytes
+            self._video_latest.configure(
+                VideoLatestConfig(
+                    config_path=cfg.zenoh_config_path,
+                    connect=cfg.zenoh_connect,
+                    listen=cfg.zenoh_listen,
+                    shm_pool_bytes=cfg.zenoh_shm_pool_bytes,
+                )
+            )
         self._flush_pending_monitor_error()
 
     def __del__(self) -> None:
@@ -373,7 +309,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         except _PYTHON_SCRIPT_DESTRUCTOR_HOOK_ERRORS as exc:
             logger.error("[%s:python_script] __del__ onStop failed", self.node_id, exc_info=exc)
         try:
-            self._shutdown_video_subscriptions_sync()
+            self._video_latest.shutdown_sync()
         except _PYTHON_SCRIPT_VIDEO_CLEANUP_ERRORS as exc:
             logger.error("[%s:python_script] __del__ video cleanup failed", self.node_id, exc_info=exc)
 
@@ -384,7 +320,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         try:
             await self._invoke_hook_async("onStop")
         finally:
-            await self._shutdown_video_subscriptions_async()
+            await self._video_latest.shutdown_async()
             self._started = False
 
     def _log(self, message: str) -> None:
@@ -507,237 +443,6 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             out.append(name)
         return tuple(out)
 
-    @staticmethod
-    def _normalize_decode_mode(decode: Any) -> str:
-        mode = str(decode or "auto").strip().lower()
-        if mode in ("none", "auto"):
-            return mode
-        return "auto"
-
-    @staticmethod
-    def _header_to_dict(frame: LatestVideoFrame) -> dict[str, int]:
-        return {
-            "frameId": int(frame.frame_id),
-            "tsMs": int(frame.ts_ms),
-            "width": int(frame.width),
-            "height": int(frame.height),
-            "pitch": int(frame.pitch),
-            "fmt": int(frame.fmt),
-            "notifySeq": 0,
-        }
-
-    @staticmethod
-    def _compact_rows(raw: bytes, *, width: int, height: int, pitch: int, row_bytes: int) -> bytes | None:
-        if width <= 0 or height <= 0 or pitch < row_bytes or row_bytes <= 0:
-            return None
-        if pitch == row_bytes:
-            return raw
-        compact = bytearray(row_bytes * height)
-        for y in range(height):
-            src_off = y * pitch
-            dst_off = y * row_bytes
-            compact[dst_off : dst_off + row_bytes] = raw[src_off : src_off + row_bytes]
-        return bytes(compact)
-
-    def _decode_video_payload(self, *, header: dict[str, int], raw: bytes, decode_mode: str) -> dict[str, Any] | None:
-        if decode_mode != "auto":
-            return None
-        width = int(header.get("width") or 0)
-        height = int(header.get("height") or 0)
-        pitch = int(header.get("pitch") or 0)
-        fmt = int(header.get("fmt") or 0)
-        if width <= 0 or height <= 0 or pitch <= 0:
-            return None
-
-        if fmt == VIDEO_FORMAT_BGRA32:
-            row_bytes = width * 4
-            compact = self._compact_rows(raw, width=width, height=height, pitch=pitch, row_bytes=row_bytes)
-            if compact is None:
-                return {"kind": "bgra32", "shape": [height, width, 4], "data": None}
-            data = None
-            if np is not None:
-                arr = np.frombuffer(compact, dtype=np.uint8)
-                if int(arr.size) == (height * width * 4):
-                    data = arr.reshape(height, width, 4)
-            return {"kind": "bgra32", "shape": [height, width, 4], "data": data}
-
-        if fmt == VIDEO_FORMAT_FLOW2_F16:
-            row_bytes = width * 4
-            compact = self._compact_rows(raw, width=width, height=height, pitch=pitch, row_bytes=row_bytes)
-            if compact is None:
-                return {"kind": "flow2_f16", "shape": [height, width, 2], "data": None}
-            data = None
-            if np is not None:
-                arr = np.frombuffer(compact, dtype="<f2")
-                if int(arr.size) == (height * width * 2):
-                    data = arr.reshape(height, width, 2)
-            return {"kind": "flow2_f16", "shape": [height, width, 2], "data": data}
-
-        return None
-
-    def _copy_packet_for_script(self, packet: dict[str, Any] | None) -> dict[str, Any] | None:
-        if not isinstance(packet, dict):
-            return None
-        header_src = packet.get("header")
-        meta_src = packet.get("meta")
-        decoded_src = packet.get("decoded")
-        out: dict[str, Any] = {
-            "header": dict(header_src) if isinstance(header_src, dict) else {},
-            "raw": packet.get("raw"),
-            "meta": dict(meta_src) if isinstance(meta_src, dict) else {},
-            "decoded": None,
-        }
-        if isinstance(decoded_src, dict):
-            decoded_out: dict[str, Any] = {}
-            if "kind" in decoded_src:
-                decoded_out["kind"] = decoded_src.get("kind")
-            if "shape" in decoded_src:
-                decoded_out["shape"] = list(decoded_src.get("shape") or [])
-            if "data" in decoded_src:
-                decoded_out["data"] = decoded_src.get("data")
-            out["decoded"] = decoded_out
-        return out
-
-    def _log_video_sub_error(self, sub: _LatestVideoSubscription, stage: str, exc: BaseException) -> None:
-        sub.error_count += 1
-        now_ms = self._now_ms()
-        sig = f"{stage}:{type(exc).__name__}:{exc}"
-        if sub.last_error_sig == sig and (now_ms - int(sub.last_error_ts_ms)) < 2000:
-            return
-        sub.last_error_sig = sig
-        sub.last_error_ts_ms = now_ms
-        logger.error(
-            "[%s:python_script] video latest subscribe failed key=%s stream_key=%s stage=%s",
-            self.node_id,
-            sub.key,
-            sub.stream_key,
-            stage,
-            exc_info=(type(exc), exc, exc.__traceback__),
-        )
-
-    def _close_video_sub_reader(self, sub: _LatestVideoSubscription) -> None:
-        reader = sub.reader
-        sub.reader = None
-        if reader is None:
-            return
-        try:
-            reader.close()
-        except _PYTHON_SCRIPT_VIDEO_CLEANUP_ERRORS as exc:
-            logger.error(
-                "[%s:python_script] video reader close failed key=%s",
-                self.node_id,
-                sub.key,
-                exc_info=exc,
-            )
-
-    def _open_video_sub_reader(self, sub: _LatestVideoSubscription) -> LatestVideoFrameTransport:
-        return ZenohLatestVideoFrameTransport.open_subscriber(
-            sub.stream_key,
-            config_path=self._zenoh_config_path,
-            connect=self._zenoh_connect,
-            listen=self._zenoh_listen,
-            shm_pool_bytes=self._zenoh_shm_pool_bytes,
-        )
-
-    def _unsubscribe_video_latest_sync(self, key: str) -> bool:
-        key_name = str(key or "").strip()
-        if not key_name:
-            return False
-        sub = self._video_subscriptions.pop(key_name, None)
-        if sub is None:
-            return False
-        task = sub.task
-        sub.task = None
-        if task is not None and not task.done():
-            task.cancel()
-        self._close_video_sub_reader(sub)
-        return True
-
-    def _shutdown_video_subscriptions_sync(self) -> None:
-        keys = list(self._video_subscriptions.keys())
-        for key in keys:
-            self._unsubscribe_video_latest_sync(key)
-
-    async def _shutdown_video_subscriptions_async(self) -> None:
-        keys = list(self._video_subscriptions.keys())
-        tasks: list[asyncio.Task[object]] = []
-        for key in keys:
-            sub = self._video_subscriptions.pop(key, None)
-            if sub is None:
-                continue
-            task = sub.task
-            sub.task = None
-            if task is not None and not task.done():
-                task.cancel()
-                tasks.append(task)
-            self._close_video_sub_reader(sub)
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-    async def _run_video_latest_subscription(self, key: str) -> None:
-        key_name = str(key or "").strip()
-        while True:
-            sub = self._video_subscriptions.get(key_name)
-            if sub is None:
-                return
-
-            if sub.reader is None:
-                try:
-                    sub.reader = self._open_video_sub_reader(sub)
-                except _PYTHON_SCRIPT_VIDEO_SUBSCRIPTION_ERRORS as exc:
-                    self._log_video_sub_error(sub, "open", exc)
-                    await asyncio.sleep(0.2)
-                    continue
-
-            assert sub.reader is not None
-            try:
-                frame = sub.reader.wait_latest(20)
-                if frame is None:
-                    await asyncio.sleep(0)
-                    continue
-                try:
-                    frame_id = int(frame.frame_id)
-                    if frame_id <= 0:
-                        await asyncio.sleep(0)
-                        continue
-                    if frame_id == int(sub.last_frame_id) and sub.latest_packet is not None:
-                        await asyncio.sleep(0)
-                        continue
-
-                    width = int(frame.width)
-                    height = int(frame.height)
-                    pitch = int(frame.pitch)
-                    frame_bytes = int(frame.frame_bytes)
-                    if width <= 0 or height <= 0 or pitch <= 0 or frame_bytes <= 0:
-                        await asyncio.sleep(0)
-                        continue
-                    if frame_bytes > len(frame.payload):
-                        await asyncio.sleep(0)
-                        continue
-
-                    raw = bytes(frame.payload[:frame_bytes])
-                    header_dict = self._header_to_dict(frame)
-                    decoded = self._decode_video_payload(header=header_dict, raw=raw, decode_mode=sub.decode_mode)
-                    sub.latest_packet = {
-                        "header": header_dict,
-                        "raw": raw,
-                        "decoded": decoded,
-                        "meta": _video_subscription_source_metadata(sub)
-                        | {
-                            "decodeMode": sub.decode_mode,
-                            "lastUpdateMs": self._now_ms(),
-                        },
-                    }
-                    sub.last_frame_id = frame_id
-                finally:
-                    frame.release()
-            except asyncio.CancelledError:
-                raise
-            except _PYTHON_SCRIPT_VIDEO_SUBSCRIPTION_ERRORS as exc:
-                self._log_video_sub_error(sub, "read", exc)
-                self._close_video_sub_reader(sub)
-                await asyncio.sleep(0.2)
-
     def _build_ctx(self) -> PyEngineContext:
         return PyEngineContext(
             _node=self,
@@ -813,7 +518,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         error_seq_start = int(self._error_seq)
         if self._started:
             self._invoke_hook_sync("onStop")
-        self._shutdown_video_subscriptions_sync()
+        self._video_latest.shutdown_sync()
         self._locals = {}
         self._ctx = self._build_ctx()
         # Normalize line endings and tabs to avoid TabError on mixed indentation.
