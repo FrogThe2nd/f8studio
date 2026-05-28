@@ -6,6 +6,8 @@ import logging
 import time
 from typing import Any, Final
 
+import msgspec
+
 from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
@@ -36,6 +38,10 @@ from ..recording import (
 OPERATOR_CLASS: Final[str] = "f8.replayer"
 
 logger = logging.getLogger(__name__)
+
+_REPLAYER_LOAD_ERRORS = (OSError, RuntimeError, TypeError, ValueError, msgspec.MsgspecError)
+_REPLAYER_PLAYBACK_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
+_REPLAYER_BUS_PUBLISH_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
 
 _CONTROL_STATE_NAMES = {
     "path",
@@ -219,12 +225,12 @@ class ReplayerRuntimeNode(OperatorNode):
             await self._safe_set_state("loaded", True)
             await self._safe_set_state("durationMs", int(self._duration_ms))
             await self.clear_error()
-        except Exception as exc:
+        except _REPLAYER_LOAD_ERRORS as exc:
             self._loaded = False
             self._events = []
             self._first_event_ts_ms = 0
             self._duration_ms = 0
-            logger.exception("[%s:replayer] failed to load recording", self.node_id)
+            logger.exception("[%s:replayer] failed to load recording", self.node_id, exc_info=exc)
             await self._safe_set_state("loaded", False)
             await self._safe_set_state("durationMs", 0)
             await self.report_error(
@@ -248,8 +254,8 @@ class ReplayerRuntimeNode(OperatorNode):
                 await self._safe_emit_exec("looped", exec_id=self._next_emit_exec_id())
         except asyncio.CancelledError:
             raise
-        except Exception as exc:
-            logger.exception("[%s:replayer] playback failed", self.node_id)
+        except _REPLAYER_PLAYBACK_ERRORS as exc:
+            logger.exception("[%s:replayer] playback failed", self.node_id, exc_info=exc)
             self._playing = False
             await self._safe_set_state("playing", False)
             await self.report_error(
@@ -316,22 +322,22 @@ class ReplayerRuntimeNode(OperatorNode):
     async def _safe_emit(self, port: str, value: Any, *, ctx_id: str | int | None = None) -> None:
         try:
             await self.emit(str(port), value, ctx_id=ctx_id)
-        except Exception:
-            logger.exception("[%s:replayer] failed to emit port: %s", self.node_id, port)
+        except _REPLAYER_BUS_PUBLISH_ERRORS as exc:
+            logger.exception("[%s:replayer] failed to emit port: %s", self.node_id, port, exc_info=exc)
 
     async def _safe_set_state(self, field: str, value: Any) -> None:
         try:
             self._self_state_writes[str(field)] = value
             await self.set_state(str(field), value)
-        except Exception:
+        except _REPLAYER_BUS_PUBLISH_ERRORS as exc:
             self._self_state_writes.pop(str(field), None)
-            logger.exception("[%s:replayer] failed to publish state: %s", self.node_id, field)
+            logger.exception("[%s:replayer] failed to publish state: %s", self.node_id, field, exc_info=exc)
 
     async def _safe_emit_exec(self, port: str, *, exec_id: str | int) -> None:
         try:
             await self.emit_exec(str(port), exec_id=exec_id)
-        except Exception:
-            logger.exception("[%s:replayer] failed to emit exec port: %s", self.node_id, port)
+        except _REPLAYER_BUS_PUBLISH_ERRORS as exc:
+            logger.exception("[%s:replayer] failed to emit exec port: %s", self.node_id, port, exc_info=exc)
 
 
 def _event_ts_ms(event: Any) -> int:
