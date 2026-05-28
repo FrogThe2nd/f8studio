@@ -26,6 +26,7 @@ from f8pysdk.codec import decode_as, decode_obj, encode_obj
 from .runtime_request import RuntimeRequester
 
 logger = logging.getLogger(__name__)
+_SERVICE_ENDPOINT_REQUEST_ERRORS = (Exception,)
 
 
 @dataclass(frozen=True)
@@ -98,7 +99,7 @@ async def request_service_status(
         )
         try:
             message = await requester.request(svc_endpoint_key(sid, "status"), payload, timeout=float(timeout_s))
-        except Exception as exc:
+        except _SERVICE_ENDPOINT_REQUEST_ERRORS as exc:
             logger.debug(
                 "service status request failed service_id=%s attempt=%s/%s",
                 service_id,
@@ -173,7 +174,7 @@ async def request_set_service_active(
                 response = decode_as(data, F8ActiveReply)
                 if response.ok:
                     return True
-        except Exception as exc:
+        except _SERVICE_ENDPOINT_REQUEST_ERRORS as exc:
             logger.debug("set service active request failed service_id=%s active=%s", service_id, active, exc_info=exc)
             await asyncio.sleep(float(retry_sleep_s))
             continue
@@ -207,7 +208,7 @@ async def request_service_terminate(
             if response.ok:
                 return True
             return False
-        except Exception as exc:
+        except _SERVICE_ENDPOINT_REQUEST_ERRORS as exc:
             logger.debug("service terminate request failed service_id=%s", service_id, exc_info=exc)
             await asyncio.sleep(float(retry_sleep_s))
             continue
@@ -265,7 +266,7 @@ async def request_set_remote_state(
                     reject_code=_error_code(error),
                     reject_message=_error_message(error),
                 )
-        except Exception as exc:
+        except _SERVICE_ENDPOINT_REQUEST_ERRORS as exc:
             logger.debug(
                 "set remote state request failed service_id=%s node_id=%s field=%s",
                 service_id,
