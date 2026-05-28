@@ -67,6 +67,34 @@ class _NoopServiceHook:
         _ = bus
 
 
+class _FailingServiceHook:
+    async def on_before_ready(self, bus: object) -> None:
+        _ = bus
+        raise RuntimeError("before ready failed")
+
+    def on_after_ready(self, bus: object) -> None:
+        _ = bus
+        raise RuntimeError("after ready failed")
+
+    async def on_before_stop(self, bus: object) -> None:
+        _ = bus
+        raise RuntimeError("before stop failed")
+
+    async def on_after_stop(self, bus: object) -> None:
+        _ = bus
+        raise RuntimeError("after stop failed")
+
+    async def on_activate(self, bus: object, meta: dict[str, object]) -> None:
+        _ = bus
+        _ = meta
+        raise RuntimeError("activate failed")
+
+    async def on_deactivate(self, bus: object, meta: dict[str, object]) -> None:
+        _ = bus
+        _ = meta
+        raise RuntimeError("deactivate failed")
+
+
 class _ClosableServiceNode(ServiceNode):
     def __init__(self, node_id: str, events: list[str]) -> None:
         super().__init__(node_id=node_id)
@@ -410,6 +438,34 @@ class RuntimeRegressionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn(rungraph_hook, bus._rungraph_hooks)
         self.assertIn(service_hook, bus._service_hooks)
+
+    async def test_service_hook_failures_are_logged_and_do_not_stop_lifecycle(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        bus.register_service_hook(_FailingServiceHook())
+
+        with patch("f8pysdk.service_bus.workflow.lifecycle._ensure_control_endpoints_started") as ensure_control:
+
+            async def _noop(_bus: object) -> None:
+                return None
+
+            ensure_control.side_effect = _noop
+            with self.assertLogs("f8pysdk.service_bus.workflow.lifecycle", level="ERROR") as captured:
+                await bus.start()
+                await bus.set_active(False)
+                await bus.set_active(True)
+                await bus.stop()
+
+        self.assertFalse(bus._started)
+        self.assertTrue(bus._closed)
+        messages = [record.getMessage() for record in captured.records]
+        self.assertTrue(any("service hook failed: on_before_ready _FailingServiceHook" in msg for msg in messages))
+        self.assertTrue(any("service hook failed: on_after_ready _FailingServiceHook" in msg for msg in messages))
+        self.assertTrue(any("service hook failed: on_deactivate _FailingServiceHook" in msg for msg in messages))
+        self.assertTrue(any("service hook failed: on_activate _FailingServiceHook" in msg for msg in messages))
+        self.assertTrue(any("service hook failed: on_before_stop _FailingServiceHook" in msg for msg in messages))
+        self.assertTrue(any("service hook failed: on_after_stop _FailingServiceHook" in msg for msg in messages))
+        self.assertTrue(all(record.exc_info is not None for record in captured.records))
 
 
 async def asyncio_sleep_ticks(ticks: int) -> None:

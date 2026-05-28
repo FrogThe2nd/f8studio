@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from typing import Any, TYPE_CHECKING
 
 from ...capabilities import LifecycleNode
@@ -17,6 +18,10 @@ if TYPE_CHECKING:
 
 
 log = logging.getLogger(__name__)
+
+# Service hooks are extension/plugin code. Keep the bus alive, but always
+# log failures with traceback and phase context.
+_SERVICE_HOOK_ERRORS = (Exception,)
 
 
 async def _ensure_control_endpoints_started(bus: "ServiceBus") -> None:
@@ -105,42 +110,31 @@ async def announce_ready(bus: "ServiceBus", ready: bool, *, reason: str) -> None
 
 async def notify_before_ready(bus: "ServiceBus") -> None:
     for hook in list(bus._service_hooks):
-        try:
-            r = hook.on_before_ready(bus)
-            if asyncio.iscoroutine(r):
-                await r
-        except Exception as exc:
-            log.error("service hook failed: on_before_ready %s", type(hook).__name__, exc_info=exc)
+        await _call_service_hook(lambda hook=hook: hook.on_before_ready(bus), phase="on_before_ready", hook=hook)
 
 
 async def notify_after_ready(bus: "ServiceBus") -> None:
     for hook in list(bus._service_hooks):
-        try:
-            r = hook.on_after_ready(bus)
-            if asyncio.iscoroutine(r):
-                await r
-        except Exception as exc:
-            log.error("service hook failed: on_after_ready %s", type(hook).__name__, exc_info=exc)
+        await _call_service_hook(lambda hook=hook: hook.on_after_ready(bus), phase="on_after_ready", hook=hook)
 
 
 async def notify_before_stop(bus: "ServiceBus") -> None:
     for hook in list(bus._service_hooks):
-        try:
-            r = hook.on_before_stop(bus)
-            if asyncio.iscoroutine(r):
-                await r
-        except Exception as exc:
-            log.error("service hook failed: on_before_stop %s", type(hook).__name__, exc_info=exc)
+        await _call_service_hook(lambda hook=hook: hook.on_before_stop(bus), phase="on_before_stop", hook=hook)
 
 
 async def notify_after_stop(bus: "ServiceBus") -> None:
     for hook in list(bus._service_hooks):
-        try:
-            r = hook.on_after_stop(bus)
-            if asyncio.iscoroutine(r):
-                await r
-        except Exception as exc:
-            log.error("service hook failed: on_after_stop %s", type(hook).__name__, exc_info=exc)
+        await _call_service_hook(lambda hook=hook: hook.on_after_stop(bus), phase="on_after_stop", hook=hook)
+
+
+async def _call_service_hook(call: Callable[[], Any], *, phase: str, hook: object) -> None:
+    try:
+        result = call()
+        if asyncio.iscoroutine(result):
+            await result
+    except _SERVICE_HOOK_ERRORS as exc:
+        log.error("service hook failed: %s %s", phase, type(hook).__name__, exc_info=exc)
 
 
 async def apply_active(
@@ -164,16 +158,18 @@ async def apply_active(
                 await r
 
         for hook in list(bus._service_hooks):
-            try:
-                if bool(active):
-                    r = hook.on_activate(bus, dict(payload))
-                else:
-                    r = hook.on_deactivate(bus, dict(payload))
-                if asyncio.iscoroutine(r):
-                    await r
-            except Exception as exc:
-                phase = "on_activate" if bool(active) else "on_deactivate"
-                log.error("service hook failed: %s %s", phase, type(hook).__name__, exc_info=exc)
+            if bool(active):
+                await _call_service_hook(
+                    lambda hook=hook: hook.on_activate(bus, dict(payload)),
+                    phase="on_activate",
+                    hook=hook,
+                )
+            else:
+                await _call_service_hook(
+                    lambda hook=hook: hook.on_deactivate(bus, dict(payload)),
+                    phase="on_deactivate",
+                    hook=hook,
+                )
 
     if persist:
         await publish_state(
