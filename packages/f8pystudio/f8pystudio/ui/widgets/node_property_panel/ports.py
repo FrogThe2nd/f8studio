@@ -40,6 +40,7 @@ from .containers import _F8SpecListSection, _F8SpecNameRow
 
 
 logger = logging.getLogger(__name__)
+_NODE_SPEC_READ_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
 
 
 class _F8SpecPortEditor(QtWidgets.QWidget):
@@ -119,10 +120,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
 
     def _load_from_spec(self) -> None:
         self._missing_locked, _ = node_missing_lock_info(self._node)
-        try:
-            spec = self._node.spec
-        except Exception:
-            spec = None
+        spec = self._node_spec_or_none(context="load_from_spec")
         self._is_patch_hub = bool(
             isinstance(spec, F8OperatorSpec) and str(spec.operatorClass or "").strip() == PATCH_HUB_OPERATOR_CLASS
         )
@@ -177,35 +175,20 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         self._sec_patch_state.set_add_visible(bool(self._state_can_add) and not self._missing_locked and not self._inspect_mode)
 
         if is_operator:
-            try:
-                exec_in_names = list(self._node.ordered_exec_port_names(is_in=True) or [])
-            except Exception:
-                exec_in_names = list(spec.execInPorts or [])
+            exec_in_names = self._ordered_exec_port_names_or_spec_default(is_in=True, spec=spec)
             for name in exec_in_names:
                 self._sec_exec_in.add_row(self._make_exec_row(str(name), is_in=True))
-            try:
-                exec_out_names = list(self._node.ordered_exec_port_names(is_in=False) or [])
-            except Exception:
-                exec_out_names = list(spec.execOutPorts or [])
+            exec_out_names = self._ordered_exec_port_names_or_spec_default(is_in=False, spec=spec)
             for name in exec_out_names:
                 self._sec_exec_out.add_row(self._make_exec_row(str(name), is_in=False))
 
-        try:
-            data_in_ports = list(self._node.ordered_data_port_specs(is_in=True) or [])
-        except Exception:
-            data_in_ports = list(spec.dataInPorts or [])
-        try:
-            data_out_ports = list(self._node.ordered_data_port_specs(is_in=False) or [])
-        except Exception:
-            data_out_ports = list(spec.dataOutPorts or [])
+        data_in_ports = self._ordered_data_port_specs_or_spec_default(is_in=True, spec=spec)
+        data_out_ports = self._ordered_data_port_specs_or_spec_default(is_in=False, spec=spec)
 
         if self._is_patch_hub:
             for p in data_in_ports:
                 self._sec_patch_data.add_row(self._make_patch_data_row(p))
-            try:
-                state_fields = list(self._node.ordered_state_field_specs() or [])
-            except Exception:
-                state_fields = list(spec.stateFields or [])
+            state_fields = self._ordered_state_field_specs_or_spec_default(spec=spec)
             for field in state_fields:
                 self._sec_patch_state.add_row(self._make_patch_state_row(field))
         else:
@@ -224,13 +207,46 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         ):
             section.set_drag_enabled(not self._missing_locked and not self._inspect_mode)
 
+    def _node_spec_or_none(self, *, context: str) -> Any | None:
+        try:
+            return self._node.spec
+        except _NODE_SPEC_READ_ERRORS:
+            logger.debug("Failed to read node spec for port editor context=%s", context, exc_info=True)
+            return None
+
+    def _ordered_exec_port_names_or_spec_default(self, *, is_in: bool, spec: F8OperatorSpec) -> list[str]:
+        try:
+            return [str(name or "") for name in list(self._node.ordered_exec_port_names(is_in=bool(is_in)) or [])]
+        except _NODE_SPEC_READ_ERRORS:
+            logger.debug(
+                "Failed to read ordered exec port names for port editor is_in=%s",
+                bool(is_in),
+                exc_info=True,
+            )
+            return [str(name or "") for name in list((spec.execInPorts if is_in else spec.execOutPorts) or [])]
+
+    def _ordered_data_port_specs_or_spec_default(self, *, is_in: bool, spec: Any) -> list[F8DataPortSpec]:
+        try:
+            return [port for port in list(self._node.ordered_data_port_specs(is_in=bool(is_in)) or []) if isinstance(port, F8DataPortSpec)]
+        except _NODE_SPEC_READ_ERRORS:
+            logger.debug(
+                "Failed to read ordered data port specs for port editor is_in=%s",
+                bool(is_in),
+                exc_info=True,
+            )
+            return [port for port in list((spec.dataInPorts if is_in else spec.dataOutPorts) or []) if isinstance(port, F8DataPortSpec)]
+
+    def _ordered_state_field_specs_or_spec_default(self, *, spec: Any) -> list[F8StateSpec]:
+        try:
+            return [field for field in list(self._node.ordered_state_field_specs() or []) if isinstance(field, F8StateSpec)]
+        except _NODE_SPEC_READ_ERRORS:
+            logger.debug("Failed to read ordered state field specs for port editor", exc_info=True)
+            return [field for field in list(spec.stateFields or []) if isinstance(field, F8StateSpec)]
+
     def _base_order_for_key(self, key: str, *, spec: F8OperatorSpec | Any | None = None) -> list[str]:
         current_spec = spec
         if current_spec is None:
-            try:
-                current_spec = self._node.spec
-            except Exception:
-                current_spec = None
+            current_spec = self._node_spec_or_none(context="base_order")
         if current_spec is None:
             return []
 

@@ -53,6 +53,12 @@ class _FakeNode:
         return None
 
 
+class _BrokenOrderedPortsNode(_FakeNode):
+    def ordered_data_port_specs(self, *, is_in: bool) -> list[F8DataPortSpec]:
+        _ = is_in
+        raise RuntimeError("ordered data ports unavailable")
+
+
 class _FakeStateEditor:
     def __init__(self, node: _FakeNode) -> None:
         self._node = node
@@ -173,6 +179,21 @@ def test_port_editor_delete_removes_row_immediately_without_reparenting() -> Non
     remaining_rows = editor._sec_data_in.rows()
     remaining_names = [str(row.name_edit.text() or "").strip() for row in remaining_rows]
     assert remaining_names == ["required_in"]
+
+
+def test_port_editor_logs_and_falls_back_when_ordered_data_ports_fail(caplog) -> None:
+    _ensure_app()
+    node = _BrokenOrderedPortsNode(_make_spec())
+
+    with caplog.at_level("DEBUG", logger="f8pystudio.ui.widgets.node_property_panel.ports"):
+        editor = _F8SpecPortEditor(None, node=node, on_apply=None)
+
+    in_names = [str(row.name_edit.text() or "").strip() for row in editor._sec_data_in.rows()]
+    out_names = [str(row.name_edit.text() or "").strip() for row in editor._sec_data_out.rows()]
+
+    assert in_names == ["required_in", "optional_in"]
+    assert out_names == ["required_out", "optional_out"]
+    assert "Failed to read ordered data port specs for port editor" in caplog.text
 
 
 def test_port_editor_commit_preserves_spec_order_when_ui_rows_are_reordered() -> None:
