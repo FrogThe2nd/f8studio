@@ -11,7 +11,8 @@ from f8pysdk.f8_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
 
 from .expr_error_reporter import PyExprErrorReporter
-from .expr_evaluator import PyExprEvaluator, compile_pyexpr, wrap_pyexpr_value
+from .expr_evaluator import PyExprEvaluator, compile_pyexpr
+from .expr_json_ref import wrap_pyexpr_value
 from .expr_templates import DEFAULT_CODE
 
 logger = logging.getLogger(__name__)

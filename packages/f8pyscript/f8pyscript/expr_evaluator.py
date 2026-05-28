@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from types import CodeType
 from typing import Any
 
+from .expr_json_ref import PyExprJsonRef
+
 try:
     import numpy as np  # type: ignore
 except ModuleNotFoundError:
@@ -37,54 +39,6 @@ _ALLOWED_MATH_FNS: set[str] = {
     "floor",
     "ceil",
 }
-
-
-def wrap_pyexpr_value(value: Any) -> Any:
-    if isinstance(value, (dict, list, tuple)):
-        return _JsonRef(value)
-    return value
-
-
-@dataclass(frozen=True)
-class _JsonRef:
-    value: Any
-
-    def __getattr__(self, name: str) -> Any:
-        attr = str(name or "")
-        if not attr or attr.startswith("_"):
-            raise AttributeError(name)
-        if isinstance(self.value, dict) and attr in self.value:
-            return wrap_pyexpr_value(self.value[attr])
-        raise AttributeError(name)
-
-    def __getitem__(self, key: Any) -> Any:
-        if isinstance(self.value, dict):
-            if isinstance(key, str) and key.startswith("_"):
-                raise KeyError(key)
-            return wrap_pyexpr_value(self.value[key])
-        if isinstance(self.value, (list, tuple)):
-            return wrap_pyexpr_value(self.value[int(key)])
-        raise TypeError(f"not indexable: {type(self.value).__name__}")
-
-    def __iter__(self):
-        if isinstance(self.value, dict):
-            for key in self.value:
-                yield key
-            return
-        if isinstance(self.value, (list, tuple)):
-            for item in self.value:
-                yield wrap_pyexpr_value(item)
-            return
-        raise TypeError(f"not iterable: {type(self.value).__name__}")
-
-    def unwrap(self) -> Any:
-        if isinstance(self.value, dict):
-            return {str(key): _JsonRef(item).unwrap() for key, item in self.value.items()}
-        if isinstance(self.value, list):
-            return [_JsonRef(item).unwrap() for item in self.value]
-        if isinstance(self.value, tuple):
-            return tuple(_JsonRef(item).unwrap() for item in self.value)
-        return self.value
 
 
 class _ExprValidator(ast.NodeVisitor):
@@ -226,11 +180,11 @@ class PyExprEvaluator:
     def evaluate(self, code: CodeType, *, names: dict[str, Any], allow_numpy: bool) -> PyExprEvalResult:
         try:
             value = _safe_eval_compiled(code, names=names, allow_numpy=allow_numpy)
-            if isinstance(value, _JsonRef):
+            if isinstance(value, PyExprJsonRef):
                 value = value.unwrap()
             return PyExprEvalResult(value=value)
         except _PYEXPR_EVAL_ERRORS as exc:
             return PyExprEvalResult(error=exc)
 
 
-__all__ = ["PyExprEvalResult", "PyExprEvaluator", "compile_pyexpr", "np", "wrap_pyexpr_value"]
+__all__ = ["PyExprEvalResult", "PyExprEvaluator", "compile_pyexpr", "np"]
