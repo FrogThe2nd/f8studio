@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+import msgspec
 
 from f8pysdk.codec import dump_json, validate_as
 from f8pysdk.specs import F8ServiceEntry, F8ServiceLaunchSpec
@@ -15,6 +16,10 @@ from f8pysdk.specs import F8ServiceEntry, F8ServiceLaunchSpec
 _YAML_SAFE_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 logger = logging.getLogger(__name__)
 _ENTRY_PATH_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
+_ENTRY_YAML_PARSE_ERRORS = (TypeError, ValueError, yaml.YAMLError)
+_ENTRY_YAML_READ_ERRORS = (OSError, UnicodeError)
+_ENTRY_CANDIDATE_LOAD_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
+_ENTRY_VALIDATION_ERRORS = (TypeError, ValueError, msgspec.ValidationError)
 
 
 def _default_roots() -> list[Path]:
@@ -39,11 +44,11 @@ def default_discovery_roots() -> list[Path]:
 def _read_yaml(path: Path) -> Any:
     try:
         raw = path.read_text("utf-8")
-    except Exception as exc:
+    except _ENTRY_YAML_READ_ERRORS as exc:
         raise ValueError(f"Failed to read {path}: {exc}") from exc
     try:
         return yaml.load(raw, Loader=_YAML_SAFE_LOADER) if raw.strip() else None
-    except Exception as exc:
+    except _ENTRY_YAML_PARSE_ERRORS as exc:
         raise ValueError(f"Failed to parse YAML {path}: {exc}") from exc
 
 
@@ -169,7 +174,7 @@ def load_service_entry(service_dir: Path) -> F8ServiceEntry:
     for candidate in candidates:
         try:
             loaded = _try_load_candidate(candidate)
-        except Exception as exc:
+        except _ENTRY_CANDIDATE_LOAD_ERRORS as exc:
             raise ValueError(str(exc)) from exc
         if loaded is not None:
             data = loaded
@@ -194,7 +199,7 @@ def load_service_entry(service_dir: Path) -> F8ServiceEntry:
 
     try:
         entry = validate_as(F8ServiceEntry, data)
-    except Exception as exc:
+    except _ENTRY_VALIDATION_ERRORS as exc:
         raise ValueError(f"Invalid service entry in {service_dir}: {exc}") from exc
 
     return _absolutize_entry_paths(entry, service_dir=service_dir)

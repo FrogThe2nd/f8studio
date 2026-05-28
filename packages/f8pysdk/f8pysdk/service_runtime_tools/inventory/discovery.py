@@ -29,6 +29,10 @@ from .policy import (
 
 
 logger = logging.getLogger(__name__)
+_DISCOVERY_BUILTIN_INJECTOR_ERRORS = (Exception,)
+_DISCOVERY_CATALOG_REGISTRATION_ERRORS = (KeyError, TypeError, ValueError)
+# Worker exceptions are isolated per service so one bad describe cannot abort discovery.
+_DISCOVERY_DESCRIBE_FUTURE_ERRORS = (Exception,)
 _DISCOVERY_PATH_REWRITE_ERRORS = (AttributeError, OSError, RuntimeError, TypeError, ValueError)
 
 
@@ -114,7 +118,7 @@ def load_discovery_into_catalog(
                     payload, dt_ms, source = future.result()
                     payload_by_dir[service_dir] = payload
                     timing_by_dir[service_dir] = (dt_ms, source)
-                except Exception as exc:
+                except _DISCOVERY_DESCRIBE_FUTURE_ERRORS as exc:
                     logger.warning("Describe failed for %s: %s", service_dir, exc)
                     payload_by_dir[service_dir] = None
                     timing_by_dir[service_dir] = (0.0, "none")
@@ -178,19 +182,19 @@ def load_discovery_into_catalog(
                 payload["service"],
                 service_entry_path=service_dir,
             )
-        except Exception as exc:
+        except _DISCOVERY_CATALOG_REGISTRATION_ERRORS as exc:
             logger.warning("Failed to register service from %s: %s", service_dir, exc)
             continue
         found.append(str(service_spec.serviceClass))
         try:
             target_catalog.register_operators(payload.get("operators") or [])
-        except Exception as exc:
+        except _DISCOVERY_CATALOG_REGISTRATION_ERRORS as exc:
             logger.warning("Failed to register operators from %s: %s", service_dir, exc)
 
     for injector in list(builtin_injectors or ()):
         try:
             service_class = injector(target_catalog)
-        except Exception:
+        except _DISCOVERY_BUILTIN_INJECTOR_ERRORS:
             logger.exception("Built-in injector failed: %r", injector)
             continue
         if service_class is not None and service_class not in found:
