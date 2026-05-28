@@ -86,6 +86,16 @@ class _StuckCloseServiceNode(ServiceNode):
         await asyncio.Event().wait()
 
 
+class _FailingCloseServiceNode(ServiceNode):
+    def __init__(self, node_id: str, events: list[str]) -> None:
+        super().__init__(node_id=node_id)
+        self._events = events
+
+    async def close(self) -> None:
+        self._events.append(f"node.close:{self.node_id}")
+        raise RuntimeError("close failed")
+
+
 class _RecordingComponentFactory(DefaultServiceBusComponentFactory):
     def __init__(self) -> None:
         self.created_data_router = None
@@ -333,6 +343,29 @@ class RuntimeRegressionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(events, ["node.close:svc"])
         self.assertIsNone(bus.get_node("svc"))
+
+    async def test_service_host_stop_logs_close_failure_and_continues(self) -> None:
+        events: list[str] = []
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svc")
+        registry = create_runtime_node_registry()
+        registry.register_service_factory(
+            "svc.test",
+            lambda node_id, node, initial_state: _FailingCloseServiceNode(node_id=node_id, events=events),
+        )
+        host = ServiceHost(
+            bus,
+            config=ServiceHostConfig(service_class="svc.test", node_close_timeout_s=0.05),
+            registry=registry,
+        )
+
+        await host.start()
+        with self.assertLogs("f8pysdk.host", level="ERROR") as captured:
+            await host.stop()
+
+        self.assertEqual(events, ["node.close:svc"])
+        self.assertIsNone(bus.get_node("svc"))
+        self.assertTrue(any("failed to close runtime node node_id=svc" in line for line in captured.output))
 
     async def test_service_runtime_stop_still_stops_bus_when_node_close_times_out(self) -> None:
         events: list[str] = []
