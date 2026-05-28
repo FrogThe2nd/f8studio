@@ -25,6 +25,9 @@ from ..constants import SERVICE_CLASS
 
 OPERATOR_CLASS = "f8.state_trigger"
 logger = logging.getLogger(__name__)
+_STATE_TRIGGER_EXEC_EMIT_ERRORS = (Exception,)
+_STATE_TRIGGER_TASK_STOP_ERRORS = (Exception,)
+_STATE_TRIGGER_VALUE_COMPARE_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
 
 
 class StateTriggerRuntimeNode(OperatorNode, EntrypointNode):
@@ -134,7 +137,7 @@ class StateTriggerRuntimeNode(OperatorNode, EntrypointNode):
                     continue
                 try:
                     await ctx.emit_exec("changed", exec_id=exec_id)
-                except Exception as exc:
+                except _STATE_TRIGGER_EXEC_EMIT_ERRORS as exc:
                     logger.exception("[%s:state_trigger] emit exec failed", self.node_id, exc_info=exc)
         except asyncio.CancelledError:
             raise
@@ -153,14 +156,14 @@ class StateTriggerRuntimeNode(OperatorNode, EntrypointNode):
             await task
         except asyncio.CancelledError:
             return
-        except Exception as exc:
+        except _STATE_TRIGGER_TASK_STOP_ERRORS as exc:
             logger.exception("[%s:state_trigger] stop emit task failed", self.node_id, exc_info=exc)
 
     @staticmethod
     def _values_equal(left: Any, right: Any) -> bool:
         try:
             return bool(left == right)
-        except Exception:
+        except _STATE_TRIGGER_VALUE_COMPARE_ERRORS:
             return False
 
 StateTriggerRuntimeNode.SPEC = F8OperatorSpec(
