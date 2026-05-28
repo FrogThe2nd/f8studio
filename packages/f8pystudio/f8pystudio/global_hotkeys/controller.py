@@ -22,6 +22,9 @@ from .parser import parse_global_hotkey
 
 logger = logging.getLogger(__name__)
 _HOTKEY_COMBO_CONTROLS = {"select", "dropdown", "dropbox", "combo", "combobox"}
+_HOTKEY_BACKEND_ERRORS = (Exception,)
+_HOTKEY_TRIGGER_ERRORS = (Exception,)
+_HOTKEY_UI_LOG_ERRORS = (Exception,)
 
 
 class _HotkeyNode(Protocol):
@@ -212,7 +215,7 @@ class ControlPanelGlobalHotkeyController(QtCore.QObject):
                     f"hotkey={binding.hotkey_text}: {exc}",
                 )
                 continue
-            except Exception as exc:
+            except _HOTKEY_BACKEND_ERRORS as exc:
                 next_entries.append(
                     GlobalHotkeyRegistryEntry(
                         binding_id=binding.binding_id,
@@ -250,7 +253,7 @@ class ControlPanelGlobalHotkeyController(QtCore.QObject):
     def _run_backend_boundary(context: str, action: Callable[[], None]) -> None:
         try:
             action()
-        except Exception:
+        except _HOTKEY_BACKEND_ERRORS:
             logger.exception("%s", context)
 
     def on_graph_property_changed(self, node: Any, name: str, value: Any) -> None:
@@ -328,7 +331,7 @@ class ControlPanelGlobalHotkeyController(QtCore.QObject):
             return
         try:
             node.set_property(binding.field_name, next_value, push_undo=False)
-        except Exception as exc:
+        except _HOTKEY_TRIGGER_ERRORS as exc:
             self._log_once(
                 f"trigger:{binding.binding_id}:{type(exc).__name__}:{exc}",
                 f"[hotkey] trigger failed nodeId={binding.node_id} field={binding.field_name}: {exc}",
@@ -460,6 +463,6 @@ class ControlPanelGlobalHotkeyController(QtCore.QObject):
         if self._emit_log_line is not None:
             try:
                 self._emit_log_line(message)
-            except Exception:
+            except _HOTKEY_UI_LOG_ERRORS:
                 logger.exception("Failed to emit global hotkey log line")
         logger.warning("%s", message)
