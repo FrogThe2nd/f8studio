@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import concurrent.futures
 from typing import Any, Callable
 
 from qtpy import QtCore
@@ -10,6 +11,12 @@ from .command_client import CommandRequest
 
 _REMOTE_COMMAND_CALLBACK_ERRORS = (Exception,)
 _REMOTE_COMMAND_REQUEST_ERRORS = (Exception,)
+_REMOTE_COMMAND_WAIT_ERRORS = (
+    concurrent.futures.CancelledError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
 
 
 class RemoteCommandControllerMixin:
@@ -112,3 +119,73 @@ class RemoteCommandControllerMixin:
                 self._emit_log_line(f"command {call} failed serviceId={service_id}: {type(exc).__name__}: {exc}")
 
         self._submit_async(_do(), context=f"submit invoke_remote_command failed serviceId={service_id}")
+
+    def invoke_remote_command_and_wait(
+        self,
+        service_id: str,
+        call: str,
+        args: Any = None,
+        *,
+        timeout_s: float = 2.0,
+    ) -> dict[str, Any]:
+        try:
+            sid = ensure_token(str(service_id), label="service_id")
+        except ValueError as exc:
+            return {"submitted": False, "completed": False, "ok": False, "result": {}, "error": str(exc)}
+        call_name = str(call or "").strip()
+        if not call_name or sid == self.studio_service_id:
+            return {
+                "submitted": False,
+                "completed": False,
+                "ok": False,
+                "result": {},
+                "error": "invalid call/service_id",
+            }
+
+        async def _do() -> dict[str, Any]:
+            response = await self._command_gateway.request_command(
+                CommandRequest(
+                    service_id=sid,
+                    call=call_name,
+                    args=args,
+                    timeout_s=float(timeout_s),
+                    source="automation",
+                    actor="studio",
+                )
+            )
+            payload_obj = response.payload if isinstance(response.payload, dict) else {}
+            return {
+                "ok": bool(response.ok),
+                "result": dict(response.result),
+                "error": "" if response.ok else str(response.error_message or "rejected"),
+                "payload": dict(payload_obj),
+            }
+
+        future = self._submit_async_future(
+            _do(),
+            context=f"submit invoke_remote_command_and_wait failed serviceId={sid}",
+        )
+        if future is None:
+            return {"submitted": False, "completed": False, "ok": False, "result": {}, "error": "submit failed"}
+        try:
+            result = future.result(timeout=float(timeout_s) + 0.25)
+        except concurrent.futures.TimeoutError:
+            self._emit_log_line(f"command {call_name} timed out serviceId={sid}")
+            return {"submitted": True, "completed": False, "ok": False, "result": {}, "error": "timeout"}
+        except _REMOTE_COMMAND_WAIT_ERRORS as exc:
+            self._report_exception(f"invoke_remote_command_and_wait failed serviceId={sid}", exc)
+            return {
+                "submitted": True,
+                "completed": True,
+                "ok": False,
+                "result": {},
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        return {
+            "submitted": True,
+            "completed": True,
+            "ok": bool(result.get("ok", False)),
+            "result": dict(result.get("result") if isinstance(result.get("result"), dict) else {}),
+            "error": str(result.get("error") or ""),
+            "payload": dict(result.get("payload") if isinstance(result.get("payload"), dict) else {}),
+        }

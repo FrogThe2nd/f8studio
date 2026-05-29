@@ -21,6 +21,13 @@ from f8pysdk.service_runtime_tools.inventory.policy import (
     merge_disabled_service_classes,
 )
 
+from f8pystudio.app.env_names import (
+    AUTOMATION_ENABLED_ENV,
+    AUTOMATION_PORT_FILE_ENV,
+    AUTOMATION_TOKEN_FILE_ENV,
+    LAUNCH_DISMISS_FILE_ENV,
+    LAUNCH_READY_FILE_ENV,
+)
 from f8pystudio.plugins.api import StudioPluginManifest
 from f8pystudio.plugins.loader import load_entrypoint_plugins
 from f8pystudio.bridge.runtime_lifecycle import SINGLETON_GUARD_DIALOG_TITLE
@@ -37,8 +44,6 @@ from f8pystudio.ui.support.ui_resources import studio_logo_path
 logger = logging.getLogger(__name__)
 MISSING_SERVICE_NODE_TYPE = "svc.f8.missing.service"
 MISSING_OPERATOR_NODE_TYPE = "svc.f8.missing.operator"
-LAUNCH_READY_FILE_ENV = "F8STUDIO_LAUNCH_READY_FILE"
-LAUNCH_DISMISS_FILE_ENV = "F8STUDIO_LAUNCH_DISMISS_FILE"
 _LAUNCHER_SIGNAL_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
 _PLUGIN_REGISTRATION_ERRORS = (Exception,)
 _QT_APP_SETUP_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
@@ -46,8 +51,48 @@ _QT_SHUTDOWN_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
 
 
 class PyStudioProgram:
-    def __init__(self, bridge_config: PyStudioServiceBridgeConfig | None = None) -> None:
+    def __init__(
+        self,
+        bridge_config: PyStudioServiceBridgeConfig | None = None,
+        *,
+        automation_enabled: bool | None = None,
+        automation_token_file: str | None = None,
+        automation_port_file: str | None = None,
+    ) -> None:
         self._bridge_config = bridge_config if bridge_config is not None else PyStudioServiceBridgeConfig()
+        self._automation_enabled = (
+            bool(automation_enabled)
+            if automation_enabled is not None
+            else self._env_bool(default=False, name=AUTOMATION_ENABLED_ENV)
+        )
+        self._automation_token_file = (
+            automation_token_file
+            if automation_token_file is not None
+            else self._env_optional_path(AUTOMATION_TOKEN_FILE_ENV)
+        )
+        self._automation_port_file = (
+            automation_port_file
+            if automation_port_file is not None
+            else self._env_optional_path(AUTOMATION_PORT_FILE_ENV)
+        )
+
+    @staticmethod
+    def _env_bool(*, default: bool, name: str) -> bool:
+        raw = str(os.environ.get(name, "") or "").strip().lower()
+        if not raw:
+            return bool(default)
+        if raw in {"0", "false", "no", "off"}:
+            return False
+        if raw in {"1", "true", "yes", "on"}:
+            return True
+        return bool(default)
+
+    @staticmethod
+    def _env_optional_path(name: str) -> str | None:
+        raw = str(os.environ.get(name, "") or "").strip()
+        if not raw:
+            return None
+        return raw
 
     @staticmethod
     def _write_launcher_signal(*, env_name: str, content: str) -> None:
@@ -275,7 +320,13 @@ class PyStudioProgram:
             bridge.stop()
             return 0
 
-        mainwin = F8StudioMainWin(node_classes, bridge=bridge)
+        mainwin = F8StudioMainWin(
+            node_classes,
+            bridge=bridge,
+            automation_enabled=self._automation_enabled,
+            automation_token_file=self._automation_token_file,
+            automation_port_file=self._automation_port_file,
+        )
         if icon_path is not None:
             mainwin_icon = QtGui.QIcon(str(icon_path))
             if not mainwin_icon.isNull():

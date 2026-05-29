@@ -10,6 +10,7 @@ PyStudio is intentionally split across UI, graph authoring, local runtime orches
 - `f8pystudio.monitoring`: monitor snapshots, alert rows, and service table projections.
 - `f8pystudio.assets`: component/variant/project persistence, sync, and catalog UI.
 - `f8pystudio.diagnostics`: process logging, uncaught exception hooks, and exception formatting. Qt message logging is installed from `f8pystudio.ui.support.qt_message_logging` at the application entrypoint so the diagnostics core stays UI-independent.
+- `f8pystudio.automation`: typed graph patch/snapshot contracts, loopback control client/server, GUI automation host, CLI entrypoint, and MCP sidecar integration. Domain types stay UI-free; adapters are the only modules that cross into Qt/nodegraph/bridge.
 
 ## Runtime Bridge Rules
 
@@ -57,3 +58,25 @@ External packages can help keep the architecture from regressing, but they will 
 - `pytest-archon` can express architecture rules in pytest style.
 
 These should be introduced with narrow contracts first. A broad repo-wide rule will be noisy until existing modules are separated further.
+
+## GUI Automation Boundary
+
+PyStudio automation is disabled by default. Launch with `python -m f8pystudio.main --automation` to start a loopback-only control server for CLI and MCP sidecars. The GUI process writes a token file and connection metadata under `~/.f8/studio/automation/` using private file permissions; sidecars must authenticate every request.
+
+Automation clients must not mutate Qt objects directly. The local control server runs on a background thread and forwards each request to `StudioAutomationHost` on the Qt main thread. Graph changes are expressed as explicit typed patch operations (`createNode`, `connectPorts`, `setNodeState`, etc.) instead of JSONPath or dynamic attribute dispatch. Mutating requests include `expectedRevision` so LLM-driven edits can fail fast when the user has changed the graph.
+
+Longer observation requests stay off the Qt thread. `runtime.watchState` waits on the automation observation store from the server thread, while `runtime.samplePort` installs a bounded short-lived subscription through the bridge runtime transport and returns capped JSON-safe samples. JSON data values may be included when they fit the caller's `maxValueBytes`; binary or oversized payloads return metadata only. High-frequency counters and port output samples remain monitor/data-channel concerns, not service `stateFields`.
+
+Codex MCP example:
+
+```json
+{
+  "mcpServers": {
+    "f8pystudio": {
+      "command": "pixi",
+      "args": ["run", "python", "-m", "f8pystudio.mcp.server"],
+      "cwd": "/home/sxs/SS/Feel8/f8studio"
+    }
+  }
+}
+```

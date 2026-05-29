@@ -11,6 +11,11 @@ from f8pysdk.service_runtime_tools.inventory.policy import (
     DISABLED_SERVICE_CLASSES_ENV,
     split_service_class_values,
 )
+from f8pystudio.app.env_names import (
+    AUTOMATION_ENABLED_ENV,
+    AUTOMATION_PORT_FILE_ENV,
+    AUTOMATION_TOKEN_FILE_ENV,
+)
 from f8pystudio.bridge.runtime_config import PyStudioServiceBridgeConfig
 from f8pystudio.diagnostics.logging import configure_root_logging_from_env
 from f8pystudio.diagnostics.process_logging import install_process_diagnostics
@@ -114,6 +119,15 @@ def _install_disabled_service_env(disabled_service_classes: tuple[str, ...]) -> 
     os.environ.pop(DISABLED_SERVICE_CLASSES_ENV, None)
 
 
+def _install_automation_env(args: argparse.Namespace) -> None:
+    if bool(args.automation):
+        os.environ[AUTOMATION_ENABLED_ENV] = "1"
+    else:
+        os.environ.pop(AUTOMATION_ENABLED_ENV, None)
+    _set_env_or_clear(AUTOMATION_TOKEN_FILE_ENV, str(args.automation_token_file or "").strip() or None)
+    _set_env_or_clear(AUTOMATION_PORT_FILE_ENV, str(args.automation_port_file or "").strip() or None)
+
+
 def _force_process_exit(exit_code: int) -> None:
     try:
         sys.stdout.flush()
@@ -183,6 +197,21 @@ def main(argv: list[str] | None = None, *, force_process_exit: bool = False) -> 
             f"(env: {DISABLED_SERVICE_CLASSES_ENV})."
         ),
     )
+    parser.add_argument(
+        "--automation",
+        action="store_true",
+        help="Enable local loopback automation control server for CLI/MCP sidecars.",
+    )
+    parser.add_argument(
+        "--automation-token-file",
+        default="",
+        help="Path for the local automation auth token file (default: ~/.f8/studio/automation/token).",
+    )
+    parser.add_argument(
+        "--automation-port-file",
+        default="",
+        help="Path for local automation connection metadata (default: ~/.f8/studio/automation/connection.json).",
+    )
     args = parser.parse_args(argv)
 
     from f8pystudio.app.program import PyStudioProgram
@@ -193,6 +222,7 @@ def main(argv: list[str] | None = None, *, force_process_exit: bool = False) -> 
     config = _build_bridge_config(args)
     _install_runtime_env(config)
     _install_disabled_service_env(_split_service_class_values(list(args.disable_service or [])))
+    _install_automation_env(args)
     prog = PyStudioProgram(config)
     if args.describe:
         print(prog.describe_json_text())

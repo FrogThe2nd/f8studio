@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 from dataclasses import dataclass
 from typing import Any
 
@@ -12,6 +13,7 @@ class _CommandResponse:
     ok: bool
     result: dict[str, Any]
     error_message: str | None = None
+    payload: dict[str, Any] | None = None
 
 
 class _CommandGateway:
@@ -51,6 +53,16 @@ class _Harness(RemoteCommandControllerMixin):
             return False
         self._submitted.append(coro)
         return True
+
+    def _submit_async_future(self, coro: Any, *, context: str) -> concurrent.futures.Future[Any] | None:
+        _ = context
+        if not self._submit_ok:
+            if asyncio.iscoroutine(coro):
+                coro.close()
+            return None
+        future: concurrent.futures.Future[Any] = concurrent.futures.Future()
+        future.set_result(asyncio.run(coro))
+        return future
 
     def _emit_remote_command_response_safe(self, req_id: str, result: object, err: object) -> None:
         self.emitted_responses.append((str(req_id), result, err))
@@ -142,3 +154,35 @@ def test_invoke_remote_command_logs_rejection() -> None:
 
     assert len(bridge._command_gateway.calls) == 1
     assert any("failed" in line and "denied" in line for line in bridge.logs)
+
+
+def test_invoke_remote_command_and_wait_returns_result() -> None:
+    bridge = _Harness(gateway=_CommandGateway(response=_CommandResponse(ok=True, result={"pong": True})))
+
+    result = bridge.invoke_remote_command_and_wait(
+        service_id="svc_wait",
+        call="ping",
+        args={"x": 1},
+        timeout_s=1.0,
+    )
+
+    assert result["submitted"] is True
+    assert result["completed"] is True
+    assert result["ok"] is True
+    assert result["result"] == {"pong": True}
+    assert len(bridge._command_gateway.calls) == 1
+
+
+def test_invoke_remote_command_and_wait_reports_submit_failure() -> None:
+    bridge = _Harness(submit_ok=False)
+
+    result = bridge.invoke_remote_command_and_wait(
+        service_id="svc_wait_fail",
+        call="ping",
+        args={},
+        timeout_s=1.0,
+    )
+
+    assert result["submitted"] is False
+    assert result["ok"] is False
+    assert result["error"] == "submit failed"

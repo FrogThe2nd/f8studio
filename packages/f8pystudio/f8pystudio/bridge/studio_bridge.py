@@ -72,6 +72,12 @@ _FUTURE_RESULT_ERRORS = (
     TypeError,
     ValueError,
 )
+_SUBMITTED_FUTURE_RESULT_ERRORS = (
+    concurrent.futures.CancelledError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
 
 
 class PyStudioServiceBridge(
@@ -285,11 +291,43 @@ class PyStudioServiceBridge(
                 return False
             self._report_exception(context, exc)
             return False
+
+    def _submit_async_future(self, coro: Any, *, context: str) -> concurrent.futures.Future[Any] | None:
+        if self._shutting_down or (not self._async.is_accepting_submissions()):
+            if asyncio.iscoroutine(coro):
+                coro.close()
+            return None
+        try:
+            return self._async.submit(coro)
+        except RuntimeError as exc:
+            if asyncio.iscoroutine(coro):
+                coro.close()
+            if self._shutting_down or (not self._async.is_accepting_submissions()):
+                return None
+            self._report_exception(context, exc)
+            return None
         except TypeError as exc:
             if asyncio.iscoroutine(coro):
                 coro.close()
             self._report_exception(context, exc)
-            return False
+            return None
+
+    def _wait_for_submitted_future(
+        self,
+        future: concurrent.futures.Future[Any],
+        *,
+        timeout_s: float,
+        context: str,
+        timeout_message: str,
+    ) -> dict[str, Any]:
+        try:
+            return {"completed": True, "result": future.result(timeout=float(timeout_s)), "error": ""}
+        except concurrent.futures.TimeoutError:
+            self._emit_log_line(str(timeout_message))
+            return {"completed": False, "result": None, "error": "timeout"}
+        except _SUBMITTED_FUTURE_RESULT_ERRORS as exc:
+            self._report_exception(context, exc)
+            return {"completed": True, "result": None, "error": f"{type(exc).__name__}: {exc}"}
 
     def _ensure_async_runtime_started(self) -> None:
         if self._async_started:

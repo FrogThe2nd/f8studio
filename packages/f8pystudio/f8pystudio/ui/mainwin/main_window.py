@@ -31,6 +31,7 @@ from f8pystudio.bridge.studio_bridge import (
     PyStudioServiceBridge,
     PyStudioServiceBridgeConfig,
 )
+from f8pystudio.automation.gui_host import StudioAutomationHost
 from f8pystudio.studio_specs.registry import SERVICE_CLASS as STUDIO_SERVICE_CLASS
 
 logger = logging.getLogger(__name__)
@@ -130,6 +131,7 @@ class F8StudioMainWin(
     _runtime_state_sync: RuntimeStateSyncController
     _global_hotkey_controller: ControlPanelGlobalHotkeyController
     _monitor_alert_notifier: MonitorAlertNotifier
+    _automation_host: StudioAutomationHost | None
 
     def __init__(
         self,
@@ -137,6 +139,9 @@ class F8StudioMainWin(
         parent=None,
         *,
         bridge: PyStudioServiceBridge | None = None,
+        automation_enabled: bool = False,
+        automation_token_file: str | None = None,
+        automation_port_file: str | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("F8PyStudio")
@@ -169,6 +174,7 @@ class F8StudioMainWin(
         self._closing = False
         self._shutdown_started = False
         self._auto_load_worker = None
+        self._automation_host = None
 
         self.studio_graph = F8StudioGraph(asset_cache_auto_refresh=False)
         self.studio_graph.node_factory.clear_registered_nodes()
@@ -252,6 +258,20 @@ class F8StudioMainWin(
             bridge=self._bridge,
             studio_service_class=STUDIO_SERVICE_CLASS,
         )
+        if automation_enabled:
+            self._automation_host = StudioAutomationHost(
+                main_window=self,
+                studio_graph=self.studio_graph,
+                bridge=self._bridge,
+                token_file=automation_token_file,
+                port_file=automation_port_file,
+                parent=self,
+            )
+            automation_info = self._automation_host.start()
+            self._log_dock.append(
+                "studio",
+                f"[automation] listening on {automation_info.host}:{automation_info.port}\n",
+            )
         self._global_hotkey_controller = ControlPanelGlobalHotkeyController(
             studio_graph=self.studio_graph,
             emit_log_line=self._append_studio_log_line,
@@ -344,6 +364,10 @@ class F8StudioMainWin(
             return
         self._shutdown_started = True
         self._closing = True
+        self._run_shutdown_step(
+            "automation-host-stop",
+            lambda: self._automation_host.stop() if self._automation_host is not None else None,
+        )
         self._run_shutdown_step("asset-cache-unsubscribe", self._clear_asset_cache_changed_subscription)
         self._run_shutdown_step(
             "timer-periodic-auto-save",

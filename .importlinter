@@ -39,3 +39,17 @@ forbidden_modules =
     f8pystudio.operators
     f8pystudio.render_nodes
     f8pystudio.app
+
+[importlinter:contract:automation-domain-boundary]
+name = automation.domain remains pure transport/domain types
+type = forbidden
+source_modules =
+    f8pystudio.automation.domain
+forbidden_modules =
+    f8pystudio.assets
+    f8pystudio.bridge
+    f8pystudio.nodegraph
+    f8pystudio.ui
+    f8pystudio.operators
+    f8pystudio.render_nodes
+    f8pystudio.app

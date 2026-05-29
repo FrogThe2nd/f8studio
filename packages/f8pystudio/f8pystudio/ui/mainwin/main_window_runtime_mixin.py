@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from ..widgets.service_log_widget import ServiceLogDock
     from .service_manager_widget import ServiceManagerWidget
     from f8pystudio.bridge.studio_bridge import PyStudioServiceBridge
+    from f8pystudio.automation.gui_host import StudioAutomationHost
 
 logger = logging.getLogger(__name__)
 _BRIDGE_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
@@ -38,6 +39,7 @@ class MainWindowRuntimeMixin:
         _prop_editor: F8StudioSingleNodePropertiesWidget
         _runtime_state_sync: RuntimeStateSyncController
         _monitor_alert_notifier: MonitorAlertNotifier
+        _automation_host: StudioAutomationHost | None
 
         def _mark_auto_deploy_synced(self, *, compiled: CompiledRuntimeGraphs | None = None) -> None: ...
 
@@ -190,6 +192,18 @@ class MainWindowRuntimeMixin:
         value: object,
         ts_ms: object,
     ) -> None:
+        automation_host = self._automation_host
+        if automation_host is not None:
+            try:
+                automation_host.record_runtime_state(
+                    service_id=service_id,
+                    node_id=node_id,
+                    field=field,
+                    value=value,
+                    ts_ms=int(ts_ms or 0),
+                )
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                logger.exception("failed to record automation runtime state nodeId=%s field=%s", node_id, field)
         self._runtime_state_sync.on_runtime_state_updated(service_id, node_id, field, value, ts_ms)
 
     def _on_ui_command(self, cmd: UiCommand) -> None:

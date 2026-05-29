@@ -6,10 +6,12 @@ from typing import Any
 
 from qtpy import QtCore
 
+from f8pysdk.f8_naming import data_key
 from f8pysdk.specs import F8RuntimeGraph
 from f8pysdk.f8_naming import ensure_token
 from f8pysdk.state import StateWriteError
 
+from .data_port_sampler import summarize_data_port_payload
 from .json_codec import coerce_json_value
 from .managed_service_inventory import collect_managed_service_inventory
 from .rungraph_deploy_flow import pick_compiled
@@ -29,6 +31,7 @@ REMOTE_SERVICE_ENSURE_CONCURRENCY = 4
 _REMOTE_STATE_WATCH_APPLY_ERRORS = (Exception,)
 _REMOTE_SERVICE_ENSURE_ERRORS = (Exception,)
 _LOCAL_STATE_PUBLISH_ERRORS = (Exception,)
+_DATA_PORT_SAMPLE_ERRORS = (AttributeError, OSError, RuntimeError, TimeoutError, TypeError, ValueError)
 
 
 class DeployStateControllerMixin:
@@ -80,6 +83,47 @@ class DeployStateControllerMixin:
         if not bool(self._managed_active):
             self.set_managed_active(False)
 
+    def deploy_and_wait(self, compiled: CompiledRuntimeGraphs, *, timeout_s: float = 20.0) -> dict[str, Any]:
+        """
+        Synchronous automation boundary for full deploy.
+
+        GUI callers keep using `deploy()`; CLI/MCP callers use this so the
+        response can state whether the async deploy completed before timeout.
+        """
+        self._remember_compiled_graphs(compiled)
+        inventory = collect_managed_service_inventory(
+            services=list(compiled.global_graph.services or []),
+            studio_service_id=self.studio_service_id,
+            studio_service_class=SERVICE_CLASS,
+            on_collect_error=lambda exc: self._emit_log_line(f"start service failed: {exc}"),
+        )
+        previous_service_classes = dict(self._managed_service_classes)
+        self._managed_service_ids = set(inventory.service_ids)
+        self._managed_service_classes = dict(inventory.service_classes)
+        future = self._submit_async_future(
+            self._ensure_remote_services_and_deploy_async(
+                compiled,
+                start_order=tuple(inventory.start_order),
+                previous_service_classes=previous_service_classes,
+            ),
+            context="submit deploy_and_wait failed",
+        )
+        if future is None:
+            return {"submitted": False, "completed": False, "error": "submit failed"}
+        completed = self._wait_for_submitted_future(
+            future,
+            timeout_s=float(timeout_s),
+            context="deploy_and_wait failed",
+            timeout_message="deploy_and_wait timed out",
+        )
+        if not bool(self._managed_active):
+            self.set_managed_active(False)
+        return {
+            "submitted": True,
+            "completed": bool(completed["completed"]),
+            "error": str(completed["error"] or ""),
+        }
+
     def deploy_service_rungraph(self, service_id: str, *, compiled: CompiledRuntimeGraphs | None = None) -> None:
         """
         Deploy the current per-service rungraph to a running service instance (best-effort).
@@ -108,6 +152,53 @@ class DeployStateControllerMixin:
             await self._deploy_service_rungraph_async(sid, compiled=compiled)
 
         self._submit_async(_do(), context=f"submit deploy_service_rungraph failed serviceId={sid}")
+
+    def deploy_service_and_wait(
+        self,
+        service_id: str,
+        *,
+        compiled: CompiledRuntimeGraphs | None = None,
+        timeout_s: float = 10.0,
+    ) -> dict[str, Any]:
+        try:
+            sid = ensure_token(str(service_id), label="service_id")
+        except ValueError as exc:
+            return {"submitted": False, "completed": False, "error": str(exc)}
+        if sid == self.studio_service_id:
+            return {"submitted": False, "completed": False, "error": "cannot deploy studio service rungraph directly"}
+
+        async def _do() -> dict[str, Any]:
+            await self._refresh_studio_runtime_async(compiled=compiled)
+            resolved_compiled = pick_compiled(compiled, self._last_compiled)
+            if resolved_compiled is None:
+                return {"deployed": False, "error": "no compiled rungraph available"}
+            desired_class = ""
+            for service in list(resolved_compiled.global_graph.services or []):
+                if str(service.serviceId or "") == sid:
+                    desired_class = str(service.serviceClass or "").strip()
+                    break
+            if not await self.ensure_service_available(sid, desired_class):
+                return {"deployed": False, "error": "service unavailable"}
+            await self._deploy_service_rungraph_async(sid, compiled=resolved_compiled)
+            return {"deployed": True, "error": ""}
+
+        future = self._submit_async_future(_do(), context=f"submit deploy_service_and_wait failed serviceId={sid}")
+        if future is None:
+            return {"submitted": False, "completed": False, "error": "submit failed"}
+        completed = self._wait_for_submitted_future(
+            future,
+            timeout_s=float(timeout_s),
+            context=f"deploy_service_and_wait failed serviceId={sid}",
+            timeout_message=f"deploy_service_and_wait timed out serviceId={sid}",
+        )
+        result = completed["result"]
+        result_dict = result if isinstance(result, dict) else {}
+        return {
+            "submitted": True,
+            "completed": bool(completed["completed"]),
+            "deployed": bool(result_dict.get("deployed", False)),
+            "error": str(completed["error"] or result_dict.get("error") or ""),
+        }
 
     def _build_studio_runtime_graph(self, compiled: CompiledRuntimeGraphs) -> F8RuntimeGraph:
         return build_studio_runtime_graph(compiled, studio_service_id=self.studio_service_id)
@@ -279,3 +370,141 @@ class DeployStateControllerMixin:
             _do(),
             context=f"submit set_remote_state failed serviceId={service_id} nodeId={node_id} field={field}",
         )
+
+    def set_remote_state_and_wait(
+        self,
+        service_id: str,
+        node_id: str,
+        field: str,
+        value: Any,
+        *,
+        timeout_s: float = 2.0,
+    ) -> dict[str, Any]:
+        try:
+            sid = ensure_token(str(service_id), label="service_id")
+            nid = ensure_token(str(node_id), label="node_id")
+        except ValueError as exc:
+            return {"submitted": False, "completed": False, "accepted": False, "error": str(exc)}
+        state_field = str(field or "").strip()
+        if not state_field:
+            return {"submitted": False, "completed": False, "accepted": False, "error": "field is required"}
+        value_json = coerce_json_value(value)
+
+        async def _do() -> dict[str, Any]:
+            requester = await self._ensure_requester()
+            if requester is None:
+                return {"accepted": False, "rejected": False, "error": "requester unavailable"}
+            result = await request_set_remote_state(
+                requester,
+                service_id=sid,
+                node_id=nid,
+                field=state_field,
+                value=value_json,
+                attempts=3,
+                timeout_s=0.5,
+                retry_sleep_s=0.1,
+            )
+            return {
+                "accepted": bool(result.accepted),
+                "rejected": bool(result.rejected),
+                "rejectCode": result.reject_code,
+                "rejectMessage": result.reject_message,
+                "error": "",
+            }
+
+        future = self._submit_async_future(
+            _do(),
+            context=f"submit set_remote_state_and_wait failed serviceId={sid} nodeId={nid} field={state_field}",
+        )
+        if future is None:
+            return {"submitted": False, "completed": False, "accepted": False, "error": "submit failed"}
+        completed = self._wait_for_submitted_future(
+            future,
+            timeout_s=float(timeout_s),
+            context=f"set_remote_state_and_wait failed serviceId={sid} nodeId={nid} field={state_field}",
+            timeout_message=f"set_remote_state_and_wait timed out serviceId={sid} nodeId={nid} field={state_field}",
+        )
+        result = completed["result"]
+        result_dict = result if isinstance(result, dict) else {}
+        return {
+            "submitted": True,
+            "completed": bool(completed["completed"]),
+            "accepted": bool(result_dict.get("accepted", False)),
+            "rejected": bool(result_dict.get("rejected", False)),
+            "rejectCode": str(result_dict.get("rejectCode") or ""),
+            "rejectMessage": str(result_dict.get("rejectMessage") or ""),
+            "error": str(completed["error"] or result_dict.get("error") or ""),
+        }
+
+    def sample_data_port_and_wait(
+        self,
+        service_id: str,
+        node_id: str,
+        port: str,
+        *,
+        limit: int = 1,
+        timeout_s: float = 2.0,
+        include_value: bool = True,
+        max_value_bytes: int = 65536,
+    ) -> dict[str, Any]:
+        try:
+            sid = ensure_token(str(service_id), label="service_id")
+            nid = ensure_token(str(node_id), label="node_id")
+            port_id = ensure_token(str(port), label="port_id")
+        except ValueError as exc:
+            return {"submitted": False, "completed": False, "samples": [], "error": str(exc)}
+        sample_limit = max(1, min(int(limit), 100))
+        timeout = max(0.0, float(timeout_s))
+
+        async def _do() -> dict[str, Any]:
+            transport = await self._ensure_runtime_transport()
+            key = data_key(sid, from_node_id=nid, port_id=port_id)
+            samples: list[dict[str, Any]] = []
+            done = asyncio.Event()
+
+            async def _on_sample(sample_key: str, payload: bytes) -> None:
+                samples.append(
+                    summarize_data_port_payload(
+                        service_id=sid,
+                        node_id=nid,
+                        port=port_id,
+                        key=str(sample_key),
+                        payload=bytes(payload),
+                        include_value=bool(include_value),
+                        max_value_bytes=int(max_value_bytes),
+                    )
+                )
+                if len(samples) >= sample_limit:
+                    done.set()
+
+            sub = await transport.subscribe(key, cb=_on_sample)
+            try:
+                try:
+                    await asyncio.wait_for(done.wait(), timeout=timeout)
+                except asyncio.TimeoutError:
+                    return {"samples": list(samples[-sample_limit:]), "timedOut": True, "error": ""}
+                return {"samples": list(samples[-sample_limit:]), "timedOut": False, "error": ""}
+            finally:
+                await sub.unsubscribe()
+
+        future = self._submit_async_future(
+            _do(),
+            context=f"submit sample_data_port_and_wait failed serviceId={sid} nodeId={nid} port={port_id}",
+        )
+        if future is None:
+            return {"submitted": False, "completed": False, "samples": [], "error": "submit failed"}
+        completed = self._wait_for_submitted_future(
+            future,
+            timeout_s=timeout + 1.0,
+            context=f"sample_data_port_and_wait failed serviceId={sid} nodeId={nid} port={port_id}",
+            timeout_message=f"sample_data_port_and_wait timed out serviceId={sid} nodeId={nid} port={port_id}",
+        )
+        result = completed["result"]
+        result_dict = result if isinstance(result, dict) else {}
+        return {
+            "submitted": True,
+            "completed": bool(completed["completed"]),
+            "samples": list(result_dict.get("samples") if isinstance(result_dict.get("samples"), list) else []),
+            "timedOut": bool(result_dict.get("timedOut", False)),
+            "error": str(completed["error"] or result_dict.get("error") or ""),
+        }
