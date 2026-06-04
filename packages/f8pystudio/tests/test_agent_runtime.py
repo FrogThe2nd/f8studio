@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import sys
 import types
 from collections.abc import AsyncIterator
@@ -29,6 +30,12 @@ class FakeAgentSession:
     def __init__(self, *, session_id: str | None = None, service_session_id: str | None = None) -> None:
         self.session_id = session_id
         self.service_session_id = service_session_id
+
+
+_fake_stream_context: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "fake_agent_stream_context",
+    default=None,
+)
 
 
 class FakeAgent:
@@ -64,6 +71,10 @@ class FakeAgent:
                 return _never_stream()
             if self.stream_mode == "idle_timeout":
                 return _idle_timeout_stream()
+            if self.stream_mode == "context_token":
+                return _context_token_stream(_fake_stream_context.set("active"))
+            if self.stream_mode == "heartbeat":
+                return _heartbeat_stream()
             return _fake_stream()
         return _fake_response()
 
@@ -86,6 +97,21 @@ async def _idle_timeout_stream() -> AsyncIterator[FakeAgentResponseUpdate]:
     yield FakeAgentResponseUpdate("hel")
     await asyncio.sleep(10)
     yield FakeAgentResponseUpdate("late")
+
+
+async def _context_token_stream(
+    token: contextvars.Token[str | None],
+) -> AsyncIterator[FakeAgentResponseUpdate]:
+    try:
+        yield FakeAgentResponseUpdate("ctx")
+    finally:
+        _fake_stream_context.reset(token)
+
+
+async def _heartbeat_stream() -> AsyncIterator[FakeAgentResponseUpdate]:
+    yield FakeAgentResponseUpdate("")
+    await asyncio.sleep(0.02)
+    yield FakeAgentResponseUpdate("ok")
 
 
 def _install_fake_agent_framework(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -293,3 +319,71 @@ def test_runtime_abort_wakes_stream_wait(
     asyncio.run(_collect())
 
     assert events == []
+
+
+def test_runtime_stream_consumes_provider_stream_in_creation_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    FakeAgent.calls.clear()
+    FakeAgent.stream_mode = "context_token"
+    _install_fake_agent_framework(monkeypatch)
+    monkeypatch.setattr("f8pystudio.agents.runtime.build_chat_client", lambda _selection: object())
+
+    runtime = StudioAgentRuntime(_store(tmp_path))
+    events: list[StudioAgentEvent] = []
+
+    async def _collect() -> None:
+        async for event in runtime.run_stream(
+            StudioAgentRequest(
+                request_id="chat-context-token-1",
+                mode="chat",
+                messages=({"role": "user", "content": "hello"},),
+                chat_provider_id="openai",
+                chat_model_id="gpt-4.1",
+            )
+        ):
+            events.append(event)
+
+    asyncio.run(_collect())
+
+    assert events == [
+        StudioAgentEvent(kind="chunk", text="ctx"),
+        StudioAgentEvent(kind="done"),
+    ]
+
+
+def test_runtime_stream_treats_empty_provider_updates_as_heartbeat(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    FakeAgent.calls.clear()
+    FakeAgent.stream_mode = "heartbeat"
+    _install_fake_agent_framework(monkeypatch)
+    monkeypatch.setattr("f8pystudio.agents.runtime.build_chat_client", lambda _selection: object())
+
+    runtime = StudioAgentRuntime(
+        _store(tmp_path),
+        stream_first_event_timeout_s=0.01,
+        stream_idle_timeout_s=0.2,
+    )
+    events: list[StudioAgentEvent] = []
+
+    async def _collect() -> None:
+        async for event in runtime.run_stream(
+            StudioAgentRequest(
+                request_id="chat-heartbeat-1",
+                mode="chat",
+                messages=({"role": "user", "content": "hello"},),
+                chat_provider_id="openai",
+                chat_model_id="gpt-4.1",
+            )
+        ):
+            events.append(event)
+
+    asyncio.run(_collect())
+
+    assert events == [
+        StudioAgentEvent(kind="chunk", text="ok"),
+        StudioAgentEvent(kind="done"),
+    ]
