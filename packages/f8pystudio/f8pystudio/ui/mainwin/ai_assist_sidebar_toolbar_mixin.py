@@ -3,12 +3,11 @@ from __future__ import annotations
 import logging
 from typing import Protocol, cast
 
-from qtpy import QtCore, QtGui, QtWidgets
+from qtpy import QtWidgets
 
 from ...agents.graph_context import GraphContextSnapshot
 from ..dialogs.ai_context_inspector import AiContextInspectorDialog
-from ..support.ai_context_controls import set_status_label_text, usage_pie_icon
-from ..support.studio_theme import ai_context_button_qss, studio_dark_theme
+from ..support.ai_context_controls import set_status_label_text
 
 logger = logging.getLogger(__name__)
 
@@ -34,48 +33,6 @@ class _AiAssistSidebarToolbarHost(Protocol):
 
 
 class AiAssistSidebarToolbarMixin:
-    @QtCore.Slot(int, int)
-    def _on_context_usage_updated(self, used: int, total: int) -> None:
-        host = cast(_AiAssistSidebarToolbarHost, self)
-        if total <= 0:
-            return
-        used_ratio = max(0.0, min(1.0, used / total))
-        free_ratio = max(0.0, 1.0 - used_ratio)
-        p = studio_dark_theme().palette
-        if used_ratio < 0.5:
-            color = p.info
-        elif used_ratio < 0.8:
-            color = p.warning
-        else:
-            color = p.error
-
-        def _fmt(value: int) -> str:
-            return f"{value / 1000:.0f}k" if value >= 1000 else str(value)
-
-        free_pct = int(round(free_ratio * 100.0))
-        host._ctx_btn.setIcon(usage_pie_icon(used_ratio=used_ratio, color=QtGui.QColor(color)))
-        host._ctx_btn.setText(f"{free_pct}% free")
-        host._ctx_btn.setStyleSheet(ai_context_button_qss(text_color=color, include_background=True))
-        try:
-            breakdown = host._ai_bridge.get_context_breakdown()
-            host._ctx_btn.setToolTip(
-                f"AI Context Usage: {free_pct}% free\n"
-                f"System: {_fmt(int(breakdown['system_tokens']))} | "
-                f"Chat: {_fmt(int(breakdown['chat_tokens']))}\n"
-                f"Used: {_fmt(int(breakdown['used_tokens']))} / {_fmt(int(breakdown['total_tokens']))} tok"
-            )
-        except Exception:
-            logger.exception("Failed to update AI context tooltip")
-
-    def _on_ctx_menu_requested(self, pos: QtCore.QPoint) -> None:
-        menu = QtWidgets.QMenu(cast(QtWidgets.QWidget, self))
-        inspect_act = menu.addAction("Inspect Current Context Payload...")
-        inspect_act.triggered.connect(self._inspect_context)
-        inspect_graph_act = menu.addAction("Inspect Graph Context Payload...")
-        inspect_graph_act.triggered.connect(self._inspect_graph_context)
-        host = cast(_AiAssistSidebarToolbarHost, self)
-        menu.exec(host._ctx_btn.mapToGlobal(pos))
-
     def _inspect_context(self) -> None:
         host = cast(_AiAssistSidebarToolbarHost, self)
         dlg = AiContextInspectorDialog(host._ai_bridge.get_context_report(), cast(QtWidgets.QWidget, self))

@@ -14,6 +14,7 @@ from ...nodegraph.edge_rules import EDGE_KIND_DATA, EDGE_KIND_EXEC, EDGE_KIND_ST
 from ...ui.support.qt_lifecycle import qt_runtime_error_is_object_deleted
 from ...ui.support.studio_theme import label_qss, studio_dark_theme
 from ...ui.support.ui_icons import StudioIcon, icon_for
+from ..agents.agent_debug_widget import AgentDebugWidget
 from ..support.service_inventory import collect_declared_services
 from ..widgets.layers_panel import LayersPanelWidget
 from ..widgets.node_property_panel import F8StudioSingleNodePropertiesWidget
@@ -64,6 +65,7 @@ class MainWindowDockBundle:
     node_library_dock: QtWidgets.QDockWidget
     layers_dock: QtWidgets.QDockWidget
     ai_assist_dock: QtWidgets.QDockWidget
+    agent_debug_dock: QtWidgets.QDockWidget
 
     @property
     def all_docks(self) -> list[QtWidgets.QDockWidget]:
@@ -73,6 +75,7 @@ class MainWindowDockBundle:
             self.node_library_dock,
             self.layers_dock,
             self.ai_assist_dock,
+            self.agent_debug_dock,
         ]
 
 
@@ -108,6 +111,7 @@ class MainWindowUiMixin:
         _node_library_dock: QtWidgets.QDockWidget
         _layers_dock: QtWidgets.QDockWidget
         _ai_assist_dock: QtWidgets.QDockWidget
+        _agent_debug_dock: QtWidgets.QDockWidget
         _dock_widgets: list[QtWidgets.QDockWidget]
         _service_manager_dock: QtWidgets.QDockWidget
         _service_manager: ServiceManagerWidget | None
@@ -117,6 +121,7 @@ class MainWindowUiMixin:
         _node_library_widget: F8StudioNodeLibraryWidget | None
         _unsubscribe_asset_cache_changed: Callable[[], None] | None
         _ai_assist_sidebar: AiAssistSidebarWidget | None
+        _agent_debug_widget: AgentDebugWidget | None
         _deferred_startup_scheduled: bool
         _deferred_startup_completed: bool
         _asset_cloud_sync_total: int
@@ -209,14 +214,20 @@ class MainWindowUiMixin:
                 title="AI Assist",
                 body="AI Assist will initialize when you open this dock.",
             ),
+            agent_debug_widget=self._build_deferred_dock_placeholder(
+                title="Agent Debug",
+                body="Agent debug evidence will initialize when you open this dock.",
+            ),
         )
         self._properties_dock = dock_bundle.properties_dock
         self._node_library_dock = dock_bundle.node_library_dock
         self._layers_dock = dock_bundle.layers_dock
         self._ai_assist_dock = dock_bundle.ai_assist_dock
+        self._agent_debug_dock = dock_bundle.agent_debug_dock
         self._dock_widgets = dock_bundle.all_docks
         self._node_library_dock.visibilityChanged.connect(self._on_node_library_dock_visibility_changed)  # type: ignore[attr-defined]
         self._ai_assist_dock.visibilityChanged.connect(self._on_ai_assist_dock_visibility_changed)  # type: ignore[attr-defined]
+        self._agent_debug_dock.visibilityChanged.connect(self._on_agent_debug_dock_visibility_changed)  # type: ignore[attr-defined]
 
     def _build_deferred_dock_placeholder(self, *, title: str, body: str) -> QtWidgets.QWidget:
         container = QtWidgets.QWidget(self)
@@ -281,6 +292,18 @@ class MainWindowUiMixin:
         self._ai_assist_sidebar = sidebar
         self._replace_dock_widget(self._ai_assist_dock, sidebar)
 
+    def _ensure_agent_debug_widget(self) -> None:
+        if self._agent_debug_widget is not None:
+            return
+        widget = AgentDebugWidget(
+            bridge=self._bridge,
+            studio_graph=self.studio_graph,
+            deploy_requested=self._on_deploy_action,
+            parent=self,
+        )
+        self._agent_debug_widget = widget
+        self._replace_dock_widget(self._agent_debug_dock, widget)
+
     def _require_asset_cloud_sync_client(self) -> VariantSyncClient:
         sync_client = self._asset_cloud_sync_client
         if sync_client is None:
@@ -313,6 +336,8 @@ class MainWindowUiMixin:
             QtCore.QTimer.singleShot(0, self._ensure_node_library_widget)
         if self._ai_assist_dock.isVisible():
             QtCore.QTimer.singleShot(0, self._ensure_ai_assist_sidebar)
+        if self._agent_debug_dock.isVisible():
+            QtCore.QTimer.singleShot(0, self._ensure_agent_debug_widget)
 
     @QtCore.Slot(int)
     def _on_subscription_sync_started(self, total: int) -> None:
@@ -384,6 +409,14 @@ class MainWindowUiMixin:
             return
         QtCore.QTimer.singleShot(0, self._ensure_ai_assist_sidebar)
 
+    @QtCore.Slot(bool)
+    def _on_agent_debug_dock_visibility_changed(self, visible: bool) -> None:
+        if not bool(visible):
+            return
+        if not self._deferred_startup_completed:
+            return
+        QtCore.QTimer.singleShot(0, self._ensure_agent_debug_widget)
+
     def _setup_service_manager_dock(self) -> None:
         manager = ServiceManagerWidget(
             bridge=self._bridge,
@@ -403,6 +436,7 @@ class MainWindowUiMixin:
             self._node_library_dock.toggleViewAction(),
             self._layers_dock.toggleViewAction(),
             self._ai_assist_dock.toggleViewAction(),
+            self._agent_debug_dock.toggleViewAction(),
             self._log_dock.toggleViewAction(),
             self._service_manager_dock.toggleViewAction(),
         ]
@@ -413,6 +447,7 @@ class MainWindowUiMixin:
             self._node_library_dock,
             self._layers_dock,
             self._ai_assist_dock,
+            self._agent_debug_dock,
             self._log_dock,
             self._service_manager_dock,
         ]
@@ -815,6 +850,7 @@ class MainWindowUiMixin:
         node_library_widget: QtWidgets.QWidget,
         layers_widget: QtWidgets.QWidget,
         ai_assist_widget: QtWidgets.QWidget,
+        agent_debug_widget: QtWidgets.QWidget,
     ) -> MainWindowDockBundle:
         properties_dock = self._add_dock_widget(
             title="Properties",
@@ -851,12 +887,22 @@ class MainWindowUiMixin:
         )
         self.tabifyDockWidget(node_library_dock, ai_assist_dock)
 
+        agent_debug_dock = self._add_dock_widget(
+            title="Agent Debug",
+            object_name="AgentDebugDock",
+            widget=agent_debug_widget,
+            area=QtCore.Qt.DockWidgetArea.RightDockWidgetArea,
+            icon=StudioIcon.SERVICE_MONITOR,
+        )
+        self.tabifyDockWidget(node_library_dock, agent_debug_dock)
+
         return MainWindowDockBundle(
             properties_dock=properties_dock,
             log_dock=log_dock,
             node_library_dock=node_library_dock,
             layers_dock=layers_dock,
             ai_assist_dock=ai_assist_dock,
+            agent_debug_dock=agent_debug_dock,
         )
 
     def _build_service_manager_dock(

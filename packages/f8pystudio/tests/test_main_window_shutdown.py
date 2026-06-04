@@ -43,6 +43,9 @@ class _ShutdownHarness:
     def _shutdown_ai_assist_sidebar(self) -> None:
         self.events.append("ai-sidebar")
 
+    def _shutdown_agent_debug_widget(self) -> None:
+        self.events.append("agent-debug")
+
     def _teardown_graph_nodes_for_exit(self) -> None:
         self.events.append("graph-teardown")
 
@@ -114,6 +117,7 @@ def test_shutdown_for_app_exit_continues_after_step_failure() -> None:
         "auto-save",
         "hotkeys",
         "ai-sidebar",
+        "agent-debug",
         "graph-teardown",
         "bridge",
         "qt-quit",

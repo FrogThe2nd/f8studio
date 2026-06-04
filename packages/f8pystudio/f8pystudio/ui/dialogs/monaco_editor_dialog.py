@@ -6,6 +6,7 @@ from typing import Any
 from qtpy import QtCore, QtGui, QtWidgets
 
 from ...editor_assist.session import EditorSessionController
+from ...ui.agents import AgentContextUsageButton, AgentQuickSettingsController, AgentSurfaceScope
 from ...ui.support.web_asset_utils import render_prism_asset_html, resolve_monaco_base_url as resolve_web_monaco_base_url
 from ...ui.support.webengine_utils import (
     configure_default_webengine_profile,
@@ -13,11 +14,9 @@ from ...ui.support.webengine_utils import (
     set_webengine_html,
 )
 from .ai_context_inspector import AiContextInspectorDialog
-from ..support.ai_context_controls import set_tool_button_point_size, usage_pie_icon
 from ..support.monaco_editor_host import _ask_save_before_close, open_code_editor_dialog, open_code_editor_window
 from ..support.monaco_editor_page import MonacoEditorPageConfig, build_monaco_editor_html
-from ..support.studio_theme import ai_context_button_qss, studio_dark_theme
-from ..widgets.ai_quick_panel import AiQuickPanel
+from ..support.studio_theme import studio_dark_theme
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +63,6 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
     ) -> None:
         super().__init__(parent)
         self._controller = controller
-        theme_palette = studio_dark_theme().palette
 
         from PySide6 import QtWebChannel, QtWebEngineWidgets  # type: ignore[import-not-found]
 
@@ -82,31 +80,24 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
             self._web_channel.registerObject("pyAssist", assist_bridge)
         self._view.page().setWebChannel(self._web_channel)
 
-        self._ctx_btn = QtWidgets.QToolButton()
-        self._ctx_btn.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self._ctx_btn.setIconSize(QtCore.QSize(14, 14))
-        self._ctx_btn.setIcon(usage_pie_icon(used_ratio=0.0, color=QtGui.QColor(theme_palette.info)))
-        self._ctx_btn.setText("100% free")
-        self._ctx_btn.setToolTip("AI context usage\nUsed: 0 / 0 tok")
-        set_tool_button_point_size(self._ctx_btn, 10)
-        self._ctx_btn.setStyleSheet(ai_context_button_qss(text_color=theme_palette.text_muted, include_background=False))
-        self._ctx_btn.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
-        self._ctx_btn.customContextMenuRequested.connect(self._on_ctx_menu_requested)
-        self._controller.ai_bridge().context_usage_updated.connect(self._on_context_usage_updated)  # type: ignore[attr-defined]
-
-        self._ai_panel_btn = QtWidgets.QToolButton()
-        self._ai_panel_btn.setText("🤖")
-        self._ai_panel_btn.setCheckable(True)
-        self._ai_panel_btn.setToolTip("Toggle AI settings panel")
-        set_tool_button_point_size(self._ai_panel_btn, 16)
-        self._ai_panel_btn.setStyleSheet(
-            "QToolButton { border: none; padding: 0 4px; }"
-            f"QToolButton:checked {{ background: {theme_palette.button_hover_bg}; border-radius: 3px; }}"
+        self._ctx_btn = AgentContextUsageButton(
+            self._controller.ai_bridge(),
+            scope=AgentSurfaceScope.EDITOR,
+            parent=self,
         )
-        self._ai_panel_btn.toggled.connect(self._on_ai_panel_toggle)  # type: ignore[attr-defined]
+        self._ctx_btn.inspect_context_requested.connect(self._inspect_context)  # type: ignore[attr-defined]
+        self._ctx_btn.inspect_graph_context_requested.connect(self._inspect_graph_context)  # type: ignore[attr-defined]
 
-        self._ai_quick_panel = AiQuickPanel(self._controller.ai_store(), self._controller.ai_bridge(), self)
-        self._ai_quick_panel.setVisible(False)
+        self._agent_settings = AgentQuickSettingsController(
+            store=self._controller.ai_store(),
+            bridge=self._controller.ai_bridge(),
+            host=self,
+            panel_parent=self,
+            scope=AgentSurfaceScope.EDITOR,
+        )
+        self._ai_panel_btn = self._agent_settings.button
+        self._ai_panel_btn.toggled.connect(self._on_ai_panel_toggle)  # type: ignore[attr-defined]
+        self._ai_quick_panel = self._agent_settings.panel
         self._ai_quick_panel.open_full_config_requested.connect(self._open_full_ai_config)  # type: ignore[attr-defined]
         self._ai_quick_panel.raise_()
 
@@ -249,68 +240,19 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
 
     @QtCore.Slot(bool)
     def _on_ai_panel_toggle(self, checked: bool) -> None:
-        self._ai_quick_panel.setVisible(checked)
         if checked:
-            self._ai_quick_panel.raise_()
             self._reposition_ai_panel()
 
     def _reposition_ai_panel(self) -> None:
-        rect = self._view.geometry()
-        if rect.width() <= 0:
-            return
-
-        self._ai_quick_panel.adjustSize()
-        panel_width = self._ai_quick_panel.width()
-        panel_height = self._ai_quick_panel.height()
-        margin = 10
-        x = rect.x() + margin
-        y = rect.y() + rect.height() - panel_height - margin
-        self._ai_quick_panel.move(x, y)
-
-    @QtCore.Slot(int, int)
-    def _on_context_usage_updated(self, used: int, total: int) -> None:
-        if total <= 0:
-            return
-        used_ratio = max(0.0, min(1.0, used / total))
-        free_ratio = max(0.0, 1.0 - used_ratio)
-        theme_palette = studio_dark_theme().palette
-        if used_ratio < 0.5:
-            color = theme_palette.info
-        elif used_ratio < 0.8:
-            color = theme_palette.warning
-        else:
-            color = theme_palette.error
-
-        def _fmt(value: int) -> str:
-            return f"{value / 1000:.0f}k" if value >= 1000 else str(value)
-
-        free_pct = int(round(free_ratio * 100.0))
-        self._ctx_btn.setIcon(usage_pie_icon(used_ratio=used_ratio, color=QtGui.QColor(color)))
-        self._ctx_btn.setText(f"{free_pct}% free")
-        set_tool_button_point_size(self._ctx_btn, 10)
-        self._ctx_btn.setStyleSheet(ai_context_button_qss(text_color=color, include_background=False))
-        try:
-            breakdown = self._controller.ai_bridge().get_context_breakdown()
-            tip = (
-                "AI Context Usage\n"
-                f"System: {_fmt(int(breakdown['system_tokens']))} tok\n"
-                f"Code: {_fmt(int(breakdown['code_tokens']))} tok\n"
-                f"Chat: {_fmt(int(breakdown['chat_tokens']))} tok\n"
-                f"Free: {free_pct}%\n"
-                f"Used: {_fmt(int(breakdown['used_tokens']))} / {_fmt(int(breakdown['total_tokens']))} tok"
-            )
-            self._ctx_btn.setToolTip(tip)
-        except Exception:
-            logger.exception("Failed to update Monaco AI context tooltip")
-
-    def _on_ctx_menu_requested(self, pos: QtCore.QPoint) -> None:
-        menu = QtWidgets.QMenu(self)
-        inspect_act = menu.addAction("Inspect Current Context Payload...")
-        inspect_act.triggered.connect(self._inspect_context)
-        menu.exec(self._ctx_btn.mapToGlobal(pos))
+        self._agent_settings.reposition_inside(self._view)
 
     def _inspect_context(self) -> None:
         report = self._controller.ai_bridge().get_context_report()
+        dlg = AiContextInspectorDialog(report, self)
+        dlg.exec()
+
+    def _inspect_graph_context(self) -> None:
+        report = self._controller.ai_bridge().get_chat_context_report()
         dlg = AiContextInspectorDialog(report, self)
         dlg.exec()
 

@@ -19,6 +19,7 @@ The migration goals are:
 ```text
 f8pystudio/agents/
   __init__.py
+  ag_ui.py
   clients.py
   graph_context.py
   memory.py
@@ -50,6 +51,29 @@ The former `f8pystudio.ai_assist` implementation has been removed. Existing UI n
 - `StudioAgentSessionRegistry` maps Studio session keys to MAF sessions so sidebar, graph, editor, and node-scoped work can share continuity.
 
 Qt and QWebChannel code uses `f8pystudio.agents.qt_bridge.AiLlmBridge`. That bridge preserves the frontend signal/slot API while delegating provider execution to `StudioAgentRuntime`.
+
+## Agent UI Surface
+
+PyStudio owns the production agent UI rather than embedding the MAF DevUI. MAF DevUI remains useful as a development and tracing surface, but it is not treated as a production Studio sidebar replacement.
+
+The product UI now has a shared Qt agent control layer in `f8pystudio.ui.agents`:
+
+- `AgentContextUsageButton` renders context budget state consistently for graph and editor surfaces.
+- `AgentQuickSettingsController` owns the reusable model/provider quick settings toggle and panel.
+- `AgentSurfaceScope` makes graph/editor/node/debug scope explicit at the UI boundary.
+- `AgentDebugWidget` provides a native Studio dock for graph compile evidence and runtime monitor snapshots.
+
+Existing graph sidebar and Monaco editor surfaces reuse these controls instead of each implementing their own AI toolbar styling and context usage logic.
+
+## Agent Debug Surface
+
+The Agent Debug dock is a Studio-native evidence view for graph/runtime debugging:
+
+- Compile current graph and display service graph count, service IDs, warnings, and errors.
+- Refresh bridge-backed service rows and selected service monitor evidence.
+- Trigger the existing Studio deploy action without bypassing compile/deploy safety.
+
+This dock is intentionally separate from the Service Monitor. Service Monitor remains the operational control table; Agent Debug is a compact evidence surface for human and agent debugging workflows.
 
 ## Provider Layer
 
@@ -93,6 +117,18 @@ MAF MCP consumption is exposed through `f8pystudio.agents.tools.mcp`:
 - `build_studio_mcp_stdio_tool()`
 
 PyStudio owns domain semantics and mutation safety. MAF/MCP own tool transport, external tool consumption, and provider orchestration.
+
+## AG-UI Direction
+
+`f8pystudio.agents.ag_ui` provides a typed, dependency-light adapter spike for AG-UI-style event payloads:
+
+- `AgUiRunEnvelope`
+- `AgUiEvent`
+- `encode_ag_ui_events()`
+- `graph_patch_preview_event()`
+- `runtime_evidence_event()`
+
+The adapter maps `StudioAgentEvent` stream chunks/errors/completion into AG-UI-style event dictionaries and exposes custom Studio events for graph patch previews and runtime evidence. This is not a hard UI dependency. It is a future integration boundary for web agent clients, MAF DevUI experiments, or approval/event streaming prototypes.
 
 ## Graph Workflow Validation
 
@@ -185,6 +221,7 @@ rg -n "QtNetwork|QNetworkAccessManager|QNetworkRequest|_test_chat_url|_build_pin
 - MAF connector availability still controls which providers are usable. Missing connector packages should fail clearly.
 - Model listing is not duplicated in Studio. Unknown/custom providers require manual model IDs unless MAF gains a stable model discovery surface.
 - Tool-call approval, richer workflow event UI, and durable project/node memory are future increments on top of the new package boundary.
+- AG-UI support is currently an adapter spike, not a full HTTP/SSE endpoint.
 - Agents must remain outside high-frequency script hooks such as per-frame `onData` or `onTick`.
 
 ## Reference Points

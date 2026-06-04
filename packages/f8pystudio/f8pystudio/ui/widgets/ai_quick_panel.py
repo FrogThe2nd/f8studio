@@ -18,6 +18,7 @@ from ...agents.qt_bridge import AiLlmBridge
 from ...agents.registry import ProviderConfig
 from ...agents.store import AiProviderStore
 from ..support.studio_theme import ai_quick_panel_qss, flat_link_button_qss, label_qss, studio_dark_theme
+from ..support.ui_icons import StudioIcon, icon_for
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +94,7 @@ class AiQuickPanel(QtWidgets.QWidget):
         self._inline_model_combo = QtWidgets.QComboBox()
         self._inline_model_combo.currentIndexChanged.connect(lambda _: self._on_inline_model_changed())  # type: ignore[attr-defined]
         self._inline_refresh_btn = QtWidgets.QToolButton()
-        self._inline_refresh_btn.setText("⟳")
+        self._inline_refresh_btn.setIcon(icon_for(self._inline_refresh_btn, StudioIcon.REFRESH))
         self._inline_refresh_btn.setToolTip("Load bundled default model IDs")
         self._inline_refresh_btn.clicked.connect(self._on_inline_refresh)  # type: ignore[attr-defined]
         inline_model_row.addWidget(self._inline_model_combo, 1)
@@ -111,7 +112,7 @@ class AiQuickPanel(QtWidgets.QWidget):
         self._chat_model_combo = QtWidgets.QComboBox()
         self._chat_model_combo.currentIndexChanged.connect(lambda _: self._on_chat_model_changed())  # type: ignore[attr-defined]
         self._chat_refresh_btn = QtWidgets.QToolButton()
-        self._chat_refresh_btn.setText("⟳")
+        self._chat_refresh_btn.setIcon(icon_for(self._chat_refresh_btn, StudioIcon.REFRESH))
         self._chat_refresh_btn.setToolTip("Load bundled default model IDs")
         self._chat_refresh_btn.clicked.connect(self._on_chat_refresh)  # type: ignore[attr-defined]
         chat_model_row.addWidget(self._chat_model_combo, 1)

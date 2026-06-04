@@ -7,10 +7,11 @@ from qtpy import QtCore, QtGui, QtWidgets
 from ...agents.graph_context import GraphContextSnapshot
 from ...agents.qt_bridge import AiLlmBridge
 from ...agents.store import AiProviderStore
+from ...ui.agents import AgentContextUsageButton, AgentQuickSettingsController, AgentSurfaceScope
 from ...ui.support.ai_assist_state import QtAiPanelStateStore
 from ...ui.support.web_asset_utils import render_prism_asset_html, resolve_web_asset_page_base_url
 from ...ui.support.ui_icons import StudioIcon, icon_for
-from ...ui.support.studio_theme import ai_context_button_qss, ai_status_label_qss, studio_dark_theme
+from ...ui.support.studio_theme import ai_status_label_qss, studio_dark_theme
 from ...ui.support.webengine_utils import (
     configure_default_webengine_profile,
     configure_webengine_local_content_access,
@@ -21,10 +22,7 @@ from ...ui.support.webengine_utils import (
 )
 from ..support.ai_context_controls import (
     configure_icon_tool_button,
-    set_tool_button_point_size,
-    usage_pie_icon,
 )
-from ..widgets.ai_quick_panel import AiQuickPanel
 from ..support.ai_assist_page import build_ai_assist_html
 from .ai_assist_sidebar_graph_context_mixin import (
     AiAssistSidebarGraphContextMixin,
@@ -75,17 +73,9 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
         self._view.page().setWebChannel(self._web_channel)
 
         # Context usage indicator
-        self._ctx_btn = QtWidgets.QToolButton()
-        self._ctx_btn.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self._ctx_btn.setIconSize(QtCore.QSize(14, 14))
-        self._ctx_btn.setIcon(usage_pie_icon(used_ratio=0.0, color=QtGui.QColor(theme_palette.info)))
-        self._ctx_btn.setText("100% free")
-        self._ctx_btn.setToolTip("AI context usage\nUsed: 0 / 0 tok")
-        set_tool_button_point_size(self._ctx_btn, 10)
-        self._ctx_btn.setStyleSheet(ai_context_button_qss(text_color=theme_palette.text_muted, include_background=True))
-        self._ctx_btn.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
-        self._ctx_btn.customContextMenuRequested.connect(self._on_ctx_menu_requested)
-        self._ai_bridge.context_usage_updated.connect(self._on_context_usage_updated)
+        self._ctx_btn = AgentContextUsageButton(self._ai_bridge, scope=AgentSurfaceScope.GRAPH, parent=self)
+        self._ctx_btn.inspect_context_requested.connect(self._inspect_context)  # type: ignore[attr-defined]
+        self._ctx_btn.inspect_graph_context_requested.connect(self._inspect_graph_context)  # type: ignore[attr-defined]
         self._ai_bridge.chat_context_snapshot_changed.connect(self._on_bridge_chat_context_changed)
 
         self._selected_node_label = QtWidgets.QLabel("Sel: none")
@@ -129,16 +119,15 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
             accent_color=theme_palette.success,
         )
         
-        # AI settings toggle button
-        self._ai_settings_btn = QtWidgets.QToolButton()
-        self._ai_settings_btn.setCheckable(True)
-        configure_icon_tool_button(
-            self._ai_settings_btn,
-            icon=icon_for(self._ai_settings_btn, StudioIcon.ROBOT_FACE),
-            tooltip="Toggle AI settings",
-            accent_color=theme_palette.purple,
+        self._agent_settings = AgentQuickSettingsController(
+            store=self._ai_store,
+            bridge=self._ai_bridge,
+            host=self,
+            panel_parent=self,
+            scope=AgentSurfaceScope.GRAPH,
         )
-        self._ai_settings_btn.toggled.connect(self._on_ai_settings_toggle)
+        self._agent_settings.button.toggled.connect(self._on_ai_settings_toggle)  # type: ignore[attr-defined]
+        self._ai_settings_btn = self._agent_settings.button
         
         # Toolbar Container
         self._toolbar_container = QtWidgets.QWidget()
@@ -165,9 +154,7 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
         toolbar_layout.addLayout(toolbar_row)
         toolbar_layout.addLayout(status_row)
 
-        # AI Quick Panel (floating overlay)
-        self._ai_quick_panel = AiQuickPanel(self._ai_store, self._ai_bridge, self)
-        self._ai_quick_panel.setVisible(False)
+        self._ai_quick_panel = self._agent_settings.panel
         self._ai_quick_panel.open_full_config_requested.connect(self._open_full_ai_config)
         
         # Layout
@@ -232,9 +219,7 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
                 pass
 
     def _on_ai_settings_toggle(self, checked: bool) -> None:
-        self._ai_quick_panel.setVisible(checked)
         if checked:
-            self._ai_quick_panel.raise_()
             self._reposition_overlays()
 
     def _open_full_ai_config(self) -> None:
@@ -247,18 +232,6 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
         self._reposition_timer.start()
 
     def _reposition_overlays(self) -> None:
-        # Position quick panel below the toolbar area
-        if not self._ai_quick_panel.isVisible():
-            return
-            
-        self._ai_quick_panel.adjustSize()
-        # Horizontal: aligned to the right with 8px margin
-        px = self.width() - self._ai_quick_panel.width() - 8
-        # Vertical: right below the toolbar container
-        py = self._toolbar_container.height()
-        
-        # Clamp px to stay visible
-        px = max(8, px)
-        
-        self._ai_quick_panel.move(px, py)
-        self._ai_quick_panel.raise_()
+        self._agent_settings.reposition_below(self._toolbar_container)
+        if self._ai_quick_panel.isVisible():
+            self._ai_quick_panel.raise_()
