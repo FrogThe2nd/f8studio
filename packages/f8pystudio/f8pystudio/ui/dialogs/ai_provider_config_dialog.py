@@ -4,7 +4,7 @@ AiProviderConfigDialog — full provider management UI.
 Allows users to:
   - Add / edit / delete AI providers
   - Configure protocol, endpoint URL, API key
-  - Fetch the model list from the provider's API
+  - Load bundled default model IDs or add model IDs manually
   - Select default inline and chat models
 """
 from __future__ import annotations
@@ -13,8 +13,8 @@ import logging
 
 from qtpy import QtCore, QtGui, QtWidgets  # type: ignore[import-not-found]
 
-from ...ai_assist.registry import ProviderApiMode, ProviderConfig, ProviderProtocol
-from ...ai_assist.store import AiProviderStore
+from ...agents.registry import ProviderApiMode, ProviderConfig, ProviderProtocol
+from ...agents.store import AiProviderStore
 from ..support.studio_theme import label_qss, studio_dark_theme
 
 logger = logging.getLogger(__name__)
@@ -110,32 +110,20 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
         self._key_edit.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
         form.addRow("API Key:", self._key_edit)
 
-        self._models_path_edit = QtWidgets.QLineEdit()
-        self._models_path_edit.setPlaceholderText("Default: /models")
-        form.addRow("Models Path:", self._models_path_edit)
-
-        self._chat_path_edit = QtWidgets.QComboBox()
-        self._chat_path_edit.setEditable(True)
-        self._chat_path_edit.addItems([
-            "/responses",
-            "/v1/responses",
-            "/chat/completions",
-            "/v1/chat/completions",
-            "/v1/messages",
-        ])
-        self._chat_path_edit.setPlaceholderText("Default: /responses or /chat/completions")
-        form.addRow("API Path:", self._chat_path_edit)
-
-        # Model fetch row
+        # Model cache actions
         fetch_row = QtWidgets.QHBoxLayout()
-        self._fetch_btn = QtWidgets.QPushButton("⟳ Fetch Models")
+        self._fetch_btn = QtWidgets.QPushButton("Load Defaults")
         self._fetch_btn.clicked.connect(self._on_fetch_models)  # type: ignore[attr-defined]
         
         self._test_btn = QtWidgets.QPushButton("Test Models")
         self._test_btn.clicked.connect(self._on_test_models)  # type: ignore[attr-defined]
         
+        self._remove_model_btn = QtWidgets.QPushButton("Remove Selected")
+        self._remove_model_btn.clicked.connect(self._on_remove_models)  # type: ignore[attr-defined]
+
         fetch_row.addWidget(self._fetch_btn)
         fetch_row.addWidget(self._test_btn)
+        fetch_row.addWidget(self._remove_model_btn)
 
         self._fetch_status = QtWidgets.QLabel("")
         self._fetch_status.setStyleSheet(label_qss(color=studio_dark_theme().palette.text_muted, font_size_px=11))
@@ -145,6 +133,16 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
         fetch_row.addWidget(self._fetch_status, 1)
 
         form.addRow("Models:", fetch_row)
+
+        add_model_row = QtWidgets.QHBoxLayout()
+        self._model_id_edit = QtWidgets.QLineEdit()
+        self._model_id_edit.setPlaceholderText("model ID")
+        self._model_id_edit.returnPressed.connect(self._on_add_model_id)  # type: ignore[attr-defined]
+        self._add_model_btn = QtWidgets.QPushButton("Add Model")
+        self._add_model_btn.clicked.connect(self._on_add_model_id)  # type: ignore[attr-defined]
+        add_model_row.addWidget(self._model_id_edit, 1)
+        add_model_row.addWidget(self._add_model_btn)
+        form.addRow("Add Model:", add_model_row)
 
         # Model table
         self._model_table = QtWidgets.QTableWidget(0, 3)
@@ -197,8 +195,8 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
 
         self._form_widgets: list[QtWidgets.QWidget] = [
             self._name_edit, self._protocol_combo, self._api_mode_combo, self._endpoint_edit,
-            self._key_edit, self._models_path_edit, self._chat_path_edit,
-            self._fetch_btn, self._test_btn, self._model_table,
+            self._key_edit, self._fetch_btn, self._test_btn, self._remove_model_btn,
+            self._model_id_edit, self._add_model_btn, self._model_table,
             self._inline_model_combo, self._chat_model_combo, self._reasoning_combo,
         ]
         self._set_form_enabled(False)
@@ -260,15 +258,7 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
         self._update_api_mode_controls(cfg.protocol, cfg.api_mode)
         self._endpoint_edit.setText(cfg.endpoint)
         self._key_edit.setText(cfg.api_key)
-        self._models_path_edit.setText(cfg.models_path)
-        
-        # Load chat path into combo (either selecting preset or setting custom text)
-        path = cfg.chat_path
-        idx = self._chat_path_edit.findText(path)
-        if idx >= 0:
-            self._chat_path_edit.setCurrentIndex(idx)
-        else:
-            self._chat_path_edit.setEditText(path)
+        self._model_id_edit.clear()
             
         self._refresh_model_combos(cfg)
         self._fetch_status.setText("")
@@ -342,8 +332,6 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
             cfg.api_mode = _API_MODES[api_mode_idx][1]
         cfg.endpoint = self._endpoint_edit.text().strip()
         cfg.api_key = self._key_edit.text().strip()
-        cfg.models_path = self._models_path_edit.text().strip()
-        cfg.chat_path = self._chat_path_edit.currentText().strip()
 
         inline_idx = self._inline_model_combo.currentIndex()
         cfg.inline_model_id = str(self._inline_model_combo.itemData(inline_idx) or "") if inline_idx >= 0 else ""
@@ -410,15 +398,13 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
             return
         cfg.api_key = self._key_edit.text().strip()
         cfg.endpoint = self._endpoint_edit.text().strip()
-        cfg.models_path = self._models_path_edit.text().strip()
         api_mode_idx = self._api_mode_combo.currentIndex()
         if 0 <= api_mode_idx < len(_API_MODES):
             cfg.api_mode = _API_MODES[api_mode_idx][1]
-        cfg.chat_path = self._chat_path_edit.currentText().strip()
-        self._store.save_provider(cfg)  # persist key/endpoint/paths first
+        self._store.save_provider(cfg)  # persist key/endpoint first
 
         self._fetch_btn.setEnabled(False)
-        self._fetch_status.setText("Fetching…")
+        self._fetch_status.setText("Loading defaults...")
         self._store.fetch_models_async(pid)
 
     def _on_models_fetched(self, pid: str, success: bool, error: str) -> None:
@@ -426,13 +412,46 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
             return
         self._fetch_btn.setEnabled(True)
         if success:
-            self._fetch_status.setText("✓ Models updated")
+            self._fetch_status.setText("Models updated.")
             cfg = self._store.provider_by_id(pid)
             if cfg:
                 self._refresh_model_combos(cfg)
         else:
             self._fetch_status.setText(f"Error: {error}")
             self._fetch_status.setToolTip(error)
+
+    def _on_add_model_id(self) -> None:
+        pid = self._current_provider_id
+        model_id = self._model_id_edit.text().strip()
+        if not pid or not model_id:
+            return
+        if not self._store.add_cached_model(pid, model_id):
+            self._fetch_status.setText("Unable to add model.")
+            return
+        self._model_id_edit.clear()
+        cfg = self._store.provider_by_id(pid)
+        if cfg is not None:
+            self._refresh_model_combos(cfg)
+        self._fetch_status.setText("Model added.")
+
+    def _on_remove_models(self) -> None:
+        pid = self._current_provider_id
+        if not pid:
+            return
+        selected_ids: list[str] = []
+        indices = self._model_table.selectionModel().selectedRows()
+        for idx in indices:
+            item = self._model_table.item(idx.row(), 2)
+            if item is not None:
+                selected_ids.append(item.text())
+        removed_count = self._store.remove_cached_models(pid, selected_ids)
+        if removed_count <= 0:
+            self._fetch_status.setText("No model selected.")
+            return
+        cfg = self._store.provider_by_id(pid)
+        if cfg is not None:
+            self._refresh_model_combos(cfg)
+        self._fetch_status.setText("Model removed." if removed_count == 1 else f"{removed_count} models removed.")
 
     def _on_test_models(self) -> None:
         pid = self._current_provider_id
@@ -446,8 +465,9 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
         selected_ids = []
         indices = self._model_table.selectionModel().selectedRows()
         for idx in indices:
-            mid = self._model_table.item(idx.row(), 2).text()
-            selected_ids.append(mid)
+            item = self._model_table.item(idx.row(), 2)
+            if item is not None:
+                selected_ids.append(item.text())
         
         # If none selected, test all
         ids_to_test = selected_ids if selected_ids else None
@@ -533,12 +553,6 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
             self._api_mode_combo.blockSignals(False)
 
         self._api_mode_combo.setEnabled(is_openai_compatible)
-        if is_openai_compatible and api_mode == "responses":
-            self._chat_path_edit.setPlaceholderText("Default: /responses")
-        elif protocol == "anthropic":
-            self._chat_path_edit.setPlaceholderText("Default: /v1/messages")
-        else:
-            self._chat_path_edit.setPlaceholderText("Default: /chat/completions")
 
     def _set_form_enabled(self, enabled: bool) -> None:
         for w in self._form_widgets:

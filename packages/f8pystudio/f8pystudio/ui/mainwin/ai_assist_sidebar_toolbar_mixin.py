@@ -5,7 +5,7 @@ from typing import Protocol, cast
 
 from qtpy import QtCore, QtGui, QtWidgets
 
-from ...ai_assist.graph_context import GraphContextSnapshot
+from ...agents.graph_context import GraphContextSnapshot
 from ..dialogs.ai_context_inspector import AiContextInspectorDialog
 from ..support.ai_context_controls import set_status_label_text, usage_pie_icon
 from ..support.studio_theme import ai_context_button_qss, studio_dark_theme

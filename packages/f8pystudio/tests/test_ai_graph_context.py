@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from f8pysdk.specs import F8DataPortSpec, F8OperatorSpec, F8StateAccess, F8StateSpec
 from f8pysdk.specs import boolean_schema, complex_object_schema, integer_schema, string_schema
 
-from f8pystudio.ai_assist.graph_context import build_graph_context_snapshot, format_graph_context_snapshot
+from f8pystudio.agents.graph_context import build_graph_context_snapshot, format_graph_context_snapshot
 
 
 class _FakePort:

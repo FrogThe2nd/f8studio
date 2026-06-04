@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -14,7 +14,14 @@ class AutomationConnectionInfo:
     created_at: int
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        return {
+            "pid": int(self.pid),
+            "host": str(self.host),
+            "port": int(self.port),
+            "tokenFile": str(self.token_file),
+            "studioServiceId": str(self.studio_service_id),
+            "createdAt": int(self.created_at),
+        }
 
 
 @dataclass(frozen=True)

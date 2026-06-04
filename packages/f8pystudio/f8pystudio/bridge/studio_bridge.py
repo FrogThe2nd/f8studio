@@ -291,6 +291,11 @@ class PyStudioServiceBridge(
                 return False
             self._report_exception(context, exc)
             return False
+        except TypeError as exc:
+            if asyncio.iscoroutine(coro):
+                coro.close()
+            self._report_exception(context, exc)
+            return False
 
     def _submit_async_future(self, coro: Any, *, context: str) -> concurrent.futures.Future[Any] | None:
         if self._shutting_down or (not self._async.is_accepting_submissions()):

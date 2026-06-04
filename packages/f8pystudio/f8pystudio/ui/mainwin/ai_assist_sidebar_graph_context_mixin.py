@@ -5,7 +5,7 @@ from typing import Any, Protocol, cast
 
 from qtpy import QtCore
 
-from ...ai_assist.graph_context import GraphContextSnapshot, build_graph_context_snapshot
+from ...agents.graph_context import GraphContextSnapshot, build_graph_context_snapshot
 
 logger = logging.getLogger(__name__)
 

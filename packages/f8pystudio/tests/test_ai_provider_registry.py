@@ -1,9 +1,9 @@
-"""Unit tests for ai_assist.registry — serialization invariants and defaults."""
+"""Unit tests for agents.registry serialization invariants and defaults."""
 from __future__ import annotations
 
 import pytest
 
-from f8pystudio.ai_assist.registry import (
+from f8pystudio.agents.registry import (
     DEFAULT_PROVIDERS,
     ModelCapabilities,
     ModelInfo,

@@ -54,10 +54,16 @@ class _FakeMainWindow:
         parent: object | None = None,
         *,
         bridge: "_FakeBridge | None" = None,
+        automation_enabled: bool = False,
+        automation_token_file: str | None = None,
+        automation_port_file: str | None = None,
     ) -> None:
         self.node_classes = list(node_classes)
         self.parent = parent
         self.bridge = bridge
+        self.automation_enabled = bool(automation_enabled)
+        self.automation_token_file = automation_token_file
+        self.automation_port_file = automation_port_file
         self.shown = False
         self.closed = False
         self.bridge_stopped = False

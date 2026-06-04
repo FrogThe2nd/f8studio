@@ -36,7 +36,7 @@ def test_apply_root_log_level_updates_existing_handlers() -> None:
     root_logger = logging.getLogger()
     original_level = root_logger.level
     original_handlers = list(root_logger.handlers)
-    child_logger = logging.getLogger("f8pystudio.ai_assist.llm_bridge")
+    child_logger = logging.getLogger("f8pystudio.agents.qt_bridge")
     original_child_level = child_logger.level
     original_disabled_level = logging.root.manager.disable
     stream = io.StringIO()

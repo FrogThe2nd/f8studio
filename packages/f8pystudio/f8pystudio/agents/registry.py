@@ -1,59 +1,34 @@
 """
-AI provider registry — static dataclasses describing provider configs, model
-capabilities and per-model parameters.  Deliberately zero magic: all fields
-are explicit, typed, and accessible by name so IDE refactoring and mypy work
-without issues.
+Agent provider registry.
+
+These dataclasses remain deliberately explicit so provider configuration is
+searchable, refactorable, and friendly to static analysis.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Literal
 
-# Protocol identifiers recognised by the HTTP client.
 ProviderProtocol = Literal["openai", "anthropic", "ollama", "custom"]
-
-# OpenAI-compatible providers can speak either the Chat Completions wire shape
-# or the Responses API wire shape.
 ProviderApiMode = Literal["chat_completions", "responses"]
-
-# All reasoning-level values that a model may advertise.
 ReasoningLevel = Literal["low", "medium", "high"]
 
 
 @dataclass(frozen=True)
 class ModelCapabilities:
-    """Static capabilities of a single model as returned by the provider."""
-
     supports_fim: bool = False
-    """True when the model can handle Fill-In-the-Middle completions."""
-
     supports_reasoning: bool = False
-    """True when the model exposes a configurable reasoning/thinking level."""
-
     supports_vision: bool = False
-    """True when the model supports image inputs."""
-
     reasoning_levels: tuple[ReasoningLevel, ...] = ()
-    """Ordered set of reasoning levels, e.g. ('low', 'medium', 'high')."""
-
     max_context_tokens: int = 128_000
-    """Maximum input + output token budget advertised by the model."""
 
 
 @dataclass
 class ModelInfo:
-    """Metadata for a single model within a provider."""
-
     model_id: str
-    """API-facing identifier, e.g. 'gpt-4o' or 'claude-3-7-sonnet-20250219'."""
-
     display_name: str
-    """Human-readable label shown in dropdowns."""
-
     capabilities: ModelCapabilities = field(default_factory=ModelCapabilities)
-    
     health_status: str = "unknown"
-    """Connectivity status: 'unknown', 'ok', or 'error'."""
 
     @property
     def health_icon(self) -> str:
@@ -62,95 +37,47 @@ class ModelInfo:
 
     @property
     def display_name_with_icons(self) -> str:
-        icons = []
+        tags: list[str] = []
         if self.capabilities.supports_reasoning:
-            icons.append("🧠")
+            tags.append("🧠")
         if self.capabilities.supports_vision:
-            icons.append("👁️")
-        
+            tags.append("👁️")
+
         ctx = self.capabilities.max_context_tokens
         if ctx > 0:
-            if ctx >= 1000:
-                icons.append(f"{ctx//1000}k")
-            else:
-                icons.append(str(ctx))
-                
-        info = " ".join(icons)
+            tags.append(f"{ctx // 1000}k" if ctx >= 1000 else str(ctx))
+
+        info = " ".join(tags)
         return f"{self.display_name} [{info}]" if info else self.display_name
 
     @property
     def full_display_label(self) -> str:
-        """Label with health icon and capability icons, e.g. '🟢 GPT-4o [👁️ 128k]'."""
         return f"{self.health_icon} {self.display_name_with_icons}"
 
 
 @dataclass
 class ProviderConfig:
-    """
-    Mutable configuration for a single AI provider.
-
-    Serialised to / deserialised from JSON by :class:`AiProviderStore`.
-    """
-
     provider_id: str
-    """Unique slug used as a stable key, e.g. 'openai', 'anthropic', 'my-ollama'."""
-
     display_name: str
-    """Human-readable label, e.g. 'OpenAI'."""
-
     protocol: ProviderProtocol = "openai"
-    """Wire protocol to use when talking to this provider."""
-
     api_mode: ProviderApiMode = "chat_completions"
-    """OpenAI-compatible API shape to use for chat/edit/plan requests."""
-
     api_key: str = ""
-    """Secret key — stored locally only, never logged."""
-
     endpoint: str = ""
-    """
-    Custom base URL.  Empty means the protocol's default endpoint is used:
-      * openai   → https://api.openai.com/v1
-      * anthropic → https://api.anthropic.com
-      * ollama   → http://localhost:11434/v1
-    """
-
     cached_models: list[ModelInfo] = field(default_factory=list)
-    """Model list populated by 'Fetch Models' and cached across sessions."""
-
-    # --- per-task model selection ---
     inline_model_id: str = ""
-    """Model used for inline (FIM) suggestions."""
-
     chat_model_id: str = ""
-    """Model used for Chat / Edit / Plan modes."""
-
     reasoning_level: str = ""
-    """
-    Active reasoning level for the selected chat model.
-    Empty string means 'use model default / disabled'.
-    """
-
-    models_path: str = ""
-    """Path to fetch models. Empty uses protocol default."""
-
-    chat_path: str = ""
-    """Path to chat completions. Empty uses protocol default."""
 
     @property
     def health_icon(self) -> str:
         if not self.cached_models:
             return "⚪"
-        if any(m.health_status == "ok" for m in self.cached_models):
+        if any(model.health_status == "ok" for model in self.cached_models):
             return "🟢"
-        if all(m.health_status == "error" for m in self.cached_models):
+        if all(model.health_status == "error" for model in self.cached_models):
             return "🔴"
         return "⚪"
 
-
-# ---------------------------------------------------------------------------
-# Default provider presets shipped with the application
-# ---------------------------------------------------------------------------
 
 def _openai_default() -> ProviderConfig:
     return ProviderConfig(
@@ -168,7 +95,7 @@ def _openai_default() -> ProviderConfig:
             ModelInfo(
                 model_id="gpt-4o",
                 display_name="GPT-4o",
-                capabilities=ModelCapabilities(max_context_tokens=128_000),
+                capabilities=ModelCapabilities(supports_vision=True, max_context_tokens=128_000),
             ),
             ModelInfo(
                 model_id="o4-mini",

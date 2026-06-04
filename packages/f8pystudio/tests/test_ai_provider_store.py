@@ -1,21 +1,18 @@
-"""Unit tests for ai_assist.store — JSON round-trip, model cache, and defaults merge."""
+"""Unit tests for agents.store JSON round-trip, model cache, and defaults merge."""
 from __future__ import annotations
 
-import json
-import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
-from f8pystudio.ai_assist.registry import ModelCapabilities, ModelInfo, ProviderConfig
-from f8pystudio.ai_assist.store import (
+from f8pystudio.agents.registry import ModelCapabilities, ModelInfo, ProviderConfig
+from f8pystudio.agents.store import (
     AiProviderStore,
     _capabilities_from_dict,
     _capabilities_to_dict,
     _model_from_dict,
     _model_to_dict,
-    _models_url,
     _provider_from_dict,
     _provider_to_dict,
 )
@@ -120,7 +117,6 @@ class TestProviderCodec:
                 "display_name": "OpenAI",
                 "protocol": "openai",
                 "endpoint": "https://api.openai.com/v1",
-                "chat_path": "/chat/completions",
             })
 
     def test_provider_config_with_invalid_api_mode_is_rejected(self) -> None:
@@ -129,7 +125,7 @@ class TestProviderCodec:
                 "provider_id": "openai",
                 "display_name": "OpenAI",
                 "protocol": "openai",
-                "api_mode": "legacy_chat_path_guess",
+                "api_mode": "legacy_endpoint_guess",
                 "endpoint": "https://api.openai.com/v1",
             })
 
@@ -197,108 +193,125 @@ class TestAiProviderStore:
         store.save_provider(new_cfg)
         assert changed_count[0] == 1
 
-    def test_parse_openai_models_response(self, tmp_path: Path) -> None:
+    def test_fetch_models_merges_bundled_defaults(self, tmp_path: Path) -> None:
         store = self._make_store(tmp_path)
-        store.save_provider(ProviderConfig(provider_id="test_parse", display_name="Test"))
-        raw = json.dumps({
-            "data": [
-                {"id": "gpt-4o", "object": "model"},
-                {"id": "gpt-4-turbo", "object": "model"},
-            ]
-        })
-        models = store._parse_models_response("test_parse", raw)
-        ids = [m.model_id for m in models]
-        assert "gpt-4o" in ids
-        assert "gpt-4-turbo" in ids
+        cfg = store.provider_by_id("openai")
+        assert cfg is not None
+        cfg.cached_models = [ModelInfo(model_id="local-alias", display_name="Local Alias")]
+        store.save_provider(cfg)
 
-    def test_parse_anthropic_models_response(self, tmp_path: Path) -> None:
+        fetched: list[tuple[str, bool, str]] = []
+        store.models_fetched.connect(lambda pid, success, error: fetched.append((pid, success, error)))
+
+        store.fetch_models_async("openai")
+
+        updated = store.provider_by_id("openai")
+        assert updated is not None
+        model_ids = [model.model_id for model in updated.cached_models]
+        assert "local-alias" in model_ids
+        assert "gpt-4.1" in model_ids
+        assert fetched == [("openai", True, "")]
+
+    def test_fetch_models_reports_manual_entry_for_custom_provider(self, tmp_path: Path) -> None:
         store = self._make_store(tmp_path)
-        store.save_provider(ProviderConfig(provider_id="ant", display_name="Ant", protocol="anthropic"))
-        raw = json.dumps({
-            "models": [
-                {"id": "claude-3-7-sonnet"},
-                {"id": "claude-3-5-haiku"},
-            ]
-        })
-        models = store._parse_models_response("ant", raw)
-        assert len(models) == 2
+        store.save_provider(ProviderConfig(provider_id="custom_lab", display_name="Custom Lab", protocol="custom"))
+        fetched: list[tuple[str, bool, str]] = []
+        store.models_fetched.connect(lambda pid, success, error: fetched.append((pid, success, error)))
 
-    def test_parse_invalid_json_raises(self, tmp_path: Path) -> None:
+        store.fetch_models_async("custom_lab")
+
+        assert len(fetched) == 1
+        assert fetched[0][0] == "custom_lab"
+        assert fetched[0][1] is False
+        assert "add model IDs manually" in fetched[0][2]
+
+    def test_add_cached_model_sets_defaults_and_capabilities(self, tmp_path: Path) -> None:
         store = self._make_store(tmp_path)
-        with pytest.raises(ValueError, match="Invalid JSON"):
-            store._parse_models_response("openai", "not-json{{{")
+        store.save_provider(ProviderConfig(provider_id="local", display_name="Local", protocol="custom"))
 
+        assert store.add_cached_model("local", "qwen-vl-reasoning")
 
-# ---------------------------------------------------------------------------
-# URL helpers
-# ---------------------------------------------------------------------------
+        updated = store.provider_by_id("local")
+        assert updated is not None
+        assert len(updated.cached_models) == 1
+        assert updated.cached_models[0].display_name == "qwen-vl-reasoning"
+        assert updated.cached_models[0].capabilities.supports_vision
+        assert updated.cached_models[0].capabilities.supports_reasoning
+        assert updated.inline_model_id == "qwen-vl-reasoning"
+        assert updated.chat_model_id == "qwen-vl-reasoning"
 
-class TestModelsUrl:
-    def test_openai_default(self) -> None:
-        cfg = ProviderConfig(provider_id="openai", display_name="OpenAI", protocol="openai")
-        url = _models_url(cfg)
-        assert "api.openai.com" in url
-        assert "/models" in url
+    def test_add_cached_model_updates_duplicate_display_name(self, tmp_path: Path) -> None:
+        store = self._make_store(tmp_path)
+        store.save_provider(ProviderConfig(provider_id="local", display_name="Local", protocol="custom"))
 
-    def test_anthropic_default(self) -> None:
-        cfg = ProviderConfig(provider_id="anthropic", display_name="Anthropic", protocol="anthropic")
-        url = _models_url(cfg)
-        assert "api.anthropic.com" in url
+        assert store.add_cached_model("local", "local-model")
+        assert store.add_cached_model("local", "local-model", "Local Model")
 
-    def test_custom_endpoint(self) -> None:
+        updated = store.provider_by_id("local")
+        assert updated is not None
+        assert len(updated.cached_models) == 1
+        assert updated.cached_models[0].display_name == "Local Model"
+
+    def test_remove_cached_models_clears_selected_defaults(self, tmp_path: Path) -> None:
+        store = self._make_store(tmp_path)
         cfg = ProviderConfig(
-            provider_id="custom", display_name="Custom", protocol="openai",
-            endpoint="http://localhost:8080/v1"
+            provider_id="local",
+            display_name="Local",
+            protocol="custom",
+            cached_models=[
+                ModelInfo(model_id="a", display_name="A"),
+                ModelInfo(model_id="b", display_name="B"),
+            ],
+            inline_model_id="a",
+            chat_model_id="b",
         )
-        url = _models_url(cfg)
-        assert url == "http://localhost:8080/v1/models"
+        store.save_provider(cfg)
 
+        removed_count = store.remove_cached_models("local", ["a", "b"])
 
-class TestModelPing:
-    pytest.importorskip("qtpy")
+        updated = store.provider_by_id("local")
+        assert updated is not None
+        assert removed_count == 2
+        assert updated.cached_models == []
+        assert updated.inline_model_id == ""
+        assert updated.chat_model_id == ""
 
-    def test_responses_ping_payload(self, tmp_path: Path) -> None:
-        store_path = tmp_path / "ai_providers.json"
-        with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
-            store = AiProviderStore()
-        cfg = ProviderConfig(
-            provider_id="openai",
-            display_name="OpenAI",
-            protocol="openai",
-            api_mode="responses",
-            endpoint="https://api.openai.com/v1",
+    def test_test_models_async_routes_through_agent_framework_runtime(self, tmp_path: Path) -> None:
+        store = self._make_store(tmp_path)
+        store.save_provider(
+            ProviderConfig(
+                provider_id="runner",
+                display_name="Runner",
+                cached_models=[
+                    ModelInfo(model_id="first", display_name="First"),
+                    ModelInfo(model_id="second", display_name="Second"),
+                ],
+            )
         )
-        assert store._test_chat_url(cfg) == "https://api.openai.com/v1/responses"
-        assert store._build_ping_payload(cfg, "gpt-4.1") == {
-            "model": "gpt-4.1",
-            "input": [{"role": "user", "content": "ping"}],
-            "max_output_tokens": 1,
-            "store": False,
-        }
 
-    def test_chat_completions_ping_payload_stays_unchanged(self, tmp_path: Path) -> None:
-        store_path = tmp_path / "ai_providers.json"
-        with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
-            store = AiProviderStore()
-        cfg = ProviderConfig(provider_id="custom", display_name="Custom", protocol="openai")
-        assert store._test_chat_url(cfg) == "https://api.openai.com/v1/chat/completions"
-        assert store._build_ping_payload(cfg, "gpt-4o") == {
-            "model": "gpt-4o",
-            "messages": [{"role": "user", "content": "ping"}],
-            "max_tokens": 1,
-            "stream": False,
-        }
+        with patch.object(AiProviderStore, "_test_model_with_agent_framework") as recorder:
+            store.test_models_async("runner", ["first"])
 
-    def test_chat_path_with_v1_prefix_does_not_duplicate_default_base(self, tmp_path: Path) -> None:
-        store_path = tmp_path / "ai_providers.json"
-        with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
-            store = AiProviderStore()
-        cfg = ProviderConfig(
-            provider_id="openai",
-            display_name="OpenAI",
-            protocol="openai",
-            api_mode="responses",
-            endpoint="https://api.openai.com/v1",
-            chat_path="/v1/responses",
+        assert recorder.call_count == 1
+        assert recorder.call_args.kwargs == {"provider_id": "runner", "model_id": "first"}
+
+    def test_record_model_test_result_updates_health_and_emits(self, tmp_path: Path) -> None:
+        store = self._make_store(tmp_path)
+        store.save_provider(
+            ProviderConfig(
+                provider_id="runner",
+                display_name="Runner",
+                cached_models=[ModelInfo(model_id="first", display_name="First")],
+            )
         )
-        assert store._test_chat_url(cfg) == "https://api.openai.com/v1/responses"
+        tested: list[tuple[str, str, bool, str]] = []
+        store.model_tested.connect(
+            lambda pid, model_id, success, error: tested.append((pid, model_id, success, error))
+        )
+
+        store._record_model_test_result("runner", "first", True, "")
+
+        updated = store.provider_by_id("runner")
+        assert updated is not None
+        assert updated.cached_models[0].health_status == "ok"
+        assert tested == [("runner", "first", True, "")]

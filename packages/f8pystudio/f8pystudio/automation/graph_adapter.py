@@ -291,14 +291,14 @@ class StudioGraphAutomationAdapter:
 
     def _require_input_port(self, node_id: str, port_name: str) -> Any:
         node = self._require_node(node_id)
-        port = node.inputs().get(str(port_name))
+        port = _resolve_port(node.inputs(), str(port_name), is_input=True)
         if port is None:
             raise ValueError(f"unknown input port: {node_id}.{port_name}")
         return port
 
     def _require_output_port(self, node_id: str, port_name: str) -> Any:
         node = self._require_node(node_id)
-        port = node.outputs().get(str(port_name))
+        port = _resolve_port(node.outputs(), str(port_name), is_input=False)
         if port is None:
             raise ValueError(f"unknown output port: {node_id}.{port_name}")
         return port
@@ -315,8 +315,8 @@ def _node_snapshot(node: Any) -> GraphNodeSnapshot:
         operator_class=_spec_operator_class(spec),
         pos=_node_pos(node),
         selected=_node_selected(node),
-        inputs=tuple(_port_snapshot(port, direction="in") for port in list(node.inputs().values())),
-        outputs=tuple(_port_snapshot(port, direction="out") for port in list(node.outputs().values())),
+        inputs=tuple(_port_snapshot(port, direction="in") for port in _node_ports(node, is_input=True)),
+        outputs=tuple(_port_snapshot(port, direction="out") for port in _node_ports(node, is_input=False)),
         state_fields=tuple(_state_field_snapshot(field) for field in _spec_state_field_objects(spec)),
     )
 
@@ -325,7 +325,7 @@ def _collect_edge_snapshots(nodes: list[Any]) -> list[GraphEdgeSnapshot]:
     edges: list[GraphEdgeSnapshot] = []
     for node in nodes:
         source_id = _node_id(node)
-        for out_port in list(node.outputs().values()):
+        for out_port in _node_ports(node, is_input=False):
             out_name = _port_name(out_port)
             for in_port in list(out_port.connected_ports() or []):
                 target_node = in_port.node()
@@ -339,6 +339,21 @@ def _collect_edge_snapshots(nodes: list[Any]) -> list[GraphEdgeSnapshot]:
                     )
                 )
     return sorted(edges, key=lambda edge: (edge.from_node_id, edge.from_port, edge.to_node_id, edge.to_port))
+
+
+def _node_ports(node: Any, *, is_input: bool) -> list[Any]:
+    try:
+        ports = node.inputs() if bool(is_input) else node.outputs()
+    except _GRAPH_READ_ERRORS:
+        return []
+    if ports is None:
+        return []
+    if isinstance(ports, dict):
+        return list(ports.values())
+    try:
+        return list(ports)
+    except _GRAPH_READ_ERRORS:
+        return []
 
 
 def _port_snapshot(port: Any, *, direction: str) -> GraphPortSnapshot:
@@ -556,6 +571,30 @@ def _state_access_text(access: Any) -> str:
         return str(access.value or "")
     except (AttributeError, RuntimeError, TypeError, ValueError):
         return str(access or "")
+
+
+def _resolve_port(ports: Any, port_name: str, *, is_input: bool) -> Any | None:
+    normalized_name = str(port_name or "").strip()
+    if not normalized_name:
+        return None
+    if ports is None:
+        return None
+    if not isinstance(ports, dict):
+        return None
+    direct = ports.get(normalized_name)
+    if direct is not None:
+        return direct
+
+    candidate_names = (
+        f"[D]{normalized_name}" if bool(is_input) else f"{normalized_name}[D]",
+        f"[S]{normalized_name}" if bool(is_input) else f"{normalized_name}[S]",
+        f"[E]{normalized_name}" if bool(is_input) else f"{normalized_name}[E]",
+    )
+    for candidate_name in candidate_names:
+        port = ports.get(candidate_name)
+        if port is not None:
+            return port
+    return None
 
 
 def layout_from_session_payload(payload: dict[str, Any]) -> dict[str, Any]:

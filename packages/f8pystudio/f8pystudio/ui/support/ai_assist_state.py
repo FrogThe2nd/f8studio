@@ -4,7 +4,7 @@ from typing import Any
 
 from qtpy import QtCore
 
-from f8pystudio.ai_assist.state_store import AiPanelStateStore
+from f8pystudio.agents.state_store import AiPanelStateStore
 
 _SETTINGS_GROUP = "monaco_editor/ai_panel/v1"
 

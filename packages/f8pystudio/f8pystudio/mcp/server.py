@@ -2,12 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from f8pystudio.automation.client import AutomationClient
-from f8pystudio.automation.gui_host import launch_pystudio_with_automation
-
-
-def _client(connection_file: str = "") -> AutomationClient:
-    return AutomationClient.from_connection_file(str(connection_file or "").strip() or None)
+from f8pystudio.agents.tools.studio import StudioAutomationTools
 
 
 def _create_server() -> Any:
@@ -16,57 +11,56 @@ def _create_server() -> Any:
     except ImportError as exc:
         raise RuntimeError("MCP SDK is not installed. Install the optional f8pystudio[mcp] dependencies.") from exc
 
+    tools = StudioAutomationTools()
     server = FastMCP("f8pystudio")
 
     @server.tool()
     def studio_launch(port_file: str = "", token_file: str = "", timeout_s: float = 20.0) -> dict[str, Any]:
-        return launch_pystudio_with_automation(
-            port_file=port_file or None,
-            token_file=token_file or None,
-            timeout_s=float(timeout_s),
-        ).to_dict()
+        return tools.studio_launch(port_file=port_file, token_file=token_file, timeout_s=timeout_s)
 
     @server.tool()
     def studio_attach(connection_file: str = "") -> dict[str, Any]:
-        return _client(connection_file).call("studio.status")
+        return tools.studio_attach(connection_file=connection_file)
 
     @server.tool()
     def studio_status(connection_file: str = "") -> dict[str, Any]:
-        return _client(connection_file).call("studio.status")
+        return tools.studio_status(connection_file=connection_file)
 
     @server.tool()
     def graph_snapshot(connection_file: str = "") -> dict[str, Any]:
-        return _client(connection_file).call("graph.snapshot")
+        return tools.graph_snapshot(connection_file=connection_file)
 
     @server.tool()
     def node_catalog(connection_file: str = "") -> dict[str, Any]:
-        return _client(connection_file).call("graph.catalog")
+        return tools.node_catalog(connection_file=connection_file)
 
     @server.tool()
     def graph_preview_patch(patch: dict[str, Any], connection_file: str = "") -> dict[str, Any]:
-        return _client(connection_file).call("graph.previewPatch", {"patch": patch})
+        return tools.graph_preview_patch(patch=patch, connection_file=connection_file)
 
     @server.tool()
     def graph_apply_patch(patch: dict[str, Any], confirm: bool = False, connection_file: str = "") -> dict[str, Any]:
-        return _client(connection_file).call("graph.applyPatch", {"patch": patch, "confirm": bool(confirm)})
+        return tools.graph_apply_patch(patch=patch, confirm=confirm, connection_file=connection_file)
 
     @server.tool()
     def graph_compile(connection_file: str = "") -> dict[str, Any]:
-        return _client(connection_file).call("graph.compile")
+        return tools.graph_compile(connection_file=connection_file)
 
     @server.tool()
     def runtime_deploy(confirm: bool = False, wait: bool = True, connection_file: str = "") -> dict[str, Any]:
-        return _client(connection_file).call("runtime.deploy", {"confirm": bool(confirm), "wait": bool(wait)})
+        return tools.runtime_deploy(confirm=confirm, wait=wait, connection_file=connection_file)
 
     @server.tool()
     def runtime_service_status(service_id: str = "", connection_file: str = "") -> dict[str, Any]:
-        return _client(connection_file).call("runtime.serviceStatus", {"serviceId": service_id})
+        return tools.runtime_service_status(service_id=service_id, connection_file=connection_file)
 
     @server.tool()
     def runtime_read_state(service_id: str, node_id: str, field: str, connection_file: str = "") -> dict[str, Any]:
-        return _client(connection_file).call(
-            "runtime.readState",
-            {"serviceId": service_id, "nodeId": node_id, "field": field},
+        return tools.runtime_read_state(
+            service_id=service_id,
+            node_id=node_id,
+            field=field,
+            connection_file=connection_file,
         )
 
     @server.tool()
@@ -77,9 +71,12 @@ def _create_server() -> Any:
         value: Any,
         connection_file: str = "",
     ) -> dict[str, Any]:
-        return _client(connection_file).call(
-            "runtime.writeState",
-            {"serviceId": service_id, "nodeId": node_id, "field": field, "value": value},
+        return tools.runtime_write_state(
+            service_id=service_id,
+            node_id=node_id,
+            field=field,
+            value=value,
+            connection_file=connection_file,
         )
 
     @server.tool()
@@ -91,22 +88,18 @@ def _create_server() -> Any:
         after_ts_ms: int = 0,
         connection_file: str = "",
     ) -> dict[str, Any]:
-        payload: dict[str, Any] = {
-            "serviceId": service_id,
-            "nodeId": node_id,
-            "field": field,
-            "durationMs": int(duration_ms),
-        }
-        if int(after_ts_ms) > 0:
-            payload["afterTsMs"] = int(after_ts_ms)
-        return _client(connection_file).call(
-            "runtime.watchState",
-            payload,
+        return tools.runtime_watch_state(
+            service_id=service_id,
+            node_id=node_id,
+            field=field,
+            duration_ms=duration_ms,
+            after_ts_ms=after_ts_ms,
+            connection_file=connection_file,
         )
 
     @server.tool()
     def runtime_read_monitor(service_id: str = "", limit: int = 500, connection_file: str = "") -> dict[str, Any]:
-        return _client(connection_file).call("runtime.readMonitor", {"serviceId": service_id, "limit": int(limit)})
+        return tools.runtime_read_monitor(service_id=service_id, limit=limit, connection_file=connection_file)
 
     @server.tool()
     def runtime_sample_port(
@@ -119,17 +112,15 @@ def _create_server() -> Any:
         max_value_bytes: int = 65536,
         connection_file: str = "",
     ) -> dict[str, Any]:
-        return _client(connection_file).call(
-            "runtime.samplePort",
-            {
-                "serviceId": service_id,
-                "nodeId": node_id,
-                "port": port,
-                "limit": int(limit),
-                "timeoutS": float(timeout_s),
-                "includeValue": bool(include_value),
-                "maxValueBytes": int(max_value_bytes),
-            },
+        return tools.runtime_sample_port(
+            service_id=service_id,
+            node_id=node_id,
+            port=port,
+            limit=limit,
+            timeout_s=timeout_s,
+            include_value=include_value,
+            max_value_bytes=max_value_bytes,
+            connection_file=connection_file,
         )
 
     @server.tool()
@@ -140,46 +131,41 @@ def _create_server() -> Any:
         confirm: bool = False,
         connection_file: str = "",
     ) -> dict[str, Any]:
-        if not bool(confirm):
-            raise ValueError("runtime_invoke_command requires confirm=true")
-        return _client(connection_file).call(
-            "runtime.invokeCommand",
-            {"serviceId": service_id, "call": call, "args": args},
+        return tools.runtime_invoke_command(
+            service_id=service_id,
+            call=call,
+            args=args,
+            confirm=confirm,
+            connection_file=connection_file,
         )
 
     @server.resource("f8studio://graph/current")
     def current_graph() -> dict[str, Any]:
-        return _client("").call("graph.snapshot")
+        return tools.graph_snapshot()
 
     @server.resource("f8studio://catalog/nodes")
     def catalog_nodes() -> dict[str, Any]:
-        return _client("").call("graph.catalog")
+        return tools.node_catalog()
 
     @server.resource("f8studio://runtime/monitor")
     def runtime_monitor() -> dict[str, Any]:
-        return _client("").call("runtime.readMonitor")
+        return tools.runtime_read_monitor()
 
     @server.resource("f8studio://session/current")
     def current_session() -> dict[str, Any]:
-        return _client("").call("graph.session")
+        return tools.graph_session()
 
     @server.prompt()
     def plan_graph_change(goal: str) -> str:
-        return (
-            "Inspect f8studio://graph/current and f8studio://catalog/nodes, then propose a GraphPatch. "
-            f"Goal: {goal}"
-        )
+        return tools.plan_graph_change_prompt(goal)
 
     @server.prompt()
     def debug_runtime_node(service_id: str, node_id: str) -> str:
-        return (
-            "Use runtime_service_status, runtime_read_monitor, and runtime_read_state to diagnose "
-            f"serviceId={service_id} nodeId={node_id}."
-        )
+        return tools.debug_runtime_node_prompt(service_id, node_id)
 
     @server.prompt()
     def explain_current_graph() -> str:
-        return "Use graph_snapshot and node_catalog to explain the current PyStudio graph succinctly."
+        return tools.explain_current_graph_prompt()
 
     return server
 

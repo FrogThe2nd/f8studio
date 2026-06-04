@@ -71,14 +71,31 @@ def load_connection_info(path: str | Path | None = None) -> AutomationConnection
     payload = json.loads(target.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("automation connection file must contain a JSON object")
+    token_file = _string_field(payload, "tokenFile", "token_file")
+    if not token_file:
+        raise ValueError("automation connection file must contain tokenFile")
     return AutomationConnectionInfo(
         pid=int(payload.get("pid") or 0),
         host=str(payload.get("host") or "127.0.0.1"),
         port=int(payload.get("port") or 0),
-        token_file=str(payload.get("tokenFile") or ""),
-        studio_service_id=str(payload.get("studioServiceId") or ""),
-        created_at=int(payload.get("createdAt") or 0),
+        token_file=token_file,
+        studio_service_id=_string_field(payload, "studioServiceId", "studio_service_id"),
+        created_at=_int_field(payload, "createdAt", "created_at"),
     )
+
+
+def _string_field(payload: dict[str, Any], camel_key: str, snake_key: str) -> str:
+    value = payload.get(camel_key)
+    if value is None:
+        value = payload.get(snake_key)
+    return str(value or "")
+
+
+def _int_field(payload: dict[str, Any], camel_key: str, snake_key: str) -> int:
+    value = payload.get(camel_key)
+    if value is None:
+        value = payload.get(snake_key)
+    return int(value or 0)
 
 
 def wait_for_connection_file(

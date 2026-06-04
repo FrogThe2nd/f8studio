@@ -4,9 +4,9 @@ import logging
 from typing import Any
 from qtpy import QtCore, QtGui, QtWidgets
 
-from ...ai_assist.graph_context import GraphContextSnapshot
-from ...ai_assist.llm_bridge import AiLlmBridge
-from ...ai_assist.store import AiProviderStore
+from ...agents.graph_context import GraphContextSnapshot
+from ...agents.qt_bridge import AiLlmBridge
+from ...agents.store import AiProviderStore
 from ...ui.support.ai_assist_state import QtAiPanelStateStore
 from ...ui.support.web_asset_utils import render_prism_asset_html, resolve_web_asset_page_base_url
 from ...ui.support.ui_icons import StudioIcon, icon_for

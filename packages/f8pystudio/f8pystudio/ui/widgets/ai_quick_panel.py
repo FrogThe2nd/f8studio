@@ -4,7 +4,7 @@ AiQuickPanel — compact collapsible panel embedded in F8MonacoEditorDialog.
 The panel provides:
   - Provider selector for inline (FIM) model
   - Provider selector for chat/edit/plan model
-  - Model combo (filtered by provider) + small refresh button
+  - Model combo (filtered by provider) + small default-cache button
   - Reasoning level combo (shown only when selected model supports it)
   - "Open Full Config" button that opens AiProviderConfigDialog
 """
@@ -14,9 +14,9 @@ import logging
 
 from qtpy import QtCore, QtGui, QtWidgets  # type: ignore[import-not-found]
 
-from ...ai_assist.llm_bridge import AiLlmBridge
-from ...ai_assist.registry import ProviderConfig
-from ...ai_assist.store import AiProviderStore
+from ...agents.qt_bridge import AiLlmBridge
+from ...agents.registry import ProviderConfig
+from ...agents.store import AiProviderStore
 from ..support.studio_theme import ai_quick_panel_qss, flat_link_button_qss, label_qss, studio_dark_theme
 
 logger = logging.getLogger(__name__)
@@ -94,7 +94,7 @@ class AiQuickPanel(QtWidgets.QWidget):
         self._inline_model_combo.currentIndexChanged.connect(lambda _: self._on_inline_model_changed())  # type: ignore[attr-defined]
         self._inline_refresh_btn = QtWidgets.QToolButton()
         self._inline_refresh_btn.setText("⟳")
-        self._inline_refresh_btn.setToolTip("Refresh model list")
+        self._inline_refresh_btn.setToolTip("Load bundled default model IDs")
         self._inline_refresh_btn.clicked.connect(self._on_inline_refresh)  # type: ignore[attr-defined]
         inline_model_row.addWidget(self._inline_model_combo, 1)
         inline_model_row.addWidget(self._inline_refresh_btn)
@@ -112,7 +112,7 @@ class AiQuickPanel(QtWidgets.QWidget):
         self._chat_model_combo.currentIndexChanged.connect(lambda _: self._on_chat_model_changed())  # type: ignore[attr-defined]
         self._chat_refresh_btn = QtWidgets.QToolButton()
         self._chat_refresh_btn.setText("⟳")
-        self._chat_refresh_btn.setToolTip("Refresh model list")
+        self._chat_refresh_btn.setToolTip("Load bundled default model IDs")
         self._chat_refresh_btn.clicked.connect(self._on_chat_refresh)  # type: ignore[attr-defined]
         chat_model_row.addWidget(self._chat_model_combo, 1)
         chat_model_row.addWidget(self._chat_refresh_btn)
@@ -197,7 +197,7 @@ class AiQuickPanel(QtWidgets.QWidget):
                     continue
                 self._inline_model_combo.addItem(m.full_display_label, m.model_id)
             if not cfg.cached_models:
-                self._inline_model_combo.addItem("(no models cached — click ⟳)", "")
+                self._inline_model_combo.addItem("(no models cached)", "")
             
             if current_id == "lsp":
                 self._inline_model_combo.addItem("Standard Python LSP", "standard")
@@ -218,7 +218,7 @@ class AiQuickPanel(QtWidgets.QWidget):
                     continue
                 self._chat_model_combo.addItem(m.full_display_label, m.model_id)
             if not cfg.cached_models:
-                self._chat_model_combo.addItem("(no models cached — click ⟳)", "")
+                self._chat_model_combo.addItem("(no models cached)", "")
                 
             if current_id:
                 self._set_combo_by_data(self._chat_model_combo, current_id)

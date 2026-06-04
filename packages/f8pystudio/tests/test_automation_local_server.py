@@ -7,7 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from f8pystudio.automation.client import wait_for_connection_file
+from f8pystudio.automation.client import load_connection_info, wait_for_connection_file
+from f8pystudio.automation.control_protocol import AutomationConnectionInfo
 from f8pystudio.automation.local_server import LocalAutomationServer
 
 
@@ -52,6 +53,63 @@ def test_local_automation_server_rejects_bad_token() -> None:
 
     assert response["ok"] is False
     assert response["error"]["code"] == "unauthorized"
+
+
+def test_connection_info_serializes_as_client_protocol_camel_case(tmp_path: Path) -> None:
+    info = AutomationConnectionInfo(
+        pid=123,
+        host="127.0.0.1",
+        port=456,
+        token_file=str(tmp_path / "token"),
+        studio_service_id="studio",
+        created_at=789,
+    )
+
+    assert info.to_dict() == {
+        "pid": 123,
+        "host": "127.0.0.1",
+        "port": 456,
+        "tokenFile": str(tmp_path / "token"),
+        "studioServiceId": "studio",
+        "createdAt": 789,
+    }
+
+
+def test_load_connection_info_accepts_legacy_snake_case_metadata(tmp_path: Path) -> None:
+    connection_file = tmp_path / "connection.json"
+    connection_file.write_text(
+        json.dumps(
+            {
+                "pid": 123,
+                "host": "127.0.0.1",
+                "port": 456,
+                "token_file": str(tmp_path / "token"),
+                "studio_service_id": "studio",
+                "created_at": 789,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    info = load_connection_info(connection_file)
+
+    assert info.pid == 123
+    assert info.host == "127.0.0.1"
+    assert info.port == 456
+    assert info.token_file == str(tmp_path / "token")
+    assert info.studio_service_id == "studio"
+    assert info.created_at == 789
+
+
+def test_load_connection_info_requires_token_file(tmp_path: Path) -> None:
+    connection_file = tmp_path / "connection.json"
+    connection_file.write_text(
+        json.dumps({"pid": 123, "host": "127.0.0.1", "port": 456}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="tokenFile"):
+        load_connection_info(connection_file)
 
 
 def test_wait_for_connection_file_ignores_stale_metadata(tmp_path: Path) -> None:

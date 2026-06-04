@@ -9,8 +9,8 @@ from typing import Any, Callable
 
 from qtpy import QtCore
 
-from ..ai_assist.llm_bridge import AiLlmBridge
-from ..ai_assist.store import AiProviderStore
+from ..agents.qt_bridge import AiLlmBridge
+from ..agents.store import AiProviderStore
 from ..ui.support.ai_assist_state import QtAiPanelStateStore
 from ..ui.support.editor_assist_bridge import PythonEditorAssistBridge
 from .workspace import EditorAssistContext

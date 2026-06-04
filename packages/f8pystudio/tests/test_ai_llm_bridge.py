@@ -5,9 +5,9 @@ from unittest.mock import patch
 import uuid
 import logging
 
-from f8pystudio.ai_assist.graph_context import GraphContextSnapshot
-from f8pystudio.ai_assist.llm_bridge import AiLlmBridge
-from f8pystudio.ai_assist.store import AiProviderStore
+from f8pystudio.agents.graph_context import GraphContextSnapshot
+from f8pystudio.agents.qt_bridge import AiLlmBridge
+from f8pystudio.agents.store import AiProviderStore
 from f8pystudio.editor_assist.workspace import (
     EditorAssistContext,
     EditorAssistDataInPort,
@@ -138,7 +138,7 @@ def test_debug_prompt_flag_logs_payload() -> None:
         with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
             bridge = AiLlmBridge(AiProviderStore())
 
-    with patch("f8pystudio.ai_assist.llm_bridge.logger.warning") as warning_mock:
+    with patch("f8pystudio.agents.qt_bridge.logger.warning") as warning_mock:
         bridge._log_prompt_payload(
             mode="chat",
             system_prompt="system",
@@ -182,7 +182,7 @@ def test_get_clipboard_image_returns_empty_payload_when_no_image(monkeypatch) ->
         def image(self) -> _FakeImage:
             return _FakeImage()
 
-    monkeypatch.setattr("f8pystudio.ai_assist.llm_bridge.QtGui.QGuiApplication.clipboard", lambda: _FakeClipboard())
+    monkeypatch.setattr("f8pystudio.agents.qt_bridge.QtGui.QGuiApplication.clipboard", lambda: _FakeClipboard())
     payload = bridge.get_clipboard_image()
 
     assert payload == {"name": "", "content": "", "mime": ""}
