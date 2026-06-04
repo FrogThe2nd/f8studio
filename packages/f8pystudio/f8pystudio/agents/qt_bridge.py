@@ -649,7 +649,7 @@ class AiLlmBridge(QtCore.QObject):
                 )
                 on_result("", str(exc))
                 return
-            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            except Exception as exc:
                 logger.exception("Studio agent text request crashed mode=%s request_id=%s", request.mode, request.request_id)
                 on_result("", f"{type(exc).__name__}: {exc}")
                 return
@@ -683,7 +683,7 @@ class AiLlmBridge(QtCore.QObject):
         def _worker() -> None:
             try:
                 asyncio.run(_consume())
-            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            except Exception as exc:
                 logger.exception("Studio agent stream request crashed mode=%s request_id=%s", request.mode, request.request_id)
                 on_done(f"{type(exc).__name__}: {exc}")
 

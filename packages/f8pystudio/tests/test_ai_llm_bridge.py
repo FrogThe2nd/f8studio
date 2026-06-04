@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
 from unittest.mock import patch
 import uuid
 import logging
+import time
+
+from qtpy import QtTest, QtWidgets
 
 from f8pystudio.agents.graph_context import GraphContextSnapshot
 from f8pystudio.agents.qt_bridge import AiLlmBridge
+from f8pystudio.agents.registry import ModelInfo, ProviderConfig
+from f8pystudio.agents.runtime import StudioAgentEvent, StudioAgentRequest
 from f8pystudio.agents.store import AiProviderStore
 from f8pystudio.editor_assist.workspace import (
     EditorAssistContext,
@@ -14,6 +20,30 @@ from f8pystudio.editor_assist.workspace import (
     EditorAssistDataOutPort,
     EditorAssistStateField,
 )
+
+
+class _FailingStreamRuntime:
+    async def run_stream(self, request: StudioAgentRequest) -> AsyncIterator[StudioAgentEvent]:
+        raise KeyError("stream failed")
+        yield
+
+
+def _ensure_app() -> QtWidgets.QApplication:
+    app = QtWidgets.QApplication.instance()
+    if app is None:
+        app = QtWidgets.QApplication([])
+    return app
+
+
+def _wait_until(predicate, *, timeout_ms: int = 3000) -> None:
+    deadline = time.monotonic() + (float(timeout_ms) / 1000.0)
+    while time.monotonic() < deadline:
+        QtWidgets.QApplication.processEvents()
+        if predicate():
+            return
+        QtTest.QTest.qWait(10)
+    QtWidgets.QApplication.processEvents()
+    assert predicate()
 
 
 def test_format_assist_context_includes_node_metadata_outputs_and_descriptions() -> None:
@@ -237,3 +267,31 @@ def test_reset_chat_history_clears_pinned_graph_context() -> None:
     assert "2 selected nodes" in bridge.get_chat_context_report()
     bridge.reset_chat_history()
     assert "_No pinned graph context._" in bridge.get_chat_context_report()
+
+
+def test_stream_request_thread_reports_unexpected_runtime_exception(tmp_path: Path) -> None:
+    _ensure_app()
+    store_path = tmp_path / "ai_providers.json"
+    with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+        store = AiProviderStore()
+
+    store.save_provider(
+        ProviderConfig(
+            provider_id="openai",
+            display_name="OpenAI",
+            protocol="openai",
+            api_mode="responses",
+            chat_model_id="gpt-4.1",
+            cached_models=[ModelInfo(model_id="gpt-4.1", display_name="GPT-4.1")],
+        ),
+        emit=False,
+    )
+    store.save_active_providers("openai", "openai")
+    bridge = AiLlmBridge(store)
+    bridge._runtime = _FailingStreamRuntime()
+    spy = QtTest.QSignalSpy(bridge.chat_done)
+
+    bridge.request_chat("rid-fail", '[{"role":"user","content":"hello"}]', "", "", "")
+
+    _wait_until(lambda: spy.count() > 0, timeout_ms=1000)
+    assert list(spy.at(0)) == ["rid-fail", "KeyError: 'stream failed'"]

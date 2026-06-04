@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import math
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -35,6 +36,8 @@ from .store import AiProviderStore
 logger = logging.getLogger(__name__)
 
 AgentRequestMode = Literal["chat", "edit", "plan", "inline"]
+_DEFAULT_STREAM_FIRST_EVENT_TIMEOUT_S = 120.0
+_DEFAULT_STREAM_IDLE_TIMEOUT_S = 120.0
 
 
 class AgentRuntimeError(RuntimeError):
@@ -83,6 +86,18 @@ class StudioAgentEvent:
     error: str = ""
 
 
+@dataclass(frozen=True)
+class _AbortRequestState:
+    event: asyncio.Event
+    loop: asyncio.AbstractEventLoop
+
+
+@dataclass(frozen=True)
+class _StreamNextResult:
+    kind: Literal["update", "done", "abort", "timeout"]
+    update: Any = None
+
+
 class StudioAgentRuntime:
     def __init__(
         self,
@@ -90,20 +105,37 @@ class StudioAgentRuntime:
         *,
         log_prompt_payload: Callable[[str, str, list[dict[str, Any]]], None] | None = None,
         session_registry: StudioAgentSessionRegistry | None = None,
+        stream_first_event_timeout_s: float | None = None,
+        stream_idle_timeout_s: float | None = None,
     ) -> None:
         self._store = store
         self._log_prompt_payload = log_prompt_payload
         self._session_registry = session_registry or StudioAgentSessionRegistry()
-        self._abort_events: dict[str, asyncio.Event] = {}
+        self._abort_events: dict[str, _AbortRequestState] = {}
+        self._stream_first_event_timeout_s = _positive_timeout(
+            stream_first_event_timeout_s,
+            default=_DEFAULT_STREAM_FIRST_EVENT_TIMEOUT_S,
+        )
+        self._stream_idle_timeout_s = _positive_timeout(
+            stream_idle_timeout_s,
+            default=_DEFAULT_STREAM_IDLE_TIMEOUT_S,
+        )
 
     def abort_request(self, request_id: str) -> None:
-        event = self._abort_events.get(str(request_id or ""))
-        if event is not None:
-            event.set()
+        state = self._abort_events.get(str(request_id or ""))
+        if state is None:
+            return
+        try:
+            state.loop.call_soon_threadsafe(state.event.set)
+        except RuntimeError:
+            state.event.set()
 
     def abort_all_requests(self) -> None:
-        for event in self._abort_events.values():
-            event.set()
+        for state in list(self._abort_events.values()):
+            try:
+                state.loop.call_soon_threadsafe(state.event.set)
+            except RuntimeError:
+                state.event.set()
         self._abort_events.clear()
 
     async def run_text(self, request: StudioAgentRequest) -> str:
@@ -117,13 +149,16 @@ class StudioAgentRuntime:
 
     async def run_stream(self, request: StudioAgentRequest) -> AsyncIterator[StudioAgentEvent]:
         abort_event = asyncio.Event()
-        self._abort_events[request.request_id] = abort_event
+        self._abort_events[request.request_id] = _AbortRequestState(
+            event=abort_event,
+            loop=asyncio.get_running_loop(),
+        )
         try:
             async for event in self._run_streaming(request, abort_event=abort_event):
                 yield event
         except AgentRuntimeError as exc:
             yield StudioAgentEvent(kind="error", error=str(exc))
-        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        except Exception as exc:
             logger.exception("Studio agent stream failed mode=%s request_id=%s", request.mode, request.request_id)
             yield StudioAgentEvent(kind="error", error=f"{type(exc).__name__}: {exc}")
         finally:
@@ -170,10 +205,32 @@ class StudioAgentRuntime:
         except ModuleNotFoundError as exc:
             raise AgentRuntimeUnavailableError(str(exc)) from exc
 
-        async for update in stream:
-            if abort_event.is_set():
+        stream_iter = stream.__aiter__()
+        seen_update = False
+        while not abort_event.is_set():
+            timeout_s = self._stream_idle_timeout_s if seen_update else self._stream_first_event_timeout_s
+            result = await _next_stream_update(stream_iter, abort_event=abort_event, timeout_s=timeout_s)
+            if result.kind == "done":
                 break
-            delta = _response_update_text(update)
+            if result.kind == "abort":
+                return
+            if result.kind == "timeout":
+                phase = "idle" if seen_update else "first event"
+                error = (
+                    f"Agent stream timed out waiting for {phase} after {timeout_s:.0f}s. "
+                    "Check provider connectivity or retry without streaming."
+                )
+                logger.warning(
+                    "Studio agent stream timed out mode=%s request_id=%s phase=%s timeout_s=%s",
+                    request.mode,
+                    request.request_id,
+                    phase,
+                    timeout_s,
+                )
+                yield StudioAgentEvent(kind="error", error=error)
+                return
+            seen_update = True
+            delta = _response_update_text(result.update)
             if delta:
                 yield StudioAgentEvent(kind="chunk", text=delta)
         if not abort_event.is_set():
@@ -379,3 +436,67 @@ def _clean_inline_text(text: str) -> str:
     if lines and lines[-1].strip() == "```":
         lines.pop()
     return "\n".join(lines)
+
+
+async def _next_stream_update(
+    stream_iter: AsyncIterator[Any],
+    *,
+    abort_event: asyncio.Event,
+    timeout_s: float,
+) -> _StreamNextResult:
+    next_task = asyncio.create_task(anext(stream_iter))
+    abort_task = asyncio.create_task(abort_event.wait())
+    try:
+        done, pending = await asyncio.wait(
+            {next_task, abort_task},
+            timeout=float(timeout_s),
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if not done:
+            for task in pending:
+                task.cancel()
+            await _drain_stream_tasks(pending)
+            return _StreamNextResult(kind="timeout")
+
+        if abort_task in done and abort_event.is_set():
+            if not next_task.done():
+                next_task.cancel()
+                await _drain_stream_tasks({next_task})
+            else:
+                await _drain_stream_tasks({next_task})
+            return _StreamNextResult(kind="abort")
+
+        if abort_task in pending:
+            abort_task.cancel()
+            await _drain_stream_tasks({abort_task})
+        try:
+            update = next_task.result()
+        except StopAsyncIteration:
+            return _StreamNextResult(kind="done")
+        return _StreamNextResult(kind="update", update=update)
+    finally:
+        unfinished_tasks = {task for task in (next_task, abort_task) if not task.done()}
+        for task in unfinished_tasks:
+            task.cancel()
+        await _drain_stream_tasks(unfinished_tasks)
+
+
+async def _drain_stream_tasks(tasks: set[asyncio.Task[Any]]) -> None:
+    for task in tasks:
+        try:
+            await task
+        except asyncio.CancelledError:
+            continue
+        except StopAsyncIteration:
+            continue
+        except Exception:
+            logger.exception("Studio agent stream cleanup observed a completed task error")
+
+
+def _positive_timeout(value: float | None, *, default: float) -> float:
+    if value is None:
+        return float(default)
+    resolved = float(value)
+    if resolved <= 0.0 or not math.isfinite(resolved):
+        return float(default)
+    return resolved
