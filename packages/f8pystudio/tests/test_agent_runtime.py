@@ -26,6 +26,12 @@ class FakeAgentResponseUpdate:
         self.text = text
 
 
+class FakeAgentMessage:
+    def __init__(self, role: str, contents: list[object]) -> None:
+        self.role = role
+        self.contents = contents
+
+
 class FakeAgentSession:
     def __init__(self, *, session_id: str | None = None, service_session_id: str | None = None) -> None:
         self.session_id = session_id
@@ -56,6 +62,11 @@ class FakeAgent:
         tools: object = None,
         options: object = None,
     ) -> object:
+        if isinstance(messages, list):
+            for message in messages:
+                if isinstance(message, dict):
+                    raise AttributeError("'dict' object has no attribute 'role'")
+                _ = message.role
         self.calls.append(
             {
                 "messages": messages,
@@ -119,6 +130,7 @@ def _install_fake_agent_framework(monkeypatch: pytest.MonkeyPatch) -> None:
         Agent=FakeAgent,
         AgentResponse=FakeAgentResponse,
         AgentResponseUpdate=FakeAgentResponseUpdate,
+        Message=FakeAgentMessage,
         AgentSession=FakeAgentSession,
     )
     monkeypatch.setitem(sys.modules, "agent_framework", module)
@@ -210,6 +222,10 @@ def test_runtime_stream_yields_chunks_and_done(
     ]
     assert FakeAgent.calls[0]["stream"] is True
     assert FakeAgent.calls[0]["options"] == {"max_tokens": 4096}
+    call_messages = FakeAgent.calls[0]["messages"]
+    assert isinstance(call_messages, list)
+    assert isinstance(call_messages[0], FakeAgentMessage)
+    assert call_messages[0].role == "user"
 
 
 def test_runtime_stream_times_out_waiting_for_first_event(

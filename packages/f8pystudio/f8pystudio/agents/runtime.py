@@ -6,7 +6,7 @@ import logging
 import math
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from f8pystudio.agents.graph_context import GraphContextSnapshot
 from f8pystudio.editor_assist.workspace import EditorAssistContext
@@ -252,7 +252,7 @@ class StudioAgentRuntime:
             raise AgentRuntimeUnavailableError("No model selected")
         return model_id
 
-    def _messages_for_request(self, request: StudioAgentRequest) -> tuple[list[dict[str, Any]], str]:
+    def _messages_for_request(self, request: StudioAgentRequest) -> tuple[list[Any], str]:
         document_language = current_document_language(
             document_language=request.document_language,
             assist_context=request.assist_context,
@@ -344,20 +344,25 @@ def _attachments_to_dicts(attachments: tuple[StudioAgentAttachment, ...]) -> lis
     return [{"name": item.name, "content": item.content, "mime": item.mime} for item in attachments]
 
 
-def _messages_to_agent_framework_content(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
+def _messages_to_agent_framework_content(messages: list[dict[str, Any]]) -> list[Any]:
+    try:
+        from agent_framework import Message
+    except ModuleNotFoundError as exc:
+        raise AgentRuntimeUnavailableError("agent-framework-core is not installed.") from exc
+
+    out: list[Any] = []
     for message in messages:
         role = str(message.get("role") or "user")
         if role == "system":
             continue
         content = message.get("content", "")
-        out.append({"role": role, "content": _content_to_agent_framework_content(content)})
+        out.append(Message(role, cast(list[Any], _content_to_agent_framework_content(content))))
     return out
 
 
-def _content_to_agent_framework_content(content: Any) -> Any:
+def _content_to_agent_framework_content(content: Any) -> list[Any]:
     if not isinstance(content, list):
-        return str(content or "")
+        return [str(content or "")]
     parts: list[Any] = []
     for part in content:
         if not isinstance(part, dict):
