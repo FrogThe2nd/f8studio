@@ -3,97 +3,44 @@ Persistent storage for Studio agent provider configurations.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 import json
 import logging
+import threading
 from pathlib import Path
 from typing import Any, cast
 
 from qtpy import QtCore  # type: ignore[import-not-found]
 
+from .connectivity import check_model_connectivity
+from .model_catalog import (
+    copy_model,
+    copy_provider,
+    discover_endpoint_model_catalog,
+    infer_model_capabilities,
+    merge_model_lists,
+    supports_agent_chat_model,
+)
 from .registry import (
     DEFAULT_PROVIDERS,
     ModelCapabilities,
     ModelInfo,
+    ModelKind,
     ProviderApiMode,
     ProviderConfig,
+    ProviderInferenceService,
     ProviderProtocol,
+    inference_service_from_legacy,
+    normalize_inference_service,
 )
 
 logger = logging.getLogger(__name__)
 
 
-def _copy_model(model: ModelInfo) -> ModelInfo:
-    return ModelInfo(
-        model_id=model.model_id,
-        display_name=model.display_name,
-        capabilities=model.capabilities,
-        health_status=model.health_status,
-    )
-
-
-def _copy_provider(provider: ProviderConfig) -> ProviderConfig:
-    return ProviderConfig(
-        provider_id=provider.provider_id,
-        display_name=provider.display_name,
-        protocol=provider.protocol,
-        api_mode=provider.api_mode,
-        api_key=provider.api_key,
-        endpoint=provider.endpoint,
-        cached_models=[_copy_model(model) for model in provider.cached_models],
-        inline_model_id=provider.inline_model_id,
-        chat_model_id=provider.chat_model_id,
-        reasoning_level=provider.reasoning_level,
-    )
-
-
-def _default_provider_by_id(provider_id: str) -> ProviderConfig | None:
-    for provider in DEFAULT_PROVIDERS:
-        if provider.provider_id == provider_id:
-            return _copy_provider(provider)
-    return None
-
-
-def _merge_model_lists(existing: list[ModelInfo], defaults: list[ModelInfo]) -> list[ModelInfo]:
-    result: list[ModelInfo] = [_copy_model(model) for model in existing if model.model_id.strip()]
-    known_ids = {model.model_id for model in result}
-    for default_model in defaults:
-        if default_model.model_id in known_ids:
-            continue
-        result.append(_copy_model(default_model))
-        known_ids.add(default_model.model_id)
-    return result
-
-
-def _model_capabilities_from_model_id(model_id: str) -> ModelCapabilities:
-    lower_model_id = model_id.lower()
-    supports_reasoning = any(
-        token in lower_model_id for token in ("o1", "o3", "o4", "r1", "think", "reasoning", "deepseek-reasoner")
-    )
-    supports_vision = any(
-        token in lower_model_id
-        for token in (
-            "vision",
-            "vl",
-            "omni",
-            "gpt-4o",
-            "claude-3.5",
-            "claude-3-5",
-            "gemini-1.5",
-            "gemini-2.0",
-            "gemini-2.5",
-            "llava",
-            "qwen-vl",
-        )
-    )
-    return ModelCapabilities(
-        supports_reasoning=supports_reasoning,
-        supports_vision=supports_vision,
-        max_context_tokens=128_000,
-    )
-
-
 def _capabilities_to_dict(caps: ModelCapabilities) -> dict[str, Any]:
     return {
+        "model_kind": caps.model_kind,
+        "supports_agent_chat": caps.supports_agent_chat,
         "supports_fim": caps.supports_fim,
         "supports_reasoning": caps.supports_reasoning,
         "supports_vision": caps.supports_vision,
@@ -103,7 +50,12 @@ def _capabilities_to_dict(caps: ModelCapabilities) -> dict[str, Any]:
 
 
 def _capabilities_from_dict(payload: dict[str, Any]) -> ModelCapabilities:
+    model_kind_raw = str(payload.get("model_kind", "agent"))
+    if model_kind_raw not in ("agent", "image", "embedding", "audio", "realtime", "moderation", "video", "tool"):
+        model_kind_raw = "agent"
     return ModelCapabilities(
+        model_kind=cast(ModelKind, model_kind_raw),
+        supports_agent_chat=bool(payload.get("supports_agent_chat", model_kind_raw == "agent")),
         supports_fim=bool(payload.get("supports_fim", False)),
         supports_reasoning=bool(payload.get("supports_reasoning", False)),
         supports_vision=bool(payload.get("supports_vision", False)),
@@ -122,10 +74,15 @@ def _model_to_dict(model: ModelInfo) -> dict[str, Any]:
 
 
 def _model_from_dict(payload: dict[str, Any]) -> ModelInfo:
+    model_id = str(payload.get("model_id", ""))
+    capabilities_payload = dict(payload.get("capabilities", {}))
+    capabilities = _capabilities_from_dict(capabilities_payload)
+    if "model_kind" not in capabilities_payload and "supports_agent_chat" not in capabilities_payload:
+        capabilities = infer_model_capabilities(model_id)
     return ModelInfo(
-        model_id=str(payload.get("model_id", "")),
-        display_name=str(payload.get("display_name", payload.get("model_id", ""))),
-        capabilities=_capabilities_from_dict(dict(payload.get("capabilities", {}))),
+        model_id=model_id,
+        display_name=str(payload.get("display_name", model_id)),
+        capabilities=capabilities,
         health_status=str(payload.get("health_status", "unknown")),
     )
 
@@ -134,10 +91,10 @@ def _provider_to_dict(provider: ProviderConfig) -> dict[str, Any]:
     return {
         "provider_id": provider.provider_id,
         "display_name": provider.display_name,
-        "protocol": provider.protocol,
-        "api_mode": provider.api_mode,
+        "inference_service": provider.inference_service,
         "api_key": provider.api_key,
         "endpoint": provider.endpoint,
+        "api_version": provider.api_version,
         "cached_models": [_model_to_dict(model) for model in provider.cached_models],
         "inline_model_id": provider.inline_model_id,
         "chat_model_id": provider.chat_model_id,
@@ -146,23 +103,28 @@ def _provider_to_dict(provider: ProviderConfig) -> dict[str, Any]:
 
 
 def _provider_from_dict(payload: dict[str, Any]) -> ProviderConfig:
-    protocol_raw = str(payload.get("protocol", "openai"))
-    if protocol_raw not in ("openai", "anthropic", "ollama", "custom"):
-        protocol_raw = "openai"
-    protocol = cast(ProviderProtocol, protocol_raw)
+    service_raw = payload.get("inference_service")
+    if isinstance(service_raw, str) and service_raw.strip():
+        inference_service = normalize_inference_service(service_raw.strip())
+    else:
+        protocol_raw = str(payload.get("protocol", "openai"))
+        if protocol_raw not in ("openai", "anthropic", "ollama", "custom"):
+            protocol_raw = "openai"
 
-    api_mode_raw = str(payload.get("api_mode", "")).strip()
-    if api_mode_raw not in ("chat_completions", "responses"):
-        raise ValueError("AI provider config is missing valid api_mode.")
-    api_mode = cast(ProviderApiMode, api_mode_raw)
+        api_mode_raw = str(payload.get("api_mode", "")).strip()
+        if api_mode_raw not in ("chat_completions", "responses"):
+            raise ValueError("AI provider config is missing valid api_mode.")
+        protocol = cast(ProviderProtocol, protocol_raw)
+        api_mode = cast(ProviderApiMode, api_mode_raw)
+        inference_service = inference_service_from_legacy(protocol, api_mode)
 
     return ProviderConfig(
         provider_id=str(payload["provider_id"]),
         display_name=str(payload.get("display_name", payload["provider_id"])),
-        protocol=protocol,
-        api_mode=api_mode,
+        inference_service=cast(ProviderInferenceService, inference_service),
         api_key=str(payload.get("api_key", "")),
         endpoint=str(payload.get("endpoint", "")),
+        api_version=str(payload.get("api_version", "")),
         cached_models=[_model_from_dict(dict(model)) for model in payload.get("cached_models", [])],
         inline_model_id=str(payload.get("inline_model_id", "")),
         chat_model_id=str(payload.get("chat_model_id", "")),
@@ -174,6 +136,7 @@ class AiProviderStore(QtCore.QObject):
     providers_changed = QtCore.Signal()
     models_fetched = QtCore.Signal(str, bool, str)
     model_tested = QtCore.Signal(str, str, bool, str)
+    _models_fetch_finished = QtCore.Signal(str, bool, str, object)
     _model_test_finished = QtCore.Signal(str, str, bool, str)
 
     def __init__(self, parent: QtCore.QObject | None = None) -> None:
@@ -182,6 +145,7 @@ class AiProviderStore(QtCore.QObject):
         self.active_inline_provider: str = ""
         self.active_chat_provider: str = ""
         self._storage_path = self._resolve_storage_path()
+        self._models_fetch_finished.connect(self._record_models_fetch_result)  # type: ignore[attr-defined]
         self._model_test_finished.connect(self._record_model_test_result)  # type: ignore[attr-defined]
         self._load()
 
@@ -232,17 +196,16 @@ class AiProviderStore(QtCore.QObject):
                 self.save_provider(cfg)
                 return True
 
-        cfg.cached_models.append(
-            ModelInfo(
-                model_id=normalized_model_id,
-                display_name=normalized_display_name,
-                capabilities=_model_capabilities_from_model_id(normalized_model_id),
-                health_status="unknown",
-            )
+        model = ModelInfo(
+            model_id=normalized_model_id,
+            display_name=normalized_display_name,
+            capabilities=infer_model_capabilities(normalized_model_id),
+            health_status="unknown",
         )
-        if not cfg.inline_model_id:
+        cfg.cached_models.append(model)
+        if supports_agent_chat_model(model) and not cfg.inline_model_id:
             cfg.inline_model_id = normalized_model_id
-        if not cfg.chat_model_id:
+        if supports_agent_chat_model(model) and not cfg.chat_model_id:
             cfg.chat_model_id = normalized_model_id
         self.save_provider(cfg)
         return True
@@ -267,67 +230,120 @@ class AiProviderStore(QtCore.QObject):
         return removed_count
 
     def fetch_models_async(self, provider_id: str) -> None:
+        self.discover_endpoint_models_async(provider_id)
+
+    def discover_endpoint_models_async(self, provider_id: str) -> None:
         cfg = self.provider_by_id(provider_id)
         if cfg is None:
-            logger.warning("fetch_models_async: unknown provider_id=%r", provider_id)
+            logger.warning("discover_endpoint_models_async: unknown provider_id=%r", provider_id)
             self.models_fetched.emit(provider_id, False, "Provider not found")
             return
-        defaults = _default_provider_by_id(cfg.provider_id)
-        if defaults is None:
-            self.models_fetched.emit(
-                provider_id,
-                False,
-                "Automatic model discovery is not available through Agent Framework; add model IDs manually.",
-            )
-            return
-        cfg.cached_models = _merge_model_lists(cfg.cached_models, defaults.cached_models)
-        self.save_provider(cfg, emit=False)
-        self.models_fetched.emit(provider_id, True, "")
 
-    def test_models_async(self, provider_id: str, model_ids: list[str] | None = None) -> None:
-        cfg = self.provider_by_id(provider_id)
-        if cfg is None:
-            return
-        to_test = [model for model in cfg.cached_models if model_ids is None or model.model_id in model_ids]
-        if not to_test:
-            return
-
-        for model in to_test:
-            self._test_model_with_agent_framework(provider_id=provider_id, model_id=model.model_id)
-
-    def _test_model_with_agent_framework(self, *, provider_id: str, model_id: str) -> None:
-        import asyncio
-        import threading
+        provider_snapshot = copy_provider(cfg)
 
         def _worker() -> None:
-            error = ""
-            success = False
             try:
-                from .runtime import StudioAgentRequest, StudioAgentRuntime
-
-                runtime = StudioAgentRuntime(self)
-                result = asyncio.run(
-                    runtime.run_text(
-                        StudioAgentRequest(
-                            request_id=f"provider-test-{provider_id}-{model_id}",
-                            mode="chat",
-                            messages=({"role": "user", "content": "Reply with only: ok"},),
-                            chat_provider_id=provider_id,
-                            chat_model_id=model_id,
-                        )
+                result = discover_endpoint_model_catalog(provider_snapshot)
+                if result.success:
+                    logger.info(
+                        "Endpoint model discovery finished provider=%s count=%s",
+                        provider_snapshot.provider_id,
+                        len(result.models),
                     )
+                else:
+                    logger.warning(
+                        "Endpoint model discovery failed provider=%s error=%s",
+                        provider_snapshot.provider_id,
+                        result.message,
+                    )
+                self._models_fetch_finished.emit(
+                    provider_snapshot.provider_id,
+                    result.success,
+                    result.message,
+                    list(result.models),
                 )
-                success = bool(str(result or "").strip())
             except Exception as exc:
-                error = f"{type(exc).__name__}: {exc}"
-                logger.exception("Agent Framework provider test failed provider=%s model=%s", provider_id, model_id)
-            self._model_test_finished.emit(provider_id, model_id, success, error)
+                logger.exception("Endpoint model discovery failed provider=%s", provider_snapshot.provider_id)
+                self._models_fetch_finished.emit(
+                    provider_snapshot.provider_id,
+                    False,
+                    f"{type(exc).__name__}: {exc}",
+                    [],
+                )
+
+        self._start_catalog_worker(provider_id, _worker)
+
+    def _start_catalog_worker(self, provider_id: str, worker: Callable[[], None]) -> None:
+        threading.Thread(
+            target=worker,
+            daemon=True,
+            name=f"f8-agent-model-catalog-{provider_id}",
+        ).start()
+
+    def test_models_async(self, provider_id: str, model_ids: list[str] | None = None) -> bool:
+        cfg = self.provider_by_id(provider_id)
+        if cfg is None:
+            logger.warning("test_models_async: unknown provider_id=%r", provider_id)
+            return False
+        to_test = [
+            model
+            for model in cfg.cached_models
+            if supports_agent_chat_model(model) and (model_ids is None or model.model_id in model_ids)
+        ]
+        if not to_test:
+            logger.warning("test_models_async: no models selected provider_id=%r model_ids=%r", provider_id, model_ids)
+            return False
+
+        provider_snapshot = copy_provider(cfg)
+        for model in to_test:
+            self._test_model_with_provider(provider=provider_snapshot, model_id=model.model_id)
+        return True
+
+    def _test_model_with_provider(self, *, provider: ProviderConfig, model_id: str) -> None:
+        def _worker() -> None:
+            try:
+                result = check_model_connectivity(provider, model_id)
+                if result.success:
+                    logger.info(
+                        "Agent Framework model connectivity check finished provider=%s model=%s",
+                        provider.provider_id,
+                        model_id,
+                    )
+                else:
+                    logger.warning(
+                        "Agent Framework model connectivity check failed provider=%s model=%s error=%s",
+                        provider.provider_id,
+                        model_id,
+                        result.error,
+                    )
+                self._model_test_finished.emit(provider.provider_id, model_id, result.success, result.error)
+            except Exception as exc:
+                logger.exception(
+                    "Agent Framework model connectivity check failed provider=%s model=%s",
+                    provider.provider_id,
+                    model_id,
+                )
+                self._model_test_finished.emit(provider.provider_id, model_id, False, f"{type(exc).__name__}: {exc}")
 
         threading.Thread(
             target=_worker,
             daemon=True,
-            name=f"f8-agent-provider-test-{provider_id}-{model_id}",
+            name=f"f8-agent-provider-test-{provider.provider_id}-{model_id}",
         ).start()
+
+    @QtCore.Slot(str, bool, str, object)
+    def _record_models_fetch_result(self, provider_id: str, success: bool, error: str, models_payload: object) -> None:
+        if success:
+            cfg = self.provider_by_id(provider_id)
+            if cfg is not None:
+                incoming_models: list[ModelInfo] = []
+                if isinstance(models_payload, list):
+                    incoming_models = [copy_model(model) for model in models_payload if isinstance(model, ModelInfo)]
+                cfg.cached_models = merge_model_lists(cfg.cached_models, incoming_models)
+                self.save_provider(cfg, emit=False)
+                if not error:
+                    error = f"Discovered {len(incoming_models)} agent model(s)."
+        self.models_fetched.emit(provider_id, bool(success), str(error or ""))
 
     @QtCore.Slot(str, str, bool, str)
     def _record_model_test_result(self, provider_id: str, model_id: str, success: bool, error: str) -> None:
@@ -373,7 +389,7 @@ class AiProviderStore(QtCore.QObject):
                 return
             except (json.JSONDecodeError, OSError):
                 logger.exception("Failed to load AI provider config from %s", self._storage_path)
-        self._providers = [_copy_provider(provider) for provider in DEFAULT_PROVIDERS]
+        self._providers = [copy_provider(provider) for provider in DEFAULT_PROVIDERS]
 
     def _persist(self) -> None:
         try:

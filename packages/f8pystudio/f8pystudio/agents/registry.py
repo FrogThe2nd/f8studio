@@ -11,11 +11,106 @@ from typing import Literal
 
 ProviderProtocol = Literal["openai", "anthropic", "ollama", "custom"]
 ProviderApiMode = Literal["chat_completions", "responses"]
+ProviderInferenceService = Literal[
+    "foundry_agent",
+    "azure_openai_chat_completion",
+    "azure_openai_responses",
+    "openai_chat_completion",
+    "openai_responses",
+    "anthropic_claude",
+    "amazon_bedrock",
+    "github_copilot",
+    "ollama_chat",
+    "custom_chat_client",
+]
 ReasoningLevel = Literal["low", "medium", "high"]
+ModelKind = Literal["agent", "image", "embedding", "audio", "realtime", "moderation", "video", "tool"]
+
+VALID_INFERENCE_SERVICES: tuple[ProviderInferenceService, ...] = (
+    "foundry_agent",
+    "azure_openai_chat_completion",
+    "azure_openai_responses",
+    "openai_chat_completion",
+    "openai_responses",
+    "anthropic_claude",
+    "amazon_bedrock",
+    "github_copilot",
+    "ollama_chat",
+    "custom_chat_client",
+)
+
+
+def normalize_inference_service(raw_service: str) -> ProviderInferenceService:
+    if raw_service == "foundry_agent":
+        return "foundry_agent"
+    if raw_service == "azure_openai_chat_completion":
+        return "azure_openai_chat_completion"
+    if raw_service == "azure_openai_responses":
+        return "azure_openai_responses"
+    if raw_service == "openai_chat_completion":
+        return "openai_chat_completion"
+    if raw_service == "openai_responses":
+        return "openai_responses"
+    if raw_service == "anthropic_claude":
+        return "anthropic_claude"
+    if raw_service == "amazon_bedrock":
+        return "amazon_bedrock"
+    if raw_service == "github_copilot":
+        return "github_copilot"
+    if raw_service in ("ollama_chat", "ollama_openai_compatible"):
+        return "ollama_chat"
+    if raw_service == "custom_chat_client":
+        return "custom_chat_client"
+    return "openai_chat_completion"
+
+
+def inference_service_from_legacy(
+    protocol: ProviderProtocol,
+    api_mode: ProviderApiMode,
+) -> ProviderInferenceService:
+    if protocol == "openai" and api_mode == "responses":
+        return "openai_responses"
+    if protocol == "openai":
+        return "openai_chat_completion"
+    if protocol == "anthropic":
+        return "anthropic_claude"
+    if protocol == "ollama":
+        return "ollama_chat"
+    if protocol == "custom" and api_mode == "responses":
+        return "openai_responses"
+    return "custom_chat_client"
+
+
+def inference_service_supports_service_history(service: ProviderInferenceService) -> bool:
+    return service in ("foundry_agent", "azure_openai_responses", "openai_responses")
+
+
+def inference_service_display_name(service: ProviderInferenceService) -> str:
+    if service == "foundry_agent":
+        return "Foundry Agent"
+    if service == "azure_openai_chat_completion":
+        return "Azure OpenAI Chat Completion"
+    if service == "azure_openai_responses":
+        return "Azure OpenAI Responses"
+    if service == "openai_chat_completion":
+        return "OpenAI Chat Completion"
+    if service == "openai_responses":
+        return "OpenAI Responses"
+    if service == "anthropic_claude":
+        return "Anthropic Claude"
+    if service == "amazon_bedrock":
+        return "Amazon Bedrock"
+    if service == "github_copilot":
+        return "GitHub Copilot"
+    if service == "ollama_chat":
+        return "Ollama (OpenAI-compatible)"
+    return "Any other ChatClient"
 
 
 @dataclass(frozen=True)
 class ModelCapabilities:
+    model_kind: ModelKind = "agent"
+    supports_agent_chat: bool = True
     supports_fim: bool = False
     supports_reasoning: bool = False
     supports_vision: bool = False
@@ -38,6 +133,8 @@ class ModelInfo:
     @property
     def display_name_with_icons(self) -> str:
         tags: list[str] = []
+        if not self.capabilities.supports_agent_chat:
+            tags.append(self.capabilities.model_kind)
         if self.capabilities.supports_reasoning:
             tags.append("🧠")
         if self.capabilities.supports_vision:
@@ -59,10 +156,10 @@ class ModelInfo:
 class ProviderConfig:
     provider_id: str
     display_name: str
-    protocol: ProviderProtocol = "openai"
-    api_mode: ProviderApiMode = "chat_completions"
+    inference_service: ProviderInferenceService = "openai_chat_completion"
     api_key: str = ""
     endpoint: str = ""
+    api_version: str = ""
     cached_models: list[ModelInfo] = field(default_factory=list)
     inline_model_id: str = ""
     chat_model_id: str = ""
@@ -83,10 +180,77 @@ def _openai_default() -> ProviderConfig:
     return ProviderConfig(
         provider_id="openai",
         display_name="OpenAI",
-        protocol="openai",
-        api_mode="responses",
+        inference_service="openai_responses",
         endpoint="https://api.openai.com/v1",
         cached_models=[
+            ModelInfo(
+                model_id="gpt-5.5",
+                display_name="GPT-5.5",
+                capabilities=ModelCapabilities(
+                    supports_reasoning=True,
+                    supports_vision=True,
+                    reasoning_levels=("low", "medium", "high"),
+                    max_context_tokens=400_000,
+                ),
+            ),
+            ModelInfo(
+                model_id="gpt-5.4",
+                display_name="GPT-5.4",
+                capabilities=ModelCapabilities(
+                    supports_reasoning=True,
+                    supports_vision=True,
+                    reasoning_levels=("low", "medium", "high"),
+                    max_context_tokens=400_000,
+                ),
+            ),
+            ModelInfo(
+                model_id="gpt-5.4-mini",
+                display_name="GPT-5.4 mini",
+                capabilities=ModelCapabilities(
+                    supports_reasoning=True,
+                    supports_vision=True,
+                    reasoning_levels=("low", "medium", "high"),
+                    max_context_tokens=400_000,
+                ),
+            ),
+            ModelInfo(
+                model_id="gpt-5.4-nano",
+                display_name="GPT-5.4 nano",
+                capabilities=ModelCapabilities(
+                    supports_reasoning=True,
+                    reasoning_levels=("low", "medium", "high"),
+                    max_context_tokens=400_000,
+                ),
+            ),
+            ModelInfo(
+                model_id="gpt-5",
+                display_name="GPT-5",
+                capabilities=ModelCapabilities(
+                    supports_reasoning=True,
+                    supports_vision=True,
+                    reasoning_levels=("low", "medium", "high"),
+                    max_context_tokens=400_000,
+                ),
+            ),
+            ModelInfo(
+                model_id="gpt-5-mini",
+                display_name="GPT-5 mini",
+                capabilities=ModelCapabilities(
+                    supports_reasoning=True,
+                    supports_vision=True,
+                    reasoning_levels=("low", "medium", "high"),
+                    max_context_tokens=400_000,
+                ),
+            ),
+            ModelInfo(
+                model_id="gpt-5-nano",
+                display_name="GPT-5 nano",
+                capabilities=ModelCapabilities(
+                    supports_reasoning=True,
+                    reasoning_levels=("low", "medium", "high"),
+                    max_context_tokens=400_000,
+                ),
+            ),
             ModelInfo(
                 model_id="gpt-4.1",
                 display_name="GPT-4.1",
@@ -123,7 +287,7 @@ def _anthropic_default() -> ProviderConfig:
     return ProviderConfig(
         provider_id="anthropic",
         display_name="Anthropic",
-        protocol="anthropic",
+        inference_service="anthropic_claude",
         endpoint="https://api.anthropic.com",
         cached_models=[
             ModelInfo(
@@ -166,7 +330,7 @@ def _ollama_default() -> ProviderConfig:
     return ProviderConfig(
         provider_id="ollama",
         display_name="Ollama (local)",
-        protocol="ollama",
+        inference_service="ollama_chat",
         endpoint="http://localhost:11434/v1",
         cached_models=[],
     )
@@ -176,7 +340,7 @@ def _gemini_default() -> ProviderConfig:
     return ProviderConfig(
         provider_id="google_gemini",
         display_name="Google Gemini",
-        protocol="openai",
+        inference_service="custom_chat_client",
         endpoint="https://generativelanguage.googleapis.com/v1beta/openai",
         cached_models=[
             ModelInfo(

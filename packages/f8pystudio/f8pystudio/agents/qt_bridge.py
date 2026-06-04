@@ -27,6 +27,7 @@ from .prompts import (
     format_assist_context,
     strip_code_fence,
 )
+from .model_catalog import supports_agent_chat_model
 from .registry import ProviderConfig
 from .runtime import (
     AgentRequestMode,
@@ -536,8 +537,9 @@ class AiLlmBridge(QtCore.QObject):
 
     @staticmethod
     def _first_model_id(cfg: ProviderConfig) -> str:
-        if cfg.cached_models:
-            return cfg.cached_models[0].model_id
+        for model in cfg.cached_models:
+            if supports_agent_chat_model(model):
+                return model.model_id
         return ""
 
     @QtCore.Slot(result="QVariantMap")

@@ -3,8 +3,8 @@ AiProviderConfigDialog — full provider management UI.
 
 Allows users to:
   - Add / edit / delete AI providers
-  - Configure protocol, endpoint URL, API key
-  - Load bundled default model IDs or add model IDs manually
+  - Configure Agent Framework inference service, endpoint URL, API key
+  - Discover endpoint model IDs or add model IDs manually
   - Select default inline and chat models
 """
 from __future__ import annotations
@@ -13,22 +13,30 @@ import logging
 
 from qtpy import QtCore, QtGui, QtWidgets  # type: ignore[import-not-found]
 
-from ...agents.registry import ProviderApiMode, ProviderConfig, ProviderProtocol
+from ...agents.model_catalog import supports_agent_chat_model, supports_endpoint_model_discovery
+from ...agents.provider_endpoints import provider_default_endpoint_for_service
+from ...agents.registry import (
+    ProviderConfig,
+    ProviderInferenceService,
+    inference_service_display_name,
+    inference_service_supports_service_history,
+)
 from ...agents.store import AiProviderStore
 from ..support.studio_theme import label_qss, studio_dark_theme
 
 logger = logging.getLogger(__name__)
 
-_PROTOCOLS: list[tuple[str, ProviderProtocol]] = [
-    ("OpenAI / compatible", "openai"),
-    ("Anthropic", "anthropic"),
-    ("Ollama", "ollama"),
-    ("Custom", "custom"),
-]
-
-_API_MODES: list[tuple[str, ProviderApiMode]] = [
-    ("Responses API", "responses"),
-    ("Chat Completions", "chat_completions"),
+_INFERENCE_SERVICES: list[tuple[str, ProviderInferenceService]] = [
+    ("Foundry Agent", "foundry_agent"),
+    ("Azure OpenAI Chat Completion", "azure_openai_chat_completion"),
+    ("Azure OpenAI Responses", "azure_openai_responses"),
+    ("OpenAI Chat Completion", "openai_chat_completion"),
+    ("OpenAI Responses", "openai_responses"),
+    ("Anthropic Claude", "anthropic_claude"),
+    ("Amazon Bedrock", "amazon_bedrock"),
+    ("GitHub Copilot", "github_copilot"),
+    ("Ollama (OpenAI-compatible)", "ollama_chat"),
+    ("Any other ChatClient", "custom_chat_client"),
 ]
 
 
@@ -90,30 +98,36 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
         self._name_edit = QtWidgets.QLineEdit()
         form.addRow("Display Name:", self._name_edit)
 
-        self._protocol_combo = QtWidgets.QComboBox()
-        for label, _ in _PROTOCOLS:
-            self._protocol_combo.addItem(label)
-        self._protocol_combo.currentIndexChanged.connect(self._on_protocol_changed)  # type: ignore[attr-defined]
-        form.addRow("Protocol:", self._protocol_combo)
+        self._inference_service_combo = QtWidgets.QComboBox()
+        for label, _ in _INFERENCE_SERVICES:
+            self._inference_service_combo.addItem(label)
+        self._inference_service_combo.currentIndexChanged.connect(self._on_inference_service_changed)  # type: ignore[attr-defined]
+        form.addRow("Inference Service:", self._inference_service_combo)
 
-        self._api_mode_combo = QtWidgets.QComboBox()
-        for label, _ in _API_MODES:
-            self._api_mode_combo.addItem(label)
-        self._api_mode_combo.currentIndexChanged.connect(self._on_api_mode_changed)  # type: ignore[attr-defined]
-        form.addRow("API Mode:", self._api_mode_combo)
+        self._service_status = QtWidgets.QLabel("")
+        self._service_status.setStyleSheet(label_qss(color=studio_dark_theme().palette.text_muted, font_size_px=11))
+        self._service_status.setWordWrap(True)
+        form.addRow("MAF:", self._service_status)
 
+        self._endpoint_label = QtWidgets.QLabel("Endpoint URL:")
         self._endpoint_edit = QtWidgets.QLineEdit()
-        self._endpoint_edit.setPlaceholderText("Leave empty for protocol default")
-        form.addRow("Endpoint URL:", self._endpoint_edit)
+        self._endpoint_edit.setPlaceholderText("Leave empty for service default")
+        form.addRow(self._endpoint_label, self._endpoint_edit)
 
+        self._api_version_label = QtWidgets.QLabel("API Version:")
+        self._api_version_edit = QtWidgets.QLineEdit()
+        self._api_version_edit.setPlaceholderText("Azure OpenAI api-version, optional")
+        form.addRow(self._api_version_label, self._api_version_edit)
+
+        self._key_label = QtWidgets.QLabel("API Key:")
         self._key_edit = QtWidgets.QLineEdit()
         self._key_edit.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
-        form.addRow("API Key:", self._key_edit)
+        form.addRow(self._key_label, self._key_edit)
 
         # Model cache actions
         fetch_row = QtWidgets.QHBoxLayout()
-        self._fetch_btn = QtWidgets.QPushButton("Load Defaults")
-        self._fetch_btn.clicked.connect(self._on_fetch_models)  # type: ignore[attr-defined]
+        self._discover_btn = QtWidgets.QPushButton("Discover Endpoint")
+        self._discover_btn.clicked.connect(self._on_discover_models)  # type: ignore[attr-defined]
         
         self._test_btn = QtWidgets.QPushButton("Test Models")
         self._test_btn.clicked.connect(self._on_test_models)  # type: ignore[attr-defined]
@@ -121,18 +135,17 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
         self._remove_model_btn = QtWidgets.QPushButton("Remove Selected")
         self._remove_model_btn.clicked.connect(self._on_remove_models)  # type: ignore[attr-defined]
 
-        fetch_row.addWidget(self._fetch_btn)
+        fetch_row.addWidget(self._discover_btn)
         fetch_row.addWidget(self._test_btn)
         fetch_row.addWidget(self._remove_model_btn)
 
+        form.addRow("Models:", fetch_row)
+
         self._fetch_status = QtWidgets.QLabel("")
         self._fetch_status.setStyleSheet(label_qss(color=studio_dark_theme().palette.text_muted, font_size_px=11))
-        # Fix layout jumping: Use Ignored policy so long text doesn't push the layout.
-        # We also enable text elision or simply let it overflow while staying compact.
-        self._fetch_status.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Preferred)
-        fetch_row.addWidget(self._fetch_status, 1)
-
-        form.addRow("Models:", fetch_row)
+        self._fetch_status.setWordWrap(True)
+        self._fetch_status.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+        form.addRow("Status:", self._fetch_status)
 
         add_model_row = QtWidgets.QHBoxLayout()
         self._model_id_edit = QtWidgets.QLineEdit()
@@ -194,13 +207,16 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
         self._splitter.setSizes([260, 520])
 
         self._form_widgets: list[QtWidgets.QWidget] = [
-            self._name_edit, self._protocol_combo, self._api_mode_combo, self._endpoint_edit,
-            self._key_edit, self._fetch_btn, self._test_btn, self._remove_model_btn,
+            self._name_edit, self._inference_service_combo, self._endpoint_edit,
+            self._api_version_edit, self._key_edit, self._discover_btn, self._test_btn, self._remove_model_btn,
             self._model_id_edit, self._add_model_btn, self._model_table,
             self._inline_model_combo, self._chat_model_combo, self._reasoning_combo,
         ]
         self._set_form_enabled(False)
         self._current_provider_id: str = ""
+        self._pending_model_tests: set[str] = set()
+        self._test_success_count = 0
+        self._test_error_count = 0
 
     # ------------------------------------------------------------------
     # List management
@@ -238,7 +254,8 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
             return
         self._load_form(cfg)
         self._set_form_enabled(True)
-        self._update_api_mode_controls(cfg.protocol, cfg.api_mode)
+        self._update_service_controls(cfg)
+        self._update_model_catalog_controls(cfg)
         self._del_btn.setEnabled(True)
 
     # ------------------------------------------------------------------
@@ -247,20 +264,23 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
 
     def _load_form(self, cfg: ProviderConfig) -> None:
         self._name_edit.setText(cfg.display_name)
-        proto_idx = next(
-            (i for i, (_, p) in enumerate(_PROTOCOLS) if p == cfg.protocol), 0
+        service_idx = next(
+            (i for i, (_, service) in enumerate(_INFERENCE_SERVICES) if service == cfg.inference_service),
+            0,
         )
-        self._protocol_combo.setCurrentIndex(proto_idx)
-        api_mode_idx = next(
-            (i for i, (_, mode) in enumerate(_API_MODES) if mode == cfg.api_mode), 1
-        )
-        self._api_mode_combo.setCurrentIndex(api_mode_idx)
-        self._update_api_mode_controls(cfg.protocol, cfg.api_mode)
+        self._inference_service_combo.blockSignals(True)
+        try:
+            self._inference_service_combo.setCurrentIndex(service_idx)
+        finally:
+            self._inference_service_combo.blockSignals(False)
         self._endpoint_edit.setText(cfg.endpoint)
+        self._api_version_edit.setText(cfg.api_version)
         self._key_edit.setText(cfg.api_key)
         self._model_id_edit.clear()
             
         self._refresh_model_combos(cfg)
+        self._update_service_controls(cfg)
+        self._update_model_catalog_controls(cfg)
         self._fetch_status.setText("")
 
     def _refresh_model_combos(self, cfg: ProviderConfig) -> None:
@@ -291,7 +311,7 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
                 id_item.setForeground(QtGui.QColor(studio_dark_theme().palette.text_muted))
                 self._model_table.setItem(row, 2, id_item)
                 
-                if m.health_status != "error":
+                if m.health_status != "error" and supports_agent_chat_model(m):
                     self._inline_model_combo.addItem(m.full_display_label, m.model_id)
                     self._chat_model_combo.addItem(m.full_display_label, m.model_id)
 
@@ -324,13 +344,9 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
             return
 
         cfg.display_name = self._name_edit.text().strip() or cfg.display_name
-        proto_idx = self._protocol_combo.currentIndex()
-        if 0 <= proto_idx < len(_PROTOCOLS):
-            cfg.protocol = _PROTOCOLS[proto_idx][1]
-        api_mode_idx = self._api_mode_combo.currentIndex()
-        if 0 <= api_mode_idx < len(_API_MODES):
-            cfg.api_mode = _API_MODES[api_mode_idx][1]
+        cfg.inference_service = self._current_inference_service()
         cfg.endpoint = self._endpoint_edit.text().strip()
+        cfg.api_version = self._api_version_edit.text().strip()
         cfg.api_key = self._key_edit.text().strip()
 
         inline_idx = self._inline_model_combo.currentIndex()
@@ -364,6 +380,7 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
         cfg = ProviderConfig(
             provider_id=pid,
             display_name=pid.replace("_", " ").title(),
+            inference_service="custom_chat_client",
         )
         self._store.save_provider(cfg)
         self._current_provider_id = pid
@@ -388,36 +405,36 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
     # Model fetch
     # ------------------------------------------------------------------
 
-    def _on_fetch_models(self) -> None:
+    def _on_discover_models(self) -> None:
         pid = self._current_provider_id
         if not pid:
             return
-        # Apply current form api_key/endpoint before fetching
-        cfg = self._store.provider_by_id(pid)
+        cfg = self._save_catalog_form_fields(pid)
         if cfg is None:
             return
-        cfg.api_key = self._key_edit.text().strip()
-        cfg.endpoint = self._endpoint_edit.text().strip()
-        api_mode_idx = self._api_mode_combo.currentIndex()
-        if 0 <= api_mode_idx < len(_API_MODES):
-            cfg.api_mode = _API_MODES[api_mode_idx][1]
-        self._store.save_provider(cfg)  # persist key/endpoint first
+        if not supports_endpoint_model_discovery(cfg):
+            self._fetch_status.setText("Endpoint discovery is not available for this provider type.")
+            self._fetch_status.setToolTip("")
+            return
 
-        self._fetch_btn.setEnabled(False)
-        self._fetch_status.setText("Loading defaults...")
-        self._store.fetch_models_async(pid)
+        self._discover_btn.setEnabled(False)
+        self._fetch_status.setText("Discovering endpoint models...")
+        self._fetch_status.setToolTip("")
+        self._store.discover_endpoint_models_async(pid)
 
     def _on_models_fetched(self, pid: str, success: bool, error: str) -> None:
         if pid != self._current_provider_id:
             return
-        self._fetch_btn.setEnabled(True)
+        cfg = self._store.provider_by_id(pid)
+        if cfg is not None:
+            self._update_model_catalog_controls(cfg)
         if success:
-            self._fetch_status.setText("Models updated.")
-            cfg = self._store.provider_by_id(pid)
+            self._fetch_status.setText(error or "Models updated.")
+            self._fetch_status.setToolTip("")
             if cfg:
                 self._refresh_model_combos(cfg)
         else:
-            self._fetch_status.setText(f"Error: {error}")
+            self._fetch_status.setText(error or "Model catalog update failed.")
             self._fetch_status.setToolTip(error)
 
     def _on_add_model_id(self) -> None:
@@ -457,28 +474,45 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
         pid = self._current_provider_id
         if not pid:
             return
-        cfg = self._store.provider_by_id(pid)
+        cfg = self._save_catalog_form_fields(pid)
         if not cfg:
             return
 
-        # Get selected models
-        selected_ids = []
+        selected_ids: list[str] = []
         indices = self._model_table.selectionModel().selectedRows()
         for idx in indices:
             item = self._model_table.item(idx.row(), 2)
             if item is not None:
                 selected_ids.append(item.text())
-        
-        # If none selected, test all
-        ids_to_test = selected_ids if selected_ids else None
-        
+
+        ids_to_test = selected_ids if selected_ids else [
+            model.model_id for model in cfg.cached_models if supports_agent_chat_model(model)
+        ]
+        if not ids_to_test:
+            self._fetch_status.setText("No models to test. Discover endpoint models or add a model ID first.")
+            self._fetch_status.setToolTip("")
+            return
+
+        self._pending_model_tests = set(ids_to_test)
+        self._test_success_count = 0
+        self._test_error_count = 0
         self._test_btn.setEnabled(False)
-        self._fetch_status.setText("Testing connectivity…")
-        self._store.test_models_async(pid, ids_to_test)
+        self._fetch_status.setText(f"Testing connectivity for {len(ids_to_test)} model(s)...")
+        self._fetch_status.setToolTip("")
+        if not self._store.test_models_async(pid, ids_to_test):
+            self._pending_model_tests.clear()
+            self._test_btn.setEnabled(True)
+            self._fetch_status.setText("No matching models to test. Refresh the table or add a model ID first.")
 
     def _on_model_tested(self, pid: str, model_id: str, success: bool, error: str) -> None:
         if pid != self._current_provider_id:
             return
+        if model_id in self._pending_model_tests:
+            self._pending_model_tests.remove(model_id)
+        if success:
+            self._test_success_count += 1
+        else:
+            self._test_error_count += 1
             
         # Update table status
         for row in range(self._model_table.rowCount()):
@@ -494,32 +528,36 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
         if cfg:
             self._refresh_model_combos(cfg)
 
+        if self._pending_model_tests:
+            self._fetch_status.setText(f"Testing connectivity... {len(self._pending_model_tests)} remaining.")
+            if not success:
+                self._fetch_status.setToolTip(error)
+            return
+
         self._test_btn.setEnabled(True)
-        self._fetch_status.setText("Test complete." if success else f"Error: {error}")
-        if not success:
+        if self._test_error_count:
+            self._fetch_status.setText(
+                f"Connectivity test complete: {self._test_success_count} ok, {self._test_error_count} failed."
+            )
             self._fetch_status.setToolTip(error)
         else:
+            self._fetch_status.setText(f"Connectivity test complete: {self._test_success_count} ok.")
             self._fetch_status.setToolTip("")
 
-    def _on_protocol_changed(self, idx: int) -> None:
+    def _on_inference_service_changed(self, idx: int) -> None:
         if not self._current_provider_id:
             return
-        if 0 <= idx < len(_PROTOCOLS):
-            _label, proto = _PROTOCOLS[idx]
-            defaults = {
-                "openai": "https://api.openai.com/v1",
-                "anthropic": "https://api.anthropic.com",
-                "ollama": "http://localhost:11434/v1",
-                "custom": "",
-            }
+        if 0 <= idx < len(_INFERENCE_SERVICES):
+            _label, service = _INFERENCE_SERVICES[idx]
             if not self._endpoint_edit.text().strip():
-                self._endpoint_edit.setText(defaults.get(proto, ""))
-            current_mode = self._current_api_mode()
-            self._update_api_mode_controls(proto, current_mode)
-
-    def _on_api_mode_changed(self, _idx: int) -> None:
-        proto = self._current_protocol()
-        self._update_api_mode_controls(proto, self._current_api_mode())
+                self._endpoint_edit.setText(provider_default_endpoint_for_service(service))
+            cfg = self._store.provider_by_id(self._current_provider_id)
+            if cfg is not None:
+                cfg.inference_service = service
+                cfg.endpoint = self._endpoint_edit.text().strip()
+                cfg.api_version = self._api_version_edit.text().strip()
+                self._update_service_controls(cfg)
+                self._update_model_catalog_controls(cfg)
 
     def _on_providers_changed(self) -> None:
         self._populate_list()
@@ -528,38 +566,81 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
     # Helpers
     # ------------------------------------------------------------------
 
-    def _current_protocol(self) -> ProviderProtocol:
-        idx = self._protocol_combo.currentIndex()
-        if 0 <= idx < len(_PROTOCOLS):
-            return _PROTOCOLS[idx][1]
-        return "openai"
+    def _current_inference_service(self) -> ProviderInferenceService:
+        idx = self._inference_service_combo.currentIndex()
+        if 0 <= idx < len(_INFERENCE_SERVICES):
+            return _INFERENCE_SERVICES[idx][1]
+        return "custom_chat_client"
 
-    def _current_api_mode(self) -> ProviderApiMode:
-        idx = self._api_mode_combo.currentIndex()
-        if 0 <= idx < len(_API_MODES):
-            return _API_MODES[idx][1]
-        return "chat_completions"
+    def _update_service_controls(self, cfg: ProviderConfig) -> None:
+        service_name = inference_service_display_name(cfg.inference_service)
+        history = "service chat history: yes" if inference_service_supports_service_history(cfg.inference_service) else "service chat history: no"
+        self._service_status.setText(f"{service_name}; {history}.")
+        self._api_version_edit.setEnabled(cfg.inference_service in ("azure_openai_chat_completion", "azure_openai_responses"))
+        self._api_version_label.setEnabled(self._api_version_edit.isEnabled())
 
-    def _update_api_mode_controls(self, protocol: ProviderProtocol, api_mode: ProviderApiMode) -> None:
-        is_openai_compatible = protocol in ("openai", "custom")
-        self._api_mode_combo.blockSignals(True)
-        try:
-            if is_openai_compatible:
-                idx = next((i for i, (_, mode) in enumerate(_API_MODES) if mode == api_mode), 1)
-            else:
-                idx = next((i for i, (_, mode) in enumerate(_API_MODES) if mode == "chat_completions"), 1)
-            self._api_mode_combo.setCurrentIndex(idx)
-        finally:
-            self._api_mode_combo.blockSignals(False)
+        if cfg.inference_service == "foundry_agent":
+            self._endpoint_label.setText("Project Endpoint:")
+            self._endpoint_edit.setPlaceholderText("https://<resource>.services.ai.azure.com/api/projects/<project>")
+            self._key_label.setText("Credential:")
+            self._key_edit.setPlaceholderText("Use Azure credential environment or project client")
+        elif cfg.inference_service == "amazon_bedrock":
+            self._endpoint_label.setText("AWS Region:")
+            self._endpoint_edit.setPlaceholderText("us-east-1")
+            self._key_label.setText("AWS Access Key:")
+            self._key_edit.setPlaceholderText("Optional; secret/session can come from AWS environment or profile")
+        elif cfg.inference_service == "github_copilot":
+            self._endpoint_label.setText("Endpoint URL:")
+            self._endpoint_edit.setPlaceholderText("Managed by GitHub Copilot SDK")
+            self._key_label.setText("Credential:")
+            self._key_edit.setPlaceholderText("Managed by GitHub Copilot SDK")
+        elif cfg.inference_service == "ollama_chat":
+            self._endpoint_label.setText("Ollama Host:")
+            self._endpoint_edit.setPlaceholderText(provider_default_endpoint_for_service(cfg.inference_service))
+            self._key_label.setText("API Key:")
+            self._key_edit.setPlaceholderText("Not required for local Ollama")
+        elif cfg.inference_service in ("azure_openai_chat_completion", "azure_openai_responses"):
+            self._endpoint_label.setText("Azure Endpoint:")
+            self._endpoint_edit.setPlaceholderText("https://<resource>.openai.azure.com")
+            self._key_label.setText("API Key:")
+            self._key_edit.setPlaceholderText("Azure OpenAI API key")
+        else:
+            self._endpoint_label.setText("Endpoint URL:")
+            default_endpoint = provider_default_endpoint_for_service(cfg.inference_service)
+            self._endpoint_edit.setPlaceholderText(default_endpoint or "Provider endpoint URL")
+            self._key_label.setText("API Key:")
+            self._key_edit.setPlaceholderText("Provider API key")
 
-        self._api_mode_combo.setEnabled(is_openai_compatible)
+    def _update_model_catalog_controls(self, cfg: ProviderConfig) -> None:
+        supports_discovery = supports_endpoint_model_discovery(cfg)
+        self._discover_btn.setEnabled(supports_discovery)
+        if supports_discovery:
+            self._discover_btn.setToolTip("Query the provider endpoint for model IDs.")
+        else:
+            self._discover_btn.setToolTip("Endpoint model discovery is not available for this provider type.")
+
+    def _save_catalog_form_fields(self, provider_id: str) -> ProviderConfig | None:
+        cfg = self._store.provider_by_id(provider_id)
+        if cfg is None:
+            return None
+        cfg.api_key = self._key_edit.text().strip()
+        cfg.endpoint = self._endpoint_edit.text().strip()
+        cfg.api_version = self._api_version_edit.text().strip()
+        cfg.inference_service = self._current_inference_service()
+        self._store.save_provider(cfg)
+        return cfg
 
     def _set_form_enabled(self, enabled: bool) -> None:
         for w in self._form_widgets:
             w.setEnabled(enabled)
+        if enabled and self._current_provider_id:
+            cfg = self._store.provider_by_id(self._current_provider_id)
+            if cfg is not None:
+                self._update_service_controls(cfg)
+                self._update_model_catalog_controls(cfg)
 
     def _setup_combo_search(self, combo: QtWidgets.QComboBox) -> None:
-        combo.setEditable(True)
+        combo.setEditable(False)
         combo.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
         completer = combo.completer()
         if completer:

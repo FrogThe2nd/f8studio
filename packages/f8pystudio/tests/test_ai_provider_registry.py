@@ -12,6 +12,9 @@ from f8pystudio.agents.registry import (
     _gemini_default,
     _ollama_default,
     _openai_default,
+    inference_service_display_name,
+    inference_service_from_legacy,
+    inference_service_supports_service_history,
 )
 
 
@@ -47,10 +50,10 @@ class TestModelInfo:
 class TestProviderConfig:
     def test_defaults(self) -> None:
         cfg = ProviderConfig(provider_id="test", display_name="Test")
-        assert cfg.protocol == "openai"
-        assert cfg.api_mode == "chat_completions"
+        assert cfg.inference_service == "openai_chat_completion"
         assert cfg.api_key == ""
         assert cfg.endpoint == ""
+        assert cfg.api_version == ""
         assert cfg.cached_models == []
         assert cfg.inline_model_id == ""
         assert cfg.chat_model_id == ""
@@ -80,32 +83,40 @@ class TestDefaultProviders:
 
     def test_openai_has_models(self) -> None:
         cfg = _openai_default()
-        assert cfg.api_mode == "responses"
+        assert cfg.inference_service == "openai_responses"
         assert len(cfg.cached_models) >= 2
         model_ids = [m.model_id for m in cfg.cached_models]
         assert "gpt-4o" in model_ids
 
     def test_anthropic_has_reasoning_model(self) -> None:
         cfg = _anthropic_default()
+        assert cfg.inference_service == "anthropic_claude"
         reasoning_models = [m for m in cfg.cached_models if m.capabilities.supports_reasoning]
         assert len(reasoning_models) >= 1
 
     def test_gemini_has_large_context(self) -> None:
         cfg = _gemini_default()
-        assert cfg.api_mode == "chat_completions"
+        assert cfg.inference_service == "custom_chat_client"
         for m in cfg.cached_models:
             assert m.capabilities.max_context_tokens >= 1_000_000
 
     def test_ollama_no_models_by_default(self) -> None:
         cfg = _ollama_default()
-        assert cfg.api_mode == "chat_completions"
+        assert cfg.inference_service == "ollama_chat"
         assert cfg.cached_models == []
 
-    def test_protocols_valid(self) -> None:
-        valid_protocols = {"openai", "anthropic", "ollama", "custom"}
-        for p in DEFAULT_PROVIDERS:
-            assert p.protocol in valid_protocols
+    def test_custom_default_service_is_explicit(self) -> None:
+        cfg = ProviderConfig(provider_id="custom", display_name="Custom", inference_service="custom_chat_client")
+        assert cfg.inference_service == "custom_chat_client"
 
-    def test_non_openai_defaults_use_chat_completions(self) -> None:
-        cfg = ProviderConfig(provider_id="custom", display_name="Custom", protocol="custom")
-        assert cfg.api_mode == "chat_completions"
+    def test_legacy_mapping_to_inference_service(self) -> None:
+        assert inference_service_from_legacy("openai", "responses") == "openai_responses"
+        assert inference_service_from_legacy("openai", "chat_completions") == "openai_chat_completion"
+        assert inference_service_from_legacy("anthropic", "chat_completions") == "anthropic_claude"
+        assert inference_service_from_legacy("ollama", "chat_completions") == "ollama_chat"
+        assert inference_service_from_legacy("custom", "chat_completions") == "custom_chat_client"
+
+    def test_inference_service_display_and_history_support(self) -> None:
+        assert inference_service_display_name("openai_responses") == "OpenAI Responses"
+        assert inference_service_supports_service_history("openai_responses")
+        assert not inference_service_supports_service_history("openai_chat_completion")

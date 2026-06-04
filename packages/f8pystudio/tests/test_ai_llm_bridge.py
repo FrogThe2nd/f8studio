@@ -279,8 +279,7 @@ def test_stream_request_thread_reports_unexpected_runtime_exception(tmp_path: Pa
         ProviderConfig(
             provider_id="openai",
             display_name="OpenAI",
-            protocol="openai",
-            api_mode="responses",
+            inference_service="openai_responses",
             chat_model_id="gpt-4.1",
             cached_models=[ModelInfo(model_id="gpt-4.1", display_name="GPT-4.1")],
         ),

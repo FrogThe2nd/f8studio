@@ -111,6 +111,12 @@ keyring = ">=25.6.0, <26"
 mcp = { version = ">=1.18.0,<2", extras = ["cli"] }
 agent-framework-core = ">=1.7.0,<2"
 agent-framework-openai = ">=1.7.0,<2"
+agent-framework-foundry = ">=1.7.0,<2"
+agent-framework-anthropic = ">=1.0.0b260521,<2"
+agent-framework-bedrock = ">=1.0.0b260521,<2"
+agent-framework-ollama = ">=1.0.0b260521,<2"
+agent-framework-github-copilot = ">=1.0.0b260521,<2"
+github-copilot-sdk = "==1.0.0b2"
 
 [feature.studio.tasks]
 f8pystudio = "python -m f8pystudio.main"

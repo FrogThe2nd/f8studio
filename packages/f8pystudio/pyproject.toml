@@ -16,6 +16,12 @@ dependencies = [
     "basedpyright>=1.31.0",
     "agent-framework-core>=1.7.0,<2",
     "agent-framework-openai>=1.7.0,<2",
+    "agent-framework-foundry>=1.7.0,<2",
+    "agent-framework-anthropic>=1.0.0b260521,<2",
+    "agent-framework-bedrock>=1.0.0b260521,<2",
+    "agent-framework-ollama>=1.0.0b260521,<2",
+    "agent-framework-github-copilot>=1.0.0b260521,<2",
+    "github-copilot-sdk==1.0.0b2",
 ]
 
 [project.optional-dependencies]

@@ -143,8 +143,7 @@ def _store(tmp_path: Path) -> AiProviderStore:
     cfg = ProviderConfig(
         provider_id="openai",
         display_name="OpenAI",
-        protocol="openai",
-        api_mode="responses",
+        inference_service="openai_responses",
         chat_model_id="gpt-4.1",
         cached_models=[ModelInfo(model_id="gpt-4.1", display_name="GPT-4.1")],
     )
@@ -189,6 +188,44 @@ def test_runtime_runs_edit_through_agent_framework_and_strips_fence(
     assert "document editing assistant" in str(call["instructions"])
 
 
+def test_runtime_reasoning_option_is_limited_to_openai_responses(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    FakeAgent.calls.clear()
+    FakeAgent.stream_mode = "normal"
+    _install_fake_agent_framework(monkeypatch)
+    monkeypatch.setattr("f8pystudio.agents.runtime.build_chat_client", lambda _selection: object())
+
+    store = _store(tmp_path)
+    cfg = ProviderConfig(
+        provider_id="foundry",
+        display_name="Foundry",
+        inference_service="foundry_agent",
+        endpoint="https://example.services.ai.azure.com/api/projects/project-a",
+        chat_model_id="agent-name",
+        cached_models=[ModelInfo(model_id="agent-name", display_name="Agent")],
+    )
+    store.save_provider(cfg, emit=False)
+
+    runtime = StudioAgentRuntime(store)
+    result = asyncio.run(
+        runtime.run_text(
+            StudioAgentRequest(
+                request_id="foundry-1",
+                mode="chat",
+                messages=({"role": "user", "content": "hello"},),
+                chat_provider_id="foundry",
+                chat_model_id="agent-name",
+                reasoning_level="high",
+            )
+        )
+    )
+
+    assert result == "```python\nprint('ok')\n```"
+    assert FakeAgent.calls[0]["options"] == {"max_tokens": 4096}
+
+
 def test_runtime_stream_yields_chunks_and_done(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -226,6 +263,77 @@ def test_runtime_stream_yields_chunks_and_done(
     assert isinstance(call_messages, list)
     assert isinstance(call_messages[0], FakeAgentMessage)
     assert call_messages[0].role == "user"
+
+
+def test_runtime_stream_disables_openai_responses_service_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    FakeAgent.calls.clear()
+    FakeAgent.stream_mode = "normal"
+    _install_fake_agent_framework(monkeypatch)
+    monkeypatch.setattr("f8pystudio.agents.runtime.build_chat_client", lambda _selection: object())
+
+    runtime = StudioAgentRuntime(_store(tmp_path))
+    session = runtime._session_registry.session_for(StudioAgentSessionKey.sidebar())
+    assert isinstance(session, FakeAgentSession)
+    session.service_session_id = "resp_previous"
+    events: list[StudioAgentEvent] = []
+
+    async def _collect() -> None:
+        async for event in runtime.run_stream(
+            StudioAgentRequest(
+                request_id="chat-openai-responses-session-1",
+                mode="chat",
+                messages=({"role": "user", "content": "hello"},),
+                chat_provider_id="openai",
+                chat_model_id="gpt-4.1",
+                session_key=StudioAgentSessionKey.sidebar(),
+            )
+        ):
+            events.append(event)
+
+    asyncio.run(_collect())
+
+    assert events[-1] == StudioAgentEvent(kind="done")
+    assert FakeAgent.calls[0]["session"] is None
+
+
+def test_runtime_stream_keeps_session_for_non_responses_services(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    FakeAgent.calls.clear()
+    FakeAgent.stream_mode = "normal"
+    _install_fake_agent_framework(monkeypatch)
+    monkeypatch.setattr("f8pystudio.agents.runtime.build_chat_client", lambda _selection: object())
+
+    store = _store(tmp_path)
+    cfg = store.provider_by_id("openai")
+    assert cfg is not None
+    cfg.inference_service = "openai_chat_completion"
+    store.save_provider(cfg, emit=False)
+
+    runtime = StudioAgentRuntime(store)
+    events: list[StudioAgentEvent] = []
+
+    async def _collect() -> None:
+        async for event in runtime.run_stream(
+            StudioAgentRequest(
+                request_id="chat-openai-chat-session-1",
+                mode="chat",
+                messages=({"role": "user", "content": "hello"},),
+                chat_provider_id="openai",
+                chat_model_id="gpt-4.1",
+                session_key=StudioAgentSessionKey.sidebar(),
+            )
+        ):
+            events.append(event)
+
+    asyncio.run(_collect())
+
+    assert events[-1] == StudioAgentEvent(kind="done")
+    assert isinstance(FakeAgent.calls[0]["session"], FakeAgentSession)
 
 
 def test_runtime_stream_times_out_waiting_for_first_event(

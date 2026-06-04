@@ -3,8 +3,10 @@ from __future__ import annotations
 
 from pathlib import Path
 from unittest.mock import patch
+import time
 
 import pytest
+from qtpy import QtTest, QtWidgets  # type: ignore[import-not-found]
 
 from f8pystudio.agents.registry import ModelCapabilities, ModelInfo, ProviderConfig
 from f8pystudio.agents.store import (
@@ -18,6 +20,24 @@ from f8pystudio.agents.store import (
 )
 
 
+def _ensure_app() -> QtWidgets.QApplication:
+    app = QtWidgets.QApplication.instance()
+    if app is not None:
+        return app
+    return QtWidgets.QApplication([])
+
+
+def _wait_until(predicate, *, timeout_ms: int = 3000) -> None:
+    deadline = time.monotonic() + (float(timeout_ms) / 1000.0)
+    while time.monotonic() < deadline:
+        QtWidgets.QApplication.processEvents()
+        if predicate():
+            return
+        QtTest.QTest.qWait(10)
+    QtWidgets.QApplication.processEvents()
+    assert predicate()
+
+
 # ---------------------------------------------------------------------------
 # Codec helpers
 # ---------------------------------------------------------------------------
@@ -27,6 +47,8 @@ class TestCapabilitiesCodec:
         caps = ModelCapabilities()
         d = _capabilities_to_dict(caps)
         restored = _capabilities_from_dict(d)
+        assert restored.model_kind == "agent"
+        assert restored.supports_agent_chat
         assert restored.supports_fim == caps.supports_fim
         assert restored.supports_reasoning == caps.supports_reasoning
         assert restored.reasoning_levels == caps.reasoning_levels
@@ -45,6 +67,8 @@ class TestCapabilitiesCodec:
 
     def test_missing_keys_use_defaults(self) -> None:
         restored = _capabilities_from_dict({})
+        assert restored.model_kind == "agent"
+        assert restored.supports_agent_chat
         assert restored.supports_fim is False
         assert restored.max_context_tokens == 128_000
 
@@ -61,33 +85,46 @@ class TestModelCodec:
         assert restored.display_name == m.display_name
         assert restored.capabilities.max_context_tokens == 128_000
 
+    def test_legacy_model_without_kind_reinfers_non_agent_capabilities(self) -> None:
+        restored = _model_from_dict(
+            {
+                "model_id": "gpt-image-2",
+                "display_name": "gpt-image-2",
+                "capabilities": {},
+            }
+        )
+
+        assert restored.capabilities.model_kind == "image"
+        assert not restored.capabilities.supports_agent_chat
+
 
 class TestProviderCodec:
     def test_round_trip_minimal(self) -> None:
         cfg = ProviderConfig(provider_id="test", display_name="Test")
-        restored = _provider_from_dict(_provider_to_dict(cfg))
+        encoded = _provider_to_dict(cfg)
+        restored = _provider_from_dict(encoded)
         assert restored.provider_id == "test"
         assert restored.display_name == "Test"
-        assert restored.protocol == "openai"
-        assert restored.api_mode == "chat_completions"
+        assert restored.inference_service == "openai_chat_completion"
         assert restored.api_key == ""
+        assert "protocol" not in encoded
+        assert "api_mode" not in encoded
 
     def test_round_trip_full(self) -> None:
         cfg = ProviderConfig(
             provider_id="anthropic",
             display_name="Anthropic",
-            protocol="anthropic",
-            api_mode="chat_completions",
+            inference_service="anthropic_claude",
             api_key="sk-xyz",
             endpoint="https://api.anthropic.com",
+            api_version="",
             cached_models=[ModelInfo(model_id="claude-3-7", display_name="Claude 3.7")],
             inline_model_id="claude-3-7",
             chat_model_id="claude-3-7",
             reasoning_level="high",
         )
         restored = _provider_from_dict(_provider_to_dict(cfg))
-        assert restored.protocol == "anthropic"
-        assert restored.api_mode == "chat_completions"
+        assert restored.inference_service == "anthropic_claude"
         assert restored.api_key == "sk-xyz"
         assert len(restored.cached_models) == 1
         assert restored.cached_models[0].model_id == "claude-3-7"
@@ -97,18 +134,41 @@ class TestProviderCodec:
         cfg = ProviderConfig(
             provider_id="openai",
             display_name="OpenAI",
-            protocol="openai",
-            api_mode="responses",
+            inference_service="openai_responses",
             endpoint="https://api.openai.com/v1",
         )
         restored = _provider_from_dict(_provider_to_dict(cfg))
-        assert restored.api_mode == "responses"
+        assert restored.inference_service == "openai_responses"
+
+    def test_legacy_provider_config_infers_inference_service(self) -> None:
+        restored = _provider_from_dict({
+            "provider_id": "openai",
+            "display_name": "OpenAI",
+            "protocol": "openai",
+            "api_mode": "responses",
+            "endpoint": "https://api.openai.com/v1",
+        })
+
+        assert restored.inference_service == "openai_responses"
+
+    def test_legacy_ollama_inference_service_name_migrates_to_ollama_chat(self) -> None:
+        restored = _provider_from_dict({
+            "provider_id": "ollama",
+            "display_name": "Ollama",
+            "inference_service": "ollama_openai_compatible",
+            "endpoint": "http://localhost:11434/v1",
+        })
+
+        assert restored.inference_service == "ollama_chat"
 
     def test_invalid_protocol_defaults_to_openai(self) -> None:
-        d = _provider_to_dict(ProviderConfig(provider_id="x", display_name="X"))
-        d["protocol"] = "unsupported_thing"
-        restored = _provider_from_dict(d)
-        assert restored.protocol == "openai"
+        restored = _provider_from_dict({
+            "provider_id": "x",
+            "display_name": "X",
+            "protocol": "unsupported_thing",
+            "api_mode": "chat_completions",
+        })
+        assert restored.inference_service == "openai_chat_completion"
 
     def test_provider_config_without_api_mode_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="api_mode"):
@@ -165,12 +225,16 @@ class TestAiProviderStore:
 
     def test_save_new_provider(self, tmp_path: Path) -> None:
         store = self._make_store(tmp_path)
-        new_cfg = ProviderConfig(provider_id="my_ollama", display_name="My Ollama", protocol="ollama")
+        new_cfg = ProviderConfig(
+            provider_id="my_ollama",
+            display_name="My Ollama",
+            inference_service="ollama_chat",
+        )
         store.save_provider(new_cfg)
 
         found = store.provider_by_id("my_ollama")
         assert found is not None
-        assert found.protocol == "ollama"
+        assert found.inference_service == "ollama_chat"
 
     def test_delete_provider(self, tmp_path: Path) -> None:
         store = self._make_store(tmp_path)
@@ -193,41 +257,74 @@ class TestAiProviderStore:
         store.save_provider(new_cfg)
         assert changed_count[0] == 1
 
-    def test_fetch_models_merges_bundled_defaults(self, tmp_path: Path) -> None:
+    def test_fetch_models_uses_endpoint_discovery(self, tmp_path: Path) -> None:
+        _ensure_app()
         store = self._make_store(tmp_path)
-        cfg = store.provider_by_id("openai")
-        assert cfg is not None
-        cfg.cached_models = [ModelInfo(model_id="local-alias", display_name="Local Alias")]
-        store.save_provider(cfg)
+        store.save_provider(
+            ProviderConfig(
+                provider_id="custom_lab",
+                display_name="Custom Lab",
+                inference_service="custom_chat_client",
+                endpoint="https://example.test/v1",
+            )
+        )
 
         fetched: list[tuple[str, bool, str]] = []
         store.models_fetched.connect(lambda pid, success, error: fetched.append((pid, success, error)))
 
-        store.fetch_models_async("openai")
+        with patch("f8pystudio.agents.store.discover_endpoint_model_catalog") as discover:
+            from f8pystudio.agents.model_catalog import ModelCatalogResult
 
-        updated = store.provider_by_id("openai")
+            discover.return_value = ModelCatalogResult(
+                status="ok",
+                models=(ModelInfo(model_id="endpoint-model", display_name="Endpoint Model"),),
+            )
+            store.fetch_models_async("custom_lab")
+            _wait_until(lambda: len(fetched) == 1)
+
+        updated = store.provider_by_id("custom_lab")
         assert updated is not None
-        model_ids = [model.model_id for model in updated.cached_models]
-        assert "local-alias" in model_ids
-        assert "gpt-4.1" in model_ids
-        assert fetched == [("openai", True, "")]
+        assert [model.model_id for model in updated.cached_models] == ["endpoint-model"]
+        assert fetched == [("custom_lab", True, "Discovered 1 agent model(s).")]
 
-    def test_fetch_models_reports_manual_entry_for_custom_provider(self, tmp_path: Path) -> None:
+    def test_discover_endpoint_models_merges_provider_native_catalog(self, tmp_path: Path) -> None:
+        _ensure_app()
         store = self._make_store(tmp_path)
-        store.save_provider(ProviderConfig(provider_id="custom_lab", display_name="Custom Lab", protocol="custom"))
+        store.save_provider(
+            ProviderConfig(
+                provider_id="custom_lab",
+                display_name="Custom Lab",
+                inference_service="custom_chat_client",
+                endpoint="https://example.test/v1",
+            )
+        )
         fetched: list[tuple[str, bool, str]] = []
         store.models_fetched.connect(lambda pid, success, error: fetched.append((pid, success, error)))
 
-        store.fetch_models_async("custom_lab")
+        with patch("f8pystudio.agents.store.discover_endpoint_model_catalog") as discover:
+            from f8pystudio.agents.model_catalog import ModelCatalogResult
 
-        assert len(fetched) == 1
-        assert fetched[0][0] == "custom_lab"
-        assert fetched[0][1] is False
-        assert "add model IDs manually" in fetched[0][2]
+            discover.return_value = ModelCatalogResult(
+                status="ok",
+                models=(ModelInfo(model_id="endpoint-model", display_name="Endpoint Model"),),
+            )
+            store.discover_endpoint_models_async("custom_lab")
+            _wait_until(lambda: len(fetched) == 1)
+
+        updated = store.provider_by_id("custom_lab")
+        assert updated is not None
+        assert [model.model_id for model in updated.cached_models] == ["endpoint-model"]
+        assert fetched == [("custom_lab", True, "Discovered 1 agent model(s).")]
 
     def test_add_cached_model_sets_defaults_and_capabilities(self, tmp_path: Path) -> None:
         store = self._make_store(tmp_path)
-        store.save_provider(ProviderConfig(provider_id="local", display_name="Local", protocol="custom"))
+        store.save_provider(
+            ProviderConfig(
+                provider_id="local",
+                display_name="Local",
+                inference_service="custom_chat_client",
+            )
+        )
 
         assert store.add_cached_model("local", "qwen-vl-reasoning")
 
@@ -240,9 +337,34 @@ class TestAiProviderStore:
         assert updated.inline_model_id == "qwen-vl-reasoning"
         assert updated.chat_model_id == "qwen-vl-reasoning"
 
+    def test_add_cached_non_agent_model_does_not_set_defaults(self, tmp_path: Path) -> None:
+        store = self._make_store(tmp_path)
+        store.save_provider(
+            ProviderConfig(
+                provider_id="local",
+                display_name="Local",
+                inference_service="custom_chat_client",
+            )
+        )
+
+        assert store.add_cached_model("local", "gpt-image-2")
+
+        updated = store.provider_by_id("local")
+        assert updated is not None
+        assert updated.cached_models[0].capabilities.model_kind == "image"
+        assert not updated.cached_models[0].capabilities.supports_agent_chat
+        assert updated.inline_model_id == ""
+        assert updated.chat_model_id == ""
+
     def test_add_cached_model_updates_duplicate_display_name(self, tmp_path: Path) -> None:
         store = self._make_store(tmp_path)
-        store.save_provider(ProviderConfig(provider_id="local", display_name="Local", protocol="custom"))
+        store.save_provider(
+            ProviderConfig(
+                provider_id="local",
+                display_name="Local",
+                inference_service="custom_chat_client",
+            )
+        )
 
         assert store.add_cached_model("local", "local-model")
         assert store.add_cached_model("local", "local-model", "Local Model")
@@ -257,7 +379,7 @@ class TestAiProviderStore:
         cfg = ProviderConfig(
             provider_id="local",
             display_name="Local",
-            protocol="custom",
+            inference_service="custom_chat_client",
             cached_models=[
                 ModelInfo(model_id="a", display_name="A"),
                 ModelInfo(model_id="b", display_name="B"),
@@ -276,7 +398,7 @@ class TestAiProviderStore:
         assert updated.inline_model_id == ""
         assert updated.chat_model_id == ""
 
-    def test_test_models_async_routes_through_agent_framework_runtime(self, tmp_path: Path) -> None:
+    def test_test_models_async_routes_through_provider_connectivity_boundary(self, tmp_path: Path) -> None:
         store = self._make_store(tmp_path)
         store.save_provider(
             ProviderConfig(
@@ -289,11 +411,34 @@ class TestAiProviderStore:
             )
         )
 
-        with patch.object(AiProviderStore, "_test_model_with_agent_framework") as recorder:
+        with patch.object(AiProviderStore, "_test_model_with_provider") as recorder:
             store.test_models_async("runner", ["first"])
 
         assert recorder.call_count == 1
-        assert recorder.call_args.kwargs == {"provider_id": "runner", "model_id": "first"}
+        assert recorder.call_args.kwargs["provider"].provider_id == "runner"
+        assert recorder.call_args.kwargs["model_id"] == "first"
+
+    def test_test_models_async_ignores_non_agent_models(self, tmp_path: Path) -> None:
+        store = self._make_store(tmp_path)
+        store.save_provider(
+            ProviderConfig(
+                provider_id="runner",
+                display_name="Runner",
+                cached_models=[
+                    ModelInfo(
+                        model_id="gpt-image-2",
+                        display_name="gpt-image-2",
+                        capabilities=ModelCapabilities(model_kind="image", supports_agent_chat=False),
+                    ),
+                ],
+            )
+        )
+
+        with patch.object(AiProviderStore, "_test_model_with_provider") as recorder:
+            started = store.test_models_async("runner", ["gpt-image-2"])
+
+        assert not started
+        assert recorder.call_count == 0
 
     def test_record_model_test_result_updates_health_and_emits(self, tmp_path: Path) -> None:
         store = self._make_store(tmp_path)

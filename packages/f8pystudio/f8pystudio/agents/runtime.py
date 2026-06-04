@@ -200,7 +200,7 @@ class StudioAgentRuntime:
         async for event in _stream_agent_events(
             agent=agent,
             messages=messages,
-            session=self._session_for_request(request),
+            session=self._session_for_streaming_request(request, provider),
             tools=list(request.tools) or None,
             options=self._options_for_request(request, provider=provider, max_tokens=4096),
             abort_event=abort_event,
@@ -231,6 +231,14 @@ class StudioAgentRuntime:
         if key is None:
             return None
         return self._session_registry.session_for(key)
+
+    def _session_for_streaming_request(self, request: StudioAgentRequest, provider: ProviderConfig) -> object | None:
+        if provider.inference_service in ("azure_openai_responses", "openai_responses"):
+            # OpenAI Responses REST/SSE streaming rejects previous_response_id. MAF derives
+            # that field from AgentSession.service_session_id, while Studio already sends
+            # explicit chat history in the messages payload.
+            return None
+        return self._session_for_request(request)
 
     def _provider_for_request(self, request: StudioAgentRequest) -> ProviderConfig:
         provider_id = request.inline_provider_id if request.mode == "inline" else request.chat_provider_id
@@ -331,7 +339,7 @@ class StudioAgentRuntime:
         if max_tokens > 0:
             options["max_tokens"] = int(max_tokens)
         if request.reasoning_level:
-            if provider.api_mode == "responses":
+            if provider.inference_service in ("azure_openai_responses", "openai_responses"):
                 options["reasoning"] = {"effort": str(request.reasoning_level)}
         return options
 

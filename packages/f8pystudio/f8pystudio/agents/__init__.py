@@ -27,9 +27,12 @@ from .registry import (
     DEFAULT_PROVIDERS,
     ModelCapabilities,
     ModelInfo,
-    ProviderApiMode,
     ProviderConfig,
-    ProviderProtocol,
+    ProviderInferenceService,
+)
+from .model_catalog import (
+    ModelCatalogResult,
+    supports_endpoint_model_discovery,
 )
 from .runtime import (
     AgentRequestMode,
@@ -65,10 +68,10 @@ __all__ = [
     "GraphContextStateFieldSummary",
     "GraphContextValueSummary",
     "ModelCapabilities",
+    "ModelCatalogResult",
     "ModelInfo",
-    "ProviderApiMode",
     "ProviderConfig",
-    "ProviderProtocol",
+    "ProviderInferenceService",
     "SYSTEM_PROMPT_CODE",
     "SYSTEM_PROMPT_EDIT",
     "SYSTEM_PROMPT_PLAN",
@@ -92,4 +95,5 @@ __all__ = [
     "graph_patch_preview_event",
     "runtime_evidence_event",
     "strip_code_fence",
+    "supports_endpoint_model_discovery",
 ]
