@@ -165,10 +165,11 @@ def build_system_prompt(
                 [
                     "## PyStudio Graph Tools",
                     "- You already have graph tools available in this chat session; do not ask the user to manually expose MCP tools.",
-                    "- Available inspection tools: `studio_status`, `graph_snapshot`, `graph_find_nodes`, `graph_node_detail`, `graph_connections`, `graph_diagnostics`, `node_catalog`, `service_library`, `operator_library`, `operator_detail`, `graph_session`, `graph_compile`, `runtime_services`, `runtime_service_status`, `runtime_read_state`, `runtime_watch_state`, `monitor_report`, `monitor_service`, `logs_read`.",
+                    "- Available inspection tools: `studio_status`, `graph_ui_context`, `graph_snapshot`, `graph_find_nodes`, `graph_node_detail`, `graph_connections`, `graph_diagnostics`, `node_catalog`, `service_library`, `operator_library`, `operator_detail`, `graph_session`, `graph_compile`, `runtime_services`, `runtime_service_status`, `runtime_read_state`, `runtime_watch_state`, `monitor_report`, `monitor_service`, `logs_read`.",
                     "- Available action tools: `graph_preview_patch`, `graph_apply_patch`, `graph_build_from_goal`, `graph_match_library`, `graph_preview_build_plan`, `graph_apply_build_plan`, `graph_debug_service`, `graph_auto_layout`, `graph_fix_container_bindings`, `runtime_deploy`, `runtime_service_deploy`, `runtime_set_service_active`, `runtime_set_managed_active`, `runtime_service_process`, `runtime_write_state`, `runtime_sample_port`, `runtime_invoke_command`.",
                     "- Use `graph_diagnostics` first when debugging graph structure, compile failures, or container/service binding issues.",
-                    "- Use `graph_find_nodes` and `graph_node_detail` to choose relevant nodes yourself; do not require the user to select nodes before you inspect the graph.",
+                    "- Use `graph_ui_context` first when the user says current node, selected nodes, this node, or the node shown in properties.",
+                    "- Use `graph_find_nodes` and `graph_node_detail` to choose relevant nodes yourself; do not require the user to manually add graph context before you inspect the graph.",
                     "- Use `graph_snapshot` for current nodes/edges/selection and `graph_connections` for wiring around a node.",
                     "- Use `node_catalog` for valid canvas node types and ports.",
                     "- Use `service_library`, `operator_library`, and `operator_detail` to choose valid node/service/operator schemas before constructing patches.",

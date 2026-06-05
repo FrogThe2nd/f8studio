@@ -171,6 +171,8 @@ class StudioAutomationHost(QtCore.QObject):
             return {"snapshot": self._graph_adapter.snapshot().to_dict()}
         if method == "graph.session":
             return {"session": self._graph_adapter.session_payload()}
+        if method == "graph.uiContext":
+            return {"uiContext": self._graph_ui_context()}
         if method == "graph.catalog":
             return self._graph_adapter.node_catalog()
         if method == "graph.findNodes":
@@ -265,6 +267,20 @@ class StudioAutomationHost(QtCore.QObject):
             "deploy": deploy_result,
             "compileWarnings": list(compiled.warnings or ()),
             "compile": self._graph_adapter.compile_graph(),
+        }
+
+    def _graph_ui_context(self) -> dict[str, Any]:
+        snapshot = self._graph_adapter.snapshot()
+        selected_node_ids = list(snapshot.selected_node_ids)
+        primary_node_id = selected_node_ids[0] if len(selected_node_ids) == 1 else ""
+        return {
+            "graphRevision": snapshot.revision,
+            "selectedNodeIds": selected_node_ids,
+            "selectionLabel": _selection_label_from_node_ids(selected_node_ids),
+            "selectionCount": len(selected_node_ids),
+            "propertyPanelNodeId": "",
+            "primaryNodeId": primary_node_id,
+            "primaryNodeSource": "singleSelection" if primary_node_id else "none",
         }
 
     def _graph_build_from_goal(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -500,6 +516,14 @@ def _stored_state_to_dict(value: Any) -> dict[str, Any] | None:
         "value": value.value,
         "tsMs": value.ts_ms,
     }
+
+
+def _selection_label_from_node_ids(node_ids: list[str]) -> str:
+    if not node_ids:
+        return ""
+    if len(node_ids) == 1:
+        return str(node_ids[0])
+    return f"{len(node_ids)} selected nodes"
 
 
 def _optional_int_param(params: dict[str, Any], key: str) -> int | None:

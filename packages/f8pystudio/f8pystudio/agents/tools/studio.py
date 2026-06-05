@@ -28,6 +28,9 @@ class StudioAutomationTools:
     def studio_status(self, connection_file: str = "") -> dict[str, Any]:
         return self._client(connection_file).call("studio.status")
 
+    def graph_ui_context(self, connection_file: str = "") -> dict[str, Any]:
+        return self._client(connection_file).call("graph.uiContext")
+
     def graph_snapshot(self, connection_file: str = "") -> dict[str, Any]:
         return self._client(connection_file).call("graph.snapshot")
 

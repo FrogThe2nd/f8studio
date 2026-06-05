@@ -27,6 +27,10 @@ def _create_server() -> Any:
         return tools.studio_status(connection_file=connection_file)
 
     @server.tool()
+    def graph_ui_context(connection_file: str = "") -> dict[str, Any]:
+        return tools.graph_ui_context(connection_file=connection_file)
+
+    @server.tool()
     def graph_snapshot(connection_file: str = "") -> dict[str, Any]:
         return tools.graph_snapshot(connection_file=connection_file)
 

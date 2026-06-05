@@ -6,50 +6,29 @@ from typing import Protocol, cast
 from qtpy import QtWidgets
 
 from ...agents.graph_context import GraphContextSnapshot
-from ..dialogs.ai_context_inspector import AiContextInspectorDialog
 from ..support.ai_context_controls import set_status_label_text
 
 logger = logging.getLogger(__name__)
 
 
-class _AiBridgeToolbar(Protocol):
-    def get_context_breakdown(self) -> dict[str, int]: ...
-
-    def get_context_report(self) -> str: ...
-
-    def get_chat_context_report(self) -> str: ...
-
-
 class _AiAssistSidebarToolbarHost(Protocol):
     _selection_mode: str
     _current_selected_snapshot_preview: GraphContextSnapshot | None
-    _pinned_graph_context_snapshot: GraphContextSnapshot | None
     _graph_tool_count: int
-    _ctx_btn: QtWidgets.QToolButton
+    _graph_tool_names: tuple[str, ...]
+    _graph_skill_names: tuple[str, ...]
     _selected_node_label: QtWidgets.QLabel
-    _pinned_node_label: QtWidgets.QLabel
-    _tools_label: QtWidgets.QLabel
-    _pin_context_btn: QtWidgets.QToolButton
-    _clear_context_btn: QtWidgets.QToolButton
-    _ai_bridge: _AiBridgeToolbar
+    _tools_button: QtWidgets.QToolButton
+    _tools_menu: QtWidgets.QMenu
+    _skills_button: QtWidgets.QToolButton
+    _skills_menu: QtWidgets.QMenu
 
 
 class AiAssistSidebarToolbarMixin:
-    def _inspect_context(self) -> None:
-        host = cast(_AiAssistSidebarToolbarHost, self)
-        dlg = AiContextInspectorDialog(host._ai_bridge.get_context_report(), cast(QtWidgets.QWidget, self))
-        dlg.exec()
-
-    def _inspect_graph_context(self) -> None:
-        host = cast(_AiAssistSidebarToolbarHost, self)
-        dlg = AiContextInspectorDialog(host._ai_bridge.get_chat_context_report(), cast(QtWidgets.QWidget, self))
-        dlg.exec()
-
     def _refresh_context_toolbar(self) -> None:
         host = cast(_AiAssistSidebarToolbarHost, self)
         selection_mode = host._selection_mode
         selected_snapshot = host._current_selected_snapshot_preview
-        pinned_snapshot = host._pinned_graph_context_snapshot
 
         if selection_mode == "active" and selected_snapshot is not None:
             selected_text = f"Sel: {selected_snapshot.selection_label}"
@@ -60,32 +39,50 @@ class AiAssistSidebarToolbarMixin:
             )
         else:
             selected_text = "Sel: none"
-            selected_tooltip = "Select one or more nodes to preview graph subgraph context."
+            selected_tooltip = "Select one or more nodes; graph tools can query the current selection."
         set_status_label_text(host._selected_node_label, selected_text, max_width=host._selected_node_label.maximumWidth())
         host._selected_node_label.setToolTip(selected_tooltip)
 
         tool_count = int(host._graph_tool_count)
         if tool_count > 0:
-            set_status_label_text(host._tools_label, f"Tools: {tool_count}", max_width=host._tools_label.maximumWidth())
-            host._tools_label.setToolTip("PyStudio graph, library, runtime, monitor, and log tools are available to the chat agent.")
-        else:
-            set_status_label_text(host._tools_label, "Tools: off", max_width=host._tools_label.maximumWidth())
-            host._tools_label.setToolTip("Graph tools are not available because no Studio graph was attached to this sidebar.")
-
-        if pinned_snapshot is None:
-            set_status_label_text(host._pinned_node_label, "Pin: none", max_width=host._pinned_node_label.maximumWidth())
-            host._pinned_node_label.setToolTip("No graph context is pinned; current selection is still used as automatic chat context.")
-        else:
-            set_status_label_text(
-                host._pinned_node_label,
-                f"Pin: {pinned_snapshot.selection_label}",
-                max_width=host._pinned_node_label.maximumWidth(),
+            host._tools_button.setText(f"Tools: {tool_count}")
+            host._tools_button.setToolTip(
+                "PyStudio graph, library, runtime, monitor, and log tools are available to the chat agent."
             )
-            host._pinned_node_label.setToolTip(
-                f"Selected nodes: {pinned_snapshot.total_selected_count}\n"
-                f"One-hop context nodes: {pinned_snapshot.total_one_hop_count}\n"
-                f"Included connections: {pinned_snapshot.total_connection_count}"
-            )
+        else:
+            host._tools_button.setText("Tools: off")
+            host._tools_button.setToolTip("Graph tools are not available because no Studio graph was attached to this sidebar.")
 
-        host._pin_context_btn.setEnabled(selected_snapshot is not None)
-        host._clear_context_btn.setEnabled(pinned_snapshot is not None)
+        skill_count = len(host._graph_skill_names)
+        if skill_count > 0:
+            host._skills_button.setText(f"Skills: {skill_count}")
+            host._skills_button.setToolTip("Agent skills are available to the chat agent.")
+        else:
+            host._skills_button.setText("Skills: off")
+            host._skills_button.setToolTip("No agent skills are attached to this sidebar yet.")
+
+    def _populate_graph_tools_menu(self) -> None:
+        host = cast(_AiAssistSidebarToolbarHost, self)
+        menu = host._tools_menu
+        menu.clear()
+
+        if host._graph_tool_names:
+            for tool_name in host._graph_tool_names:
+                action = menu.addAction(str(tool_name))
+                action.setEnabled(False)
+        else:
+            action = menu.addAction("No graph tools available")
+            action.setEnabled(False)
+
+    def _populate_graph_skills_menu(self) -> None:
+        host = cast(_AiAssistSidebarToolbarHost, self)
+        menu = host._skills_menu
+        menu.clear()
+
+        if host._graph_skill_names:
+            for skill_name in host._graph_skill_names:
+                action = menu.addAction(str(skill_name))
+                action.setEnabled(False)
+        else:
+            action = menu.addAction("No skills attached")
+            action.setEnabled(False)

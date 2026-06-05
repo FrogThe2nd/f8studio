@@ -135,6 +135,10 @@ class StudioRuntimeObservationSource(Protocol):
     ) -> StoredStateValue | None: ...
 
 
+class StudioGraphUiContextSource(Protocol):
+    def graph_ui_context(self) -> dict[str, Any]: ...
+
+
 @dataclass
 class _PendingToolApproval:
     request: StudioAgentApprovalRequest
@@ -160,6 +164,7 @@ class LocalStudioGraphToolExecutor(QtCore.QObject):
         bridge: StudioRuntimeToolBridge | None = None,
         log_source: StudioLogToolSource | None = None,
         observation_source: StudioRuntimeObservationSource | None = None,
+        ui_context_source: StudioGraphUiContextSource | None = None,
         on_graph_patch_applied: Callable[[], None] | None = None,
         on_tool_trace: Callable[[dict[str, Any]], None] | None = None,
         on_tool_approval_requested: Callable[[dict[str, Any]], None] | None = None,
@@ -172,6 +177,7 @@ class LocalStudioGraphToolExecutor(QtCore.QObject):
         self._bridge = bridge
         self._log_source = log_source
         self._observation_source = observation_source
+        self._ui_context_source = ui_context_source
         self._on_graph_patch_applied = on_graph_patch_applied
         self._on_tool_trace = on_tool_trace
         self._on_tool_approval_requested = on_tool_approval_requested
@@ -320,6 +326,8 @@ class LocalStudioGraphToolExecutor(QtCore.QObject):
             return {"snapshot": self._adapter.snapshot().to_dict()}
         if method == "graph.session":
             return {"session": self._adapter.session_payload()}
+        if method == "graph.uiContext":
+            return {"uiContext": self._graph_ui_context()}
         if method == "graph.catalog":
             return self._adapter.node_catalog()
         if method == "graph.findNodes":
@@ -438,6 +446,25 @@ class LocalStudioGraphToolExecutor(QtCore.QObject):
                 "managedActive": bridge.managed_active,
             }
         return {"status": status}
+
+    def _graph_ui_context(self) -> dict[str, Any]:
+        source = self._ui_context_source
+        if source is not None:
+            payload = source.graph_ui_context()
+            if isinstance(payload, dict):
+                return dict(payload)
+        snapshot = self._adapter.snapshot()
+        selected_node_ids = list(snapshot.selected_node_ids)
+        primary_node_id = selected_node_ids[0] if len(selected_node_ids) == 1 else ""
+        return {
+            "graphRevision": snapshot.revision,
+            "selectedNodeIds": selected_node_ids,
+            "selectionLabel": _selection_label_from_node_ids(selected_node_ids),
+            "selectionCount": len(selected_node_ids),
+            "propertyPanelNodeId": "",
+            "primaryNodeId": primary_node_id,
+            "primaryNodeSource": "singleSelection" if primary_node_id else "none",
+        }
 
     def _runtime_deploy(self, params: dict[str, Any]) -> dict[str, Any]:
         if not bool(params.get("confirm")):
@@ -828,6 +855,7 @@ class LocalStudioGraphTools:
     def available_tools(self) -> tuple[Callable[..., dict[str, Any]], ...]:
         return (
             self.studio_status,
+            self.graph_ui_context,
             self.graph_snapshot,
             self.graph_find_nodes,
             self.graph_node_detail,
@@ -865,9 +893,54 @@ class LocalStudioGraphTools:
             self.logs_read,
         )
 
+    def available_tool_names(self) -> tuple[str, ...]:
+        return (
+            "studio_status",
+            "graph_ui_context",
+            "graph_snapshot",
+            "graph_find_nodes",
+            "graph_node_detail",
+            "graph_connections",
+            "graph_diagnostics",
+            "node_catalog",
+            "service_library",
+            "operator_library",
+            "operator_detail",
+            "graph_session",
+            "graph_compile",
+            "graph_preview_patch",
+            "graph_apply_patch",
+            "graph_build_from_goal",
+            "graph_match_library",
+            "graph_preview_build_plan",
+            "graph_apply_build_plan",
+            "graph_debug_service",
+            "graph_auto_layout",
+            "graph_fix_container_bindings",
+            "runtime_deploy",
+            "runtime_service_deploy",
+            "runtime_services",
+            "runtime_service_status",
+            "runtime_set_service_active",
+            "runtime_set_managed_active",
+            "runtime_service_process",
+            "runtime_write_state",
+            "runtime_read_state",
+            "runtime_watch_state",
+            "runtime_sample_port",
+            "runtime_invoke_command",
+            "monitor_report",
+            "monitor_service",
+            "logs_read",
+        )
+
     def studio_status(self) -> dict[str, Any]:
         """Return Studio graph/runtime status, including graph revision and runtime management state."""
         return self.executor.call("studio.status")
+
+    def graph_ui_context(self) -> dict[str, Any]:
+        """Return lightweight UI focus state: selected node ids, property panel node, and primary current node."""
+        return self.executor.call("graph.uiContext")
 
     def graph_snapshot(self) -> dict[str, Any]:
         """Return the current PyStudio graph snapshot, including nodes, selected nodes, ports, and edges."""
@@ -1240,6 +1313,14 @@ def _stored_state_to_dict(value: StoredStateValue | None) -> dict[str, Any] | No
         "value": value.value,
         "tsMs": value.ts_ms,
     }
+
+
+def _selection_label_from_node_ids(node_ids: list[str]) -> str:
+    if not node_ids:
+        return ""
+    if len(node_ids) == 1:
+        return str(node_ids[0])
+    return f"{len(node_ids)} selected nodes"
 
 
 def _optional_int_param(params: dict[str, Any], key: str) -> int | None:

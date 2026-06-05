@@ -52,6 +52,28 @@ def test_studio_automation_tools_forward_graph_snapshot_to_automation_client(
     assert calls == [("graph.snapshot", None)]
 
 
+def test_studio_automation_tools_forward_graph_ui_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, dict[str, object] | None]] = []
+
+    class FakeClient:
+        def call(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+            calls.append((method, params))
+            return {"ok": True}
+
+    monkeypatch.setattr(
+        "f8pystudio.agents.tools.studio.AutomationClient.from_connection_file",
+        lambda path: FakeClient(),
+    )
+
+    tools = StudioAutomationTools(connection_file="/tmp/f8-connection.json")
+    result = tools.graph_ui_context()
+
+    assert result == {"ok": True}
+    assert calls == [("graph.uiContext", None)]
+
+
 def test_studio_automation_tools_forward_graph_build_plan_calls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -132,8 +154,16 @@ def test_local_studio_graph_tools_dispatch_to_adapter(monkeypatch: pytest.Monkey
     callback_count = 0
 
     class FakePayload:
-        def __init__(self, payload: dict[str, object]) -> None:
+        def __init__(
+            self,
+            payload: dict[str, object],
+            *,
+            revision: int = 0,
+            selected_node_ids: tuple[str, ...] = (),
+        ) -> None:
             self._payload = dict(payload)
+            self.revision = int(revision)
+            self.selected_node_ids = tuple(selected_node_ids)
 
         def to_dict(self) -> dict[str, object]:
             return dict(self._payload)
@@ -148,7 +178,7 @@ def test_local_studio_graph_tools_dispatch_to_adapter(monkeypatch: pytest.Monkey
 
         def snapshot(self) -> FakePayload:
             calls.append("snapshot")
-            return FakePayload({"nodeCount": 1})
+            return FakePayload({"nodeCount": 1}, revision=7, selected_node_ids=("node-a",))
 
         def session_payload(self) -> dict[str, object]:
             calls.append("session")
@@ -220,6 +250,17 @@ def test_local_studio_graph_tools_dispatch_to_adapter(monkeypatch: pytest.Monkey
     patch = {"expectedRevision": None, "ops": []}
 
     assert tools.graph_snapshot() == {"snapshot": {"nodeCount": 1}}
+    assert tools.graph_ui_context() == {
+        "uiContext": {
+            "graphRevision": 7,
+            "selectedNodeIds": ["node-a"],
+            "selectionLabel": "node-a",
+            "selectionCount": 1,
+            "propertyPanelNodeId": "",
+            "primaryNodeId": "node-a",
+            "primaryNodeSource": "singleSelection",
+        }
+    }
     assert tools.graph_find_nodes(query="node", selected_only=True, limit=3) == {"nodes": [{"node_id": "node-a"}]}
     assert tools.graph_node_detail("node-a") == {"detail": {"node": {"node_id": "node-a"}}}
     assert tools.graph_connections("node-a", direction="outgoing", limit=4) == {
@@ -234,6 +275,7 @@ def test_local_studio_graph_tools_dispatch_to_adapter(monkeypatch: pytest.Monkey
     assert callback_count == 1
     assert calls == [
         "init:graph",
+        "snapshot",
         "snapshot",
         ("find", "node", "", "", "", "", "", True, 3),
         "detail:node-a",

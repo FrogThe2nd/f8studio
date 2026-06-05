@@ -385,6 +385,9 @@ class F8StudioSingleNodePropertiesWidget(
             self._log_exception("Failed to read property panel scroll position")
             return 0
 
+    def current_node_id(self) -> str:
+        return str(self._node_id or "")
+
     def _build_property_editor(self, *, node: F8StudioBaseNode) -> F8StudioNodePropEditorWidget:
         return F8StudioNodePropEditorWidget(
             self._container,

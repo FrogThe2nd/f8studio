@@ -295,6 +295,7 @@ class MainWindowUiMixin:
             runtime_bridge=self._bridge,
             log_source=self._log_dock,
             observation_source=self._runtime_observations,
+            property_editor=self._prop_editor,
             on_graph_patch_applied=self._schedule_studio_runtime_sync,
             parent=self,
         )

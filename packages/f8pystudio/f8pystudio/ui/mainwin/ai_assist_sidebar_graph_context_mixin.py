@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Protocol, cast
+from typing import Protocol, cast
 
 from qtpy import QtCore
 
@@ -21,22 +21,12 @@ class GraphSelectionSource(Protocol):
     def selected_nodes(self) -> list[object]: ...
 
 
-class _AiBridgeGraphContext(Protocol):
-    def set_chat_context_snapshot(self, snapshot: GraphContextSnapshot) -> None: ...
-
-    def set_auto_chat_context_snapshot(self, snapshot: GraphContextSnapshot | None) -> None: ...
-
-    def clear_chat_context_snapshot(self) -> None: ...
-
-
 class _AiAssistSidebarGraphContextHost(Protocol):
     _studio_graph: GraphSelectionSource | None
     _selection_timer: QtCore.QTimer
     _selection_mode: str
     _current_selection_label: str
     _current_selected_snapshot_preview: GraphContextSnapshot | None
-    _pinned_graph_context_snapshot: GraphContextSnapshot | None
-    _ai_bridge: _AiBridgeGraphContext
 
     def isVisible(self) -> bool: ...
 
@@ -73,22 +63,6 @@ class AiAssistSidebarGraphContextMixin:
         else:
             host._current_selected_snapshot_preview = snapshot
             host._current_selection_label = snapshot.selection_label
-        host._ai_bridge.set_auto_chat_context_snapshot(snapshot)
-        host._refresh_context_toolbar()
-
-    def _pin_selected_context(self) -> None:
-        host = cast(_AiAssistSidebarGraphContextHost, self)
-        snapshot = host._current_selected_snapshot_preview
-        if snapshot is None:
-            return
-        host._pinned_graph_context_snapshot = snapshot
-        host._ai_bridge.set_chat_context_snapshot(snapshot)
-        host._refresh_context_toolbar()
-
-    def _clear_pinned_context(self) -> None:
-        host = cast(_AiAssistSidebarGraphContextHost, self)
-        host._pinned_graph_context_snapshot = None
-        host._ai_bridge.clear_chat_context_snapshot()
         host._refresh_context_toolbar()
 
     @QtCore.Slot(object)
@@ -132,10 +106,3 @@ class AiAssistSidebarGraphContextMixin:
             return
         snapshot = build_graph_context_snapshot(graph, selected_nodes)
         self._set_current_selection_snapshot(snapshot, mode="active" if snapshot is not None else "none")
-
-    @QtCore.Slot(bool, str)
-    def _on_bridge_chat_context_changed(self, has_context: bool, _node_name: str) -> None:
-        host = cast(_AiAssistSidebarGraphContextHost, self)
-        if not has_context:
-            host._pinned_graph_context_snapshot = None
-        host._refresh_context_toolbar()

@@ -83,6 +83,7 @@ class _FakeGraph(QtCore.QObject):
     def __init__(self) -> None:
         super().__init__()
         self._selected_nodes: list[object] = []
+        self._undo_stack = _FakeUndoStack()
 
     def selected_nodes(self) -> list[object]:
         return list(self._selected_nodes)
@@ -90,6 +91,19 @@ class _FakeGraph(QtCore.QObject):
     def set_selected_nodes(self, nodes: list[object]) -> None:
         self._selected_nodes = list(nodes)
         self.node_selection_changed.emit(list(nodes), [])
+
+
+class _FakeUndoStack:
+    def index(self) -> int:
+        return 7
+
+
+class _FakePropertyEditor:
+    def __init__(self, node_id: str = "") -> None:
+        self.node_id = node_id
+
+    def current_node_id(self) -> str:
+        return self.node_id
 
 
 @dataclass
@@ -152,7 +166,7 @@ def _make_node(node_id: str, name: str) -> _FakeSnapshotNode:
     )
 
 
-def test_sidebar_pin_is_frozen_until_cleared(monkeypatch) -> None:
+def test_sidebar_selection_label_tracks_current_selection(monkeypatch) -> None:
     widget, graph = _make_sidebar(monkeypatch)
     first = _make_node("node-a", "Node A")
     second = _make_node("node-b", "Node B")
@@ -160,35 +174,39 @@ def test_sidebar_pin_is_frozen_until_cleared(monkeypatch) -> None:
     graph.set_selected_nodes([first])
     QtWidgets.QApplication.processEvents()
 
-    assert widget._pin_context_btn.isEnabled()
     assert "Node A" in widget._selected_node_label.text()
-
-    widget._pin_selected_context()
-    assert "Node A" in widget._pinned_node_label.text()
 
     graph.set_selected_nodes([second])
     QtWidgets.QApplication.processEvents()
 
     assert "Node B" in widget._selected_node_label.text()
-    assert "Node A" in widget._pinned_node_label.text()
 
 
-def test_sidebar_selection_is_auto_chat_context_without_pin(monkeypatch) -> None:
+def test_sidebar_selection_is_tool_state_not_auto_chat_context(monkeypatch) -> None:
     widget, graph = _make_sidebar(monkeypatch)
     first = _make_node("node-a", "Node A")
 
     graph.set_selected_nodes([first])
     QtWidgets.QApplication.processEvents()
 
-    assert widget._pinned_graph_context_snapshot is None
     prompt = widget._ai_bridge._get_system_prompt("Base prompt.")
-    assert "Focused Graph Subgraph Snapshot" in prompt
-    assert "Node A" in prompt
+    assert "Focused Graph Subgraph Snapshot" not in prompt
+    assert "Node A" not in prompt
     assert "PyStudio Graph Tools" in prompt
+    assert "graph_ui_context" in prompt
     assert "graph_find_nodes" in prompt
     assert "graph_diagnostics" in prompt
-    assert widget._tools_label.text().startswith("Tools: ")
-    assert widget._tools_label.text() != "Tools: off"
+    assert widget._tools_button.text().startswith("Tools: ")
+    assert widget._tools_button.text() != "Tools: off"
+    assert widget.graph_ui_context() == {
+        "graphRevision": 7,
+        "selectedNodeIds": ["node-a"],
+        "selectionLabel": "Node A",
+        "selectionCount": 1,
+        "propertyPanelNodeId": "",
+        "primaryNodeId": "node-a",
+        "primaryNodeSource": "singleSelection",
+    }
 
 
 def test_sidebar_injects_runtime_bridge_and_logs_into_graph_tools(monkeypatch) -> None:
@@ -208,6 +226,7 @@ def test_sidebar_injects_runtime_bridge_and_logs_into_graph_tools(monkeypatch) -
             bridge: object | None = None,
             log_source: object | None = None,
             observation_source: object | None = None,
+            ui_context_source: object | None = None,
             on_graph_patch_applied=None,
             on_tool_trace=None,
             on_tool_approval_requested=None,
@@ -219,6 +238,7 @@ def test_sidebar_injects_runtime_bridge_and_logs_into_graph_tools(monkeypatch) -
                     "bridge": bridge,
                     "log_source": log_source,
                     "observation_source": observation_source,
+                    "ui_context_source": ui_context_source,
                     "on_graph_patch_applied": on_graph_patch_applied,
                     "on_tool_trace": on_tool_trace,
                     "on_tool_approval_requested": on_tool_approval_requested,
@@ -235,6 +255,9 @@ def test_sidebar_injects_runtime_bridge_and_logs_into_graph_tools(monkeypatch) -
 
         def available_tools(self) -> tuple[object, ...]:
             return (self.executor,)
+
+        def available_tool_names(self) -> tuple[str, ...]:
+            return ("fake_tool",)
 
     monkeypatch.setattr("f8pystudio.ui.mainwin.ai_assist_sidebar.LocalStudioGraphToolExecutor", FakeToolExecutor)
     monkeypatch.setattr("f8pystudio.ui.mainwin.ai_assist_sidebar.LocalStudioGraphTools", FakeGraphTools)
@@ -254,32 +277,46 @@ def test_sidebar_injects_runtime_bridge_and_logs_into_graph_tools(monkeypatch) -
     assert created[0]["bridge"] is runtime_bridge
     assert created[0]["log_source"] is log_source
     assert created[0]["observation_source"] is observation_source
+    assert created[0]["ui_context_source"] is widget
     assert created[0]["on_tool_trace"] == widget._ai_bridge.publish_tool_trace
     assert created[0]["on_tool_approval_requested"] == widget._ai_bridge.publish_tool_approval
     assert widget._ai_bridge._agent_tools
+    assert widget._graph_tool_names == ("fake_tool",)
+    widget._populate_graph_tools_menu()
+    tool_menu_texts = [action.text() for action in widget._tools_menu.actions() if not action.isSeparator()]
+    assert tool_menu_texts == ["fake_tool"]
+    widget._populate_graph_skills_menu()
+    skill_menu_texts = [action.text() for action in widget._skills_menu.actions() if not action.isSeparator()]
+    assert skill_menu_texts == ["No skills attached"]
 
 
-def test_sidebar_supports_multi_select_subgraph_context_and_reset_clears_pin(monkeypatch) -> None:
-    widget, graph = _make_sidebar(monkeypatch)
+def test_sidebar_supports_multi_select_ui_context(monkeypatch) -> None:
+    _ensure_app()
+    _install_fake_pyside6(monkeypatch)
+    graph = _FakeGraph()
+    property_editor = _FakePropertyEditor("node-b")
+    temp_dir = Path(".tmp") / "test_ai_assist_sidebar" / uuid.uuid4().hex
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    store_path = temp_dir / "ai_providers.json"
+    with patch("f8pystudio.ui.mainwin.ai_assist_sidebar.AiProviderStore._resolve_storage_path", return_value=store_path):
+        widget = AiAssistSidebarWidget(studio_graph=graph, property_editor=property_editor)
     first = _make_node("node-a", "Node A")
     second = _make_node("node-b", "Node B")
 
     graph.set_selected_nodes([first, second])
     QtWidgets.QApplication.processEvents()
 
-    assert widget._pin_context_btn.isEnabled()
     assert widget._selected_node_label.text().startswith("Sel:")
     assert "Selected nodes: 2" in widget._selected_node_label.toolTip()
-    widget._pin_selected_context()
-    assert widget._pinned_node_label.text().startswith("Pin:")
-    assert "Selected nodes: 2" in widget._pinned_node_label.toolTip()
-    assert widget._clear_context_btn.isEnabled()
-
-    widget._ai_bridge.reset_chat_history()
-    QtWidgets.QApplication.processEvents()
-
-    assert "Pin: none" == widget._pinned_node_label.text()
-    assert not widget._clear_context_btn.isEnabled()
+    assert widget.graph_ui_context() == {
+        "graphRevision": 7,
+        "selectedNodeIds": ["node-a", "node-b"],
+        "selectionLabel": "2 selected nodes",
+        "selectionCount": 2,
+        "propertyPanelNodeId": "node-b",
+        "primaryNodeId": "node-b",
+        "primaryNodeSource": "propertyPanel",
+    }
 
 
 def test_ai_assist_html_includes_tool_trace_and_approval_handlers() -> None:

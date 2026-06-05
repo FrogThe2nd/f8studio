@@ -9,10 +9,9 @@ from ...agents.graph_context import GraphContextSnapshot
 from ...agents.qt_bridge import AiLlmBridge
 from ...agents.store import AiProviderStore
 from ...agents.tools import LocalStudioGraphToolExecutor, LocalStudioGraphTools
-from ...ui.agents import AgentContextUsageButton, AgentQuickSettingsController, AgentSurfaceScope
+from ...ui.agents import AgentQuickSettingsController, AgentSurfaceScope
 from ...ui.support.ai_assist_state import QtAiPanelStateStore
 from ...ui.support.web_asset_utils import render_prism_asset_html, resolve_web_asset_page_base_url
-from ...ui.support.ui_icons import StudioIcon, icon_for
 from ...ui.support.studio_theme import ai_status_label_qss, studio_dark_theme
 from ...ui.support.webengine_utils import (
     configure_default_webengine_profile,
@@ -21,9 +20,6 @@ from ...ui.support.webengine_utils import (
     release_webengine_view,
     set_webengine_html,
     take_prewarmed_webengine_view,
-)
-from ..support.ai_context_controls import (
-    configure_icon_tool_button,
 )
 from ..support.ai_assist_page import build_ai_assist_html
 from .ai_assist_sidebar_graph_context_mixin import (
@@ -46,18 +42,21 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
         runtime_bridge: Any | None = None,
         log_source: Any | None = None,
         observation_source: Any | None = None,
+        property_editor: Any | None = None,
         on_graph_patch_applied: Callable[[], None] | None = None,
         parent: QtWidgets.QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._studio_graph = studio_graph
+        self._property_editor = property_editor
         self._graph_tool_executor: LocalStudioGraphToolExecutor | None = None
         self._graph_tools: LocalStudioGraphTools | None = None
         self._graph_tool_count = 0
+        self._graph_tool_names: tuple[str, ...] = ()
+        self._graph_skill_names: tuple[str, ...] = ()
         self._selection_mode = "none"
         self._current_selection_label = ""
         self._current_selected_snapshot_preview: GraphContextSnapshot | None = None
-        self._pinned_graph_context_snapshot: GraphContextSnapshot | None = None
         self._shutdown_started = False
         theme_palette = studio_dark_theme().palette
         
@@ -70,6 +69,7 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
                 bridge=runtime_bridge,
                 log_source=log_source,
                 observation_source=observation_source,
+                ui_context_source=self,
                 on_graph_patch_applied=on_graph_patch_applied,
                 on_tool_trace=self._ai_bridge.publish_tool_trace,
                 on_tool_approval_requested=self._ai_bridge.publish_tool_approval,
@@ -79,6 +79,7 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
             self._graph_tools = LocalStudioGraphTools(self._graph_tool_executor)
             graph_tools = self._graph_tools.available_tools()
             self._graph_tool_count = len(graph_tools)
+            self._graph_tool_names = self._graph_tools.available_tool_names()
             self._ai_bridge.set_agent_tools(graph_tools)
         
         # 2. UI Components
@@ -97,59 +98,38 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
         self._web_channel.registerObject("aiAssist", self._ai_bridge)
         self._view.page().setWebChannel(self._web_channel)
 
-        # Context usage indicator
-        self._ctx_btn = AgentContextUsageButton(self._ai_bridge, scope=AgentSurfaceScope.GRAPH, parent=self)
-        self._ctx_btn.inspect_context_requested.connect(self._inspect_context)  # type: ignore[attr-defined]
-        self._ctx_btn.inspect_graph_context_requested.connect(self._inspect_graph_context)  # type: ignore[attr-defined]
-        self._ai_bridge.chat_context_snapshot_changed.connect(self._on_bridge_chat_context_changed)
-
         self._selected_node_label = QtWidgets.QLabel("Sel: none")
         self._selected_node_label.setStyleSheet(ai_status_label_qss(text_color=theme_palette.text_muted))
         self._selected_node_label.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Fixed)
         self._selected_node_label.setMaximumWidth(150)
-        self._selected_node_label.setToolTip("Current graph selection subgraph preview.")
+        self._selected_node_label.setToolTip("Current graph selection. The agent can query this through graph tools.")
 
-        self._tools_label = QtWidgets.QLabel("Tools: off")
-        self._tools_label.setStyleSheet(ai_status_label_qss(text_color=theme_palette.success))
-        self._tools_label.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Fixed)
-        self._tools_label.setMaximumWidth(90)
-        self._tools_label.setToolTip("PyStudio graph tools status.")
+        self._tools_button = QtWidgets.QToolButton()
+        self._tools_button.setText("Tools: off")
+        self._tools_button.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._tools_button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self._tools_button.setAutoRaise(False)
+        self._tools_button.setStyleSheet(ai_status_label_qss(text_color=theme_palette.success))
+        self._tools_button.setSizePolicy(QtWidgets.QSizePolicy.Policy.Maximum, QtWidgets.QSizePolicy.Policy.Fixed)
+        self._tools_button.setMinimumWidth(82)
+        self._tools_button.setToolTip("PyStudio graph tools status.")
+        self._tools_menu = QtWidgets.QMenu(self._tools_button)
+        self._tools_menu.aboutToShow.connect(self._populate_graph_tools_menu)  # type: ignore[attr-defined]
+        self._tools_button.setMenu(self._tools_menu)
 
-        self._pinned_node_label = QtWidgets.QLabel("Pin: none")
-        self._pinned_node_label.setStyleSheet(ai_status_label_qss(text_color=theme_palette.accent_hover))
-        self._pinned_node_label.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Fixed)
-        self._pinned_node_label.setMaximumWidth(150)
-        self._pinned_node_label.setToolTip("Pinned graph context injected into AI chat.")
+        self._skills_button = QtWidgets.QToolButton()
+        self._skills_button.setText("Skills: off")
+        self._skills_button.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._skills_button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self._skills_button.setAutoRaise(False)
+        self._skills_button.setStyleSheet(ai_status_label_qss(text_color=theme_palette.accent_hover))
+        self._skills_button.setSizePolicy(QtWidgets.QSizePolicy.Policy.Maximum, QtWidgets.QSizePolicy.Policy.Fixed)
+        self._skills_button.setMinimumWidth(82)
+        self._skills_button.setToolTip("PyStudio agent skills status.")
+        self._skills_menu = QtWidgets.QMenu(self._skills_button)
+        self._skills_menu.aboutToShow.connect(self._populate_graph_skills_menu)  # type: ignore[attr-defined]
+        self._skills_button.setMenu(self._skills_menu)
 
-        self._pin_context_btn = QtWidgets.QToolButton()
-        self._pin_context_btn.setEnabled(False)
-        self._pin_context_btn.clicked.connect(self._pin_selected_context)
-        configure_icon_tool_button(
-            self._pin_context_btn,
-            icon=icon_for(self._pin_context_btn, StudioIcon.PLUS),
-            tooltip="Use selected subgraph context",
-            accent_color=theme_palette.text_primary,
-        )
-
-        self._clear_context_btn = QtWidgets.QToolButton()
-        self._clear_context_btn.setEnabled(False)
-        self._clear_context_btn.clicked.connect(self._clear_pinned_context)
-        configure_icon_tool_button(
-            self._clear_context_btn,
-            icon=icon_for(self._clear_context_btn, StudioIcon.X),
-            tooltip="Clear pinned graph context",
-            accent_color=theme_palette.error,
-        )
-
-        self._inspect_graph_context_btn = QtWidgets.QToolButton()
-        self._inspect_graph_context_btn.clicked.connect(self._inspect_graph_context)
-        configure_icon_tool_button(
-            self._inspect_graph_context_btn,
-            icon=icon_for(self._inspect_graph_context_btn, StudioIcon.ARTICLE),
-            tooltip="Inspect active graph context payload",
-            accent_color=theme_palette.success,
-        )
-        
         self._agent_settings = AgentQuickSettingsController(
             store=self._ai_store,
             bridge=self._ai_bridge,
@@ -162,29 +142,13 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
         
         # Toolbar Container
         self._toolbar_container = QtWidgets.QWidget()
-        toolbar_layout = QtWidgets.QVBoxLayout(self._toolbar_container)
+        toolbar_layout = QtWidgets.QHBoxLayout(self._toolbar_container)
         toolbar_layout.setContentsMargins(8, 4, 8, 4)
         toolbar_layout.setSpacing(4)
-
-        toolbar_row = QtWidgets.QHBoxLayout()
-        toolbar_row.setContentsMargins(0, 0, 0, 0)
-        toolbar_row.setSpacing(4)
-        toolbar_row.addWidget(self._ctx_btn)
-        toolbar_row.addStretch()
-        toolbar_row.addWidget(self._pin_context_btn)
-        toolbar_row.addWidget(self._clear_context_btn)
-        toolbar_row.addWidget(self._inspect_graph_context_btn)
-        toolbar_row.addWidget(self._ai_settings_btn)
-
-        status_row = QtWidgets.QHBoxLayout()
-        status_row.setContentsMargins(0, 0, 0, 0)
-        status_row.setSpacing(4)
-        status_row.addWidget(self._selected_node_label, 1)
-        status_row.addWidget(self._tools_label, 0)
-        status_row.addWidget(self._pinned_node_label, 1)
-
-        toolbar_layout.addLayout(toolbar_row)
-        toolbar_layout.addLayout(status_row)
+        toolbar_layout.addWidget(self._selected_node_label, 1)
+        toolbar_layout.addWidget(self._tools_button, 0)
+        toolbar_layout.addWidget(self._skills_button, 0)
+        toolbar_layout.addWidget(self._ai_settings_btn, 0)
 
         self._ai_quick_panel = self._agent_settings.panel
         self._ai_quick_panel.open_full_config_requested.connect(self._open_full_ai_config)
@@ -259,6 +223,31 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
         dlg = AiProviderConfigDialog(self._ai_store, self)
         dlg.exec()
 
+    def graph_ui_context(self) -> dict[str, Any]:
+        property_panel_node_id = ""
+        editor = self._property_editor
+        if editor is not None:
+            try:
+                property_panel_node_id = str(editor.current_node_id() or "")
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                logger.exception("failed to read AI assist property panel node id")
+        selected_snapshot = self._current_selected_snapshot_preview
+        selected_node_ids = list(selected_snapshot.selected_node_ids) if selected_snapshot is not None else []
+        primary_node_id = property_panel_node_id
+        primary_source = "propertyPanel" if property_panel_node_id else "none"
+        if not primary_node_id and len(selected_node_ids) == 1:
+            primary_node_id = str(selected_node_ids[0])
+            primary_source = "singleSelection"
+        return {
+            "graphRevision": _graph_revision(self._studio_graph),
+            "selectedNodeIds": selected_node_ids,
+            "selectionLabel": "" if selected_snapshot is None else selected_snapshot.selection_label,
+            "selectionCount": len(selected_node_ids),
+            "propertyPanelNodeId": property_panel_node_id,
+            "primaryNodeId": primary_node_id,
+            "primaryNodeSource": primary_source,
+        }
+
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)
         self._reposition_timer.start()
@@ -267,3 +256,13 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
         self._agent_settings.reposition_below(self._toolbar_container)
         if self._ai_quick_panel.isVisible():
             self._ai_quick_panel.raise_()
+
+
+def _graph_revision(graph: object | None) -> int | None:
+    if graph is None:
+        return None
+    try:
+        undo_stack = graph._undo_stack
+        return int(undo_stack.index())
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return None

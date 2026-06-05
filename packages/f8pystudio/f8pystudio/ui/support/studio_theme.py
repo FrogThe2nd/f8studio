@@ -594,8 +594,11 @@ def ai_context_button_qss(*, text_color: str, include_background: bool) -> str:
 def ai_status_label_qss(*, text_color: str) -> str:
     p = studio_dark_theme().palette
     return (
-        f"QLabel {{ color: {text_color}; font-size: 9pt; background: {p.field_alt_bg}; "
+        f"QLabel, QToolButton {{ color: {text_color}; font-size: 9pt; background: {p.field_alt_bg}; "
         f"border: 1px solid {p.border_subtle}; border-radius: 5px; padding: 1px 6px; }}"
+        f"QToolButton:hover:enabled {{ background: {p.button_hover_bg}; }}"
+        f"QToolButton:pressed:enabled {{ background: {p.button_pressed_bg}; }}"
+        "QToolButton::menu-indicator { width: 8px; }"
     )
 
 
