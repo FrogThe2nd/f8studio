@@ -38,7 +38,7 @@ VALID_INFERENCE_SERVICES: tuple[ProviderInferenceService, ...] = (
 )
 
 
-def normalize_inference_service(raw_service: str) -> ProviderInferenceService:
+def parse_inference_service(raw_service: str) -> ProviderInferenceService:
     if raw_service == "foundry_agent":
         return "foundry_agent"
     if raw_service == "azure_openai_chat_completion":
@@ -55,11 +55,11 @@ def normalize_inference_service(raw_service: str) -> ProviderInferenceService:
         return "amazon_bedrock"
     if raw_service == "github_copilot":
         return "github_copilot"
-    if raw_service in ("ollama_chat", "ollama_openai_compatible"):
+    if raw_service == "ollama_chat":
         return "ollama_chat"
     if raw_service == "custom_chat_client":
         return "custom_chat_client"
-    return "openai_chat_completion"
+    raise ValueError(f"Unsupported Agent Framework inference service: {raw_service}")
 
 
 def inference_service_supports_service_history(service: ProviderInferenceService) -> bool:

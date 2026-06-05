@@ -65,12 +65,15 @@ class TestCapabilitiesCodec:
         restored = _capabilities_from_dict(d)
         assert restored == caps
 
-    def test_missing_keys_use_defaults(self) -> None:
-        restored = _capabilities_from_dict({})
-        assert restored.model_kind == "agent"
-        assert restored.supports_agent_chat
-        assert restored.supports_fim is False
-        assert restored.max_context_tokens == 128_000
+    def test_missing_required_keys_are_rejected(self) -> None:
+        with pytest.raises(ValueError, match="model_kind"):
+            _capabilities_from_dict({})
+        with pytest.raises(ValueError, match="supports_agent_chat"):
+            _capabilities_from_dict({"model_kind": "agent"})
+
+    def test_unknown_model_kind_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="Unsupported AI model kind"):
+            _capabilities_from_dict({"model_kind": "unknown", "supports_agent_chat": True})
 
 
 class TestModelCodec:
@@ -85,17 +88,9 @@ class TestModelCodec:
         assert restored.display_name == m.display_name
         assert restored.capabilities.max_context_tokens == 128_000
 
-    def test_legacy_model_without_kind_reinfers_non_agent_capabilities(self) -> None:
-        restored = _model_from_dict(
-            {
-                "model_id": "gpt-image-2",
-                "display_name": "gpt-image-2",
-                "capabilities": {},
-            }
-        )
-
-        assert restored.capabilities.model_kind == "image"
-        assert not restored.capabilities.supports_agent_chat
+    def test_model_without_explicit_capabilities_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="capabilities"):
+            _model_from_dict({"model_id": "gpt-image-2", "display_name": "gpt-image-2"})
 
 
 class TestProviderCodec:
@@ -107,8 +102,6 @@ class TestProviderCodec:
         assert restored.display_name == "Test"
         assert restored.inference_service == "openai_chat_completion"
         assert restored.api_key == ""
-        assert "protocol" not in encoded
-        assert "api_mode" not in encoded
 
     def test_round_trip_full(self) -> None:
         cfg = ProviderConfig(
@@ -140,15 +133,14 @@ class TestProviderCodec:
         restored = _provider_from_dict(_provider_to_dict(cfg))
         assert restored.inference_service == "openai_responses"
 
-    def test_legacy_ollama_inference_service_name_migrates_to_ollama_chat(self) -> None:
-        restored = _provider_from_dict({
-            "provider_id": "ollama",
-            "display_name": "Ollama",
-            "inference_service": "ollama_openai_compatible",
-            "endpoint": "http://localhost:11434/v1",
-        })
-
-        assert restored.inference_service == "ollama_chat"
+    def test_unknown_inference_service_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="Unsupported Agent Framework inference service"):
+            _provider_from_dict({
+                "provider_id": "ollama",
+                "display_name": "Ollama",
+                "inference_service": "ollama_openai_compatible",
+                "endpoint": "http://localhost:11434/v1",
+            })
 
     def test_provider_config_without_inference_service_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="inference_service"):

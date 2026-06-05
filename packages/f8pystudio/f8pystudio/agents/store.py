@@ -28,7 +28,7 @@ from .registry import (
     ModelKind,
     ProviderConfig,
     ProviderInferenceService,
-    normalize_inference_service,
+    parse_inference_service,
 )
 
 logger = logging.getLogger(__name__)
@@ -47,12 +47,17 @@ def _capabilities_to_dict(caps: ModelCapabilities) -> dict[str, Any]:
 
 
 def _capabilities_from_dict(payload: dict[str, Any]) -> ModelCapabilities:
-    model_kind_raw = str(payload.get("model_kind", "agent"))
+    if "model_kind" not in payload:
+        raise ValueError("AI model capabilities are missing model_kind.")
+    if "supports_agent_chat" not in payload:
+        raise ValueError("AI model capabilities are missing supports_agent_chat.")
+
+    model_kind_raw = str(payload["model_kind"])
     if model_kind_raw not in ("agent", "image", "embedding", "audio", "realtime", "moderation", "video", "tool"):
-        model_kind_raw = "agent"
+        raise ValueError(f"Unsupported AI model kind: {model_kind_raw}")
     return ModelCapabilities(
         model_kind=cast(ModelKind, model_kind_raw),
-        supports_agent_chat=bool(payload.get("supports_agent_chat", model_kind_raw == "agent")),
+        supports_agent_chat=bool(payload["supports_agent_chat"]),
         supports_fim=bool(payload.get("supports_fim", False)),
         supports_reasoning=bool(payload.get("supports_reasoning", False)),
         supports_vision=bool(payload.get("supports_vision", False)),
@@ -72,10 +77,11 @@ def _model_to_dict(model: ModelInfo) -> dict[str, Any]:
 
 def _model_from_dict(payload: dict[str, Any]) -> ModelInfo:
     model_id = str(payload.get("model_id", ""))
-    capabilities_payload = dict(payload.get("capabilities", {}))
+    capabilities_raw = payload.get("capabilities")
+    if not isinstance(capabilities_raw, dict):
+        raise ValueError(f"AI model config is missing capabilities for model_id={model_id!r}.")
+    capabilities_payload = dict(capabilities_raw)
     capabilities = _capabilities_from_dict(capabilities_payload)
-    if "model_kind" not in capabilities_payload and "supports_agent_chat" not in capabilities_payload:
-        capabilities = infer_model_capabilities(model_id)
     return ModelInfo(
         model_id=model_id,
         display_name=str(payload.get("display_name", model_id)),
@@ -103,7 +109,7 @@ def _provider_from_dict(payload: dict[str, Any]) -> ProviderConfig:
     service_raw = payload.get("inference_service")
     if not isinstance(service_raw, str) or not service_raw.strip():
         raise ValueError("AI provider config is missing inference_service.")
-    inference_service = normalize_inference_service(service_raw.strip())
+    inference_service = parse_inference_service(service_raw.strip())
 
     return ProviderConfig(
         provider_id=str(payload["provider_id"]),

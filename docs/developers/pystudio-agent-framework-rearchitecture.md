@@ -89,12 +89,14 @@ Provider configuration lives in explicit dataclasses:
 `AiProviderStore` is now storage, model-cache, and configuration-time provider probing only:
 
 - It persists provider configs and selected models.
+- It accepts only the explicit MAF-aligned `inference_service` values listed in `ProviderInferenceService`.
+- It treats model cache entries as typed records with explicit `ModelCapabilities`; provider setup paths must create the new schema instead of relying on old local-cache inference.
 - It can load bundled default model IDs for known providers.
 - It supports manual model ID add/remove for custom/Ollama providers.
 - It tests model connectivity by routing through `StudioAgentRuntime`, not by constructing provider HTTP payloads.
 - It can query provider model endpoints when an endpoint exposes a compatible model-list API.
 
-Runtime chat/edit/agent execution stays on MAF clients. Configuration-time endpoint discovery is kept as a separate, explicit boundary so provider setup can still offer model combo boxes without pretending that MAF exposes a universal model-list API.
+Runtime chat/edit/agent execution stays on MAF clients. Configuration-time endpoint discovery is kept as a separate, explicit boundary so provider setup can still offer model combo boxes without pretending that MAF exposes a universal model-list API. Old provider `protocol`/`api_mode` fields and pre-MAF inference service names are intentionally not migrated.
 
 ## Prompt And Context Layer
 
@@ -206,6 +208,7 @@ rg -n "QtNetwork|QNetworkAccessManager|QNetworkRequest|_test_chat_url|_build_pin
 ## Current Limits
 
 - MAF connector availability still controls which providers are usable. Missing connector packages should fail clearly.
+- Provider storage is strict to the MAF-aligned schema; old local provider configuration files should be recreated through the current provider dialog.
 - Runtime model execution is handled by MAF clients. Configuration-time endpoint discovery is separate and best-effort; unknown/custom providers may still require manual model IDs.
 - Tool-call approval, richer workflow event UI, and durable project/node memory are future increments on top of the new package boundary.
 - Agents must remain outside high-frequency script hooks such as per-frame `onData` or `onTick`.
