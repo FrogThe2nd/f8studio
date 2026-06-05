@@ -519,6 +519,23 @@ def test_local_studio_graph_tool_traces_success_and_failure(monkeypatch: pytest.
     assert "ValueError" in str(traces[3]["error"])
 
 
+def test_local_studio_graph_tools_codeact_profile_is_diagnostic_only() -> None:
+    tools = LocalStudioGraphTools(StudioAutomationTools())
+
+    names = tools.available_codeact_diagnostic_tool_names()
+
+    assert "graph_snapshot" in names
+    assert "graph_debug_service" in names
+    assert "runtime_sample_port" in names
+    assert "logs_read" in names
+    assert "graph_apply_patch" not in names
+    assert "graph_apply_build_plan" not in names
+    assert "runtime_deploy" not in names
+    assert "runtime_service_deploy" not in names
+    assert "runtime_write_state" not in names
+    assert "runtime_invoke_command" not in names
+
+
 def test_runtime_action_tool_can_use_gui_approval(monkeypatch: pytest.MonkeyPatch) -> None:
     _ensure_app()
     approvals: list[dict[str, object]] = []

@@ -73,6 +73,7 @@ class StudioAgentRequest:
     graph_context_snapshot: GraphContextSnapshot | None = None
     attachments: tuple[StudioAgentAttachment, ...] = ()
     tools: tuple[Any, ...] = ()
+    context_providers: tuple[Any, ...] = ()
     session_key: StudioAgentSessionKey | None = None
     inline_provider_id: str = ""
     inline_model_id: str = ""
@@ -172,7 +173,12 @@ class StudioAgentRuntime:
         model_id = self._model_for_request(request, provider)
         messages, system_prompt = self._messages_for_request(request)
         self._log_prompt(request.mode, system_prompt, messages)
-        agent = self._build_agent(provider=provider, model_id=model_id, system_prompt=system_prompt)
+        agent = self._build_agent(
+            provider=provider,
+            model_id=model_id,
+            system_prompt=system_prompt,
+            context_providers=request.context_providers,
+        )
         try:
             response = await agent.run(
                 messages,
@@ -196,7 +202,12 @@ class StudioAgentRuntime:
         model_id = self._model_for_request(request, provider)
         messages, system_prompt = self._messages_for_request(request)
         self._log_prompt(request.mode, system_prompt, messages)
-        agent = self._build_agent(provider=provider, model_id=model_id, system_prompt=system_prompt)
+        agent = self._build_agent(
+            provider=provider,
+            model_id=model_id,
+            system_prompt=system_prompt,
+            context_providers=request.context_providers,
+        )
 
         async for event in _stream_agent_events(
             agent=agent,
@@ -212,7 +223,14 @@ class StudioAgentRuntime:
         ):
             yield event
 
-    def _build_agent(self, *, provider: ProviderConfig, model_id: str, system_prompt: str) -> Any:
+    def _build_agent(
+        self,
+        *,
+        provider: ProviderConfig,
+        model_id: str,
+        system_prompt: str,
+        context_providers: tuple[Any, ...] = (),
+    ) -> Any:
         try:
             from agent_framework import Agent
         except ModuleNotFoundError as exc:
@@ -225,7 +243,12 @@ class StudioAgentRuntime:
                 reasoning_level=str(provider.reasoning_level or ""),
             )
         )
-        return Agent(client, instructions=system_prompt, name="f8studio-agent")
+        return Agent(
+            client,
+            instructions=system_prompt,
+            name="f8studio-agent",
+            context_providers=list(context_providers) or None,
+        )
 
     def _session_for_request(self, request: StudioAgentRequest) -> object | None:
         key = request.session_key

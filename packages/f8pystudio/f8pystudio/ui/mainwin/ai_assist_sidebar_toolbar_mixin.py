@@ -5,6 +5,7 @@ from typing import Protocol, cast
 
 from qtpy import QtWidgets
 
+from ...agents.codeact import StudioAgentSkillStatus
 from ...agents.graph_context import GraphContextSnapshot
 from ..support.ai_context_controls import set_status_label_text
 
@@ -16,7 +17,7 @@ class _AiAssistSidebarToolbarHost(Protocol):
     _current_selected_snapshot_preview: GraphContextSnapshot | None
     _graph_tool_count: int
     _graph_tool_names: tuple[str, ...]
-    _graph_skill_names: tuple[str, ...]
+    _graph_skill_statuses: tuple[StudioAgentSkillStatus, ...]
     _selected_node_label: QtWidgets.QLabel
     _tools_button: QtWidgets.QToolButton
     _tools_menu: QtWidgets.QMenu
@@ -53,10 +54,11 @@ class AiAssistSidebarToolbarMixin:
             host._tools_button.setText("Tools: off")
             host._tools_button.setToolTip("Graph tools are not available because no Studio graph was attached to this sidebar.")
 
-        skill_count = len(host._graph_skill_names)
-        if skill_count > 0:
-            host._skills_button.setText(f"Skills: {skill_count}")
-            host._skills_button.setToolTip("Agent skills are available to the chat agent.")
+        skill_statuses = host._graph_skill_statuses
+        enabled_skill_count = len([status for status in skill_statuses if status.enabled and status.available])
+        if skill_statuses:
+            host._skills_button.setText(f"Skills: {enabled_skill_count}/{len(skill_statuses)}")
+            host._skills_button.setToolTip(_skills_tooltip(skill_statuses))
         else:
             host._skills_button.setText("Skills: off")
             host._skills_button.setToolTip("No agent skills are attached to this sidebar yet.")
@@ -79,10 +81,24 @@ class AiAssistSidebarToolbarMixin:
         menu = host._skills_menu
         menu.clear()
 
-        if host._graph_skill_names:
-            for skill_name in host._graph_skill_names:
-                action = menu.addAction(str(skill_name))
+        if host._graph_skill_statuses:
+            for skill_status in host._graph_skill_statuses:
+                action = menu.addAction(skill_status.label())
+                tooltip_parts = [skill_status.description]
+                if skill_status.reason:
+                    tooltip_parts.append(skill_status.reason)
+                action.setToolTip("\n".join(tooltip_parts))
                 action.setEnabled(False)
         else:
             action = menu.addAction("No skills attached")
             action.setEnabled(False)
+
+
+def _skills_tooltip(skill_statuses: tuple[StudioAgentSkillStatus, ...]) -> str:
+    lines: list[str] = []
+    for skill_status in skill_statuses:
+        line = skill_status.label()
+        if skill_status.reason:
+            line = f"{line} - {skill_status.reason}"
+        lines.append(line)
+    return "\n".join(lines)

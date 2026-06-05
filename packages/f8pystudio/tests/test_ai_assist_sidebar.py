@@ -259,6 +259,9 @@ def test_sidebar_injects_runtime_bridge_and_logs_into_graph_tools(monkeypatch) -
         def available_tool_names(self) -> tuple[str, ...]:
             return ("fake_tool",)
 
+        def available_codeact_diagnostic_tools(self) -> tuple[object, ...]:
+            return (self.executor,)
+
     monkeypatch.setattr("f8pystudio.ui.mainwin.ai_assist_sidebar.LocalStudioGraphToolExecutor", FakeToolExecutor)
     monkeypatch.setattr("f8pystudio.ui.mainwin.ai_assist_sidebar.LocalStudioGraphTools", FakeGraphTools)
     temp_dir = Path(".tmp") / "test_ai_assist_sidebar" / uuid.uuid4().hex
@@ -287,7 +290,7 @@ def test_sidebar_injects_runtime_bridge_and_logs_into_graph_tools(monkeypatch) -
     assert tool_menu_texts == ["fake_tool"]
     widget._populate_graph_skills_menu()
     skill_menu_texts = [action.text() for action in widget._skills_menu.actions() if not action.isSeparator()]
-    assert skill_menu_texts == ["No skills attached"]
+    assert skill_menu_texts == ["CodeAct diagnostics: unavailable"]
 
 
 def test_sidebar_supports_multi_select_ui_context(monkeypatch) -> None:

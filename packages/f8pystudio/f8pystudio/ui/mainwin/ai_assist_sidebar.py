@@ -5,6 +5,12 @@ from collections.abc import Callable
 from typing import Any
 from qtpy import QtCore, QtGui, QtWidgets
 
+from ...agents.codeact import (
+    StudioAgentSkillStatus,
+    StudioCodeActConfig,
+    build_codeact_context_provider,
+    codeact_skill_status,
+)
 from ...agents.graph_context import GraphContextSnapshot
 from ...agents.qt_bridge import AiLlmBridge
 from ...agents.store import AiProviderStore
@@ -53,7 +59,7 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
         self._graph_tools: LocalStudioGraphTools | None = None
         self._graph_tool_count = 0
         self._graph_tool_names: tuple[str, ...] = ()
-        self._graph_skill_names: tuple[str, ...] = ()
+        self._graph_skill_statuses: tuple[StudioAgentSkillStatus, ...] = ()
         self._selection_mode = "none"
         self._current_selection_label = ""
         self._current_selected_snapshot_preview: GraphContextSnapshot | None = None
@@ -81,6 +87,14 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
             self._graph_tool_count = len(graph_tools)
             self._graph_tool_names = self._graph_tools.available_tool_names()
             self._ai_bridge.set_agent_tools(graph_tools)
+            codeact_status = codeact_skill_status(StudioCodeActConfig(enabled=True))
+            codeact_provider = build_codeact_context_provider(
+                tools=self._graph_tools.available_codeact_diagnostic_tools(),
+                config=StudioCodeActConfig(enabled=True),
+            )
+            self._ai_bridge.set_agent_codeact_context_providers(() if codeact_provider is None else (codeact_provider,))
+            self._ai_bridge.set_agent_skill_statuses((codeact_status,))
+            self._graph_skill_statuses = self._ai_bridge.agent_skill_statuses()
         
         # 2. UI Components
         from PySide6 import QtWebChannel, QtWebEngineWidgets  # type: ignore[import-not-found]

@@ -48,10 +48,17 @@ class FakeAgent:
     calls: list[dict[str, object]] = []
     stream_mode = "normal"
 
-    def __init__(self, client: object, instructions: str, name: str) -> None:
+    def __init__(
+        self,
+        client: object,
+        instructions: str,
+        name: str,
+        context_providers: object = None,
+    ) -> None:
         self.client = client
         self.instructions = instructions
         self.name = name
+        self.context_providers = context_providers
 
     def run(
         self,
@@ -75,6 +82,7 @@ class FakeAgent:
                 "tools": tools,
                 "options": options,
                 "instructions": self.instructions,
+                "context_providers": self.context_providers,
             }
         )
         if stream:
@@ -297,6 +305,38 @@ def test_runtime_stream_yields_chunks_and_done(
     assert isinstance(call_messages, list)
     assert isinstance(call_messages[0], FakeAgentMessage)
     assert call_messages[0].role == "user"
+
+
+def test_runtime_passes_context_providers_to_agent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    FakeAgent.calls.clear()
+    FakeAgent.stream_mode = "normal"
+    _install_fake_agent_framework(monkeypatch)
+    monkeypatch.setattr("f8pystudio.agents.runtime.build_chat_client", lambda _selection: object())
+
+    provider = object()
+    runtime = StudioAgentRuntime(_store(tmp_path))
+    events: list[StudioAgentEvent] = []
+
+    async def _collect() -> None:
+        async for event in runtime.run_stream(
+            StudioAgentRequest(
+                request_id="chat-codeact-context-provider-1",
+                mode="chat",
+                messages=({"role": "user", "content": "hello"},),
+                chat_provider_id="openai",
+                chat_model_id="gpt-4.1",
+                context_providers=(provider,),
+            )
+        ):
+            events.append(event)
+
+    asyncio.run(_collect())
+
+    assert events[-1] == StudioAgentEvent(kind="done")
+    assert FakeAgent.calls[0]["context_providers"] == [provider]
 
 
 def test_runtime_stream_disables_openai_responses_service_session(

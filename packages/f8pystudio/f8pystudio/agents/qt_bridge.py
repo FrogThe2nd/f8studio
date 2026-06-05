@@ -14,6 +14,7 @@ from typing import Any
 from qtpy import QtCore, QtGui  # type: ignore[import-not-found]
 
 from f8pystudio.agents.graph_context import GraphContextSnapshot, format_graph_context_report
+from f8pystudio.agents.codeact import StudioAgentSkillStatus
 from f8pystudio.editor_assist.workspace import EditorAssistContext
 from f8pystudio.ui.support.editor_assist_bridge import PythonEditorAssistBridge
 
@@ -102,6 +103,8 @@ class AiLlmBridge(QtCore.QObject):
         self._chat_context_snapshot: GraphContextSnapshot | None = None
         self._auto_chat_context_snapshot: GraphContextSnapshot | None = None
         self._agent_tools: tuple[Any, ...] = ()
+        self._agent_codeact_context_providers: tuple[Any, ...] = ()
+        self._agent_skill_statuses: tuple[StudioAgentSkillStatus, ...] = ()
         self._assist_context: EditorAssistContext | None = None
         self._lsp_bridge: PythonEditorAssistBridge | None = None
         self._tool_approval_resolver: Callable[[str, bool], None] | None = None
@@ -146,6 +149,16 @@ class AiLlmBridge(QtCore.QObject):
     def set_agent_tools(self, tools: tuple[Any, ...]) -> None:
         self._agent_tools = tuple(tools)
         self._refresh_system_tokens()
+
+    def set_agent_codeact_context_providers(self, context_providers: tuple[Any, ...]) -> None:
+        self._agent_codeact_context_providers = tuple(context_providers)
+        self._refresh_system_tokens()
+
+    def set_agent_skill_statuses(self, statuses: tuple[StudioAgentSkillStatus, ...]) -> None:
+        self._agent_skill_statuses = tuple(statuses)
+
+    def agent_skill_statuses(self) -> tuple[StudioAgentSkillStatus, ...]:
+        return self._agent_skill_statuses
 
     def set_tool_approval_resolver(self, resolver: Callable[[str, bool], None] | None) -> None:
         self._tool_approval_resolver = resolver
@@ -661,6 +674,7 @@ class AiLlmBridge(QtCore.QObject):
             graph_context_snapshot=self._effective_chat_context_snapshot(),
             attachments=attachments,
             tools=self._tools_for_mode(mode),
+            context_providers=self._context_providers_for_mode(mode),
             session_key=self._session_key_for_mode(mode),
             inline_provider_id=self._inline_provider_id,
             inline_model_id=str(inline_model_id or self._inline_model_id or ""),
@@ -677,6 +691,11 @@ class AiLlmBridge(QtCore.QObject):
     def _tools_for_mode(self, mode: AgentRequestMode) -> tuple[Any, ...]:
         if mode == "chat":
             return self._agent_tools
+        return ()
+
+    def _context_providers_for_mode(self, mode: AgentRequestMode) -> tuple[Any, ...]:
+        if mode == "chat":
+            return self._agent_codeact_context_providers
         return ()
 
     @staticmethod

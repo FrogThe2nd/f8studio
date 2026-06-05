@@ -893,6 +893,36 @@ class LocalStudioGraphTools:
             self.logs_read,
         )
 
+    def available_codeact_diagnostic_tools(self) -> tuple[Callable[..., dict[str, Any]], ...]:
+        return (
+            self.studio_status,
+            self.graph_ui_context,
+            self.graph_snapshot,
+            self.graph_find_nodes,
+            self.graph_node_detail,
+            self.graph_connections,
+            self.graph_diagnostics,
+            self.node_catalog,
+            self.service_library,
+            self.operator_library,
+            self.operator_detail,
+            self.graph_session,
+            self.graph_compile,
+            self.graph_preview_patch,
+            self.graph_build_from_goal,
+            self.graph_match_library,
+            self.graph_preview_build_plan,
+            self.graph_debug_service,
+            self.runtime_services,
+            self.runtime_service_status,
+            self.runtime_read_state,
+            self.runtime_watch_state,
+            self.runtime_sample_port,
+            self.monitor_report,
+            self.monitor_service,
+            self.logs_read,
+        )
+
     def available_tool_names(self) -> tuple[str, ...]:
         return (
             "studio_status",
@@ -929,6 +959,36 @@ class LocalStudioGraphTools:
             "runtime_watch_state",
             "runtime_sample_port",
             "runtime_invoke_command",
+            "monitor_report",
+            "monitor_service",
+            "logs_read",
+        )
+
+    def available_codeact_diagnostic_tool_names(self) -> tuple[str, ...]:
+        return (
+            "studio_status",
+            "graph_ui_context",
+            "graph_snapshot",
+            "graph_find_nodes",
+            "graph_node_detail",
+            "graph_connections",
+            "graph_diagnostics",
+            "node_catalog",
+            "service_library",
+            "operator_library",
+            "operator_detail",
+            "graph_session",
+            "graph_compile",
+            "graph_preview_patch",
+            "graph_build_from_goal",
+            "graph_match_library",
+            "graph_preview_build_plan",
+            "graph_debug_service",
+            "runtime_services",
+            "runtime_service_status",
+            "runtime_read_state",
+            "runtime_watch_state",
+            "runtime_sample_port",
             "monitor_report",
             "monitor_service",
             "logs_read",
