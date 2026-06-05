@@ -330,6 +330,11 @@ def test_ai_assist_html_includes_tool_trace_and_approval_handlers() -> None:
     assert "resolve_tool_approval" in html
     assert "f8-agent-tool-trace" in html
     assert "f8-agent-approval" in html
+    assert "list_conversations" in html
+    assert "save_conversation_messages" in html
+    assert "set_active_conversation" in html
+    assert "f8-ai-conversation-select" in html
+    assert "f8-ai-delete-conversation" in html
 
 
 def test_take_prewarmed_webengine_view_returns_cached_instance(monkeypatch) -> None:

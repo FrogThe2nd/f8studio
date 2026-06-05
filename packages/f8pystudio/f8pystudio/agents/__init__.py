@@ -38,6 +38,13 @@ from .codeact import (
     codeact_availability,
     codeact_skill_status,
 )
+from .conversations import (
+    StudioConversationMessage,
+    StudioConversationRecord,
+    StudioConversationStore,
+    StudioConversationSummary,
+    decode_conversation_messages,
+)
 from .model_catalog import (
     ModelCatalogResult,
     supports_endpoint_model_discovery,
@@ -82,6 +89,10 @@ __all__ = [
     "ProviderConfig",
     "ProviderInferenceService",
     "StudioAgentSkillStatus",
+    "StudioConversationMessage",
+    "StudioConversationRecord",
+    "StudioConversationStore",
+    "StudioConversationSummary",
     "SYSTEM_PROMPT_CODE",
     "SYSTEM_PROMPT_EDIT",
     "SYSTEM_PROMPT_PLAN",
@@ -107,6 +118,7 @@ __all__ = [
     "graph_patch_preview_event",
     "codeact_availability",
     "codeact_skill_status",
+    "decode_conversation_messages",
     "runtime_evidence_event",
     "strip_code_fence",
     "supports_endpoint_model_discovery",

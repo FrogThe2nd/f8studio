@@ -332,6 +332,7 @@ def build_ai_assist_html(*, prism_asset_html: str = "") -> str:
       .f8-toolbar-left {{
         display: flex;
         gap: 6px;
+        align-items: center;
       }}
 
       .f8-toolbar-btn {{
@@ -358,6 +359,24 @@ def build_ai_assist_html(*, prism_asset_html: str = "") -> str:
       .f8-toolbar-btn:hover {{
         background: var(--bg-hover);
         color: var(--text-primary);
+      }}
+
+      #f8-ai-conversation-select {{
+        height: 28px;
+        max-width: 160px;
+        min-width: 90px;
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        background: var(--bg-secondary);
+        color: var(--text-secondary);
+        font-size: 11px;
+        padding: 0 6px;
+        outline: none;
+      }}
+
+      #f8-ai-conversation-select:hover {{
+        color: var(--text-primary);
+        background: var(--bg-hover);
       }}
 
       #f8-ai-send {{
@@ -493,6 +512,9 @@ def build_ai_assist_html(*, prism_asset_html: str = "") -> str:
       window._f8_toolCards = Object.create(null);
       window._f8_attachments = [];
       window._f8_currentRid = null;
+      window._f8_conversations = [];
+      window._f8_currentConversationId = '';
+      window._f8_loadingConversation = false;
 
       // Enhanced markdown parser with thinking block support
       function _f8_md(text) {{
@@ -568,10 +590,30 @@ def build_ai_assist_html(*, prism_asset_html: str = "") -> str:
         }}
       }}
 
+      function _f8_callBridge(method, args, callback) {{
+        if (!method) return;
+        const params = Array.isArray(args) ? args.slice() : [];
+        if (callback) params.push(callback);
+        const result = method.apply(window._f8_aiAssist, params);
+        if (callback && result !== undefined) callback(result);
+        return result;
+      }}
+
+      function _f8_cloneAttachments(attachments) {{
+        if (!Array.isArray(attachments)) return [];
+        return attachments.map(function(item) {{
+          return {{
+            name: String(item && item.name ? item.name : ''),
+            content: String(item && item.content ? item.content : ''),
+            mime: String(item && item.mime ? item.mime : 'image/png')
+          }};
+        }});
+      }}
+
       function _f8_sendMessage() {{
         const input = document.getElementById('f8-ai-input');
         const text = input ? input.value.trim() : '';
-        if (!text && window._f8_attachments.length === 0 || !window._f8_aiAssist) return;
+        if ((!text && window._f8_attachments.length === 0) || !window._f8_aiAssist) return;
         input.value = '';
         input.style.height = 'auto';
 
@@ -579,18 +621,21 @@ def build_ai_assist_html(*, prism_asset_html: str = "") -> str:
 
         const rid = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()));
         const thinking = document.getElementById('f8-ai-thinking');
+        const pendingAttachments = _f8_cloneAttachments(window._f8_attachments);
 
-        window._f8_chatMessages.push({{role: 'user', content: text, attachments: window._f8_attachments}});
-        if (thinking) thinking.classList.add('visible');
-        const assistantEl = _f8_appendMessage('assistant', '');
+        window._f8_chatMessages.push({{role: 'user', content: text, attachments: pendingAttachments, createdAtMs: Date.now()}});
+        _f8_saveConversation(function() {{
+          if (thinking) thinking.classList.add('visible');
+          const assistantEl = _f8_appendMessage('assistant', '');
 
-        window._f8_currentRid = rid;
-        document.getElementById('f8-ai-send').style.display = 'none';
-        document.getElementById('f8-ai-stop').classList.add('visible');
+          window._f8_currentRid = rid;
+          document.getElementById('f8-ai-send').style.display = 'none';
+          document.getElementById('f8-ai-stop').classList.add('visible');
 
-        window._f8_chatRequests[rid] = {{ assistantEl, thinking, toolHost: null }};
-        window._f8_aiAssist.request_chat(rid, JSON.stringify(window._f8_chatMessages), '', '', JSON.stringify(window._f8_attachments));
-        _f8_clearAttachments();
+          window._f8_chatRequests[rid] = {{ assistantEl, thinking, toolHost: null }};
+          window._f8_aiAssist.request_chat(rid, JSON.stringify(window._f8_chatMessages), '', '', JSON.stringify(pendingAttachments));
+          _f8_clearAttachments();
+        }});
       }}
 
       function _f8_stopMessage() {{
@@ -608,6 +653,101 @@ def build_ai_assist_html(*, prism_asset_html: str = "") -> str:
         msgs.appendChild(div);
         msgs.scrollTop = msgs.scrollHeight;
         return div;
+      }}
+
+      function _f8_persistableMessages() {{
+        return window._f8_chatMessages.map(function(message) {{
+          const out = {{
+            role: String(message.role || ''),
+            content: String(message.content || ''),
+            createdAtMs: Number(message.createdAtMs || 0)
+          }};
+          if (Array.isArray(message.attachments) && message.attachments.length > 0) {{
+            out.attachments = _f8_cloneAttachments(message.attachments);
+          }}
+          return out;
+        }});
+      }}
+
+      function _f8_saveConversation(afterSave) {{
+        if (!window._f8_aiAssist || !window._f8_aiAssist.save_conversation_messages) {{
+          if (afterSave) afterSave(null);
+          return;
+        }}
+        if (window._f8_loadingConversation) {{
+          if (afterSave) afterSave(null);
+          return;
+        }}
+        _f8_callBridge(window._f8_aiAssist.save_conversation_messages, [
+          window._f8_currentConversationId || '',
+          'graph',
+          JSON.stringify(_f8_persistableMessages())
+        ], function(saved) {{
+          if (saved && saved.conversationId) {{
+            window._f8_currentConversationId = String(saved.conversationId || '');
+            _f8_refreshConversationList(window._f8_currentConversationId);
+          }}
+          if (afterSave) afterSave(saved || null);
+        }});
+      }}
+
+      function _f8_renderConversationList(selectedId) {{
+        const select = document.getElementById('f8-ai-conversation-select');
+        if (!select) return;
+        select.innerHTML = '';
+        window._f8_conversations.forEach(function(item) {{
+          const option = document.createElement('option');
+          option.value = String(item.conversationId || '');
+          option.textContent = String(item.title || 'New conversation');
+          select.appendChild(option);
+        }});
+        if (selectedId) select.value = selectedId;
+      }}
+
+      function _f8_refreshConversationList(selectedId) {{
+        if (!window._f8_aiAssist || !window._f8_aiAssist.list_conversations) return;
+        _f8_callBridge(window._f8_aiAssist.list_conversations, ['graph'], function(rows) {{
+          window._f8_conversations = Array.isArray(rows) ? rows : [];
+          _f8_renderConversationList(selectedId || window._f8_currentConversationId);
+        }});
+      }}
+
+      function _f8_loadConversation(conversationId) {{
+        if (!window._f8_aiAssist || !window._f8_aiAssist.load_conversation) return;
+        _f8_callBridge(window._f8_aiAssist.load_conversation, [String(conversationId || '')], function(record) {{
+          if (!record || !record.conversationId) return;
+          window._f8_loadingConversation = true;
+          try {{
+            window._f8_currentConversationId = String(record.conversationId || '');
+            if (window._f8_aiAssist.set_active_conversation) {{
+              window._f8_aiAssist.set_active_conversation(window._f8_currentConversationId);
+            }}
+            window._f8_chatMessages = Array.isArray(record.messages) ? record.messages.map(function(message) {{
+              return {{
+                role: String(message.role || ''),
+                content: String(message.content || ''),
+                attachments: Array.isArray(message.attachments) ? _f8_cloneAttachments(message.attachments) : [],
+                createdAtMs: Number(message.createdAtMs || 0)
+              }};
+            }}) : [];
+            window._f8_toolCards = Object.create(null);
+            const msgs = document.getElementById('f8-ai-messages');
+            msgs.innerHTML = '';
+            if (window._f8_chatMessages.length === 0) {{
+              _f8_appendMessage('assistant', 'How can I help you with your graph?');
+            }} else {{
+              window._f8_chatMessages.forEach(function(message) {{
+                _f8_appendMessage(message.role === 'assistant' ? 'assistant' : 'user', message.content || '');
+              }});
+            }}
+            if (window._f8_aiAssist.update_chat_context) {{
+              window._f8_aiAssist.update_chat_context(JSON.stringify(window._f8_chatMessages));
+            }}
+            _f8_renderConversationList(window._f8_currentConversationId);
+          }} finally {{
+            window._f8_loadingConversation = false;
+          }}
+        }});
       }}
 
       function _f8_escHtml(s) {{
@@ -732,12 +872,39 @@ def build_ai_assist_html(*, prism_asset_html: str = "") -> str:
       }}
 
       function _f8_newConversation() {{
-        document.getElementById('f8-ai-messages').innerHTML = '';
-        window._f8_chatMessages = [];
-        window._f8_toolCards = Object.create(null);
-        if (window._f8_aiAssist.reset_chat_history) window._f8_aiAssist.reset_chat_history();
-        _f8_appendMessage('assistant', 'Conversation reset. How can I help you?');
-        _f8_clearAttachments();
+        const applyRecord = function(record) {{
+          window._f8_currentConversationId = record && record.conversationId ? String(record.conversationId || '') : '';
+          if (window._f8_aiAssist && window._f8_aiAssist.set_active_conversation) {{
+            window._f8_aiAssist.set_active_conversation(window._f8_currentConversationId);
+          }}
+          window._f8_chatMessages = [];
+          window._f8_toolCards = Object.create(null);
+          if (window._f8_aiAssist.reset_chat_history) window._f8_aiAssist.reset_chat_history();
+          if (window._f8_aiAssist.update_chat_context) window._f8_aiAssist.update_chat_context('[]');
+          document.getElementById('f8-ai-messages').innerHTML = '';
+          _f8_appendMessage('assistant', 'Conversation reset. How can I help you?');
+          _f8_clearAttachments();
+          _f8_refreshConversationList(window._f8_currentConversationId);
+        }};
+        if (window._f8_aiAssist && window._f8_aiAssist.create_conversation) {{
+          _f8_callBridge(window._f8_aiAssist.create_conversation, ['graph'], applyRecord);
+        }} else {{
+          applyRecord(null);
+        }}
+      }}
+
+      function _f8_deleteConversation() {{
+        if (!window._f8_currentConversationId || !window._f8_aiAssist || !window._f8_aiAssist.delete_conversation) return;
+        _f8_callBridge(window._f8_aiAssist.delete_conversation, [window._f8_currentConversationId], function() {{
+          _f8_callBridge(window._f8_aiAssist.list_conversations, ['graph'], function(rows) {{
+            window._f8_conversations = Array.isArray(rows) ? rows : [];
+            if (window._f8_conversations.length > 0) {{
+              _f8_loadConversation(window._f8_conversations[0].conversationId);
+            }} else {{
+              _f8_newConversation();
+            }}
+          }});
+        }});
       }}
 
       function _f8_clearAttachments() {{
@@ -811,7 +978,8 @@ def build_ai_assist_html(*, prism_asset_html: str = "") -> str:
             if (err) {{
               req.assistantEl.innerHTML += '<div style="color:var(--accent-red);padding-top:8px;font-weight:500;">⚠ Error: ' + _f8_escHtml(err) + '</div>';
             }} else {{
-              window._f8_chatMessages.push({{role: 'assistant', content: req.assistantEl.dataset.raw}});
+              window._f8_chatMessages.push({{role: 'assistant', content: req.assistantEl.dataset.raw, createdAtMs: Date.now()}});
+              _f8_saveConversation();
             }}
           }});
 
@@ -839,13 +1007,25 @@ def build_ai_assist_html(*, prism_asset_html: str = "") -> str:
           }};
 
           document.querySelector('.f8-new-chat').onclick = _f8_newConversation;
+          document.getElementById('f8-ai-delete-conversation').onclick = _f8_deleteConversation;
+          document.getElementById('f8-ai-conversation-select').onchange = function() {{
+            if (this.value) _f8_loadConversation(this.value);
+          }};
           document.getElementById('f8-ai-attach-btn').onclick = function() {{
             window._f8_aiAssist.select_images(function(res) {{
               if(res) _f8_addAttachments(res);
             }});
           }};
 
-          _f8_appendMessage('assistant', 'How can I help you with your graph?');
+          _f8_callBridge(window._f8_aiAssist.list_conversations, ['graph'], function(rows) {{
+            window._f8_conversations = Array.isArray(rows) ? rows : [];
+            _f8_renderConversationList('');
+            if (window._f8_conversations.length > 0) {{
+              _f8_loadConversation(window._f8_conversations[0].conversationId);
+            }} else {{
+              _f8_newConversation();
+            }}
+          }});
         }});
       }};
     </script>
@@ -863,11 +1043,15 @@ def build_ai_assist_html(*, prism_asset_html: str = "") -> str:
           <textarea id="f8-ai-input" placeholder="Ask AI about your graph…" rows="1"></textarea>
           <div class="f8-input-toolbar">
             <div class="f8-toolbar-left">
+              <select id="f8-ai-conversation-select" title="Conversation"></select>
               <button id="f8-ai-attach-btn" class="f8-toolbar-btn" title="Attach Images">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 7l-6.5 6.5a1.5 1.5 0 0 0 3 3l6.5 -6.5a3 3 0 0 0 -6 -6l-6.5 6.5a4.5 4.5 0 0 0 9 9l6.5 -6.5" /></svg>
               </button>
               <button class="f8-new-chat f8-toolbar-btn" title="New Conversation">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0 -18"/><path d="M12 8v8"/><path d="M8 12h8"/></svg>
+              </button>
+              <button id="f8-ai-delete-conversation" class="f8-toolbar-btn" title="Delete Conversation">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12"/><path d="M9 7V4h6v3"/></svg>
               </button>
             </div>
             <button id="f8-ai-send" title="Send (Enter)">

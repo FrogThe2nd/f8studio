@@ -210,7 +210,7 @@ def build_chat_messages(
         role = str(item.get("role") or "")
         if role == "system":
             continue
-        messages.append({"role": role, "content": item.get("content", "")})
+        messages.append(_history_message_to_prompt_message(item))
 
     return _attach_images_to_last_user_message(messages, attachments)
 
@@ -229,7 +229,7 @@ def build_edit_messages(
     for item in history:
         role = str(item.get("role") or "")
         if role != "system":
-            messages.append({"role": role, "content": item.get("content", "")})
+            messages.append(_history_message_to_prompt_message(item))
 
     user_content = (
         f"Instruction: {instruction}\n\n"
@@ -261,7 +261,7 @@ def build_plan_messages(
     for item in history:
         role = str(item.get("role") or "")
         if role != "system":
-            messages.append({"role": role, "content": item.get("content", "")})
+            messages.append(_history_message_to_prompt_message(item))
     if task_description:
         messages.append({"role": "user", "content": str(task_description)})
     return _attach_images_to_last_user_message(messages, attachments)
@@ -304,3 +304,33 @@ def _attach_images_to_last_user_message(
         )
     last_msg["content"] = parts
     return messages
+
+
+def _history_message_to_prompt_message(item: dict[str, Any]) -> dict[str, Any]:
+    role = str(item.get("role") or "")
+    content = item.get("content", "")
+    message = {"role": role, "content": content}
+    attachments = item.get("attachments", [])
+    if role != "user" or not isinstance(content, str) or not isinstance(attachments, list):
+        return message
+    image_attachments: list[dict[str, str]] = []
+    for attachment in attachments:
+        if isinstance(attachment, dict):
+            image_attachments.append(
+                {
+                    "content": str(attachment.get("content", "")),
+                    "mime": str(attachment.get("mime", "image/png")),
+                }
+            )
+    if not image_attachments:
+        return message
+    parts: list[dict[str, str]] = [{"type": "text", "text": content}]
+    for attachment in image_attachments:
+        parts.append(
+            {
+                "type": "image",
+                "image": attachment["content"],
+                "mime_type": attachment["mime"],
+            }
+        )
+    return {"role": role, "content": parts}

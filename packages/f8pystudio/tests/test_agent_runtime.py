@@ -37,6 +37,16 @@ class FakeAgentSession:
         self.session_id = session_id
         self.service_session_id = service_session_id
 
+    def to_dict(self) -> dict[str, object]:
+        return {"sessionId": self.session_id, "serviceSessionId": self.service_session_id}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> "FakeAgentSession":
+        return cls(
+            session_id=str(data.get("sessionId") or ""),
+            service_session_id=str(data.get("serviceSessionId") or ""),
+        )
+
 
 _fake_stream_context: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "fake_agent_stream_context",
@@ -228,6 +238,25 @@ def test_runtime_non_streaming_keeps_session_for_non_responses_services(
     assert call["stream"] is False
     assert isinstance(call["session"], FakeAgentSession)
     assert call["session"].session_id == "sidebar:::"
+
+
+def test_session_registry_can_restore_and_serialize_agent_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_fake_agent_framework(monkeypatch)
+    key = StudioAgentSessionKey.sidebar(conversation_id="conversation-a")
+    from f8pystudio.agents.sessions import StudioAgentSessionRegistry
+
+    registry = StudioAgentSessionRegistry()
+    restored = registry.restore(
+        key,
+        {"sessionId": "sidebar::::conversation-a", "serviceSessionId": "provider-session"},
+    )
+
+    assert isinstance(restored, FakeAgentSession)
+    assert registry.session_for(key) is restored
+    assert registry.serialize(key) == {
+        "sessionId": "sidebar::::conversation-a",
+        "serviceSessionId": "provider-session",
+    }
 
 
 def test_runtime_reasoning_option_is_limited_to_openai_responses(

@@ -10,6 +10,7 @@ import time
 
 from qtpy import QtTest, QtWidgets
 
+from f8pystudio.agents.conversations import StudioConversationStore
 from f8pystudio.agents.graph_context import GraphContextSnapshot
 from f8pystudio.agents.qt_bridge import AiLlmBridge
 from f8pystudio.agents.registry import ModelInfo, ProviderConfig
@@ -159,6 +160,34 @@ def test_build_chat_messages_uses_language_fenced_context() -> None:
 
     assert "```json" in str(messages[1]["content"])
     assert "Current editor content (json)" in str(messages[1]["content"])
+
+
+def test_build_chat_messages_keeps_history_attachments() -> None:
+    temp_dir = Path(".tmp") / "test_ai_llm_bridge" / uuid.uuid4().hex
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    store_path = temp_dir / "ai_providers.json"
+    with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+        bridge = AiLlmBridge(AiProviderStore())
+
+    messages = bridge._build_chat_messages(
+        history=[
+            {
+                "role": "user",
+                "content": "look at this",
+                "attachments": [{"name": "input.png", "content": "abc", "mime": "image/png"}],
+            }
+        ],
+        code="",
+        selection="",
+        system_prompt="system",
+        attachments=None,
+    )
+
+    assert messages[1]["role"] == "user"
+    assert messages[1]["content"] == [
+        {"type": "text", "text": "look at this"},
+        {"type": "image", "image": "abc", "mime_type": "image/png"},
+    ]
 
 
 def test_debug_prompt_flag_logs_payload() -> None:
@@ -350,6 +379,168 @@ def test_pinned_graph_context_overrides_auto_graph_context() -> None:
 
     assert request.graph_context_snapshot is not None
     assert request.graph_context_snapshot.selection_label == "Pinned Node"
+
+
+def test_bridge_exposes_persistent_conversation_slots(tmp_path: Path) -> None:
+    store_path = tmp_path / "ai_providers.json"
+    conversation_store = StudioConversationStore(storage_path=tmp_path / "ai_conversations.json")
+    with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+        bridge = AiLlmBridge(AiProviderStore(), conversation_store=conversation_store)
+
+    created = bridge.create_conversation("graph")
+    conversation_id = str(created["conversationId"])
+    saved = bridge.save_conversation_messages(
+        conversation_id,
+        "graph",
+        json.dumps(
+            [
+                {
+                    "role": "user",
+                    "content": "Build a sine graph",
+                    "createdAtMs": 123,
+                    "attachments": [{"name": "plot.png", "content": "abc", "mime": "image/png"}],
+                },
+                {"role": "assistant", "content": "Ready.", "createdAtMs": 456},
+            ]
+        ),
+    )
+    summaries = bridge.list_conversations("graph")
+    loaded = bridge.load_conversation(conversation_id)
+    request = bridge._agent_request(request_id="rid-chat", mode="chat")
+
+    assert saved["conversationId"] == conversation_id
+    assert saved["title"] == "Build a sine graph"
+    assert len(summaries) == 1
+    assert summaries[0]["messageCount"] == 2
+    assert loaded["messages"][0]["attachments"][0]["name"] == "plot.png"
+    assert request.session_key is not None
+    assert request.session_key.conversation_id == conversation_id
+    assert bridge.delete_conversation(conversation_id) is True
+    assert bridge.list_conversations("graph") == []
+
+
+def test_bridge_rejects_invalid_conversation_message_payload(tmp_path: Path) -> None:
+    store_path = tmp_path / "ai_providers.json"
+    conversation_store = StudioConversationStore(storage_path=tmp_path / "ai_conversations.json")
+    with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+        bridge = AiLlmBridge(AiProviderStore(), conversation_store=conversation_store)
+
+    assert bridge.save_conversation_messages("", "graph", "{broken") == {}
+
+
+def test_bridge_persists_and_restores_non_responses_agent_session(tmp_path: Path) -> None:
+    store_path = tmp_path / "ai_providers.json"
+    conversation_store = StudioConversationStore(storage_path=tmp_path / "ai_conversations.json")
+    with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+        store = AiProviderStore()
+
+    store.save_provider(
+        ProviderConfig(
+            provider_id="openai",
+            display_name="OpenAI",
+            inference_service="openai_chat_completion",
+            endpoint="https://example.test/v1",
+            chat_model_id="gpt-4.1",
+            cached_models=[ModelInfo(model_id="gpt-4.1", display_name="GPT-4.1")],
+        ),
+        emit=False,
+    )
+    store.save_active_providers("openai", "openai")
+    bridge = AiLlmBridge(store, conversation_store=conversation_store)
+    record = bridge.create_conversation("graph")
+    conversation_id = str(record["conversationId"])
+    request = bridge._agent_request(request_id="rid-chat", mode="chat", chat_model_id="gpt-4.1")
+    assert request.session_key is not None
+
+    with patch.object(bridge._runtime, "serialize_session", return_value={"sessionId": "maf-session"}):
+        bridge._save_agent_session_for_request(request)
+
+    saved = conversation_store.get_conversation(conversation_id)
+    assert saved is not None
+    assert saved.agent_session == {
+        "schemaVersion": "f8studio-maf-agent-session/1",
+        "providerId": "openai",
+        "inferenceService": "openai_chat_completion",
+        "endpoint": "https://example.test/v1",
+        "modelId": "gpt-4.1",
+        "state": {"sessionId": "maf-session"},
+    }
+    with patch.object(bridge._runtime, "restore_session", return_value=object()) as restore_mock:
+        bridge._restore_agent_session_for_request(request)
+
+    restore_mock.assert_called_once_with(request.session_key, {"sessionId": "maf-session"})
+
+
+def test_bridge_saves_agent_session_to_request_conversation_when_ui_switches(tmp_path: Path) -> None:
+    store_path = tmp_path / "ai_providers.json"
+    conversation_store = StudioConversationStore(storage_path=tmp_path / "ai_conversations.json")
+    with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+        store = AiProviderStore()
+
+    store.save_provider(
+        ProviderConfig(
+            provider_id="openai",
+            display_name="OpenAI",
+            inference_service="openai_chat_completion",
+            endpoint="https://example.test/v1",
+            chat_model_id="gpt-4.1",
+            cached_models=[ModelInfo(model_id="gpt-4.1", display_name="GPT-4.1")],
+        ),
+        emit=False,
+    )
+    store.save_active_providers("openai", "openai")
+    bridge = AiLlmBridge(store, conversation_store=conversation_store)
+    first = bridge.create_conversation("graph")
+    first_id = str(first["conversationId"])
+    request = bridge._agent_request(request_id="rid-chat", mode="chat", chat_model_id="gpt-4.1")
+    assert request.session_key is not None
+    second = bridge.create_conversation("graph")
+    second_id = str(second["conversationId"])
+
+    with patch.object(bridge._runtime, "serialize_session", return_value={"sessionId": "request-session"}):
+        bridge._save_agent_session_for_request(request)
+
+    first_record = conversation_store.get_conversation(first_id)
+    second_record = conversation_store.get_conversation(second_id)
+    assert first_record is not None
+    assert second_record is not None
+    assert first_record.agent_session is not None
+    assert first_record.agent_session["state"] == {"sessionId": "request-session"}
+    assert second_record.agent_session is None
+
+
+def test_bridge_does_not_persist_responses_agent_session(tmp_path: Path) -> None:
+    store_path = tmp_path / "ai_providers.json"
+    conversation_store = StudioConversationStore(storage_path=tmp_path / "ai_conversations.json")
+    with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+        store = AiProviderStore()
+
+    store.save_provider(
+        ProviderConfig(
+            provider_id="openai",
+            display_name="OpenAI",
+            inference_service="openai_responses",
+            endpoint="https://example.test/v1",
+            chat_model_id="gpt-4.1",
+            cached_models=[ModelInfo(model_id="gpt-4.1", display_name="GPT-4.1")],
+        ),
+        emit=False,
+    )
+    store.save_active_providers("openai", "openai")
+    bridge = AiLlmBridge(store, conversation_store=conversation_store)
+    record = bridge.create_conversation("graph")
+    request = bridge._agent_request(request_id="rid-chat", mode="chat", chat_model_id="gpt-4.1")
+    assert request.session_key is not None
+
+    with patch.object(bridge._runtime, "serialize_session", return_value={"sessionId": "maf-session"}):
+        bridge._save_agent_session_for_request(request)
+    with patch.object(bridge._runtime, "restore_session", return_value=object()) as restore_mock:
+        bridge._restore_agent_session_for_request(request)
+
+    saved = conversation_store.get_conversation(str(record["conversationId"]))
+    assert saved is not None
+    assert saved.agent_session is None
+    restore_mock.assert_not_called()
 
 
 def test_reset_chat_history_clears_pinned_graph_context() -> None:

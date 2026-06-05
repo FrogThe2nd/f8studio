@@ -256,6 +256,12 @@ class StudioAgentRuntime:
             return None
         return self._session_registry.session_for(key)
 
+    def restore_session(self, key: StudioAgentSessionKey, payload: dict[str, Any]) -> object | None:
+        return self._session_registry.restore(key, payload)
+
+    def serialize_session(self, key: StudioAgentSessionKey) -> dict[str, Any] | None:
+        return self._session_registry.serialize(key)
+
     def _session_for_provider_request(self, request: StudioAgentRequest, provider: ProviderConfig) -> object | None:
         if provider.inference_service in _STUDIO_EXPLICIT_HISTORY_SERVICES:
             # Studio owns chat/editor history and sends it explicitly in every request.

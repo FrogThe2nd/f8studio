@@ -13,6 +13,7 @@ from typing import Any
 
 from qtpy import QtCore, QtGui  # type: ignore[import-not-found]
 
+from f8pystudio.agents.conversations import StudioConversationStore, decode_conversation_messages
 from f8pystudio.agents.graph_context import GraphContextSnapshot, format_graph_context_report
 from f8pystudio.agents.codeact import StudioAgentSkillStatus
 from f8pystudio.editor_assist.workspace import EditorAssistContext
@@ -30,7 +31,7 @@ from .prompts import (
     strip_code_fence,
 )
 from .model_catalog import supports_agent_chat_model
-from .registry import ProviderConfig
+from .registry import ProviderConfig, ProviderInferenceService
 from .runtime import (
     AgentRequestMode,
     AgentRuntimeError,
@@ -62,6 +63,11 @@ class AiBridgeSelectionState:
     reasoning_level: str
 
 
+_AGENT_SESSION_DISABLED_SERVICES: frozenset[ProviderInferenceService] = frozenset(
+    {"azure_openai_responses", "openai_responses"}
+)
+
+
 class AiLlmBridge(QtCore.QObject):
     inline_suggestion_ready = QtCore.Signal(str, str)
     chat_chunk_ready = QtCore.Signal(str, str)
@@ -78,11 +84,13 @@ class AiLlmBridge(QtCore.QObject):
         self,
         store: AiProviderStore,
         state_store: AiPanelStateStore | None = None,
+        conversation_store: StudioConversationStore | None = None,
         parent: QtCore.QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self._store = store
         self._state_store = state_store or MemoryAiPanelStateStore()
+        self._conversation_store = conversation_store or StudioConversationStore()
         self._runtime = StudioAgentRuntime(self._store, log_prompt_payload=self._log_prompt_payload)
 
         self._inline_provider_id = self._store.active_inline_provider
@@ -102,6 +110,7 @@ class AiLlmBridge(QtCore.QObject):
         self._document_language = "plaintext"
         self._chat_context_snapshot: GraphContextSnapshot | None = None
         self._auto_chat_context_snapshot: GraphContextSnapshot | None = None
+        self._active_conversation_id = ""
         self._agent_tools: tuple[Any, ...] = ()
         self._agent_codeact_context_providers: tuple[Any, ...] = ()
         self._agent_skill_statuses: tuple[StudioAgentSkillStatus, ...] = ()
@@ -112,6 +121,7 @@ class AiLlmBridge(QtCore.QObject):
         self._active_stream_lock = threading.Lock()
         self._tool_request_ids_by_thread: dict[int, str] = {}
         self._tool_request_ids_lock = threading.Lock()
+        self._restored_agent_session_keys: set[str] = set()
 
         self._system_tokens = 0
         self._code_tokens = 0
@@ -280,6 +290,54 @@ class AiLlmBridge(QtCore.QObject):
         logger.debug("AI chat history reset requested by user")
         self.clear_chat_context_snapshot()
 
+    @QtCore.Slot(str, result="QVariantList")
+    def list_conversations(self, scope: str = "graph") -> list[dict[str, Any]]:
+        return [summary.to_dict() for summary in self._conversation_store.list_conversations(scope=str(scope or "graph"))]
+
+    @QtCore.Slot(str, result="QVariantMap")
+    def create_conversation(self, scope: str = "graph") -> dict[str, Any]:
+        record = self._conversation_store.ensure_conversation(scope=str(scope or "graph"))
+        self._active_conversation_id = record.conversation_id
+        return record.to_dict()
+
+    @QtCore.Slot(str, result="QVariantMap")
+    def load_conversation(self, conversation_id: str) -> dict[str, Any]:
+        record = self._conversation_store.get_conversation(str(conversation_id or ""))
+        if record is None:
+            return {}
+        self._active_conversation_id = record.conversation_id
+        return record.to_dict()
+
+    @QtCore.Slot(str, result=bool)
+    def delete_conversation(self, conversation_id: str) -> bool:
+        deleted_id = str(conversation_id or "").strip()
+        deleted = self._conversation_store.delete_conversation(deleted_id)
+        if deleted and self._active_conversation_id == deleted_id:
+            self._active_conversation_id = ""
+        return deleted
+
+    @QtCore.Slot(str, str, str, result="QVariantMap")
+    def save_conversation_messages(self, conversation_id: str, scope: str, messages_json: str) -> dict[str, Any]:
+        try:
+            messages = decode_conversation_messages(str(messages_json or ""))
+        except (json.JSONDecodeError, TypeError, ValueError):
+            logger.exception("Failed to decode AI conversation messages")
+            return {}
+        record = self._conversation_store.save_messages(
+            str(conversation_id or ""),
+            scope=str(scope or "graph"),
+            messages=messages,
+        )
+        self._active_conversation_id = record.conversation_id
+        self._last_messages = [message.to_dict() for message in messages]
+        self._chat_tokens = sum(approx_tokens(message.content) for message in messages)
+        self._emit_context_usage()
+        return record.to_dict()
+
+    @QtCore.Slot(str)
+    def set_active_conversation(self, conversation_id: str) -> None:
+        self._active_conversation_id = str(conversation_id or "").strip()
+
     @QtCore.Slot(str)
     def abort_request(self, request_id: str) -> None:
         self._runtime.abort_request(request_id)
@@ -445,6 +503,7 @@ class AiLlmBridge(QtCore.QObject):
             attachments=tuple(attachments),
             chat_model_id=model_id,
         )
+        self._restore_agent_session_for_request(request)
         self._start_stream_request(
             request,
             on_chunk=lambda text: self.chat_chunk_ready.emit(rid, text),
@@ -499,6 +558,7 @@ class AiLlmBridge(QtCore.QObject):
             attachments=tuple(attachments),
             chat_model_id=model_id,
         )
+        self._restore_agent_session_for_request(request)
         self._start_text_request(request, lambda text, err: self._on_edit_result(rid, text, err))
 
     def _on_edit_result(self, rid: str, text: str, err: str | None) -> None:
@@ -542,6 +602,7 @@ class AiLlmBridge(QtCore.QObject):
             attachments=tuple(attachments),
             chat_model_id=model_id,
         )
+        self._restore_agent_session_for_request(request)
         self._start_stream_request(
             request,
             on_chunk=lambda text: self.plan_step_ready.emit(rid, text),
@@ -675,7 +736,7 @@ class AiLlmBridge(QtCore.QObject):
             attachments=attachments,
             tools=self._tools_for_mode(mode),
             context_providers=self._context_providers_for_mode(mode),
-            session_key=self._session_key_for_mode(mode),
+            session_key=self._session_key_for_mode(mode, self._active_conversation_id),
             inline_provider_id=self._inline_provider_id,
             inline_model_id=str(inline_model_id or self._inline_model_id or ""),
             chat_provider_id=self._chat_provider_id,
@@ -699,10 +760,53 @@ class AiLlmBridge(QtCore.QObject):
         return ()
 
     @staticmethod
-    def _session_key_for_mode(mode: AgentRequestMode) -> StudioAgentSessionKey:
+    def _session_key_for_mode(mode: AgentRequestMode, conversation_id: str = "") -> StudioAgentSessionKey:
         if mode == "inline":
             return StudioAgentSessionKey.editor(editor_id="inline")
-        return StudioAgentSessionKey.sidebar()
+        return StudioAgentSessionKey.sidebar(conversation_id=str(conversation_id or ""))
+
+    def _restore_agent_session_for_request(self, request: StudioAgentRequest) -> None:
+        key = request.session_key
+        if key is None:
+            return
+        provider = self._chat_provider(for_inline=request.mode == "inline")
+        if provider is None or provider.inference_service in _AGENT_SESSION_DISABLED_SERVICES:
+            return
+        session_key = key.as_id()
+        if session_key in self._restored_agent_session_keys:
+            return
+        record = self._conversation_store.get_conversation(key.conversation_id)
+        if record is None or record.agent_session is None:
+            return
+        payload = dict(record.agent_session)
+        if not _agent_session_payload_matches_request(payload, request=request, provider=provider):
+            return
+        state = payload.get("state")
+        if not isinstance(state, dict):
+            return
+        restored = self._runtime.restore_session(key, state)
+        if restored is not None:
+            self._restored_agent_session_keys.add(session_key)
+
+    def _save_agent_session_for_request(self, request: StudioAgentRequest) -> None:
+        key = request.session_key
+        if key is None:
+            return
+        provider = self._chat_provider(for_inline=request.mode == "inline")
+        if provider is None or provider.inference_service in _AGENT_SESSION_DISABLED_SERVICES:
+            return
+        conversation_id = key.conversation_id
+        if not conversation_id:
+            return
+        state = self._runtime.serialize_session(key)
+        if state is None:
+            return
+        payload = _agent_session_payload_for_request(state, request=request, provider=provider)
+        self._conversation_store.save_agent_session(
+            conversation_id,
+            scope="graph",
+            agent_session=payload,
+        )
 
     def _start_text_request(
         self,
@@ -725,6 +829,7 @@ class AiLlmBridge(QtCore.QObject):
                 logger.exception("Studio agent text request crashed mode=%s request_id=%s", request.mode, request.request_id)
                 on_result("", f"{type(exc).__name__}: {exc}")
                 return
+            self._save_agent_session_for_request(request)
             on_result(text, None)
 
         threading.Thread(target=_worker, daemon=True, name=f"f8-agent-text-{request.request_id}").start()
@@ -747,6 +852,7 @@ class AiLlmBridge(QtCore.QObject):
                     return
                 elif event.kind == "done":
                     terminal_event_seen = True
+                    self._save_agent_session_for_request(request)
                     on_done("")
                     return
             if not terminal_event_seen:
@@ -852,3 +958,35 @@ def _json_payload(payload: dict[str, Any]) -> str:
     except (TypeError, ValueError):
         logger.exception("Failed to encode AI bridge payload")
         return "{}"
+
+
+def _agent_session_payload_for_request(
+    state: dict[str, Any],
+    *,
+    request: StudioAgentRequest,
+    provider: ProviderConfig,
+) -> dict[str, Any]:
+    return {
+        "schemaVersion": "f8studio-maf-agent-session/1",
+        "providerId": provider.provider_id,
+        "inferenceService": provider.inference_service,
+        "endpoint": provider.endpoint,
+        "modelId": request.inline_model_id if request.mode == "inline" else request.chat_model_id,
+        "state": dict(state),
+    }
+
+
+def _agent_session_payload_matches_request(
+    payload: dict[str, Any],
+    *,
+    request: StudioAgentRequest,
+    provider: ProviderConfig,
+) -> bool:
+    model_id = request.inline_model_id if request.mode == "inline" else request.chat_model_id
+    return (
+        str(payload.get("schemaVersion") or "") == "f8studio-maf-agent-session/1"
+        and str(payload.get("providerId") or "") == provider.provider_id
+        and str(payload.get("inferenceService") or "") == provider.inference_service
+        and str(payload.get("endpoint") or "") == provider.endpoint
+        and str(payload.get("modelId") or "") == model_id
+    )
