@@ -226,36 +226,6 @@ class TestAiProviderStore:
         store.save_provider(new_cfg)
         assert changed_count[0] == 1
 
-    def test_fetch_models_uses_endpoint_discovery(self, tmp_path: Path) -> None:
-        _ensure_app()
-        store = self._make_store(tmp_path)
-        store.save_provider(
-            ProviderConfig(
-                provider_id="custom_lab",
-                display_name="Custom Lab",
-                inference_service="custom_chat_client",
-                endpoint="https://example.test/v1",
-            )
-        )
-
-        fetched: list[tuple[str, bool, str]] = []
-        store.models_fetched.connect(lambda pid, success, error: fetched.append((pid, success, error)))
-
-        with patch("f8pystudio.agents.store.discover_endpoint_model_catalog") as discover:
-            from f8pystudio.agents.model_catalog import ModelCatalogResult
-
-            discover.return_value = ModelCatalogResult(
-                status="ok",
-                models=(ModelInfo(model_id="endpoint-model", display_name="Endpoint Model"),),
-            )
-            store.fetch_models_async("custom_lab")
-            _wait_until(lambda: len(fetched) == 1)
-
-        updated = store.provider_by_id("custom_lab")
-        assert updated is not None
-        assert [model.model_id for model in updated.cached_models] == ["endpoint-model"]
-        assert fetched == [("custom_lab", True, "Discovered 1 agent model(s).")]
-
     def test_discover_endpoint_models_merges_provider_native_catalog(self, tmp_path: Path) -> None:
         _ensure_app()
         store = self._make_store(tmp_path)

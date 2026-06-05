@@ -23,7 +23,7 @@ def _make_store(tmp_path: Path) -> AiProviderStore:
         return AiProviderStore()
 
 
-def test_provider_dialog_exposes_api_mode_and_manual_model_controls(tmp_path: Path) -> None:
+def test_provider_dialog_exposes_inference_service_and_manual_model_controls(tmp_path: Path) -> None:
     _ensure_app()
     store = _make_store(tmp_path)
     dialog = AiProviderConfigDialog(store)
@@ -45,7 +45,7 @@ def test_provider_dialog_exposes_api_mode_and_manual_model_controls(tmp_path: Pa
         dialog.close()
 
 
-def test_provider_dialog_disables_api_mode_for_anthropic(tmp_path: Path) -> None:
+def test_provider_dialog_disables_endpoint_discovery_for_anthropic(tmp_path: Path) -> None:
     _ensure_app()
     store = _make_store(tmp_path)
     dialog = AiProviderConfigDialog(store)

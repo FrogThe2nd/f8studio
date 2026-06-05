@@ -216,9 +216,6 @@ class AiProviderStore(QtCore.QObject):
         self.save_provider(cfg)
         return removed_count
 
-    def fetch_models_async(self, provider_id: str) -> None:
-        self.discover_endpoint_models_async(provider_id)
-
     def discover_endpoint_models_async(self, provider_id: str) -> None:
         cfg = self.provider_by_id(provider_id)
         if cfg is None:

@@ -292,13 +292,13 @@ class AiQuickPanel(QtWidgets.QWidget):
         pid = self._current_id(self._inline_provider_combo)
         if pid:
             self._inline_refresh_btn.setEnabled(False)
-            self._store.fetch_models_async(pid)
+            self._store.discover_endpoint_models_async(pid)
 
     def _on_chat_refresh(self) -> None:
         pid = self._current_id(self._chat_provider_combo)
         if pid:
             self._chat_refresh_btn.setEnabled(False)
-            self._store.fetch_models_async(pid)
+            self._store.discover_endpoint_models_async(pid)
 
     def _on_models_fetched(self, pid: str, success: bool, _error: str) -> None:
         self._inline_refresh_btn.setEnabled(True)
