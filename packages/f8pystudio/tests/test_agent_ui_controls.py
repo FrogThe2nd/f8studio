@@ -24,12 +24,6 @@ class _Bridge(QtCore.QObject):
             "total_tokens": 12000,
         }
 
-    def get_context_report(self) -> str:
-        return "context"
-
-    def get_chat_context_report(self) -> str:
-        return "graph"
-
 
 def test_context_usage_button_updates_text_and_tooltip() -> None:
     _ensure_app()

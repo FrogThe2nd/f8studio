@@ -273,7 +273,7 @@ def test_get_system_prompt_includes_active_graph_context_only_when_set() -> None
     assert "2 selected nodes" in prompt_with_graph
     assert "not the full graph" in prompt_with_graph
 
-    bridge.clear_chat_context_snapshot()
+    bridge._clear_chat_context_snapshot()
     assert "Focused Graph Subgraph Snapshot" not in bridge._get_system_prompt("Base prompt.")
 
 
@@ -532,9 +532,9 @@ def test_reset_chat_history_clears_active_graph_context() -> None:
         )
     )
 
-    assert "2 selected nodes" in bridge.get_chat_context_report()
+    assert bridge._effective_chat_context_snapshot() is not None
     bridge.reset_chat_history()
-    assert "_No active graph context._" in bridge.get_chat_context_report()
+    assert bridge._effective_chat_context_snapshot() is None
 
 
 def test_stream_request_thread_reports_unexpected_runtime_exception(tmp_path: Path) -> None:

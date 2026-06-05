@@ -185,13 +185,8 @@ class AiLlmBridge(QtCore.QObject):
         except (RuntimeError, TypeError, ValueError):
             logger.exception("AI tool approval resolver failed approval_id=%s", approval_id)
 
-    @QtCore.Slot()
-    def clear_chat_context_snapshot(self) -> None:
+    def _clear_chat_context_snapshot(self) -> None:
         self.set_auto_chat_context_snapshot(None)
-
-    @QtCore.Slot(result=str)
-    def get_chat_context_report(self) -> str:
-        return format_graph_context_report(self._effective_chat_context_snapshot())
 
     def selection_state(self) -> AiBridgeSelectionState:
         cfg = self._store.provider_by_id(self._chat_provider_id)
@@ -233,7 +228,7 @@ class AiLlmBridge(QtCore.QObject):
                 "system_prompt": str(system_prompt or ""),
                 "messages": messages,
                 "context_block": self._format_assist_context(),
-                "chat_context_block": self.get_chat_context_report(),
+                "chat_context_block": format_graph_context_report(self._effective_chat_context_snapshot()),
             }
             logger.warning(
                 "F8_AI_DEBUG_PROMPT payload:\n%s",
@@ -283,7 +278,7 @@ class AiLlmBridge(QtCore.QObject):
     @QtCore.Slot()
     def reset_chat_history(self) -> None:
         logger.debug("AI chat history reset requested by user")
-        self.clear_chat_context_snapshot()
+        self._clear_chat_context_snapshot()
 
     @QtCore.Slot(str, result="QVariantList")
     def list_conversations(self, scope: str = "graph") -> list[dict[str, Any]]:
@@ -671,33 +666,6 @@ class AiLlmBridge(QtCore.QObject):
     def _refresh_system_tokens(self) -> None:
         self._system_tokens = approx_tokens(self._get_system_prompt(SYSTEM_PROMPT_CODE))
         self._emit_context_usage()
-
-    @QtCore.Slot(result=str)
-    def get_context_report(self) -> str:
-        system_prompt = self._get_system_prompt(SYSTEM_PROMPT_CODE)
-        messages = self._build_chat_messages(self._last_messages, self._last_code, "", system_prompt)
-        lines = ["# AI Context Payload Report", ""]
-        lines.append(f"- **Total Tokens (Approx):** {self._system_tokens + self._code_tokens + self._chat_tokens}")
-        lines.append(f"- **Chat Messages:** {len(self._last_messages)}")
-        lines.append("")
-        lines.append("## Active Graph Context")
-        active_snapshot = self._effective_chat_context_snapshot()
-        lines.append(format_graph_context_report(active_snapshot))
-        lines.append("")
-        for index, message in enumerate(messages):
-            role = str(message.get("role", "unknown")).upper()
-            content = message.get("content", "")
-            lines.append(f"### [{index}] {role}")
-            if isinstance(content, list):
-                for part in content:
-                    if isinstance(part, dict) and part.get("type") == "text":
-                        lines.append(str(part.get("text", "")))
-                    elif isinstance(part, dict):
-                        lines.append(f"*[{part.get('type')} attachment]*")
-            else:
-                lines.append(str(content))
-            lines.append("")
-        return "\n".join(lines)
 
     def _agent_request(
         self,
