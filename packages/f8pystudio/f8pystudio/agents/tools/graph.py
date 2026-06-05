@@ -1,22 +1,41 @@
 from __future__ import annotations
 
 import logging
+import math
+import threading
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Any, Protocol
 
 from qtpy import QtCore
 
-from f8pystudio.automation.domain import decode_graph_patch
+from f8pystudio.agents.tool_events import (
+    StudioAgentApprovalRequest,
+    StudioAgentToolTrace,
+    new_approval_id,
+    new_tool_call_id,
+    now_ms,
+    summarize_tool_params,
+    summarize_tool_result,
+    tool_method_to_name,
+)
+from f8pystudio.agents.workflows.pyengine_sine_graph import (
+    build_pyengine_sine_0_100_patch,
+    pyengine_sine_expected_range,
+    pyengine_sine_sample_port,
+)
+from f8pystudio.automation.domain import GraphPatch, MoveNodeOp, SetNodeStateOp, decode_graph_patch, graph_patch_to_dict
 from f8pystudio.automation.graph_adapter import StudioGraphAutomationAdapter
 from f8pystudio.automation.library_catalog import (
     operator_detail_payload,
     operator_library_payload,
     service_library_payload,
 )
+from f8pystudio.automation.observation_store import StoredStateValue
 
 logger = logging.getLogger(__name__)
-_GRAPH_TOOL_ERRORS = (AttributeError, KeyError, RuntimeError, TypeError, ValueError)
+_GRAPH_TOOL_ERRORS = (AttributeError, KeyError, RuntimeError, TimeoutError, TypeError, ValueError)
+_DEFAULT_APPROVAL_TIMEOUT_S = 120.0
 
 
 class StudioGraphToolExecutor(Protocol):
@@ -100,6 +119,35 @@ class StudioLogToolSource(Protocol):
     ) -> dict[str, object]: ...
 
 
+class StudioRuntimeObservationSource(Protocol):
+    def get_state(self, *, service_id: str, node_id: str, field: str) -> StoredStateValue | None: ...
+
+    def wait_state(
+        self,
+        *,
+        service_id: str,
+        node_id: str,
+        field: str,
+        after_ts_ms: int | None = None,
+        timeout_s: float = 1.0,
+    ) -> StoredStateValue | None: ...
+
+
+@dataclass
+class _PendingToolApproval:
+    request: StudioAgentApprovalRequest
+    event: threading.Event
+    approved: bool | None = None
+
+
+@dataclass(frozen=True)
+class _ToolApprovalSpec:
+    title: str
+    description: str
+    confirm_error_message: str
+    require_confirm_without_callback: bool = True
+
+
 class LocalStudioGraphToolExecutor(QtCore.QObject):
     _call_requested = QtCore.Signal(str, object, object)
 
@@ -109,7 +157,11 @@ class LocalStudioGraphToolExecutor(QtCore.QObject):
         *,
         bridge: StudioRuntimeToolBridge | None = None,
         log_source: StudioLogToolSource | None = None,
+        observation_source: StudioRuntimeObservationSource | None = None,
         on_graph_patch_applied: Callable[[], None] | None = None,
+        on_tool_trace: Callable[[dict[str, Any]], None] | None = None,
+        on_tool_approval_requested: Callable[[dict[str, Any]], None] | None = None,
+        approval_timeout_s: float = _DEFAULT_APPROVAL_TIMEOUT_S,
         parent: QtCore.QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -117,7 +169,13 @@ class LocalStudioGraphToolExecutor(QtCore.QObject):
         self._adapter = StudioGraphAutomationAdapter(studio_graph)
         self._bridge = bridge
         self._log_source = log_source
+        self._observation_source = observation_source
         self._on_graph_patch_applied = on_graph_patch_applied
+        self._on_tool_trace = on_tool_trace
+        self._on_tool_approval_requested = on_tool_approval_requested
+        self._approval_timeout_s = max(1.0, float(approval_timeout_s))
+        self._approval_lock = threading.Lock()
+        self._pending_approvals: dict[str, _PendingToolApproval] = {}
         self._call_requested.connect(
             self._handle_call_on_qt_thread,
             QtCore.Qt.ConnectionType.BlockingQueuedConnection,
@@ -125,10 +183,68 @@ class LocalStudioGraphToolExecutor(QtCore.QObject):
 
     def call(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         params_dict = dict(params or {})
+        method_text = str(method)
+        tool_call_id = new_tool_call_id()
+        started_at_ms = now_ms()
+        self._emit_tool_trace(
+            StudioAgentToolTrace(
+                tool_call_id=tool_call_id,
+                tool_name=tool_method_to_name(method_text),
+                method=method_text,
+                status="started",
+                started_at_ms=started_at_ms,
+                summary=summarize_tool_params(params_dict),
+            )
+        )
+        try:
+            self._ensure_approved_if_needed(method_text, params_dict, tool_call_id=tool_call_id)
+            result = self._call_dispatch(method_text, params_dict)
+        except _GRAPH_TOOL_ERRORS as exc:
+            ended_at_ms = now_ms()
+            self._emit_tool_trace(
+                StudioAgentToolTrace(
+                    tool_call_id=tool_call_id,
+                    tool_name=tool_method_to_name(method_text),
+                    method=method_text,
+                    status="failed",
+                    started_at_ms=started_at_ms,
+                    ended_at_ms=ended_at_ms,
+                    duration_ms=max(0, ended_at_ms - started_at_ms),
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+            )
+            raise
+        ended_at_ms = now_ms()
+        self._emit_tool_trace(
+            StudioAgentToolTrace(
+                tool_call_id=tool_call_id,
+                tool_name=tool_method_to_name(method_text),
+                method=method_text,
+                status="completed",
+                started_at_ms=started_at_ms,
+                ended_at_ms=ended_at_ms,
+                duration_ms=max(0, ended_at_ms - started_at_ms),
+                summary=summarize_tool_result(result),
+            )
+        )
+        return result
+
+    def resolve_approval(self, approval_id: str, approved: bool) -> None:
+        resolved_id = str(approval_id or "").strip()
+        if not resolved_id:
+            return
+        with self._approval_lock:
+            pending = self._pending_approvals.get(resolved_id)
+            if pending is None:
+                return
+            pending.approved = bool(approved)
+            pending.event.set()
+
+    def _call_dispatch(self, method: str, params_dict: dict[str, Any]) -> dict[str, Any]:
         if QtCore.QThread.currentThread() == self.thread():
-            return self._dispatch(str(method), params_dict)
+            return self._dispatch(method, params_dict)
         response_box: dict[str, Any] = {}
-        self._call_requested.emit(str(method), params_dict, response_box)
+        self._call_requested.emit(method, params_dict, response_box)
         error = response_box.get("error")
         if isinstance(error, BaseException):
             raise error
@@ -136,6 +252,55 @@ class LocalStudioGraphToolExecutor(QtCore.QObject):
         if isinstance(result, dict):
             return dict(result)
         return {}
+
+    def _emit_tool_trace(self, trace: StudioAgentToolTrace) -> None:
+        callback = self._on_tool_trace
+        if callback is None:
+            return
+        try:
+            callback(trace.to_dict())
+        except _GRAPH_TOOL_ERRORS:
+            logger.exception("failed to publish graph agent tool trace method=%s", trace.method)
+
+    def _ensure_approved_if_needed(self, method: str, params: dict[str, Any], *, tool_call_id: str) -> None:
+        approval_spec = _approval_spec_for_method(method, params)
+        if approval_spec is None:
+            return
+        if bool(params.get("confirm")):
+            return
+        callback = self._on_tool_approval_requested
+        if callback is None:
+            if approval_spec.require_confirm_without_callback:
+                raise ValueError(approval_spec.confirm_error_message)
+            return
+        if QtCore.QThread.currentThread() == self.thread():
+            raise ValueError(f"{approval_spec.confirm_error_message}; GUI approval cannot block the UI thread")
+
+        request = StudioAgentApprovalRequest(
+            approval_id=new_approval_id(),
+            tool_call_id=tool_call_id,
+            tool_name=tool_method_to_name(method),
+            method=method,
+            title=approval_spec.title,
+            description=approval_spec.description,
+            params_summary=summarize_tool_params(params),
+            created_at_ms=now_ms(),
+            timeout_s=self._approval_timeout_s,
+            metadata={"confirmParam": "confirm"},
+        )
+        pending = _PendingToolApproval(request=request, event=threading.Event())
+        with self._approval_lock:
+            self._pending_approvals[request.approval_id] = pending
+        try:
+            callback(request.to_dict())
+            if not pending.event.wait(timeout=self._approval_timeout_s):
+                raise TimeoutError(f"{request.tool_name} approval timed out")
+            if pending.approved is not True:
+                raise ValueError(f"{request.tool_name} approval denied")
+            params["confirm"] = True
+        finally:
+            with self._approval_lock:
+                self._pending_approvals.pop(request.approval_id, None)
 
     @QtCore.Slot(str, object, object)
     def _handle_call_on_qt_thread(self, method: str, params: object, response_box: object) -> None:
@@ -186,6 +351,14 @@ class LocalStudioGraphToolExecutor(QtCore.QObject):
             preview = self._adapter.apply_patch(patch)
             self._notify_graph_patch_applied()
             return {"preview": preview.to_dict(), "snapshot": self._adapter.snapshot().to_dict()}
+        if method == "graph.buildFromGoal":
+            return self._graph_build_from_goal(params)
+        if method == "graph.debugService":
+            return self._graph_debug_service(params)
+        if method == "graph.autoLayout":
+            return self._graph_auto_layout(params)
+        if method == "graph.fixContainerBindings":
+            return self._graph_fix_container_bindings(params)
         if method == "graph.compile":
             return {"compile": self._adapter.compile_graph()}
         if method == "studio.status":
@@ -212,6 +385,10 @@ class LocalStudioGraphToolExecutor(QtCore.QObject):
             return self._runtime_service_process(params)
         if method == "runtime.writeState":
             return self._runtime_write_state(params)
+        if method == "runtime.readState":
+            return self._runtime_read_state(params)
+        if method == "runtime.watchState":
+            return self._runtime_watch_state(params)
         if method == "runtime.samplePort":
             return self._runtime_sample_port(params)
         if method == "runtime.invokeCommand":
@@ -229,6 +406,12 @@ class LocalStudioGraphToolExecutor(QtCore.QObject):
         if bridge is None:
             raise RuntimeError("runtime bridge is not available for this Studio agent tool")
         return bridge
+
+    def _require_observation_source(self) -> StudioRuntimeObservationSource:
+        source = self._observation_source
+        if source is None:
+            raise RuntimeError("runtime observation store is not available for this Studio agent tool")
+        return source
 
     def _studio_status(self) -> dict[str, Any]:
         snapshot = self._adapter.snapshot()
@@ -338,6 +521,26 @@ class LocalStudioGraphToolExecutor(QtCore.QObject):
             )
         }
 
+    def _runtime_read_state(self, params: dict[str, Any]) -> dict[str, Any]:
+        source = self._require_observation_source()
+        state = source.get_state(
+            service_id=_required_text(params, "serviceId"),
+            node_id=_required_text(params, "nodeId"),
+            field=_required_text(params, "field"),
+        )
+        return {"state": _stored_state_to_dict(state)}
+
+    def _runtime_watch_state(self, params: dict[str, Any]) -> dict[str, Any]:
+        source = self._require_observation_source()
+        state = source.wait_state(
+            service_id=_required_text(params, "serviceId"),
+            node_id=_required_text(params, "nodeId"),
+            field=_required_text(params, "field"),
+            after_ts_ms=_optional_int_param(params, "afterTsMs"),
+            timeout_s=float(params.get("timeoutS") or (float(params.get("durationMs") or 1000.0) / 1000.0)),
+        )
+        return {"state": _stored_state_to_dict(state)}
+
     def _runtime_sample_port(self, params: dict[str, Any]) -> dict[str, Any]:
         bridge = self._require_bridge()
         service_id = _required_text(params, "serviceId")
@@ -397,6 +600,181 @@ class LocalStudioGraphToolExecutor(QtCore.QObject):
             )
         }
 
+    def _graph_build_from_goal(self, params: dict[str, Any]) -> dict[str, Any]:
+        goal = str(params.get("goal") or "").strip()
+        if not goal:
+            raise ValueError("graph_build_from_goal requires goal")
+        normalized_goal = goal.lower()
+        if not _goal_matches_pyengine_sine(normalized_goal):
+            return {
+                "workflow": {
+                    "name": "graph_build_from_goal",
+                    "status": "unsupported_goal",
+                    "summary": "No typed workflow matched this goal.",
+                    "goal": goal,
+                    "supportedGoals": [
+                        "Build a pyengine graph that outputs a 1 Hz sine wave mapped to the 0-100 range.",
+                    ],
+                }
+            }
+
+        patch = build_pyengine_sine_0_100_patch(expected_revision=self._adapter.revision())
+        patch_payload = graph_patch_to_dict(patch)
+        preview = self._adapter.preview_patch(patch)
+        workflow: dict[str, Any] = {
+            "name": "graph_build_from_goal",
+            "status": "previewed",
+            "summary": "Prepared typed PyEngine 1 Hz sine 0-100 graph.",
+            "goal": goal,
+            "patch": patch_payload,
+            "preview": preview.to_dict(),
+            "samplePort": {
+                "nodeId": pyengine_sine_sample_port()[0],
+                "port": pyengine_sine_sample_port()[1],
+            },
+            "expectedRange": list(pyengine_sine_expected_range()),
+        }
+        apply_workflow = not bool(params.get("previewOnly", True))
+        if not apply_workflow:
+            return {"workflow": workflow}
+        if not bool(params.get("confirm")):
+            raise ValueError("graph_build_from_goal apply requires confirm=true")
+        applied = self._adapter.apply_patch(patch)
+        self._notify_graph_patch_applied()
+        workflow["status"] = "applied"
+        workflow["summary"] = "Applied typed PyEngine 1 Hz sine 0-100 graph."
+        workflow["applyPreview"] = applied.to_dict()
+        workflow["snapshot"] = self._adapter.snapshot().to_dict()
+        return {"workflow": workflow}
+
+    def _graph_debug_service(self, params: dict[str, Any]) -> dict[str, Any]:
+        service_id = str(params.get("serviceId") or "").strip()
+        status: dict[str, Any] | None = None
+        monitor: dict[str, Any] | None = None
+        logs: dict[str, Any] | None = None
+        if service_id:
+            if self._bridge is not None:
+                status = self._runtime_service_status({"serviceId": service_id})["service"]
+                monitor = self._monitor_service({"serviceId": service_id, "limit": int(params.get("limit") or 100)})
+            if self._log_source is not None:
+                logs = self._logs_read({"serviceId": service_id, "limit": int(params.get("logLimit") or 100)})["logs"]
+        diagnostics = self._adapter.diagnostics()
+        compile_payload = self._adapter.compile_graph()
+        issue_count = len(list(diagnostics.get("issues") or []))
+        return {
+            "workflow": {
+                "name": "graph_debug_service",
+                "status": "completed",
+                "summary": f"Collected service debug bundle; diagnostics issues={issue_count}.",
+                "serviceId": service_id,
+                "service": status,
+                "monitor": monitor,
+                "logs": logs,
+                "diagnostics": diagnostics,
+                "compile": compile_payload,
+            }
+        }
+
+    def _graph_auto_layout(self, params: dict[str, Any]) -> dict[str, Any]:
+        selected_only = bool(params.get("selectedOnly", False))
+        apply_layout = bool(params.get("apply", False)) or bool(params.get("confirm", False))
+        snapshot = self._adapter.snapshot()
+        nodes = [node for node in snapshot.nodes if not selected_only or node.selected]
+        if not nodes:
+            return {
+                "workflow": {
+                    "name": "graph_auto_layout",
+                    "status": "no_nodes",
+                    "summary": "No nodes matched the layout scope.",
+                    "patch": graph_patch_to_dict(GraphPatch(expected_revision=snapshot.revision, ops=(), label="auto layout")),
+                }
+            }
+        columns = max(1, int(math.ceil(math.sqrt(float(len(nodes))))))
+        spacing_x = float(params.get("spacingX") or 260.0)
+        spacing_y = float(params.get("spacingY") or 150.0)
+        origin_x = float(params.get("originX") or 0.0)
+        origin_y = float(params.get("originY") or 0.0)
+        ops: list[MoveNodeOp] = []
+        for index, node in enumerate(sorted(nodes, key=lambda item: item.node_id)):
+            row = index // columns
+            col = index % columns
+            ops.append(MoveNodeOp(node_id=node.node_id, pos=(origin_x + col * spacing_x, origin_y + row * spacing_y)))
+        patch = GraphPatch(expected_revision=snapshot.revision, label="agent auto layout", ops=tuple(ops))
+        patch_payload = graph_patch_to_dict(patch)
+        preview = self._adapter.preview_patch(patch)
+        workflow = {
+            "name": "graph_auto_layout",
+            "status": "previewed",
+            "summary": f"Prepared auto layout for {len(ops)} nodes.",
+            "patch": patch_payload,
+            "preview": preview.to_dict(),
+        }
+        if not apply_layout:
+            return {"workflow": workflow}
+        if not bool(params.get("confirm")):
+            raise ValueError("graph_auto_layout apply requires confirm=true")
+        applied = self._adapter.apply_patch(patch)
+        self._notify_graph_patch_applied()
+        workflow["status"] = "applied"
+        workflow["summary"] = f"Applied auto layout to {len(ops)} nodes."
+        workflow["applyPreview"] = applied.to_dict()
+        return {"workflow": workflow}
+
+    def _graph_fix_container_bindings(self, params: dict[str, Any]) -> dict[str, Any]:
+        apply_fix = bool(params.get("apply", False)) or bool(params.get("confirm", False))
+        snapshot = self._adapter.snapshot()
+        diagnostics = self._adapter.diagnostics()
+        issues = [issue for issue in list(diagnostics.get("issues") or []) if isinstance(issue, dict)]
+        services_by_class: dict[str, str] = {}
+        for node in snapshot.nodes:
+            if node.kind == "service" and node.service_class:
+                services_by_class.setdefault(node.service_class, node.node_id)
+
+        ops: list[SetNodeStateOp] = []
+        unresolved: list[dict[str, Any]] = []
+        for issue in issues:
+            code = str(issue.get("code") or "")
+            if code not in {
+                "operator_missing_service_container",
+                "operator_service_container_missing",
+                "operator_service_class_mismatch",
+            }:
+                continue
+            node_id = str(issue.get("nodeId") or "").strip()
+            details = issue.get("details")
+            detail_map = details if isinstance(details, dict) else {}
+            service_class = str(detail_map.get("serviceClass") or detail_map.get("operatorServiceClass") or "").strip()
+            service_id = str(params.get("serviceId") or "").strip() or services_by_class.get(service_class, "")
+            if not node_id or not service_id:
+                unresolved.append({"nodeId": node_id, "serviceClass": service_class, "code": code})
+                continue
+            ops.append(SetNodeStateOp(node_id=node_id, field="svcId", value=service_id))
+
+        patch = GraphPatch(expected_revision=snapshot.revision, label="agent fix container bindings", ops=tuple(ops))
+        patch_payload = graph_patch_to_dict(patch)
+        preview = self._adapter.preview_patch(patch) if ops else None
+        workflow: dict[str, Any] = {
+            "name": "graph_fix_container_bindings",
+            "status": "previewed" if ops else "no_fix_available",
+            "summary": f"Prepared {len(ops)} service-container binding fixes; unresolved={len(unresolved)}.",
+            "patch": patch_payload,
+            "preview": None if preview is None else preview.to_dict(),
+            "unresolved": unresolved,
+        }
+        if not apply_fix:
+            return {"workflow": workflow}
+        if not ops:
+            return {"workflow": workflow}
+        if not bool(params.get("confirm")):
+            raise ValueError("graph_fix_container_bindings apply requires confirm=true")
+        applied = self._adapter.apply_patch(patch)
+        self._notify_graph_patch_applied()
+        workflow["status"] = "applied"
+        workflow["summary"] = f"Applied {len(ops)} service-container binding fixes."
+        workflow["applyPreview"] = applied.to_dict()
+        workflow["diagnosticsAfter"] = self._adapter.diagnostics()
+        return {"workflow": workflow}
+
     def _notify_graph_patch_applied(self) -> None:
         callback = self._on_graph_patch_applied
         if callback is None:
@@ -427,6 +805,10 @@ class LocalStudioGraphTools:
             self.graph_compile,
             self.graph_preview_patch,
             self.graph_apply_patch,
+            self.graph_build_from_goal,
+            self.graph_debug_service,
+            self.graph_auto_layout,
+            self.graph_fix_container_bindings,
             self.runtime_deploy,
             self.runtime_service_deploy,
             self.runtime_services,
@@ -435,6 +817,8 @@ class LocalStudioGraphTools:
             self.runtime_set_managed_active,
             self.runtime_service_process,
             self.runtime_write_state,
+            self.runtime_read_state,
+            self.runtime_watch_state,
             self.runtime_sample_port,
             self.runtime_invoke_command,
             self.monitor_report,
@@ -529,6 +913,61 @@ class LocalStudioGraphTools:
         """Apply a non-destructive GraphPatch to the current graph; destructive patches require confirm=true."""
         return self.executor.call("graph.applyPatch", {"patch": patch, "confirm": bool(confirm)})
 
+    def graph_build_from_goal(
+        self,
+        goal: str,
+        preview_only: bool = True,
+        confirm: bool = False,
+    ) -> dict[str, Any]:
+        """Build a typed graph workflow from a supported natural-language goal; can preview or apply the patch."""
+        return self.executor.call(
+            "graph.buildFromGoal",
+            {"goal": goal, "previewOnly": bool(preview_only), "confirm": bool(confirm)},
+        )
+
+    def graph_debug_service(self, service_id: str = "", limit: int = 100, log_limit: int = 100) -> dict[str, Any]:
+        """Collect diagnostics, compile metadata, monitor snapshots, and logs for a service debugging pass."""
+        return self.executor.call(
+            "graph.debugService",
+            {"serviceId": service_id, "limit": int(limit), "logLimit": int(log_limit)},
+        )
+
+    def graph_auto_layout(
+        self,
+        selected_only: bool = False,
+        apply: bool = False,
+        confirm: bool = False,
+        spacing_x: float = 260.0,
+        spacing_y: float = 150.0,
+        origin_x: float = 0.0,
+        origin_y: float = 0.0,
+    ) -> dict[str, Any]:
+        """Preview or apply a simple typed graph auto-layout patch."""
+        return self.executor.call(
+            "graph.autoLayout",
+            {
+                "selectedOnly": bool(selected_only),
+                "apply": bool(apply),
+                "confirm": bool(confirm),
+                "spacingX": float(spacing_x),
+                "spacingY": float(spacing_y),
+                "originX": float(origin_x),
+                "originY": float(origin_y),
+            },
+        )
+
+    def graph_fix_container_bindings(
+        self,
+        service_id: str = "",
+        apply: bool = False,
+        confirm: bool = False,
+    ) -> dict[str, Any]:
+        """Preview or apply fixes for operator nodes missing valid service-container bindings."""
+        return self.executor.call(
+            "graph.fixContainerBindings",
+            {"serviceId": service_id, "apply": bool(apply), "confirm": bool(confirm)},
+        )
+
     def runtime_deploy(self, confirm: bool = False, timeout_s: float = 20.0) -> dict[str, Any]:
         """Compile and deploy the current graph to the runtime; requires confirm=true."""
         return self.executor.call("runtime.deploy", {"confirm": bool(confirm), "timeoutS": float(timeout_s)})
@@ -573,6 +1012,29 @@ class LocalStudioGraphTools:
             "runtime.writeState",
             {"serviceId": service_id, "nodeId": node_id, "field": field, "value": value, "timeoutS": float(timeout_s)},
         )
+
+    def runtime_read_state(self, service_id: str, node_id: str, field: str) -> dict[str, Any]:
+        """Read the latest observed runtime state value from the local observation store."""
+        return self.executor.call("runtime.readState", {"serviceId": service_id, "nodeId": node_id, "field": field})
+
+    def runtime_watch_state(
+        self,
+        service_id: str,
+        node_id: str,
+        field: str,
+        after_ts_ms: int | None = None,
+        timeout_s: float = 1.0,
+    ) -> dict[str, Any]:
+        """Wait for a runtime state observation newer than after_ts_ms, or return the latest observed value on timeout."""
+        params: dict[str, Any] = {
+            "serviceId": service_id,
+            "nodeId": node_id,
+            "field": field,
+            "timeoutS": float(timeout_s),
+        }
+        if after_ts_ms is not None:
+            params["afterTsMs"] = int(after_ts_ms)
+        return self.executor.call("runtime.watchState", params)
 
     def runtime_sample_port(
         self,
@@ -641,6 +1103,112 @@ def _requires_confirm(params: dict[str, Any]) -> bool:
         if str(op.get("op") or "") == "deleteNode":
             return True
     return False
+
+
+def _approval_spec_for_method(method: str, params: dict[str, Any]) -> _ToolApprovalSpec | None:
+    if method == "graph.applyPatch" and _requires_confirm(params):
+        return _ToolApprovalSpec(
+            title="Apply Graph Patch",
+            description="This patch may delete nodes or perform a destructive graph change.",
+            confirm_error_message="graph.applyPatch with destructive ops requires confirm=true",
+        )
+    if method == "runtime.deploy":
+        return _ToolApprovalSpec(
+            title="Deploy Runtime Graph",
+            description="Compile and deploy the current graph to the runtime.",
+            confirm_error_message="runtime_deploy requires confirm=true",
+        )
+    if method == "runtime.serviceDeploy":
+        return _ToolApprovalSpec(
+            title="Deploy Runtime Service",
+            description="Compile and deploy one service rungraph to the runtime.",
+            confirm_error_message="runtime_service_deploy requires confirm=true",
+            require_confirm_without_callback=False,
+        )
+    if method == "runtime.setServiceActive":
+        return _ToolApprovalSpec(
+            title="Set Service Active",
+            description="Change whether a managed runtime service is active.",
+            confirm_error_message="runtime_set_service_active requires confirm=true",
+            require_confirm_without_callback=False,
+        )
+    if method == "runtime.setManagedActive":
+        return _ToolApprovalSpec(
+            title="Set Managed Services Active",
+            description="Change active state for all managed runtime services.",
+            confirm_error_message="runtime_set_managed_active requires confirm=true",
+            require_confirm_without_callback=False,
+        )
+    if method == "runtime.serviceProcess":
+        return _ToolApprovalSpec(
+            title="Control Service Process",
+            description="Start, stop, or restart a managed service process.",
+            confirm_error_message="runtime_service_process requires confirm=true",
+            require_confirm_without_callback=False,
+        )
+    if method == "runtime.writeState":
+        return _ToolApprovalSpec(
+            title="Write Runtime State",
+            description="Write a state value to a running runtime node.",
+            confirm_error_message="runtime_write_state requires confirm=true",
+            require_confirm_without_callback=False,
+        )
+    if method == "runtime.invokeCommand":
+        return _ToolApprovalSpec(
+            title="Invoke Runtime Command",
+            description="Call a command on a running runtime service.",
+            confirm_error_message="runtime_invoke_command requires confirm=true",
+        )
+    if method == "graph.buildFromGoal" and not bool(params.get("previewOnly", True)):
+        return _ToolApprovalSpec(
+            title="Build Graph From Goal",
+            description="Apply the generated typed workflow patch to the current graph.",
+            confirm_error_message="graph_build_from_goal apply requires confirm=true",
+        )
+    if method == "graph.autoLayout" and bool(params.get("apply", False)):
+        return _ToolApprovalSpec(
+            title="Apply Auto Layout",
+            description="Move graph nodes to the generated layout positions.",
+            confirm_error_message="graph_auto_layout apply requires confirm=true",
+        )
+    if method == "graph.fixContainerBindings" and bool(params.get("apply", False)):
+        return _ToolApprovalSpec(
+            title="Fix Container Bindings",
+            description="Update operator svcId state fields to bind them to service containers.",
+            confirm_error_message="graph_fix_container_bindings apply requires confirm=true",
+        )
+    return None
+
+
+def _goal_matches_pyengine_sine(goal: str) -> bool:
+    text = str(goal or "").lower()
+    has_pyengine = "pyengine" in text or "py engine" in text
+    has_wave = "sine" in text or "sin" in text or "正弦" in text
+    has_hz = "1hz" in text or "1 hz" in text or "1赫兹" in text
+    has_range = "0-100" in text or "0 to 100" in text or "0 到 100" in text
+    return has_pyengine and has_wave and has_hz and has_range
+
+
+def _stored_state_to_dict(value: StoredStateValue | None) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    return {
+        "serviceId": value.service_id,
+        "nodeId": value.node_id,
+        "field": value.field,
+        "value": value.value,
+        "tsMs": value.ts_ms,
+    }
+
+
+def _optional_int_param(params: dict[str, Any], key: str) -> int | None:
+    value = params.get(key)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _required_text(params: dict[str, Any], key: str) -> str:

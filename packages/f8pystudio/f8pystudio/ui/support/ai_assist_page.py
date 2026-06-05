@@ -4,6 +4,8 @@ Standalone AI Assist page builder for the Studio Sidebar.
 
 from __future__ import annotations
 
+from f8pystudio.ui.agents.agent_cards import agent_card_css
+
 from .studio_theme import qss_rgba, studio_dark_theme
 
 
@@ -13,6 +15,7 @@ def build_ai_assist_html(*, prism_asset_html: str = "") -> str:
     if prism_asset_html_block:
         prism_asset_html_block += "\n"
     p = studio_dark_theme().palette
+    card_css = agent_card_css()
 
     html = f"""
 <!doctype html>
@@ -478,6 +481,8 @@ def build_ai_assist_html(*, prism_asset_html: str = "") -> str:
         background: var(--accent-red-hover);
         transform: scale(1.1);
       }}
+
+{card_css}
     </style>
     {prism_asset_html_block}
     <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
@@ -485,6 +490,7 @@ def build_ai_assist_html(*, prism_asset_html: str = "") -> str:
       window._f8_aiAssist = null;
       window._f8_chatMessages = [];
       window._f8_chatRequests = Object.create(null);
+      window._f8_toolCards = Object.create(null);
       window._f8_attachments = [];
       window._f8_currentRid = null;
 
@@ -582,7 +588,7 @@ def build_ai_assist_html(*, prism_asset_html: str = "") -> str:
         document.getElementById('f8-ai-send').style.display = 'none';
         document.getElementById('f8-ai-stop').classList.add('visible');
 
-        window._f8_chatRequests[rid] = {{ assistantEl, thinking }};
+        window._f8_chatRequests[rid] = {{ assistantEl, thinking, toolHost: null }};
         window._f8_aiAssist.request_chat(rid, JSON.stringify(window._f8_chatMessages), '', '', JSON.stringify(window._f8_attachments));
         _f8_clearAttachments();
       }}
@@ -608,9 +614,127 @@ def build_ai_assist_html(*, prism_asset_html: str = "") -> str:
         return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\\n/g, '<br>');
       }}
 
+      function _f8_toolRequest(rid) {{
+        const direct = window._f8_chatRequests[rid];
+        if (direct) return direct;
+        if (window._f8_currentRid && window._f8_chatRequests[window._f8_currentRid]) {{
+          return window._f8_chatRequests[window._f8_currentRid];
+        }}
+        return null;
+      }}
+
+      function _f8_toolHost(rid) {{
+        const req = _f8_toolRequest(rid);
+        if (!req) return null;
+        let host = req.toolHost;
+        if (!host) {{
+          host = document.createElement('div');
+          host.className = 'f8-agent-tool-host';
+          req.toolHost = host;
+        }}
+        if (host.parentElement !== req.assistantEl) {{
+          req.assistantEl.appendChild(host);
+        }}
+        return host;
+      }}
+
+      function _f8_toolTraceKey(payload) {{
+        return String(payload && payload.toolCallId ? payload.toolCallId : Math.random());
+      }}
+
+      function _f8_payloadObject(payload) {{
+        if (!payload) return {{}};
+        if (typeof payload === 'string') {{
+          try {{
+            const parsed = JSON.parse(payload);
+            return parsed && typeof parsed === 'object' ? parsed : {{}};
+          }} catch (err) {{
+            return {{}};
+          }}
+        }}
+        if (typeof payload === 'object') return payload;
+        return {{}};
+      }}
+
+      function _f8_toolLabel(payload) {{
+        const name = String(payload.toolName || payload.tool_name || payload.method || 'tool');
+        return name.replace(/\\./g, '_');
+      }}
+
+      function _f8_appendToolTrace(rid, payload) {{
+        payload = _f8_payloadObject(payload);
+        const host = _f8_toolHost(rid);
+        if (!host) return;
+        const key = _f8_toolTraceKey(payload);
+        let row = window._f8_toolCards[key];
+        if (!row) {{
+          row = document.createElement('details');
+          row.className = 'f8-agent-tool-trace';
+          window._f8_toolCards[key] = row;
+          host.appendChild(row);
+        }}
+        const status = String(payload.status || 'started');
+        const title = _f8_toolLabel(payload);
+        const method = String(payload.method || '');
+        const summary = String(payload.error || payload.summary || '');
+        const duration = payload.durationMs === null || payload.durationMs === undefined ? '' : ' · ' + String(payload.durationMs) + ' ms';
+        const verb = status === 'completed' ? 'Called' : (status === 'failed' ? 'Failed' : 'Calling');
+        row.innerHTML =
+          '<summary>' +
+            '<span class="f8-agent-tool-caret">›</span>' +
+            '<span class="f8-agent-tool-title">' + _f8_escHtml(verb + ' ' + title + duration) + '</span>' +
+            '<span class="f8-agent-tool-status ' + _f8_escHtml(status) + '">' + _f8_escHtml(status) + '</span>' +
+          '</summary>' +
+          '<div class="f8-agent-tool-detail">' + _f8_escHtml(method || title) + '<br>' + _f8_escHtml(summary) + '</div>';
+        const msgs = document.getElementById('f8-ai-messages');
+        msgs.scrollTop = msgs.scrollHeight;
+      }}
+
+      function _f8_appendApprovalCard(rid, payload) {{
+        payload = _f8_payloadObject(payload);
+        const host = _f8_toolHost(rid);
+        if (!host) return;
+        const approvalId = String(payload.approvalId || '');
+        const card = document.createElement('div');
+        card.className = 'f8-agent-card f8-agent-approval';
+        card.dataset.approvalId = approvalId;
+        const title = String(payload.title || payload.toolName || 'Approve Tool Call');
+        const description = String(payload.description || '');
+        const params = String(payload.paramsSummary || '');
+        card.innerHTML =
+          '<div class="f8-agent-card-row">' +
+            '<div class="f8-agent-card-title">' + _f8_escHtml(title) + '</div>' +
+            '<div class="f8-agent-card-status started">approval</div>' +
+          '</div>' +
+          '<div class="f8-agent-card-body">' + _f8_escHtml(description) + '<br>' + _f8_escHtml(params) + '</div>' +
+          '<div class="f8-agent-card-actions">' +
+            '<button class="f8-agent-card-button danger" data-decision="deny">Deny</button>' +
+            '<button class="f8-agent-card-button primary" data-decision="approve">Approve</button>' +
+          '</div>';
+        const buttons = Array.from(card.querySelectorAll('button'));
+        buttons.forEach(function(btn) {{
+          btn.onclick = function() {{
+            const approved = btn.dataset.decision === 'approve';
+            buttons.forEach(function(item) {{ item.disabled = true; }});
+            const status = card.querySelector('.f8-agent-card-status');
+            if (status) {{
+              status.textContent = approved ? 'approved' : 'denied';
+              status.className = 'f8-agent-card-status ' + (approved ? 'completed' : 'failed');
+            }}
+            if (window._f8_aiAssist && window._f8_aiAssist.resolve_tool_approval) {{
+              window._f8_aiAssist.resolve_tool_approval(approvalId, approved);
+            }}
+          }};
+        }});
+        host.appendChild(card);
+        const msgs = document.getElementById('f8-ai-messages');
+        msgs.scrollTop = msgs.scrollHeight;
+      }}
+
       function _f8_newConversation() {{
         document.getElementById('f8-ai-messages').innerHTML = '';
         window._f8_chatMessages = [];
+        window._f8_toolCards = Object.create(null);
         if (window._f8_aiAssist.reset_chat_history) window._f8_aiAssist.reset_chat_history();
         _f8_appendMessage('assistant', 'Conversation reset. How can I help you?');
         _f8_clearAttachments();
@@ -668,6 +792,7 @@ def build_ai_assist_html(*, prism_asset_html: str = "") -> str:
             if (!req) return;
             req.assistantEl.dataset.raw = (req.assistantEl.dataset.raw || '') + delta;
             req.assistantEl.innerHTML = _f8_md(req.assistantEl.dataset.raw);
+            if (req.toolHost) req.assistantEl.appendChild(req.toolHost);
             if (window.Prism) Prism.highlightAllUnder(req.assistantEl);
             const msgs = document.getElementById('f8-ai-messages');
             msgs.scrollTop = msgs.scrollHeight;
@@ -688,6 +813,14 @@ def build_ai_assist_html(*, prism_asset_html: str = "") -> str:
             }} else {{
               window._f8_chatMessages.push({{role: 'assistant', content: req.assistantEl.dataset.raw}});
             }}
+          }});
+
+          window._f8_aiAssist.tool_trace_ready.connect(function(rid, payload) {{
+            _f8_appendToolTrace(rid, payload || {{}});
+          }});
+
+          window._f8_aiAssist.tool_approval_requested.connect(function(rid, payload) {{
+            _f8_appendApprovalCard(rid, payload || {{}});
           }});
 
           const input = document.getElementById('f8-ai-input');

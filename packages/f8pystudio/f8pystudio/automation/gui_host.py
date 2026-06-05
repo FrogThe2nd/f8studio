@@ -49,6 +49,7 @@ class StudioAutomationHost(QtCore.QObject):
         main_window: Any,
         studio_graph: Any,
         bridge: Any,
+        observation_store: RuntimeObservationStore | None = None,
         token_file: str | Path | None = None,
         port_file: str | Path | None = None,
         parent: QtCore.QObject | None = None,
@@ -58,7 +59,7 @@ class StudioAutomationHost(QtCore.QObject):
         self._graph = studio_graph
         self._bridge = bridge
         self._graph_adapter = StudioGraphAutomationAdapter(studio_graph)
-        self._observations = RuntimeObservationStore()
+        self._observations = observation_store or RuntimeObservationStore()
         self._token_file = Path(token_file).expanduser() if token_file is not None else default_token_file()
         self._port_file = Path(port_file).expanduser() if port_file is not None else default_port_file()
         self._token = ""
@@ -111,6 +112,10 @@ class StudioAutomationHost(QtCore.QObject):
             value=value,
             ts_ms=int(ts_ms),
         )
+
+    @property
+    def observation_store(self) -> RuntimeObservationStore:
+        return self._observations
 
     def _handle_request_from_server_thread(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         if method in _SERVER_THREAD_METHODS:

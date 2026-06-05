@@ -70,6 +70,8 @@ class AiLlmBridge(QtCore.QObject):
     plan_done = QtCore.Signal(str, str)
     context_usage_updated = QtCore.Signal(int, int)
     chat_context_snapshot_changed = QtCore.Signal(bool, str)
+    tool_trace_ready = QtCore.Signal(str, str)
+    tool_approval_requested = QtCore.Signal(str, str)
 
     def __init__(
         self,
@@ -102,6 +104,11 @@ class AiLlmBridge(QtCore.QObject):
         self._agent_tools: tuple[Any, ...] = ()
         self._assist_context: EditorAssistContext | None = None
         self._lsp_bridge: PythonEditorAssistBridge | None = None
+        self._tool_approval_resolver: Callable[[str, bool], None] | None = None
+        self._active_stream_request_id = ""
+        self._active_stream_lock = threading.Lock()
+        self._tool_request_ids_by_thread: dict[int, str] = {}
+        self._tool_request_ids_lock = threading.Lock()
 
         self._system_tokens = 0
         self._code_tokens = 0
@@ -139,6 +146,26 @@ class AiLlmBridge(QtCore.QObject):
     def set_agent_tools(self, tools: tuple[Any, ...]) -> None:
         self._agent_tools = tuple(tools)
         self._refresh_system_tokens()
+
+    def set_tool_approval_resolver(self, resolver: Callable[[str, bool], None] | None) -> None:
+        self._tool_approval_resolver = resolver
+
+    def publish_tool_trace(self, payload: dict[str, Any]) -> None:
+        self.tool_trace_ready.emit(self._resolve_tool_event_request_id(payload), _json_payload(payload))
+
+    def publish_tool_approval(self, payload: dict[str, Any]) -> None:
+        self.tool_approval_requested.emit(self._resolve_tool_event_request_id(payload), _json_payload(payload))
+
+    @QtCore.Slot(str, bool)
+    def resolve_tool_approval(self, approval_id: str, approved: bool) -> None:
+        resolver = self._tool_approval_resolver
+        if resolver is None:
+            logger.warning("AI tool approval resolver is not configured approval_id=%s", approval_id)
+            return
+        try:
+            resolver(str(approval_id or ""), bool(approved))
+        except (RuntimeError, TypeError, ValueError):
+            logger.exception("AI tool approval resolver failed approval_id=%s", approval_id)
 
     @QtCore.Slot()
     def clear_chat_context_snapshot(self) -> None:
@@ -707,13 +734,49 @@ class AiLlmBridge(QtCore.QObject):
                 on_done("")
 
         def _worker() -> None:
+            self._set_current_tool_request_id(request.request_id)
             try:
+                self._set_active_stream_request_id(request.request_id)
                 asyncio.run(_consume())
             except Exception as exc:
                 logger.exception("Studio agent stream request crashed mode=%s request_id=%s", request.mode, request.request_id)
                 on_done(f"{type(exc).__name__}: {exc}")
+            finally:
+                self._clear_current_tool_request_id()
+                self._clear_active_stream_request_id(request.request_id)
 
         threading.Thread(target=_worker, daemon=True, name=f"f8-agent-stream-{request.request_id}").start()
+
+    def _resolve_tool_event_request_id(self, payload: dict[str, Any]) -> str:
+        payload_request_id = str(payload.get("requestId") or "").strip()
+        if payload_request_id:
+            return payload_request_id
+        thread_id = threading.get_ident()
+        with self._tool_request_ids_lock:
+            thread_request_id = str(self._tool_request_ids_by_thread.get(thread_id, "") or "").strip()
+        if thread_request_id:
+            return thread_request_id
+        with self._active_stream_lock:
+            return self._active_stream_request_id
+
+    def _set_current_tool_request_id(self, request_id: str) -> None:
+        thread_id = threading.get_ident()
+        with self._tool_request_ids_lock:
+            self._tool_request_ids_by_thread[thread_id] = str(request_id or "")
+
+    def _clear_current_tool_request_id(self) -> None:
+        thread_id = threading.get_ident()
+        with self._tool_request_ids_lock:
+            self._tool_request_ids_by_thread.pop(thread_id, None)
+
+    def _set_active_stream_request_id(self, request_id: str) -> None:
+        with self._active_stream_lock:
+            self._active_stream_request_id = str(request_id or "")
+
+    def _clear_active_stream_request_id(self, request_id: str) -> None:
+        with self._active_stream_lock:
+            if self._active_stream_request_id == str(request_id or ""):
+                self._active_stream_request_id = ""
 
     def _history_from_json(self, raw: str, *, purpose: str) -> list[dict[str, Any]]:
         if not raw:
@@ -762,3 +825,11 @@ class AiLlmBridge(QtCore.QObject):
 
 def _attachments_to_dicts(attachments: list[StudioAgentAttachment]) -> list[dict[str, str]]:
     return [{"name": item.name, "content": item.content, "mime": item.mime} for item in attachments]
+
+
+def _json_payload(payload: dict[str, Any]) -> str:
+    try:
+        return json.dumps(dict(payload), ensure_ascii=False, separators=(",", ":"))
+    except (TypeError, ValueError):
+        logger.exception("Failed to encode AI bridge payload")
+        return "{}"

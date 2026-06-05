@@ -45,6 +45,7 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
         studio_graph: GraphSelectionSource | None = None,
         runtime_bridge: Any | None = None,
         log_source: Any | None = None,
+        observation_source: Any | None = None,
         on_graph_patch_applied: Callable[[], None] | None = None,
         parent: QtWidgets.QWidget | None = None,
     ) -> None:
@@ -68,9 +69,13 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
                 studio_graph,
                 bridge=runtime_bridge,
                 log_source=log_source,
+                observation_source=observation_source,
                 on_graph_patch_applied=on_graph_patch_applied,
+                on_tool_trace=self._ai_bridge.publish_tool_trace,
+                on_tool_approval_requested=self._ai_bridge.publish_tool_approval,
                 parent=self,
             )
+            self._ai_bridge.set_tool_approval_resolver(self._graph_tool_executor.resolve_approval)
             self._graph_tools = LocalStudioGraphTools(self._graph_tool_executor)
             graph_tools = self._graph_tools.available_tools()
             self._graph_tool_count = len(graph_tools)

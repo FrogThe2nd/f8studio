@@ -12,6 +12,7 @@ from qtpy import QtCore, QtWidgets
 from f8pysdk.specs import F8OperatorSpec
 
 from f8pystudio.ui.mainwin.ai_assist_sidebar import AiAssistSidebarWidget
+from f8pystudio.ui.support.ai_assist_page import build_ai_assist_html
 from f8pystudio.ui.support import webengine_utils
 
 
@@ -196,6 +197,7 @@ def test_sidebar_injects_runtime_bridge_and_logs_into_graph_tools(monkeypatch) -
     graph = _FakeGraph()
     runtime_bridge = object()
     log_source = object()
+    observation_source = object()
     created: list[dict[str, object]] = []
 
     class FakeToolExecutor:
@@ -205,7 +207,10 @@ def test_sidebar_injects_runtime_bridge_and_logs_into_graph_tools(monkeypatch) -
             *,
             bridge: object | None = None,
             log_source: object | None = None,
+            observation_source: object | None = None,
             on_graph_patch_applied=None,
+            on_tool_trace=None,
+            on_tool_approval_requested=None,
             parent: object | None = None,
         ) -> None:
             created.append(
@@ -213,10 +218,16 @@ def test_sidebar_injects_runtime_bridge_and_logs_into_graph_tools(monkeypatch) -
                     "studio_graph": studio_graph,
                     "bridge": bridge,
                     "log_source": log_source,
+                    "observation_source": observation_source,
                     "on_graph_patch_applied": on_graph_patch_applied,
+                    "on_tool_trace": on_tool_trace,
+                    "on_tool_approval_requested": on_tool_approval_requested,
                     "parent": parent,
                 }
             )
+
+        def resolve_approval(self, approval_id: str, approved: bool) -> None:
+            _ = (approval_id, approved)
 
     class FakeGraphTools:
         def __init__(self, executor: object) -> None:
@@ -231,12 +242,20 @@ def test_sidebar_injects_runtime_bridge_and_logs_into_graph_tools(monkeypatch) -
     temp_dir.mkdir(parents=True, exist_ok=True)
     store_path = temp_dir / "ai_providers.json"
     with patch("f8pystudio.ui.mainwin.ai_assist_sidebar.AiProviderStore._resolve_storage_path", return_value=store_path):
-        widget = AiAssistSidebarWidget(studio_graph=graph, runtime_bridge=runtime_bridge, log_source=log_source)
+        widget = AiAssistSidebarWidget(
+            studio_graph=graph,
+            runtime_bridge=runtime_bridge,
+            log_source=log_source,
+            observation_source=observation_source,
+        )
 
     assert created
     assert created[0]["studio_graph"] is graph
     assert created[0]["bridge"] is runtime_bridge
     assert created[0]["log_source"] is log_source
+    assert created[0]["observation_source"] is observation_source
+    assert created[0]["on_tool_trace"] == widget._ai_bridge.publish_tool_trace
+    assert created[0]["on_tool_approval_requested"] == widget._ai_bridge.publish_tool_approval
     assert widget._ai_bridge._agent_tools
 
 
@@ -261,6 +280,16 @@ def test_sidebar_supports_multi_select_subgraph_context_and_reset_clears_pin(mon
 
     assert "Pin: none" == widget._pinned_node_label.text()
     assert not widget._clear_context_btn.isEnabled()
+
+
+def test_ai_assist_html_includes_tool_trace_and_approval_handlers() -> None:
+    html = build_ai_assist_html()
+
+    assert "tool_trace_ready" in html
+    assert "tool_approval_requested" in html
+    assert "resolve_tool_approval" in html
+    assert "f8-agent-tool-trace" in html
+    assert "f8-agent-approval" in html
 
 
 def test_take_prewarmed_webengine_view_returns_cached_instance(monkeypatch) -> None:

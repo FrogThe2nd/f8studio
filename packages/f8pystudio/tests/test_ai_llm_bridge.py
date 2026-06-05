@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+import json
 from pathlib import Path
 from unittest.mock import patch
 import uuid
@@ -294,6 +295,33 @@ def test_agent_request_keeps_graph_tools_out_of_inline_requests() -> None:
     request = bridge._agent_request(request_id="rid-inline", mode="inline")
 
     assert request.tools == ()
+
+
+def test_bridge_publishes_tool_trace_and_resolves_approval(tmp_path: Path) -> None:
+    _ensure_app()
+    store_path = tmp_path / "ai_providers.json"
+    with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+        bridge = AiLlmBridge(AiProviderStore())
+
+    trace_spy = QtTest.QSignalSpy(bridge.tool_trace_ready)
+    approval_spy = QtTest.QSignalSpy(bridge.tool_approval_requested)
+    resolved: list[tuple[str, bool]] = []
+    bridge.set_tool_approval_resolver(lambda approval_id, approved: resolved.append((approval_id, approved)))
+
+    bridge._set_active_stream_request_id("rid-tool")
+    bridge.publish_tool_trace({"toolCallId": "tool-1", "toolName": "graph_snapshot", "status": "started"})
+    bridge.publish_tool_approval({"approvalId": "approval-1", "toolName": "runtime_deploy"})
+    bridge.resolve_tool_approval("approval-1", True)
+
+    trace_payload = json.loads(str(trace_spy.at(0)[1]))
+    approval_payload = json.loads(str(approval_spy.at(0)[1]))
+
+    assert trace_spy.at(0)[0] == "rid-tool"
+    assert trace_payload == {"toolCallId": "tool-1", "toolName": "graph_snapshot", "status": "started"}
+    assert approval_spy.at(0)[0] == "rid-tool"
+    assert approval_payload == {"approvalId": "approval-1", "toolName": "runtime_deploy"}
+    assert resolved == [("approval-1", True)]
+    bridge._clear_active_stream_request_id("rid-tool")
 
 
 def test_pinned_graph_context_overrides_auto_graph_context() -> None:

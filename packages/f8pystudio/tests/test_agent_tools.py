@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import threading
 import types
 from dataclasses import dataclass
 
@@ -16,6 +17,7 @@ from f8pysdk.specs import (
 )
 from qtpy import QtWidgets
 
+from f8pystudio.automation.observation_store import RuntimeObservationStore
 from f8pystudio.agents.tools.graph import LocalStudioGraphToolExecutor, LocalStudioGraphTools
 from f8pystudio.agents.tools.mcp import StudioMCPStdioConfig, build_studio_mcp_stdio_tool
 from f8pystudio.agents.tools.studio import StudioAutomationTools
@@ -411,6 +413,139 @@ def test_local_studio_graph_tools_dispatch_runtime_monitor_and_logs(monkeypatch:
     assert "invoke_remote_command_and_wait" in call_names
 
 
+def test_local_studio_graph_tool_traces_success_and_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    _ensure_app()
+    traces: list[dict[str, object]] = []
+
+    class FakePayload:
+        node_count = 1
+        edge_count = 0
+
+        def to_dict(self) -> dict[str, object]:
+            return {"nodeCount": self.node_count, "edgeCount": self.edge_count}
+
+    class FakeAdapter:
+        def __init__(self, studio_graph: object) -> None:
+            self.studio_graph = studio_graph
+
+        def snapshot(self) -> FakePayload:
+            return FakePayload()
+
+    monkeypatch.setattr("f8pystudio.agents.tools.graph.StudioGraphAutomationAdapter", FakeAdapter)
+    executor = LocalStudioGraphToolExecutor("graph", on_tool_trace=traces.append)
+    tools = LocalStudioGraphTools(executor)
+
+    assert tools.graph_snapshot()["snapshot"]["nodeCount"] == 1
+    with pytest.raises(ValueError, match="unsupported"):
+        executor.call("graph.unknown")
+
+    assert traces[0]["status"] == "started"
+    assert traces[0]["toolName"] == "graph_snapshot"
+    assert traces[1]["status"] == "completed"
+    assert traces[2]["status"] == "started"
+    assert traces[3]["status"] == "failed"
+    assert "ValueError" in str(traces[3]["error"])
+
+
+def test_runtime_action_tool_can_use_gui_approval(monkeypatch: pytest.MonkeyPatch) -> None:
+    _ensure_app()
+    approvals: list[dict[str, object]] = []
+
+    class FakePayload:
+        node_count = 1
+        edge_count = 0
+
+        def to_dict(self) -> dict[str, object]:
+            return {"nodeCount": self.node_count, "edgeCount": self.edge_count}
+
+    class FakeAdapter:
+        def __init__(self, studio_graph: object) -> None:
+            self.studio_graph = studio_graph
+
+        def revision(self) -> int:
+            return 1
+
+        def snapshot(self) -> FakePayload:
+            return FakePayload()
+
+        def compile_graph(self) -> dict[str, object]:
+            return {"warnings": []}
+
+    monkeypatch.setattr("f8pystudio.agents.tools.graph.StudioGraphAutomationAdapter", FakeAdapter)
+    monkeypatch.setattr("f8pystudio.nodegraph.runtime_compiler.compile_runtime_graphs_from_studio", lambda graph: {"compiled": graph})
+
+    bridge = _FakeBridge()
+    executor = LocalStudioGraphToolExecutor(
+        "graph",
+        bridge=bridge,
+        on_tool_approval_requested=approvals.append,
+        approval_timeout_s=2.0,
+    )
+    tools = LocalStudioGraphTools(executor)
+
+    result_box: dict[str, object] = {}
+    error_box: dict[str, BaseException] = {}
+
+    def call_tool() -> None:
+        try:
+            result_box["result"] = tools.runtime_deploy(confirm=False, timeout_s=4.0)
+        except BaseException as exc:
+            error_box["error"] = exc
+
+    worker = threading.Thread(target=call_tool, daemon=True)
+    worker.start()
+    while not approvals and worker.is_alive():
+        QtWidgets.QApplication.processEvents()
+    assert approvals
+    executor.resolve_approval(str(approvals[0]["approvalId"]), True)
+    while worker.is_alive():
+        QtWidgets.QApplication.processEvents()
+        worker.join(timeout=0.01)
+    assert "error" not in error_box
+    result = result_box["result"]
+
+    assert result["deploy"]["completed"] is True
+    assert approvals[0]["toolName"] == "runtime_deploy"
+    assert bridge.calls[-1][0] == "deploy_and_wait"
+
+
+def test_runtime_action_tool_gui_approval_denial_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    _ensure_app()
+    approvals: list[dict[str, object]] = []
+
+    class FakeAdapter:
+        def __init__(self, studio_graph: object) -> None:
+            self.studio_graph = studio_graph
+
+    monkeypatch.setattr("f8pystudio.agents.tools.graph.StudioGraphAutomationAdapter", FakeAdapter)
+    executor = LocalStudioGraphToolExecutor(
+        "graph",
+        bridge=_FakeBridge(),
+        on_tool_approval_requested=approvals.append,
+        approval_timeout_s=2.0,
+    )
+    tools = LocalStudioGraphTools(executor)
+
+    error_box: dict[str, BaseException] = {}
+
+    def call_tool() -> None:
+        try:
+            tools.runtime_deploy(confirm=False)
+        except BaseException as exc:
+            error_box["error"] = exc
+
+    worker = threading.Thread(target=call_tool, daemon=True)
+    worker.start()
+    while not approvals and worker.is_alive():
+        QtWidgets.QApplication.processEvents()
+    assert approvals
+    executor.resolve_approval(str(approvals[0]["approvalId"]), False)
+    worker.join(timeout=1.0)
+
+    assert isinstance(error_box["error"], ValueError)
+    assert "approval denied" in str(error_box["error"])
+
+
 def test_runtime_action_tools_require_confirm(monkeypatch: pytest.MonkeyPatch) -> None:
     _ensure_app()
 
@@ -425,6 +560,94 @@ def test_runtime_action_tools_require_confirm(monkeypatch: pytest.MonkeyPatch) -
         tools.runtime_deploy()
     with pytest.raises(ValueError, match="confirm=true"):
         tools.runtime_invoke_command("svc", "reset")
+
+
+def test_runtime_read_and_watch_state_use_observation_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    _ensure_app()
+
+    class FakeAdapter:
+        def __init__(self, studio_graph: object) -> None:
+            self.studio_graph = studio_graph
+
+    monkeypatch.setattr("f8pystudio.agents.tools.graph.StudioGraphAutomationAdapter", FakeAdapter)
+    store = RuntimeObservationStore()
+    store.put_state(service_id="svc", node_id="node", field="gain", value=2.5, ts_ms=100)
+    tools = LocalStudioGraphTools(LocalStudioGraphToolExecutor("graph", observation_source=store))
+
+    assert tools.runtime_read_state("svc", "node", "gain")["state"] == {
+        "serviceId": "svc",
+        "nodeId": "node",
+        "field": "gain",
+        "value": 2.5,
+        "tsMs": 100,
+    }
+    assert tools.runtime_watch_state("svc", "node", "gain", after_ts_ms=0, timeout_s=0.01)["state"]["tsMs"] == 100
+
+
+def test_workflow_tools_preview_goal_and_auto_layout(monkeypatch: pytest.MonkeyPatch) -> None:
+    _ensure_app()
+
+    class FakeNode:
+        def __init__(self, node_id: str, selected: bool) -> None:
+            self.node_id = node_id
+            self.node_type = "type"
+            self.name = node_id
+            self.kind = "operator"
+            self.service_class = "f8.test"
+            self.operator_class = "op"
+            self.pos = (0.0, 0.0)
+            self.selected = selected
+            self.inputs = ()
+            self.outputs = ()
+            self.state_fields = ()
+
+    class FakePreview:
+        valid = True
+
+        def to_dict(self) -> dict[str, object]:
+            return {"valid": True, "changed_node_ids": ["node-a"]}
+
+    class FakeSnapshot:
+        revision = 9
+        nodes = (FakeNode("node-a", True), FakeNode("node-b", False))
+        node_count = 2
+        edge_count = 0
+
+        def to_dict(self) -> dict[str, object]:
+            return {"revision": self.revision, "nodeCount": self.node_count}
+
+    class FakeAdapter:
+        def __init__(self, studio_graph: object) -> None:
+            self.studio_graph = studio_graph
+
+        def revision(self) -> int:
+            return 9
+
+        def snapshot(self) -> FakeSnapshot:
+            return FakeSnapshot()
+
+        def preview_patch(self, patch: object) -> FakePreview:
+            self.patch = patch
+            return FakePreview()
+
+        def diagnostics(self) -> dict[str, object]:
+            return {"issues": [], "summary": {"nodeCount": 2}}
+
+        def compile_graph(self) -> dict[str, object]:
+            return {"warnings": []}
+
+    monkeypatch.setattr("f8pystudio.agents.tools.graph.StudioGraphAutomationAdapter", FakeAdapter)
+    tools = LocalStudioGraphTools(LocalStudioGraphToolExecutor("graph"))
+
+    goal = "Use pyengine to output a 1Hz sine wave mapped from 0-100"
+    workflow = tools.graph_build_from_goal(goal)["workflow"]
+    assert workflow["status"] == "previewed"
+    assert workflow["samplePort"] == {"nodeId": "pyengine_sine_0_100", "port": "value"}
+
+    layout = tools.graph_auto_layout(selected_only=True)["workflow"]
+    assert layout["status"] == "previewed"
+    assert layout["patch"]["ops"][0]["op"] == "moveNode"
+    assert layout["patch"]["ops"][0]["nodeId"] == "node-a"
 
 
 def test_service_and_operator_library_tools_query_catalog() -> None:

@@ -33,6 +33,7 @@ from f8pystudio.bridge.studio_bridge import (
     PyStudioServiceBridgeConfig,
 )
 from f8pystudio.automation.gui_host import StudioAutomationHost
+from f8pystudio.automation.observation_store import RuntimeObservationStore
 from f8pystudio.studio_specs.registry import SERVICE_CLASS as STUDIO_SERVICE_CLASS
 
 logger = logging.getLogger(__name__)
@@ -135,6 +136,7 @@ class F8StudioMainWin(
     _global_hotkey_controller: ControlPanelGlobalHotkeyController
     _monitor_alert_notifier: MonitorAlertNotifier
     _automation_host: StudioAutomationHost | None
+    _runtime_observations: RuntimeObservationStore
 
     def __init__(
         self,
@@ -179,6 +181,7 @@ class F8StudioMainWin(
         self._shutdown_started = False
         self._auto_load_worker = None
         self._automation_host = None
+        self._runtime_observations = RuntimeObservationStore()
 
         self.studio_graph = F8StudioGraph(asset_cache_auto_refresh=False)
         self.studio_graph.node_factory.clear_registered_nodes()
@@ -267,6 +270,7 @@ class F8StudioMainWin(
                 main_window=self,
                 studio_graph=self.studio_graph,
                 bridge=self._bridge,
+                observation_store=self._runtime_observations,
                 token_file=automation_token_file,
                 port_file=automation_port_file,
                 parent=self,

@@ -27,6 +27,7 @@ from f8pystudio.studio_specs.registry import SERVICE_CLASS as STUDIO_SERVICE_CLA
 if TYPE_CHECKING:
     from ...nodegraph.node_graph import F8StudioGraph
     from f8pystudio.bridge.studio_bridge import PyStudioServiceBridge
+    from f8pystudio.automation.observation_store import RuntimeObservationStore
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,7 @@ class MainWindowUiMixin:
         _unsubscribe_asset_cache_changed: Callable[[], None] | None
         _ai_assist_sidebar: AiAssistSidebarWidget | None
         _agent_debug_widget: AgentDebugWidget | None
+        _runtime_observations: RuntimeObservationStore
         _deferred_startup_scheduled: bool
         _deferred_startup_completed: bool
         _asset_cloud_sync_total: int
@@ -292,6 +294,7 @@ class MainWindowUiMixin:
             studio_graph=self.studio_graph,
             runtime_bridge=self._bridge,
             log_source=self._log_dock,
+            observation_source=self._runtime_observations,
             on_graph_patch_applied=self._schedule_studio_runtime_sync,
             parent=self,
         )
