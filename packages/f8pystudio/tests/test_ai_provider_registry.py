@@ -13,7 +13,6 @@ from f8pystudio.agents.registry import (
     _ollama_default,
     _openai_default,
     inference_service_display_name,
-    inference_service_from_legacy,
     inference_service_supports_service_history,
 )
 
@@ -108,13 +107,6 @@ class TestDefaultProviders:
     def test_custom_default_service_is_explicit(self) -> None:
         cfg = ProviderConfig(provider_id="custom", display_name="Custom", inference_service="custom_chat_client")
         assert cfg.inference_service == "custom_chat_client"
-
-    def test_legacy_mapping_to_inference_service(self) -> None:
-        assert inference_service_from_legacy("openai", "responses") == "openai_responses"
-        assert inference_service_from_legacy("openai", "chat_completions") == "openai_chat_completion"
-        assert inference_service_from_legacy("anthropic", "chat_completions") == "anthropic_claude"
-        assert inference_service_from_legacy("ollama", "chat_completions") == "ollama_chat"
-        assert inference_service_from_legacy("custom", "chat_completions") == "custom_chat_client"
 
     def test_inference_service_display_and_history_support(self) -> None:
         assert inference_service_display_name("openai_responses") == "OpenAI Responses"

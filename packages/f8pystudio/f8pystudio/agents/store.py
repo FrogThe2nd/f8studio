@@ -26,11 +26,8 @@ from .registry import (
     ModelCapabilities,
     ModelInfo,
     ModelKind,
-    ProviderApiMode,
     ProviderConfig,
     ProviderInferenceService,
-    ProviderProtocol,
-    inference_service_from_legacy,
     normalize_inference_service,
 )
 
@@ -104,19 +101,9 @@ def _provider_to_dict(provider: ProviderConfig) -> dict[str, Any]:
 
 def _provider_from_dict(payload: dict[str, Any]) -> ProviderConfig:
     service_raw = payload.get("inference_service")
-    if isinstance(service_raw, str) and service_raw.strip():
-        inference_service = normalize_inference_service(service_raw.strip())
-    else:
-        protocol_raw = str(payload.get("protocol", "openai"))
-        if protocol_raw not in ("openai", "anthropic", "ollama", "custom"):
-            protocol_raw = "openai"
-
-        api_mode_raw = str(payload.get("api_mode", "")).strip()
-        if api_mode_raw not in ("chat_completions", "responses"):
-            raise ValueError("AI provider config is missing valid api_mode.")
-        protocol = cast(ProviderProtocol, protocol_raw)
-        api_mode = cast(ProviderApiMode, api_mode_raw)
-        inference_service = inference_service_from_legacy(protocol, api_mode)
+    if not isinstance(service_raw, str) or not service_raw.strip():
+        raise ValueError("AI provider config is missing inference_service.")
+    inference_service = normalize_inference_service(service_raw.strip())
 
     return ProviderConfig(
         provider_id=str(payload["provider_id"]),

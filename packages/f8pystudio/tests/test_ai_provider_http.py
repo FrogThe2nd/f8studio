@@ -1,11 +1,31 @@
 from __future__ import annotations
 
-from f8pystudio.agents.provider_http import fake_http_error, format_http_error
+from email.message import Message
+from io import BytesIO
+import json
+from typing import Any
+from urllib import error
+
+from f8pystudio.agents.provider_http import format_http_error
+
+
+def _fake_http_error(*, code: int, body: dict[str, Any] | str, reason: str = "Error") -> error.HTTPError:
+    if isinstance(body, str):
+        raw_body = body.encode("utf-8")
+    else:
+        raw_body = json.dumps(body).encode("utf-8")
+    return error.HTTPError(
+        url="https://example.test/v1/models",
+        code=code,
+        msg=reason,
+        hdrs=Message(),
+        fp=BytesIO(raw_body),
+    )
 
 
 def test_format_http_error_summarizes_cloudflare_1010_payload() -> None:
     message = format_http_error(
-        fake_http_error(
+        _fake_http_error(
             code=403,
             body={
                 "cloudflare_error": True,

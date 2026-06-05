@@ -130,7 +130,7 @@ class TestProviderCodec:
         assert restored.cached_models[0].model_id == "claude-3-7"
         assert restored.reasoning_level == "high"
 
-    def test_round_trip_responses_api_mode(self) -> None:
+    def test_round_trip_responses_inference_service(self) -> None:
         cfg = ProviderConfig(
             provider_id="openai",
             display_name="OpenAI",
@@ -138,17 +138,6 @@ class TestProviderCodec:
             endpoint="https://api.openai.com/v1",
         )
         restored = _provider_from_dict(_provider_to_dict(cfg))
-        assert restored.inference_service == "openai_responses"
-
-    def test_legacy_provider_config_infers_inference_service(self) -> None:
-        restored = _provider_from_dict({
-            "provider_id": "openai",
-            "display_name": "OpenAI",
-            "protocol": "openai",
-            "api_mode": "responses",
-            "endpoint": "https://api.openai.com/v1",
-        })
-
         assert restored.inference_service == "openai_responses"
 
     def test_legacy_ollama_inference_service_name_migrates_to_ollama_chat(self) -> None:
@@ -161,31 +150,11 @@ class TestProviderCodec:
 
         assert restored.inference_service == "ollama_chat"
 
-    def test_invalid_protocol_defaults_to_openai(self) -> None:
-        restored = _provider_from_dict({
-            "provider_id": "x",
-            "display_name": "X",
-            "protocol": "unsupported_thing",
-            "api_mode": "chat_completions",
-        })
-        assert restored.inference_service == "openai_chat_completion"
-
-    def test_provider_config_without_api_mode_is_rejected(self) -> None:
-        with pytest.raises(ValueError, match="api_mode"):
+    def test_provider_config_without_inference_service_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="inference_service"):
             _provider_from_dict({
                 "provider_id": "openai",
                 "display_name": "OpenAI",
-                "protocol": "openai",
-                "endpoint": "https://api.openai.com/v1",
-            })
-
-    def test_provider_config_with_invalid_api_mode_is_rejected(self) -> None:
-        with pytest.raises(ValueError, match="api_mode"):
-            _provider_from_dict({
-                "provider_id": "openai",
-                "display_name": "OpenAI",
-                "protocol": "openai",
-                "api_mode": "legacy_endpoint_guess",
                 "endpoint": "https://api.openai.com/v1",
             })
 

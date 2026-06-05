@@ -9,8 +9,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-ProviderProtocol = Literal["openai", "anthropic", "ollama", "custom"]
-ProviderApiMode = Literal["chat_completions", "responses"]
 ProviderInferenceService = Literal[
     "foundry_agent",
     "azure_openai_chat_completion",
@@ -62,23 +60,6 @@ def normalize_inference_service(raw_service: str) -> ProviderInferenceService:
     if raw_service == "custom_chat_client":
         return "custom_chat_client"
     return "openai_chat_completion"
-
-
-def inference_service_from_legacy(
-    protocol: ProviderProtocol,
-    api_mode: ProviderApiMode,
-) -> ProviderInferenceService:
-    if protocol == "openai" and api_mode == "responses":
-        return "openai_responses"
-    if protocol == "openai":
-        return "openai_chat_completion"
-    if protocol == "anthropic":
-        return "anthropic_claude"
-    if protocol == "ollama":
-        return "ollama_chat"
-    if protocol == "custom" and api_mode == "responses":
-        return "openai_responses"
-    return "custom_chat_client"
 
 
 def inference_service_supports_service_history(service: ProviderInferenceService) -> bool:

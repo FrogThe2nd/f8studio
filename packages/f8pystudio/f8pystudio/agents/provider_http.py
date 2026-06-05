@@ -1,10 +1,7 @@
 """HTTP helpers for provider configuration requests."""
 from __future__ import annotations
 
-from email.message import Message
-from io import BytesIO
 import json
-from typing import Any
 from urllib import error
 
 STUDIO_API_USER_AGENT = "F8PyStudio/0.4 API Client"
@@ -28,20 +25,6 @@ def format_http_error(exc: error.HTTPError) -> str:
     if not body:
         return f"HTTP {exc.code}: {exc.reason}"
     return f"HTTP {exc.code}: {_truncate(body)}"
-
-
-def fake_http_error(*, code: int, body: dict[str, Any] | str, reason: str = "Error") -> error.HTTPError:
-    if isinstance(body, str):
-        raw_body = body.encode("utf-8")
-    else:
-        raw_body = json.dumps(body).encode("utf-8")
-    return error.HTTPError(
-        url="https://example.test/v1/models",
-        code=code,
-        msg=reason,
-        hdrs=Message(),
-        fp=BytesIO(raw_body),
-    )
 
 
 def _read_http_error_body(exc: error.HTTPError) -> str:
