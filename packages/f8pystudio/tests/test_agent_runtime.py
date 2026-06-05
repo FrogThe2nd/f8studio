@@ -181,11 +181,45 @@ def test_runtime_runs_edit_through_agent_framework_and_strips_fence(
     assert FakeAgent.calls
     call = FakeAgent.calls[0]
     assert call["stream"] is False
-    assert call["session"] is not None
+    assert call["session"] is None
+    assert call["options"] == {"max_tokens": 8192, "store": False, "reasoning": {"effort": "high"}}
+    assert "document editing assistant" in str(call["instructions"])
+
+
+def test_runtime_non_streaming_keeps_session_for_non_responses_services(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    FakeAgent.calls.clear()
+    FakeAgent.stream_mode = "normal"
+    _install_fake_agent_framework(monkeypatch)
+    monkeypatch.setattr("f8pystudio.agents.runtime.build_chat_client", lambda _selection: object())
+
+    store = _store(tmp_path)
+    cfg = store.provider_by_id("openai")
+    assert cfg is not None
+    cfg.inference_service = "openai_chat_completion"
+    store.save_provider(cfg, emit=False)
+
+    runtime = StudioAgentRuntime(store)
+    result = asyncio.run(
+        runtime.run_text(
+            StudioAgentRequest(
+                request_id="chat-openai-chat-session-1",
+                mode="chat",
+                messages=({"role": "user", "content": "hello"},),
+                chat_provider_id="openai",
+                chat_model_id="gpt-4.1",
+                session_key=StudioAgentSessionKey.sidebar(),
+            )
+        )
+    )
+
+    assert result == "```python\nprint('ok')\n```"
+    call = FakeAgent.calls[0]
+    assert call["stream"] is False
     assert isinstance(call["session"], FakeAgentSession)
     assert call["session"].session_id == "sidebar:::"
-    assert call["options"] == {"max_tokens": 8192, "reasoning": {"effort": "high"}}
-    assert "document editing assistant" in str(call["instructions"])
 
 
 def test_runtime_reasoning_option_is_limited_to_openai_responses(
@@ -258,7 +292,7 @@ def test_runtime_stream_yields_chunks_and_done(
         StudioAgentEvent(kind="done"),
     ]
     assert FakeAgent.calls[0]["stream"] is True
-    assert FakeAgent.calls[0]["options"] == {"max_tokens": 4096}
+    assert FakeAgent.calls[0]["options"] == {"max_tokens": 4096, "store": False}
     call_messages = FakeAgent.calls[0]["messages"]
     assert isinstance(call_messages, list)
     assert isinstance(call_messages[0], FakeAgentMessage)
@@ -297,6 +331,7 @@ def test_runtime_stream_disables_openai_responses_service_session(
 
     assert events[-1] == StudioAgentEvent(kind="done")
     assert FakeAgent.calls[0]["session"] is None
+    assert FakeAgent.calls[0]["options"] == {"max_tokens": 4096, "store": False}
 
 
 def test_runtime_stream_keeps_session_for_non_responses_services(

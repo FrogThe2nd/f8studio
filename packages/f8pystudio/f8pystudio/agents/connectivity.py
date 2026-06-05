@@ -50,9 +50,16 @@ async def _check_model_connectivity_async(provider: ProviderConfig, model_id: st
     message = _connectivity_message()
     response = client.get_response(
         [message],
-        options={"max_tokens": 8},
+        options=_connectivity_options(provider),
     )
     await asyncio.wait_for(response, timeout=timeout_s)
+
+
+def _connectivity_options(provider: ProviderConfig) -> dict[str, Any]:
+    options: dict[str, Any] = {"max_tokens": 8}
+    if provider.inference_service in ("azure_openai_responses", "openai_responses"):
+        options["store"] = False
+    return options
 
 
 def _connectivity_message() -> Any:

@@ -24,9 +24,11 @@ class _AiAssistSidebarToolbarHost(Protocol):
     _selection_mode: str
     _current_selected_snapshot_preview: GraphContextSnapshot | None
     _pinned_graph_context_snapshot: GraphContextSnapshot | None
+    _graph_tool_count: int
     _ctx_btn: QtWidgets.QToolButton
     _selected_node_label: QtWidgets.QLabel
     _pinned_node_label: QtWidgets.QLabel
+    _tools_label: QtWidgets.QLabel
     _pin_context_btn: QtWidgets.QToolButton
     _clear_context_btn: QtWidgets.QToolButton
     _ai_bridge: _AiBridgeToolbar
@@ -62,9 +64,17 @@ class AiAssistSidebarToolbarMixin:
         set_status_label_text(host._selected_node_label, selected_text, max_width=host._selected_node_label.maximumWidth())
         host._selected_node_label.setToolTip(selected_tooltip)
 
+        tool_count = int(host._graph_tool_count)
+        if tool_count > 0:
+            set_status_label_text(host._tools_label, f"Tools: {tool_count}", max_width=host._tools_label.maximumWidth())
+            host._tools_label.setToolTip("PyStudio graph, library, runtime, monitor, and log tools are available to the chat agent.")
+        else:
+            set_status_label_text(host._tools_label, "Tools: off", max_width=host._tools_label.maximumWidth())
+            host._tools_label.setToolTip("Graph tools are not available because no Studio graph was attached to this sidebar.")
+
         if pinned_snapshot is None:
             set_status_label_text(host._pinned_node_label, "Pin: none", max_width=host._pinned_node_label.maximumWidth())
-            host._pinned_node_label.setToolTip("No graph context is currently pinned into chat.")
+            host._pinned_node_label.setToolTip("No graph context is pinned; current selection is still used as automatic chat context.")
         else:
             set_status_label_text(
                 host._pinned_node_label,

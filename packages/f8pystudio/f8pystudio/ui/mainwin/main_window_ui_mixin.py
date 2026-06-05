@@ -288,7 +288,13 @@ class MainWindowUiMixin:
     def _ensure_ai_assist_sidebar(self) -> None:
         if self._ai_assist_sidebar is not None:
             return
-        sidebar = AiAssistSidebarWidget(studio_graph=self.studio_graph, parent=self)
+        sidebar = AiAssistSidebarWidget(
+            studio_graph=self.studio_graph,
+            runtime_bridge=self._bridge,
+            log_source=self._log_dock,
+            on_graph_patch_applied=self._schedule_studio_runtime_sync,
+            parent=self,
+        )
         self._ai_assist_sidebar = sidebar
         self._replace_dock_widget(self._ai_assist_dock, sidebar)
 

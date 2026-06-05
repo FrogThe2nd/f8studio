@@ -39,6 +39,7 @@ AgentRequestMode = Literal["chat", "edit", "plan", "inline"]
 _STREAM_QUEUE_MAX_SIZE = 32
 _DEFAULT_STREAM_FIRST_EVENT_TIMEOUT_S = 120.0
 _DEFAULT_STREAM_IDLE_TIMEOUT_S = 120.0
+_STUDIO_EXPLICIT_HISTORY_SERVICES = frozenset({"azure_openai_responses", "openai_responses"})
 
 
 class AgentRuntimeError(RuntimeError):
@@ -175,7 +176,7 @@ class StudioAgentRuntime:
         try:
             response = await agent.run(
                 messages,
-                session=self._session_for_request(request),
+                session=self._session_for_provider_request(request, provider),
                 tools=list(request.tools) or None,
                 options=self._options_for_request(request, provider=provider, max_tokens=max_tokens),
             )
@@ -200,7 +201,7 @@ class StudioAgentRuntime:
         async for event in _stream_agent_events(
             agent=agent,
             messages=messages,
-            session=self._session_for_streaming_request(request, provider),
+            session=self._session_for_provider_request(request, provider),
             tools=list(request.tools) or None,
             options=self._options_for_request(request, provider=provider, max_tokens=4096),
             abort_event=abort_event,
@@ -232,11 +233,12 @@ class StudioAgentRuntime:
             return None
         return self._session_registry.session_for(key)
 
-    def _session_for_streaming_request(self, request: StudioAgentRequest, provider: ProviderConfig) -> object | None:
-        if provider.inference_service in ("azure_openai_responses", "openai_responses"):
-            # OpenAI Responses REST/SSE streaming rejects previous_response_id. MAF derives
-            # that field from AgentSession.service_session_id, while Studio already sends
-            # explicit chat history in the messages payload.
+    def _session_for_provider_request(self, request: StudioAgentRequest, provider: ProviderConfig) -> object | None:
+        if provider.inference_service in _STUDIO_EXPLICIT_HISTORY_SERVICES:
+            # Studio owns chat/editor history and sends it explicitly in every request.
+            # Passing AgentSession to MAF Responses clients can add previous_response_id,
+            # which is provider-side continuation state and breaks OpenAI-compatible
+            # REST/SSE Responses endpoints.
             return None
         return self._session_for_request(request)
 
@@ -271,6 +273,7 @@ class StudioAgentRuntime:
                 document_language=document_language,
                 assist_context=request.assist_context,
                 graph_context_snapshot=request.graph_context_snapshot,
+                graph_tools_enabled=bool(request.tools),
             )
             messages = build_edit_messages(
                 history=list(request.messages),
@@ -287,6 +290,7 @@ class StudioAgentRuntime:
                 document_language=document_language,
                 assist_context=request.assist_context,
                 graph_context_snapshot=request.graph_context_snapshot,
+                graph_tools_enabled=bool(request.tools),
             )
             messages = build_plan_messages(
                 history=list(request.messages),
@@ -303,6 +307,7 @@ class StudioAgentRuntime:
                 document_language=document_language,
                 assist_context=request.assist_context,
                 graph_context_snapshot=request.graph_context_snapshot,
+                graph_tools_enabled=bool(request.tools),
             )
             user_text = (
                 "Return only the code text that should be inserted at the cursor. "
@@ -317,6 +322,7 @@ class StudioAgentRuntime:
             document_language=document_language,
             assist_context=request.assist_context,
             graph_context_snapshot=request.graph_context_snapshot,
+            graph_tools_enabled=bool(request.tools),
         )
         messages = build_chat_messages(
             history=list(request.messages),
@@ -338,6 +344,8 @@ class StudioAgentRuntime:
         options: dict[str, Any] = {}
         if max_tokens > 0:
             options["max_tokens"] = int(max_tokens)
+        if provider.inference_service in _STUDIO_EXPLICIT_HISTORY_SERVICES:
+            options["store"] = False
         if request.reasoning_level:
             if provider.inference_service in ("azure_openai_responses", "openai_responses"):
                 options["reasoning"] = {"effort": str(request.reasoning_level)}

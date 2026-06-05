@@ -247,6 +247,83 @@ def test_get_system_prompt_includes_pinned_graph_context_only_when_set() -> None
     assert "Focused Graph Subgraph Snapshot" not in bridge._get_system_prompt("Base prompt.")
 
 
+def test_agent_request_uses_chat_tools_and_auto_graph_context() -> None:
+    temp_dir = Path(".tmp") / "test_ai_llm_bridge" / uuid.uuid4().hex
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    store_path = temp_dir / "ai_providers.json"
+    with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+        bridge = AiLlmBridge(AiProviderStore())
+
+    def graph_snapshot() -> dict[str, object]:
+        return {"snapshot": {"nodeCount": 1}}
+
+    bridge.set_agent_tools((graph_snapshot,))
+    bridge.set_auto_chat_context_snapshot(
+        GraphContextSnapshot(
+            selection_label="Auto Node",
+            selected_node_ids=("node-auto",),
+            total_selected_count=1,
+            total_one_hop_count=0,
+            total_connection_count=0,
+        )
+    )
+
+    request = bridge._agent_request(request_id="rid-chat", mode="chat")
+
+    assert request.tools == (graph_snapshot,)
+    assert request.graph_context_snapshot is not None
+    assert request.graph_context_snapshot.selection_label == "Auto Node"
+    prompt = bridge._get_system_prompt("Base prompt.")
+    assert "Auto Node" in prompt
+    assert "PyStudio Graph Tools" in prompt
+    assert "graph_snapshot" in prompt
+
+
+def test_agent_request_keeps_graph_tools_out_of_inline_requests() -> None:
+    temp_dir = Path(".tmp") / "test_ai_llm_bridge" / uuid.uuid4().hex
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    store_path = temp_dir / "ai_providers.json"
+    with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+        bridge = AiLlmBridge(AiProviderStore())
+
+    def graph_snapshot() -> dict[str, object]:
+        return {"snapshot": {"nodeCount": 1}}
+
+    bridge.set_agent_tools((graph_snapshot,))
+
+    request = bridge._agent_request(request_id="rid-inline", mode="inline")
+
+    assert request.tools == ()
+
+
+def test_pinned_graph_context_overrides_auto_graph_context() -> None:
+    temp_dir = Path(".tmp") / "test_ai_llm_bridge" / uuid.uuid4().hex
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    store_path = temp_dir / "ai_providers.json"
+    with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+        bridge = AiLlmBridge(AiProviderStore())
+
+    bridge.set_auto_chat_context_snapshot(
+        GraphContextSnapshot(
+            selection_label="Auto Node",
+            selected_node_ids=("node-auto",),
+            total_selected_count=1,
+        )
+    )
+    bridge.set_chat_context_snapshot(
+        GraphContextSnapshot(
+            selection_label="Pinned Node",
+            selected_node_ids=("node-pinned",),
+            total_selected_count=1,
+        )
+    )
+
+    request = bridge._agent_request(request_id="rid-chat", mode="chat")
+
+    assert request.graph_context_snapshot is not None
+    assert request.graph_context_snapshot.selection_label == "Pinned Node"
+
+
 def test_reset_chat_history_clears_pinned_graph_context() -> None:
     temp_dir = Path(".tmp") / "test_ai_llm_bridge" / uuid.uuid4().hex
     temp_dir.mkdir(parents=True, exist_ok=True)

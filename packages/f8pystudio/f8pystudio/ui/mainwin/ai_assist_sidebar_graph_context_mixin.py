@@ -24,6 +24,8 @@ class GraphSelectionSource(Protocol):
 class _AiBridgeGraphContext(Protocol):
     def set_chat_context_snapshot(self, snapshot: GraphContextSnapshot) -> None: ...
 
+    def set_auto_chat_context_snapshot(self, snapshot: GraphContextSnapshot | None) -> None: ...
+
     def clear_chat_context_snapshot(self) -> None: ...
 
 
@@ -71,6 +73,7 @@ class AiAssistSidebarGraphContextMixin:
         else:
             host._current_selected_snapshot_preview = snapshot
             host._current_selection_label = snapshot.selection_label
+        host._ai_bridge.set_auto_chat_context_snapshot(snapshot)
         host._refresh_context_toolbar()
 
     def _pin_selected_context(self) -> None:

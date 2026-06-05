@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 from qtpy import QtCore, QtGui, QtWidgets
 
 from ...agents.graph_context import GraphContextSnapshot
 from ...agents.qt_bridge import AiLlmBridge
 from ...agents.store import AiProviderStore
+from ...agents.tools import LocalStudioGraphToolExecutor, LocalStudioGraphTools
 from ...ui.agents import AgentContextUsageButton, AgentQuickSettingsController, AgentSurfaceScope
 from ...ui.support.ai_assist_state import QtAiPanelStateStore
 from ...ui.support.web_asset_utils import render_prism_asset_html, resolve_web_asset_page_base_url
@@ -41,10 +43,16 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
     def __init__(
         self,
         studio_graph: GraphSelectionSource | None = None,
+        runtime_bridge: Any | None = None,
+        log_source: Any | None = None,
+        on_graph_patch_applied: Callable[[], None] | None = None,
         parent: QtWidgets.QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._studio_graph = studio_graph
+        self._graph_tool_executor: LocalStudioGraphToolExecutor | None = None
+        self._graph_tools: LocalStudioGraphTools | None = None
+        self._graph_tool_count = 0
         self._selection_mode = "none"
         self._current_selection_label = ""
         self._current_selected_snapshot_preview: GraphContextSnapshot | None = None
@@ -55,6 +63,18 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
         # 1. Setup AI components
         self._ai_store = AiProviderStore()
         self._ai_bridge = AiLlmBridge(self._ai_store, state_store=QtAiPanelStateStore(), parent=self)
+        if studio_graph is not None:
+            self._graph_tool_executor = LocalStudioGraphToolExecutor(
+                studio_graph,
+                bridge=runtime_bridge,
+                log_source=log_source,
+                on_graph_patch_applied=on_graph_patch_applied,
+                parent=self,
+            )
+            self._graph_tools = LocalStudioGraphTools(self._graph_tool_executor)
+            graph_tools = self._graph_tools.available_tools()
+            self._graph_tool_count = len(graph_tools)
+            self._ai_bridge.set_agent_tools(graph_tools)
         
         # 2. UI Components
         from PySide6 import QtWebChannel, QtWebEngineWidgets  # type: ignore[import-not-found]
@@ -83,6 +103,12 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
         self._selected_node_label.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Fixed)
         self._selected_node_label.setMaximumWidth(150)
         self._selected_node_label.setToolTip("Current graph selection subgraph preview.")
+
+        self._tools_label = QtWidgets.QLabel("Tools: off")
+        self._tools_label.setStyleSheet(ai_status_label_qss(text_color=theme_palette.success))
+        self._tools_label.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Fixed)
+        self._tools_label.setMaximumWidth(90)
+        self._tools_label.setToolTip("PyStudio graph tools status.")
 
         self._pinned_node_label = QtWidgets.QLabel("Pin: none")
         self._pinned_node_label.setStyleSheet(ai_status_label_qss(text_color=theme_palette.accent_hover))
@@ -115,7 +141,7 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
         configure_icon_tool_button(
             self._inspect_graph_context_btn,
             icon=icon_for(self._inspect_graph_context_btn, StudioIcon.ARTICLE),
-            tooltip="Inspect pinned graph context payload",
+            tooltip="Inspect active graph context payload",
             accent_color=theme_palette.success,
         )
         
@@ -149,6 +175,7 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
         status_row.setContentsMargins(0, 0, 0, 0)
         status_row.setSpacing(4)
         status_row.addWidget(self._selected_node_label, 1)
+        status_row.addWidget(self._tools_label, 0)
         status_row.addWidget(self._pinned_node_label, 1)
 
         toolbar_layout.addLayout(toolbar_row)

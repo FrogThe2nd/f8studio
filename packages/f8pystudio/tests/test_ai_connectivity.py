@@ -58,7 +58,7 @@ def test_connectivity_uses_maf_chat_client_ping(monkeypatch) -> None:
     assert result.success
     assert selections == [("openai", "gpt-4.1")]
     assert len(calls) == 1
-    assert calls[0]["options"] == {"max_tokens": 8}
+    assert calls[0]["options"] == {"max_tokens": 8, "store": False}
     message = calls[0]["messages"][0]
     assert message.role == "user"
     assert message.contents == ["Reply with only: ok"]

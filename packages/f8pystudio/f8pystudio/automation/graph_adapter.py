@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import copy
 import logging
+from dataclasses import asdict
 from typing import Any
 
+from f8pysdk.codec import dump_json
 from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
 
 from f8pystudio.bridge.json_codec import coerce_json_value
 from f8pystudio.nodegraph.runtime_compiler import compile_runtime_graphs_from_studio
 from f8pystudio.nodegraph.session_schema import extract_layout
+from f8pystudio.studio_specs.identifiers import SERVICE_CLASS as STUDIO_SERVICE_CLASS
+from f8pystudio.studio_specs.identifiers import STUDIO_SERVICE_ID
 
 from .domain import (
     ConnectPortsOp,
@@ -31,6 +35,7 @@ from .domain import (
 logger = logging.getLogger(__name__)
 _GRAPH_READ_ERRORS = (AttributeError, KeyError, RuntimeError, TypeError, ValueError)
 _GRAPH_MUTATION_ERRORS = (AttributeError, KeyError, RuntimeError, TypeError, ValueError)
+_MAX_NODE_DETAIL_TEXT = 12000
 
 
 class StudioGraphAutomationAdapter:
@@ -82,6 +87,218 @@ class StudioGraphAutomationAdapter:
                 }
             )
         return {"nodes": items}
+
+    def find_nodes(
+        self,
+        *,
+        query: str = "",
+        node_id: str = "",
+        node_type: str = "",
+        kind: str = "",
+        service_class: str = "",
+        operator_class: str = "",
+        selected_only: bool = False,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        query_text = str(query or "").strip().lower()
+        exact_node_id = str(node_id or "").strip()
+        exact_node_type = str(node_type or "").strip()
+        exact_kind = str(kind or "").strip()
+        exact_service_class = str(service_class or "").strip()
+        exact_operator_class = str(operator_class or "").strip()
+        max_items = max(1, min(int(limit), 500))
+
+        matches: list[dict[str, Any]] = []
+        total_matches = 0
+        for node in sorted(list(self._graph.all_nodes() or []), key=_node_id):
+            snapshot = _node_snapshot(node)
+            if exact_node_id and snapshot.node_id != exact_node_id:
+                continue
+            if exact_node_type and snapshot.node_type != exact_node_type:
+                continue
+            if exact_kind and snapshot.kind != exact_kind:
+                continue
+            if exact_service_class and snapshot.service_class != exact_service_class:
+                continue
+            if exact_operator_class and snapshot.operator_class != exact_operator_class:
+                continue
+            if bool(selected_only) and not snapshot.selected:
+                continue
+            if query_text and query_text not in _node_search_text(snapshot):
+                continue
+
+            total_matches += 1
+            if len(matches) >= max_items:
+                continue
+            matches.append(_node_snapshot_to_dict(snapshot))
+
+        return {
+            "nodes": matches,
+            "count": len(matches),
+            "totalMatches": total_matches,
+            "truncated": total_matches > len(matches),
+            "revision": self.revision(),
+        }
+
+    def node_detail(self, node_id: str) -> dict[str, Any]:
+        node = self._require_node(node_id)
+        node_snapshot = _node_snapshot(node)
+        return {
+            "node": _node_snapshot_to_dict(node_snapshot),
+            "runtimeBinding": _node_runtime_binding(node),
+            "stateValues": _node_state_values(node),
+            "properties": _node_properties_payload(node),
+            "ui": _node_ui_payload(node),
+            "spec": _spec_to_json(_node_spec(node)),
+            "connections": self.connections(node_id=node_snapshot.node_id, direction="both", limit=500)["connections"],
+        }
+
+    def connections(self, *, node_id: str = "", direction: str = "both", limit: int = 200) -> dict[str, Any]:
+        snapshot = self.snapshot()
+        target_node_id = str(node_id or "").strip()
+        resolved_direction = str(direction or "both").strip().lower()
+        if resolved_direction not in {"both", "incoming", "outgoing"}:
+            raise ValueError("direction must be both, incoming, or outgoing")
+        max_items = max(1, min(int(limit), 2000))
+
+        matches: list[dict[str, Any]] = []
+        total_matches = 0
+        for edge in snapshot.edges:
+            incoming = bool(target_node_id) and edge.to_node_id == target_node_id
+            outgoing = bool(target_node_id) and edge.from_node_id == target_node_id
+            if target_node_id:
+                if resolved_direction == "incoming" and not incoming:
+                    continue
+                if resolved_direction == "outgoing" and not outgoing:
+                    continue
+                if resolved_direction == "both" and not (incoming or outgoing):
+                    continue
+            total_matches += 1
+            if len(matches) >= max_items:
+                continue
+            matches.append(asdict(edge))
+        return {
+            "connections": matches,
+            "count": len(matches),
+            "totalMatches": total_matches,
+            "truncated": total_matches > len(matches),
+            "revision": snapshot.revision,
+        }
+
+    def diagnostics(self) -> dict[str, Any]:
+        snapshot = self.snapshot()
+        issues: list[dict[str, Any]] = []
+        if snapshot.node_count == 0:
+            issues.append(
+                {
+                    "severity": "info",
+                    "code": "graph_empty",
+                    "message": "The graph has no nodes.",
+                    "details": {},
+                }
+            )
+
+        nodes = list(self._graph.all_nodes() or [])
+        service_nodes_by_id: dict[str, Any] = {}
+        for node in nodes:
+            spec = _node_spec(node)
+            if isinstance(spec, F8ServiceSpec):
+                service_nodes_by_id[_node_id(node)] = node
+
+        for node in nodes:
+            spec = _node_spec(node)
+            if not isinstance(spec, F8OperatorSpec):
+                continue
+            node_id = _node_id(node)
+            service_class = str(spec.serviceClass or "").strip()
+            if service_class == STUDIO_SERVICE_CLASS:
+                service_id = str(_node_runtime_binding(node).get("serviceId") or "").strip()
+                if service_id != STUDIO_SERVICE_ID:
+                    issues.append(
+                        {
+                            "severity": "warning",
+                            "code": "studio_operator_service_binding",
+                            "message": "A Studio-local operator is not bound to the built-in Studio service.",
+                            "nodeId": node_id,
+                            "details": {"serviceId": service_id, "expectedServiceId": STUDIO_SERVICE_ID},
+                        }
+                    )
+                continue
+
+            service_id = str(_node_runtime_binding(node).get("serviceId") or "").strip()
+            if not service_id:
+                issues.append(
+                    {
+                        "severity": "warning",
+                        "code": "operator_missing_service_container",
+                        "message": "Operator node is not bound to a service container.",
+                        "nodeId": node_id,
+                        "details": {"serviceClass": service_class},
+                    }
+                )
+                continue
+            service_node = service_nodes_by_id.get(service_id)
+            if service_node is None:
+                issues.append(
+                    {
+                        "severity": "warning",
+                        "code": "operator_service_container_missing",
+                        "message": "Operator node references a service container that is not present in the graph.",
+                        "nodeId": node_id,
+                        "details": {"serviceId": service_id, "serviceClass": service_class},
+                    }
+                )
+                continue
+            service_spec = _node_spec(service_node)
+            if isinstance(service_spec, F8ServiceSpec) and str(service_spec.serviceClass or "") != service_class:
+                issues.append(
+                    {
+                        "severity": "warning",
+                        "code": "operator_service_class_mismatch",
+                        "message": "Operator node is bound to a service container with a different service class.",
+                        "nodeId": node_id,
+                        "details": {
+                            "serviceId": service_id,
+                            "operatorServiceClass": service_class,
+                            "containerServiceClass": str(service_spec.serviceClass or ""),
+                        },
+                    }
+                )
+
+        compile_payload: dict[str, Any] | None = None
+        try:
+            compile_payload = self.compile_graph()
+        except _GRAPH_MUTATION_ERRORS as exc:
+            issues.append(
+                {
+                    "severity": "error",
+                    "code": "graph_compile_failed",
+                    "message": f"{type(exc).__name__}: {exc}",
+                    "details": {},
+                }
+            )
+        if compile_payload is not None:
+            for warning in list(compile_payload.get("warnings") or []):
+                issues.append(
+                    {
+                        "severity": "warning",
+                        "code": "graph_compile_warning",
+                        "message": str(warning),
+                        "details": {},
+                    }
+                )
+
+        return {
+            "ok": not any(str(issue.get("severity") or "") == "error" for issue in issues),
+            "revision": snapshot.revision,
+            "summary": {
+                "nodeCount": snapshot.node_count,
+                "edgeCount": snapshot.edge_count,
+                "issueCount": len(issues),
+            },
+            "issues": issues,
+            "compile": compile_payload,
+        }
 
     def preview_patch(self, patch: GraphPatch) -> GraphPatchPreview:
         current_revision = self.revision()
@@ -319,6 +536,112 @@ def _node_snapshot(node: Any) -> GraphNodeSnapshot:
         outputs=tuple(_port_snapshot(port, direction="out") for port in _node_ports(node, is_input=False)),
         state_fields=tuple(_state_field_snapshot(field) for field in _spec_state_field_objects(spec)),
     )
+
+
+def _node_snapshot_to_dict(snapshot: GraphNodeSnapshot) -> dict[str, Any]:
+    return asdict(snapshot)
+
+
+def _node_search_text(snapshot: GraphNodeSnapshot) -> str:
+    return " ".join(
+        [
+            snapshot.node_id,
+            snapshot.node_type,
+            snapshot.name,
+            snapshot.kind,
+            snapshot.service_class,
+            snapshot.operator_class,
+        ]
+    ).lower()
+
+
+def _node_runtime_binding(node: Any) -> dict[str, Any]:
+    spec = _node_spec(node)
+    node_id = _node_id(node)
+    if isinstance(spec, F8ServiceSpec):
+        return {"nodeId": node_id, "serviceId": node_id, "runtimeKind": "service"}
+    if isinstance(spec, F8OperatorSpec):
+        if str(spec.serviceClass or "") == STUDIO_SERVICE_CLASS:
+            return {"nodeId": node_id, "serviceId": STUDIO_SERVICE_ID, "runtimeKind": "studio-operator"}
+        return {"nodeId": node_id, "serviceId": _node_service_id(node), "runtimeKind": "operator"}
+    return {"nodeId": node_id, "serviceId": "", "runtimeKind": ""}
+
+
+def _node_service_id(node: Any) -> str:
+    try:
+        return str(node.svcId or "").strip()
+    except _GRAPH_READ_ERRORS:
+        return ""
+
+
+def _node_state_values(node: Any) -> dict[str, Any]:
+    spec = _node_spec(node)
+    if spec is None:
+        return {}
+    out: dict[str, Any] = {}
+    for field in list(spec.stateFields or []):
+        name = str(field.name or "").strip()
+        if not name:
+            continue
+        try:
+            model = node.model
+            if name not in model.properties and name not in model.custom_properties:
+                continue
+            out[name] = _json_detail_value(model.get_property(name))
+        except _GRAPH_READ_ERRORS:
+            continue
+    return out
+
+
+def _node_properties_payload(node: Any) -> dict[str, Any]:
+    try:
+        model = node.model
+        registered = _json_detail_value(dict(model.properties or {}))
+        custom = _json_detail_value(dict(model.custom_properties or {}))
+    except _GRAPH_READ_ERRORS:
+        return {"registered": {}, "custom": {}}
+    return {
+        "registered": registered if isinstance(registered, dict) else {},
+        "custom": custom if isinstance(custom, dict) else {},
+    }
+
+
+def _node_ui_payload(node: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    try:
+        payload["overrides"] = _json_detail_value(node.ui_overrides())
+    except _GRAPH_READ_ERRORS:
+        payload["overrides"] = {}
+    try:
+        payload["state"] = _json_detail_value(node.ui_state())
+    except _GRAPH_READ_ERRORS:
+        payload["state"] = {}
+    return payload
+
+
+def _json_detail_value(value: Any) -> Any:
+    return _truncate_json_value(coerce_json_value(value), max_text=_MAX_NODE_DETAIL_TEXT)
+
+
+def _truncate_json_value(value: Any, *, max_text: int) -> Any:
+    if isinstance(value, str):
+        if len(value) <= max_text:
+            return value
+        return value[:max_text] + f"... <truncated {len(value) - max_text} chars>"
+    if isinstance(value, list):
+        return [_truncate_json_value(item, max_text=max_text) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _truncate_json_value(item, max_text=max_text) for key, item in value.items()}
+    return value
+
+
+def _spec_to_json(spec: F8OperatorSpec | F8ServiceSpec | None) -> dict[str, Any]:
+    if spec is None:
+        return {}
+    payload = dump_json(spec, mode="json", by_alias=True)
+    if isinstance(payload, dict):
+        return payload
+    return {}
 
 
 def _collect_edge_snapshots(nodes: list[Any]) -> list[GraphEdgeSnapshot]:

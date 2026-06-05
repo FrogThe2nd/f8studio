@@ -31,8 +31,73 @@ class StudioAutomationTools:
     def graph_snapshot(self, connection_file: str = "") -> dict[str, Any]:
         return self._client(connection_file).call("graph.snapshot")
 
+    def graph_find_nodes(
+        self,
+        query: str = "",
+        node_id: str = "",
+        node_type: str = "",
+        kind: str = "",
+        service_class: str = "",
+        operator_class: str = "",
+        selected_only: bool = False,
+        limit: int = 50,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return self._client(connection_file).call(
+            "graph.findNodes",
+            {
+                "query": query,
+                "nodeId": node_id,
+                "nodeType": node_type,
+                "kind": kind,
+                "serviceClass": service_class,
+                "operatorClass": operator_class,
+                "selectedOnly": bool(selected_only),
+                "limit": int(limit),
+            },
+        )
+
+    def graph_node_detail(self, node_id: str, connection_file: str = "") -> dict[str, Any]:
+        return self._client(connection_file).call("graph.nodeDetail", {"nodeId": node_id})
+
+    def graph_connections(
+        self,
+        node_id: str = "",
+        direction: str = "both",
+        limit: int = 200,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return self._client(connection_file).call(
+            "graph.connections",
+            {"nodeId": node_id, "direction": direction, "limit": int(limit)},
+        )
+
+    def graph_diagnostics(self, connection_file: str = "") -> dict[str, Any]:
+        return self._client(connection_file).call("graph.diagnostics")
+
     def node_catalog(self, connection_file: str = "") -> dict[str, Any]:
         return self._client(connection_file).call("graph.catalog")
+
+    def service_library(self, query: str = "", limit: int = 200, connection_file: str = "") -> dict[str, Any]:
+        return self._client(connection_file).call("library.services", {"query": query, "limit": int(limit)})
+
+    def operator_library(
+        self,
+        service_class: str = "",
+        query: str = "",
+        limit: int = 300,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return self._client(connection_file).call(
+            "library.operators",
+            {"serviceClass": service_class, "query": query, "limit": int(limit)},
+        )
+
+    def operator_detail(self, service_class: str, operator_class: str, connection_file: str = "") -> dict[str, Any]:
+        return self._client(connection_file).call(
+            "library.operatorDetail",
+            {"serviceClass": service_class, "operatorClass": operator_class},
+        )
 
     def graph_preview_patch(self, patch: dict[str, Any], connection_file: str = "") -> dict[str, Any]:
         return self._client(connection_file).call("graph.previewPatch", {"patch": patch})
@@ -155,13 +220,15 @@ class StudioAutomationTools:
 
     def plan_graph_change_prompt(self, goal: str) -> str:
         return (
-            "Inspect f8studio://graph/current and f8studio://catalog/nodes, then propose a GraphPatch. "
+            "Inspect f8studio://graph/diagnostics, f8studio://graph/current, and f8studio://catalog/nodes, "
+            "then propose a GraphPatch. "
             f"Goal: {goal}"
         )
 
     def debug_runtime_node_prompt(self, service_id: str, node_id: str) -> str:
         return (
-            "Use runtime_service_status, runtime_read_monitor, and runtime_read_state to diagnose "
+            "Use graph_node_detail, runtime_service_status, runtime_read_monitor, runtime_sample_port, "
+            "and runtime_read_state to diagnose "
             f"serviceId={service_id} nodeId={node_id}."
         )
 

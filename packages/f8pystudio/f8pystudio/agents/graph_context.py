@@ -206,8 +206,8 @@ def format_graph_context_snapshot(
         f"- Selected nodes: {snapshot.total_selected_count}",
         f"- One-hop context nodes: {snapshot.total_one_hop_count}",
         f"- Included connections: {snapshot.total_connection_count}",
-        "- This is a frozen snapshot of the user's pinned graph subgraph.",
-        "- Seed nodes are the user's current selection. One-hop neighbor nodes were added as immediate structure context.",
+        "- This is a bounded snapshot of the current graph focus.",
+        "- Seed nodes are the user's current selection or pinned focus. One-hop neighbor nodes were added as immediate structure context.",
         "- This is not the full graph. Base your answer on this snapshot unless the user asks for broader graph reasoning.",
     ]
     if snapshot.truncated_selected_nodes or snapshot.truncated_one_hop_nodes or snapshot.truncated_connections:

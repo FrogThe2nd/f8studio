@@ -31,8 +31,80 @@ def _create_server() -> Any:
         return tools.graph_snapshot(connection_file=connection_file)
 
     @server.tool()
+    def graph_find_nodes(
+        query: str = "",
+        node_id: str = "",
+        node_type: str = "",
+        kind: str = "",
+        service_class: str = "",
+        operator_class: str = "",
+        selected_only: bool = False,
+        limit: int = 50,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return tools.graph_find_nodes(
+            query=query,
+            node_id=node_id,
+            node_type=node_type,
+            kind=kind,
+            service_class=service_class,
+            operator_class=operator_class,
+            selected_only=selected_only,
+            limit=limit,
+            connection_file=connection_file,
+        )
+
+    @server.tool()
+    def graph_node_detail(node_id: str, connection_file: str = "") -> dict[str, Any]:
+        return tools.graph_node_detail(node_id=node_id, connection_file=connection_file)
+
+    @server.tool()
+    def graph_connections(
+        node_id: str = "",
+        direction: str = "both",
+        limit: int = 200,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return tools.graph_connections(
+            node_id=node_id,
+            direction=direction,
+            limit=limit,
+            connection_file=connection_file,
+        )
+
+    @server.tool()
+    def graph_diagnostics(connection_file: str = "") -> dict[str, Any]:
+        return tools.graph_diagnostics(connection_file=connection_file)
+
+    @server.tool()
     def node_catalog(connection_file: str = "") -> dict[str, Any]:
         return tools.node_catalog(connection_file=connection_file)
+
+    @server.tool()
+    def service_library(query: str = "", limit: int = 200, connection_file: str = "") -> dict[str, Any]:
+        return tools.service_library(query=query, limit=limit, connection_file=connection_file)
+
+    @server.tool()
+    def operator_library(
+        service_class: str = "",
+        query: str = "",
+        limit: int = 300,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return tools.operator_library(
+            service_class=service_class,
+            query=query,
+            limit=limit,
+            connection_file=connection_file,
+        )
+
+    @server.tool()
+    def operator_detail(service_class: str, operator_class: str, connection_file: str = "") -> dict[str, Any]:
+        return tools.operator_detail(
+            service_class=service_class,
+            operator_class=operator_class,
+            connection_file=connection_file,
+        )
 
     @server.tool()
     def graph_preview_patch(patch: dict[str, Any], connection_file: str = "") -> dict[str, Any]:
@@ -146,6 +218,22 @@ def _create_server() -> Any:
     @server.resource("f8studio://catalog/nodes")
     def catalog_nodes() -> dict[str, Any]:
         return tools.node_catalog()
+
+    @server.resource("f8studio://catalog/services")
+    def catalog_services() -> dict[str, Any]:
+        return tools.service_library()
+
+    @server.resource("f8studio://catalog/operators")
+    def catalog_operators() -> dict[str, Any]:
+        return tools.operator_library()
+
+    @server.resource("f8studio://graph/diagnostics")
+    def graph_diagnostics_resource() -> dict[str, Any]:
+        return tools.graph_diagnostics()
+
+    @server.resource("f8studio://graph/connections")
+    def graph_connections_resource() -> dict[str, Any]:
+        return tools.graph_connections()
 
     @server.resource("f8studio://runtime/monitor")
     def runtime_monitor() -> dict[str, Any]:

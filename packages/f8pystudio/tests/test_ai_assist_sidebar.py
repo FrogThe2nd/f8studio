@@ -172,6 +172,74 @@ def test_sidebar_pin_is_frozen_until_cleared(monkeypatch) -> None:
     assert "Node A" in widget._pinned_node_label.text()
 
 
+def test_sidebar_selection_is_auto_chat_context_without_pin(monkeypatch) -> None:
+    widget, graph = _make_sidebar(monkeypatch)
+    first = _make_node("node-a", "Node A")
+
+    graph.set_selected_nodes([first])
+    QtWidgets.QApplication.processEvents()
+
+    assert widget._pinned_graph_context_snapshot is None
+    prompt = widget._ai_bridge._get_system_prompt("Base prompt.")
+    assert "Focused Graph Subgraph Snapshot" in prompt
+    assert "Node A" in prompt
+    assert "PyStudio Graph Tools" in prompt
+    assert "graph_find_nodes" in prompt
+    assert "graph_diagnostics" in prompt
+    assert widget._tools_label.text().startswith("Tools: ")
+    assert widget._tools_label.text() != "Tools: off"
+
+
+def test_sidebar_injects_runtime_bridge_and_logs_into_graph_tools(monkeypatch) -> None:
+    _ensure_app()
+    _install_fake_pyside6(monkeypatch)
+    graph = _FakeGraph()
+    runtime_bridge = object()
+    log_source = object()
+    created: list[dict[str, object]] = []
+
+    class FakeToolExecutor:
+        def __init__(
+            self,
+            studio_graph: object,
+            *,
+            bridge: object | None = None,
+            log_source: object | None = None,
+            on_graph_patch_applied=None,
+            parent: object | None = None,
+        ) -> None:
+            created.append(
+                {
+                    "studio_graph": studio_graph,
+                    "bridge": bridge,
+                    "log_source": log_source,
+                    "on_graph_patch_applied": on_graph_patch_applied,
+                    "parent": parent,
+                }
+            )
+
+    class FakeGraphTools:
+        def __init__(self, executor: object) -> None:
+            self.executor = executor
+
+        def available_tools(self) -> tuple[object, ...]:
+            return (self.executor,)
+
+    monkeypatch.setattr("f8pystudio.ui.mainwin.ai_assist_sidebar.LocalStudioGraphToolExecutor", FakeToolExecutor)
+    monkeypatch.setattr("f8pystudio.ui.mainwin.ai_assist_sidebar.LocalStudioGraphTools", FakeGraphTools)
+    temp_dir = Path(".tmp") / "test_ai_assist_sidebar" / uuid.uuid4().hex
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    store_path = temp_dir / "ai_providers.json"
+    with patch("f8pystudio.ui.mainwin.ai_assist_sidebar.AiProviderStore._resolve_storage_path", return_value=store_path):
+        widget = AiAssistSidebarWidget(studio_graph=graph, runtime_bridge=runtime_bridge, log_source=log_source)
+
+    assert created
+    assert created[0]["studio_graph"] is graph
+    assert created[0]["bridge"] is runtime_bridge
+    assert created[0]["log_source"] is log_source
+    assert widget._ai_bridge._agent_tools
+
+
 def test_sidebar_supports_multi_select_subgraph_context_and_reset_clears_pin(monkeypatch) -> None:
     widget, graph = _make_sidebar(monkeypatch)
     first = _make_node("node-a", "Node A")
@@ -262,5 +330,3 @@ def test_sidebar_shutdown_releases_webengine_view(monkeypatch) -> None:
     assert view.stopped is True
     assert view.page().web_channel is None
     assert view.deleted is True
-
-

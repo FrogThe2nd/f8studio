@@ -134,6 +134,7 @@ def build_system_prompt(
     document_language: str,
     assist_context: EditorAssistContext | None,
     graph_context_snapshot: GraphContextSnapshot | None,
+    graph_tools_enabled: bool = False,
 ) -> str:
     language = current_document_language(document_language=document_language, assist_context=assist_context)
     language_guidance = ""
@@ -158,6 +159,26 @@ def build_system_prompt(
     graph_block = format_graph_context_snapshot(graph_context_snapshot)
     if graph_block:
         blocks.append(graph_block)
+    if graph_tools_enabled:
+        blocks.append(
+            "\n".join(
+                [
+                    "## PyStudio Graph Tools",
+                    "- You already have graph tools available in this chat session; do not ask the user to manually expose MCP tools.",
+                    "- Available inspection tools: `studio_status`, `graph_snapshot`, `graph_find_nodes`, `graph_node_detail`, `graph_connections`, `graph_diagnostics`, `node_catalog`, `service_library`, `operator_library`, `operator_detail`, `graph_session`, `graph_compile`, `runtime_services`, `runtime_service_status`, `monitor_report`, `monitor_service`, `logs_read`.",
+                    "- Available action tools: `graph_preview_patch`, `graph_apply_patch`, `runtime_deploy`, `runtime_service_deploy`, `runtime_set_service_active`, `runtime_set_managed_active`, `runtime_service_process`, `runtime_write_state`, `runtime_sample_port`, `runtime_invoke_command`.",
+                    "- Use `graph_diagnostics` first when debugging graph structure, compile failures, or container/service binding issues.",
+                    "- Use `graph_find_nodes` and `graph_node_detail` to choose relevant nodes yourself; do not require the user to select nodes before you inspect the graph.",
+                    "- Use `graph_snapshot` for current nodes/edges/selection and `graph_connections` for wiring around a node.",
+                    "- Use `node_catalog` for valid canvas node types and ports.",
+                    "- Use `service_library`, `operator_library`, and `operator_detail` to choose valid node/service/operator schemas before constructing patches.",
+                    "- Use `runtime_services`, `monitor_service`, `runtime_sample_port`, and `logs_read` when debugging a running graph.",
+                    "- Use `graph_preview_patch` before applying a non-trivial graph edit, then use `graph_apply_patch` when the user asks you to make the graph change.",
+                    "- Deploy or runtime command tools may require `confirm=true`; ask the user only when the requested action is destructive or ambiguous.",
+                    "- GraphPatch operations use camelCase fields: `expectedRevision`, `ops`, `op`, `nodeType`, `nodeId`, `fromNodeId`, `fromPort`, `toNodeId`, and `toPort`.",
+                ]
+            )
+        )
     return "\n\n".join(blocks)
 
 

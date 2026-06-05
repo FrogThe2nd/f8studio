@@ -7,8 +7,9 @@ import logging
 import mimetypes
 import os
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from qtpy import QtCore, QtGui  # type: ignore[import-not-found]
 
@@ -97,6 +98,8 @@ class AiLlmBridge(QtCore.QObject):
 
         self._document_language = "plaintext"
         self._chat_context_snapshot: GraphContextSnapshot | None = None
+        self._auto_chat_context_snapshot: GraphContextSnapshot | None = None
+        self._agent_tools: tuple[Any, ...] = ()
         self._assist_context: EditorAssistContext | None = None
         self._lsp_bridge: PythonEditorAssistBridge | None = None
 
@@ -129,13 +132,21 @@ class AiLlmBridge(QtCore.QObject):
         self._refresh_system_tokens()
         self.chat_context_snapshot_changed.emit(snapshot is not None, node_name)
 
+    def set_auto_chat_context_snapshot(self, snapshot: GraphContextSnapshot | None) -> None:
+        self._auto_chat_context_snapshot = snapshot
+        self._refresh_system_tokens()
+
+    def set_agent_tools(self, tools: tuple[Any, ...]) -> None:
+        self._agent_tools = tuple(tools)
+        self._refresh_system_tokens()
+
     @QtCore.Slot()
     def clear_chat_context_snapshot(self) -> None:
         self.set_chat_context_snapshot(None)
 
     @QtCore.Slot(result=str)
     def get_chat_context_report(self) -> str:
-        return format_graph_context_report(self._chat_context_snapshot)
+        return format_graph_context_report(self._effective_chat_context_snapshot())
 
     def selection_state(self) -> AiBridgeSelectionState:
         cfg = self._store.provider_by_id(self._chat_provider_id)
@@ -164,7 +175,8 @@ class AiLlmBridge(QtCore.QObject):
             base_prompt,
             document_language=self._document_language,
             assist_context=self._assist_context,
-            graph_context_snapshot=self._chat_context_snapshot,
+            graph_context_snapshot=self._effective_chat_context_snapshot(),
+            graph_tools_enabled=bool(self._tools_for_mode("chat")),
         )
 
     def _log_prompt_payload(self, mode: str, system_prompt: str, messages: list[dict[str, Any]]) -> None:
@@ -572,8 +584,9 @@ class AiLlmBridge(QtCore.QObject):
         lines.append(f"- **Total Tokens (Approx):** {self._system_tokens + self._code_tokens + self._chat_tokens}")
         lines.append(f"- **Chat Messages:** {len(self._last_messages)}")
         lines.append("")
-        lines.append("## Pinned Graph Context")
-        lines.append(self.get_chat_context_report())
+        lines.append("## Active Graph Context")
+        active_snapshot = self._effective_chat_context_snapshot()
+        lines.append(format_graph_context_report(active_snapshot))
         lines.append("")
         for index, message in enumerate(messages):
             role = str(message.get("role", "unknown")).upper()
@@ -618,8 +631,9 @@ class AiLlmBridge(QtCore.QObject):
             suffix=str(suffix or ""),
             document_language=self._current_document_language(),
             assist_context=self._assist_context,
-            graph_context_snapshot=self._chat_context_snapshot,
+            graph_context_snapshot=self._effective_chat_context_snapshot(),
             attachments=attachments,
+            tools=self._tools_for_mode(mode),
             session_key=self._session_key_for_mode(mode),
             inline_provider_id=self._inline_provider_id,
             inline_model_id=str(inline_model_id or self._inline_model_id or ""),
@@ -627,6 +641,16 @@ class AiLlmBridge(QtCore.QObject):
             chat_model_id=str(chat_model_id or self._chat_model_id or ""),
             reasoning_level=self.selection_state().reasoning_level,
         )
+
+    def _effective_chat_context_snapshot(self) -> GraphContextSnapshot | None:
+        if self._chat_context_snapshot is not None:
+            return self._chat_context_snapshot
+        return self._auto_chat_context_snapshot
+
+    def _tools_for_mode(self, mode: AgentRequestMode) -> tuple[Any, ...]:
+        if mode == "chat":
+            return self._agent_tools
+        return ()
 
     @staticmethod
     def _session_key_for_mode(mode: AgentRequestMode) -> StudioAgentSessionKey:

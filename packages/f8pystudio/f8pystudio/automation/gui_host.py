@@ -22,6 +22,11 @@ from .graph_adapter import StudioGraphAutomationAdapter
 from .local_server import LocalAutomationServer
 from .observation_store import RuntimeObservationStore
 from .paths import automation_dir, default_port_file, default_token_file
+from f8pystudio.automation.library_catalog import (
+    operator_detail_payload,
+    operator_library_payload,
+    service_library_payload,
+)
 
 logger = logging.getLogger(__name__)
 _HOST_METHOD_ERRORS = (Exception,)
@@ -156,6 +161,27 @@ class StudioAutomationHost(QtCore.QObject):
             return {"session": self._graph_adapter.session_payload()}
         if method == "graph.catalog":
             return self._graph_adapter.node_catalog()
+        if method == "graph.findNodes":
+            return self._graph_adapter.find_nodes(
+                query=str(params.get("query") or ""),
+                node_id=str(params.get("nodeId") or ""),
+                node_type=str(params.get("nodeType") or ""),
+                kind=str(params.get("kind") or ""),
+                service_class=str(params.get("serviceClass") or ""),
+                operator_class=str(params.get("operatorClass") or ""),
+                selected_only=bool(params.get("selectedOnly", False)),
+                limit=int(params.get("limit") or 50),
+            )
+        if method == "graph.nodeDetail":
+            return {"detail": self._graph_adapter.node_detail(_required_text(params, "nodeId"))}
+        if method == "graph.connections":
+            return self._graph_adapter.connections(
+                node_id=str(params.get("nodeId") or ""),
+                direction=str(params.get("direction") or "both"),
+                limit=int(params.get("limit") or 200),
+            )
+        if method == "graph.diagnostics":
+            return {"diagnostics": self._graph_adapter.diagnostics()}
         if method == "graph.previewPatch":
             patch = decode_graph_patch(params.get("patch"))
             return {"preview": self._graph_adapter.preview_patch(patch).to_dict()}
@@ -168,6 +194,12 @@ class StudioAutomationHost(QtCore.QObject):
             return {"preview": preview.to_dict(), "snapshot": self._graph_adapter.snapshot().to_dict()}
         if method == "graph.compile":
             return {"compile": self._graph_adapter.compile_graph()}
+        if method == "library.services":
+            return service_library_payload(params)
+        if method == "library.operators":
+            return operator_library_payload(params)
+        if method == "library.operatorDetail":
+            return operator_detail_payload(params)
         if method == "runtime.deploy":
             if not bool(params.get("confirm")):
                 raise ValueError("runtime.deploy requires confirm=true")
@@ -356,6 +388,13 @@ def _requires_confirm(params: dict[str, Any]) -> bool:
         if str(op.get("op") or "") == "deleteNode":
             return True
     return False
+
+
+def _required_text(params: dict[str, Any], key: str) -> str:
+    value = str(params.get(key) or "").strip()
+    if not value:
+        raise ValueError(f"{key} is required")
+    return value
 
 
 def _stored_state_to_dict(value: Any) -> dict[str, Any] | None:

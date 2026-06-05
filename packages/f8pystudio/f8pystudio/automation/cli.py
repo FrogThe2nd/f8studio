@@ -25,6 +25,22 @@ def main(argv: list[str] | None = None) -> int:
     graph = sub.add_parser("graph", help="Graph operations.")
     graph_sub = graph.add_subparsers(dest="graph_command", required=True)
     graph_sub.add_parser("snapshot", help="Print current graph snapshot.")
+    find_nodes = graph_sub.add_parser("find", help="Find graph nodes.")
+    find_nodes.add_argument("--query", default="")
+    find_nodes.add_argument("--node-id", default="")
+    find_nodes.add_argument("--node-type", default="")
+    find_nodes.add_argument("--kind", default="")
+    find_nodes.add_argument("--service-class", default="")
+    find_nodes.add_argument("--operator-class", default="")
+    find_nodes.add_argument("--selected-only", action="store_true")
+    find_nodes.add_argument("--limit", type=int, default=50)
+    detail = graph_sub.add_parser("detail", help="Print one graph node detail.")
+    detail.add_argument("--node-id", required=True)
+    connections = graph_sub.add_parser("connections", help="Print graph connections.")
+    connections.add_argument("--node-id", default="")
+    connections.add_argument("--direction", choices=("both", "incoming", "outgoing"), default="both")
+    connections.add_argument("--limit", type=int, default=200)
+    graph_sub.add_parser("diagnostics", help="Print graph diagnostics.")
     graph_sub.add_parser("catalog", help="Print node catalog.")
     graph_sub.add_parser("compile", help="Compile current graph.")
     patch = graph_sub.add_parser("patch", help="Preview or apply a graph patch JSON file.")
@@ -101,6 +117,37 @@ def _client_from_args(args: argparse.Namespace) -> AutomationClient:
 def _handle_graph(client: AutomationClient, args: argparse.Namespace) -> int:
     if args.graph_command == "snapshot":
         _print_json(client.call("graph.snapshot"))
+        return 0
+    if args.graph_command == "find":
+        _print_json(
+            client.call(
+                "graph.findNodes",
+                {
+                    "query": args.query,
+                    "nodeId": args.node_id,
+                    "nodeType": args.node_type,
+                    "kind": args.kind,
+                    "serviceClass": args.service_class,
+                    "operatorClass": args.operator_class,
+                    "selectedOnly": bool(args.selected_only),
+                    "limit": int(args.limit),
+                },
+            )
+        )
+        return 0
+    if args.graph_command == "detail":
+        _print_json(client.call("graph.nodeDetail", {"nodeId": args.node_id}))
+        return 0
+    if args.graph_command == "connections":
+        _print_json(
+            client.call(
+                "graph.connections",
+                {"nodeId": args.node_id, "direction": args.direction, "limit": int(args.limit)},
+            )
+        )
+        return 0
+    if args.graph_command == "diagnostics":
+        _print_json(client.call("graph.diagnostics"))
         return 0
     if args.graph_command == "catalog":
         _print_json(client.call("graph.catalog"))

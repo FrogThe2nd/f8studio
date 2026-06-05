@@ -168,6 +168,13 @@ class ServiceLogView(QtWidgets.QPlainTextEdit):
             return
         self.appendPlainText(line)
 
+    def export_lines(self, *, limit: int = 200, minimum_level: int | None = None) -> list[dict[str, object]]:
+        if limit <= 0:
+            return []
+        resolved_level = self._minimum_level if minimum_level is None else _normalize_log_level(int(minimum_level))
+        entries = [entry for entry in self._entries if entry.level >= resolved_level]
+        return [{"line": entry.line, "level": int(entry.level)} for entry in entries[-int(limit) :]]
+
     def _rerender(self) -> None:
         visible_lines = [entry.line for entry in self._entries if entry.level >= self._minimum_level]
         self.setPlainText("\n".join(visible_lines))
@@ -256,6 +263,39 @@ class ServiceLogDock(QtWidgets.QDockWidget):
     def append(self, service_id: str, line: str) -> None:
         view = self._ensure_tab(service_id)
         view.append_line(line)
+
+    def export_logs(
+        self,
+        *,
+        service_id: str = "",
+        limit: int = 200,
+        minimum_level: int | None = None,
+    ) -> dict[str, object]:
+        sid = str(service_id or "").strip()
+        if sid:
+            view = self._views.get(sid)
+            if view is None:
+                return {"services": [{"serviceId": sid, "serviceName": self._service_names.get(sid, ""), "lines": []}]}
+            return {
+                "services": [
+                    {
+                        "serviceId": sid,
+                        "serviceName": self._service_names.get(sid, ""),
+                        "lines": view.export_lines(limit=int(limit), minimum_level=minimum_level),
+                    }
+                ]
+            }
+        services: list[dict[str, object]] = []
+        for current_sid in sorted(self._views.keys()):
+            view = self._views[current_sid]
+            services.append(
+                {
+                    "serviceId": current_sid,
+                    "serviceName": self._service_names.get(current_sid, ""),
+                    "lines": view.export_lines(limit=int(limit), minimum_level=minimum_level),
+                }
+            )
+        return {"services": services}
 
     def report_exception(self, service_id: str, context: str, exc: BaseException, *, level: str = "ERROR") -> None:
         sid = str(service_id or "").strip() or "studio"
