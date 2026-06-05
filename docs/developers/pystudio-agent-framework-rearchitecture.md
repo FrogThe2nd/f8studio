@@ -19,7 +19,6 @@ The migration goals are:
 ```text
 f8pystudio/agents/
   __init__.py
-  ag_ui.py
   clients.py
   codeact.py
   connectivity.py
@@ -31,7 +30,6 @@ f8pystudio/agents/
     plan_codec.py
     schema.py
   graph_context.py
-  memory.py
   model_catalog.py
   prompts.py
   provider_endpoints.py
@@ -88,14 +86,15 @@ Provider configuration lives in explicit dataclasses:
 - OpenAI-compatible, custom, and Ollama-style providers use MAF OpenAI-compatible clients.
 - Anthropic requires the MAF Anthropic connector. Studio does not keep a handwritten Anthropic HTTP fallback.
 
-`AiProviderStore` is now storage and model-cache management only:
+`AiProviderStore` is now storage, model-cache, and configuration-time provider probing only:
 
 - It persists provider configs and selected models.
 - It can load bundled default model IDs for known providers.
 - It supports manual model ID add/remove for custom/Ollama providers.
 - It tests model connectivity by routing through `StudioAgentRuntime`, not by constructing provider HTTP payloads.
+- It can query provider model endpoints when an endpoint exposes a compatible model-list API.
 
-Automatic model discovery is intentionally not reimplemented in Studio unless MAF exposes a stable typed model-list API for that connector. This keeps provider protocol behavior in MAF rather than duplicating it.
+Runtime chat/edit/agent execution stays on MAF clients. Configuration-time endpoint discovery is kept as a separate, explicit boundary so provider setup can still offer model combo boxes without pretending that MAF exposes a universal model-list API.
 
 ## Prompt And Context Layer
 
@@ -118,30 +117,18 @@ MAF MCP consumption is exposed through `f8pystudio.agents.tools.mcp`:
 
 PyStudio owns domain semantics and mutation safety. MAF/MCP own tool transport, external tool consumption, and provider orchestration.
 
-## AG-UI Direction
+## Graph Builder Validation
 
-`f8pystudio.agents.ag_ui` provides a typed, dependency-light adapter spike for AG-UI-style event payloads:
+`f8pystudio.agents.graph_builder` is the typed planning layer for goal-driven graph construction. It resolves catalog candidates, produces explicit build plans, encodes those plans into `GraphPatch` operations, and lets graph tools preview/apply the result through the same automation boundary used by MCP.
 
-- `AgUiRunEnvelope`
-- `AgUiEvent`
-- `encode_ag_ui_events()`
-- `graph_patch_preview_event()`
-- `runtime_evidence_event()`
+The production tool path is intentionally generic:
 
-The adapter maps `StudioAgentEvent` stream chunks/errors/completion into AG-UI-style event dictionaries and exposes custom Studio events for graph patch previews and runtime evidence. This is not a hard UI dependency. It is a future integration boundary for web agent clients, MAF DevUI experiments, or approval/event streaming prototypes.
+- `graph_build_from_goal`
+- `graph_match_library`
+- `graph_preview_build_plan`
+- `graph_apply_build_plan`
 
-## Graph Workflow Validation
-
-`f8pystudio.agents.workflows.pyengine_sine_graph` provides a typed validation workflow for a small pyengine graph:
-
-- Creates a `svc.f8.pyengine` service node.
-- Creates `f8.pyengine.f8.phase`, `f8.pyengine.f8.cosine`, and `f8.pyengine.f8.range_map` operator nodes inside that service.
-- Sets `phase.hz = 1.0`.
-- Uses cosine with `phaseOffset = 0.75` to produce a sine-shaped signal.
-- Maps input `[-1, 1]` to output `[0, 100]`.
-- Connects `phase.phase -> sine.phase -> range_map.value`.
-
-The test suite verifies both graph patch/catalog compatibility and runtime sample behavior:
+The sine graph test remains a compact validation case for the generic builder: the builder must discover usable pyengine nodes, place them inside a service container, wire a live signal path, and validate the resulting patch/runtime behavior without depending on a special-purpose workflow module.
 
 ```bash
 QT_QPA_PLATFORM=offscreen pixi run pytest packages/f8pystudio/tests/test_agent_pyengine_sine_workflow.py -q
@@ -164,9 +151,9 @@ With Studio launched in automation mode, an external agent such as Codex can ope
 
 This means Codex can run Studio, apply a typed graph patch, compile it, and debug graph/runtime evidence through the API. Runtime live sampling depends on the running service backend and transport support; in-process pyengine tests validate the sine graph behavior independently of the GUI transport.
 
-## Memory Direction
+## Conversation And Memory Direction
 
-The implemented baseline includes typed session and memory scaffolding. The intended memory scopes are:
+The implemented baseline includes durable conversation/session storage. Future durable memory should remain typed and scoped instead of becoming an implicit global prompt dump. The intended memory scopes are:
 
 - `global`: stable user/provider preferences
 - `project`: project-level decisions and conventions
@@ -219,9 +206,8 @@ rg -n "QtNetwork|QNetworkAccessManager|QNetworkRequest|_test_chat_url|_build_pin
 ## Current Limits
 
 - MAF connector availability still controls which providers are usable. Missing connector packages should fail clearly.
-- Model listing is not duplicated in Studio. Unknown/custom providers require manual model IDs unless MAF gains a stable model discovery surface.
+- Runtime model execution is handled by MAF clients. Configuration-time endpoint discovery is separate and best-effort; unknown/custom providers may still require manual model IDs.
 - Tool-call approval, richer workflow event UI, and durable project/node memory are future increments on top of the new package boundary.
-- AG-UI support is currently an adapter spike, not a full HTTP/SSE endpoint.
 - Agents must remain outside high-frequency script hooks such as per-frame `onData` or `onTick`.
 
 ## Reference Points
