@@ -108,7 +108,6 @@ class AiLlmBridge(QtCore.QObject):
                 self._chat_model_id = chat_cfg.chat_model_id
 
         self._document_language = "plaintext"
-        self._chat_context_snapshot: GraphContextSnapshot | None = None
         self._auto_chat_context_snapshot: GraphContextSnapshot | None = None
         self._active_conversation_id = ""
         self._agent_tools: tuple[Any, ...] = ()
@@ -146,15 +145,11 @@ class AiLlmBridge(QtCore.QObject):
         self._document_language = str(language or "plaintext").strip().lower() or "plaintext"
         self._refresh_system_tokens()
 
-    def set_chat_context_snapshot(self, snapshot: GraphContextSnapshot | None) -> None:
-        self._chat_context_snapshot = snapshot
+    def set_auto_chat_context_snapshot(self, snapshot: GraphContextSnapshot | None) -> None:
+        self._auto_chat_context_snapshot = snapshot
         node_name = snapshot.node_name if snapshot is not None else ""
         self._refresh_system_tokens()
         self.chat_context_snapshot_changed.emit(snapshot is not None, node_name)
-
-    def set_auto_chat_context_snapshot(self, snapshot: GraphContextSnapshot | None) -> None:
-        self._auto_chat_context_snapshot = snapshot
-        self._refresh_system_tokens()
 
     def set_agent_tools(self, tools: tuple[Any, ...]) -> None:
         self._agent_tools = tuple(tools)
@@ -192,7 +187,7 @@ class AiLlmBridge(QtCore.QObject):
 
     @QtCore.Slot()
     def clear_chat_context_snapshot(self) -> None:
-        self.set_chat_context_snapshot(None)
+        self.set_auto_chat_context_snapshot(None)
 
     @QtCore.Slot(result=str)
     def get_chat_context_report(self) -> str:
@@ -745,8 +740,6 @@ class AiLlmBridge(QtCore.QObject):
         )
 
     def _effective_chat_context_snapshot(self) -> GraphContextSnapshot | None:
-        if self._chat_context_snapshot is not None:
-            return self._chat_context_snapshot
         return self._auto_chat_context_snapshot
 
     def _tools_for_mode(self, mode: AgentRequestMode) -> tuple[Any, ...]:

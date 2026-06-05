@@ -279,21 +279,9 @@ def test_low_level_ui_layers_do_not_reach_into_assets_ui_or_studio_bridge() -> N
                 ), str(path)
 
 
-def test_debug_launchers_live_under_app_package() -> None:
+def test_no_debug_launchers_are_packaged() -> None:
     debug_files = [path for path in _python_files(PACKAGE_ROOT) if path.name.startswith("debug_")]
-    app_root = PACKAGE_ROOT / "app"
-    assert debug_files, "Expected at least one app debug launcher"
-    assert all(path.parent == app_root for path in debug_files), [str(path) for path in debug_files]
-
-
-def test_app_debug_launchers_import() -> None:
-    module_names = [
-        "f8pystudio.app.debug_component_catalog",
-        "f8pystudio.app.debug_monaco_editor",
-        "f8pystudio.app.debug_variant_catalog",
-    ]
-    for module_name in module_names:
-        assert importlib.import_module(module_name) is not None
+    assert debug_files == []
 
 
 def test_new_public_module_surfaces_import() -> None:
@@ -302,6 +290,7 @@ def test_new_public_module_surfaces_import() -> None:
         "f8pystudio.plugins.loader",
         "f8pystudio.bridge.studio_bridge",
         "f8pystudio.contracts.ui_commands",
+        "f8pystudio.editor_assist.session_targets",
         "f8pystudio.studio_specs.registry",
         "f8pystudio.nodegraph.session_schema",
     ]

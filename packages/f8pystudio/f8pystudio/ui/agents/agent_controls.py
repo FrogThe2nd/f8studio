@@ -9,7 +9,6 @@ from qtpy import QtCore, QtGui, QtWidgets
 
 from f8pystudio.agents.qt_bridge import AiLlmBridge
 from f8pystudio.agents.store import AiProviderStore
-from f8pystudio.ui.dialogs.ai_context_inspector import AiContextInspectorDialog
 from f8pystudio.ui.support.ai_context_controls import set_tool_button_point_size, usage_pie_icon
 from f8pystudio.ui.support.studio_theme import ai_context_button_qss, studio_dark_theme
 from f8pystudio.ui.support.ui_icons import StudioIcon, icon_for
@@ -22,17 +21,12 @@ class AgentSurfaceScope(Enum):
     GRAPH = "graph"
     EDITOR = "editor"
     NODE = "node"
-    DEBUG = "debug"
 
 
 class AgentContextReportBridge(Protocol):
     context_usage_updated: QtCore.Signal
 
     def get_context_breakdown(self) -> dict[str, object]: ...
-
-    def get_context_report(self) -> str: ...
-
-    def get_chat_context_report(self) -> str: ...
 
 
 @dataclass(frozen=True)
@@ -45,14 +39,10 @@ _CONTEXT_STYLE_BY_SCOPE: dict[AgentSurfaceScope, AgentContextUsageStyle] = {
     AgentSurfaceScope.GRAPH: AgentContextUsageStyle(include_background=True, compact_tooltip=True),
     AgentSurfaceScope.EDITOR: AgentContextUsageStyle(include_background=False, compact_tooltip=False),
     AgentSurfaceScope.NODE: AgentContextUsageStyle(include_background=False, compact_tooltip=False),
-    AgentSurfaceScope.DEBUG: AgentContextUsageStyle(include_background=True, compact_tooltip=True),
 }
 
 
 class AgentContextUsageButton(QtWidgets.QToolButton):
-    inspect_context_requested = QtCore.Signal()
-    inspect_graph_context_requested = QtCore.Signal()
-
     def __init__(
         self,
         bridge: AgentContextReportBridge,
@@ -73,8 +63,6 @@ class AgentContextUsageButton(QtWidgets.QToolButton):
         self.setToolTip("AI context usage\nUsed: 0 / 0 tok")
         set_tool_button_point_size(self, 10)
         self.setStyleSheet(ai_context_button_qss(text_color=p.text_muted, include_background=self._style.include_background))
-        self.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
-        self.customContextMenuRequested.connect(self._on_context_menu_requested)  # type: ignore[attr-defined]
         bridge.context_usage_updated.connect(self.update_usage)  # type: ignore[attr-defined]
 
     @QtCore.Slot(int, int)
@@ -116,15 +104,6 @@ class AgentContextUsageButton(QtWidgets.QToolButton):
             f"Free: {int(free_pct)}%\n"
             f"Used: {_format_tokens(used_tokens)} / {_format_tokens(total_tokens)} tok"
         )
-
-    def _on_context_menu_requested(self, pos: QtCore.QPoint) -> None:
-        menu = QtWidgets.QMenu(self)
-        inspect_act = menu.addAction("Inspect Current Context Payload...")
-        inspect_act.triggered.connect(self.inspect_context_requested.emit)  # type: ignore[attr-defined]
-        inspect_graph_act = menu.addAction("Inspect Graph Context Payload...")
-        inspect_graph_act.triggered.connect(self.inspect_graph_context_requested.emit)  # type: ignore[attr-defined]
-        menu.exec(self.mapToGlobal(pos))
-
 
 class AgentQuickSettingsController(QtCore.QObject):
     def __init__(
@@ -176,11 +155,6 @@ class AgentQuickSettingsController(QtCore.QObject):
         self.panel.setVisible(bool(checked))
         if bool(checked):
             self.panel.raise_()
-
-
-def open_context_inspector(report: str, parent: QtWidgets.QWidget) -> None:
-    dlg = AiContextInspectorDialog(str(report or ""), parent)
-    dlg.exec()
 
 
 def _agent_settings_button_qss(*, include_border: bool) -> str:

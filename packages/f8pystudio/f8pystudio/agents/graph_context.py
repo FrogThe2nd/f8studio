@@ -207,7 +207,7 @@ def format_graph_context_snapshot(
         f"- One-hop context nodes: {snapshot.total_one_hop_count}",
         f"- Included connections: {snapshot.total_connection_count}",
         "- This is a bounded snapshot of the current graph focus.",
-        "- Seed nodes are the user's current selection or pinned focus. One-hop neighbor nodes were added as immediate structure context.",
+        "- Seed nodes are the user's current graph selection. One-hop neighbor nodes were added as immediate structure context.",
         "- This is not the full graph. Base your answer on this snapshot unless the user asks for broader graph reasoning.",
     ]
     if snapshot.truncated_selected_nodes or snapshot.truncated_one_hop_nodes or snapshot.truncated_connections:
@@ -246,7 +246,7 @@ def format_graph_context_snapshot(
 
 def format_graph_context_report(snapshot: GraphContextSnapshot | None) -> str:
     if snapshot is None:
-        return "# Graph Context Snapshot\n\n_No pinned graph context._"
+        return "# Graph Context Snapshot\n\n_No active graph context._"
     payload = json.dumps(snapshot.to_dict(), ensure_ascii=False, indent=2)
     summary = format_graph_context_snapshot(snapshot)
     return "\n".join(

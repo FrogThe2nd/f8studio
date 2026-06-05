@@ -21,22 +21,33 @@ f8pystudio/agents/
   __init__.py
   ag_ui.py
   clients.py
+  codeact.py
+  connectivity.py
+  conversations.py
+  graph_builder/
+    __init__.py
+    library_matcher.py
+    pipeline.py
+    plan_codec.py
+    schema.py
   graph_context.py
   memory.py
+  model_catalog.py
   prompts.py
+  provider_endpoints.py
+  provider_http.py
   qt_bridge.py
   registry.py
   runtime.py
   sessions.py
   state_store.py
   store.py
+  tool_events.py
   tools/
     __init__.py
+    graph.py
     mcp.py
     studio.py
-  workflows/
-    __init__.py
-    pyengine_sine_graph.py
 ```
 
 The former `f8pystudio.ai_assist` implementation has been removed. Existing UI names such as `ai_assist_sidebar.py` remain as UI concepts, but their assistant runtime imports now point at `f8pystudio.agents`.
@@ -60,20 +71,9 @@ The product UI now has a shared Qt agent control layer in `f8pystudio.ui.agents`
 
 - `AgentContextUsageButton` renders context budget state consistently for graph and editor surfaces.
 - `AgentQuickSettingsController` owns the reusable model/provider quick settings toggle and panel.
-- `AgentSurfaceScope` makes graph/editor/node/debug scope explicit at the UI boundary.
-- `AgentDebugWidget` provides a native Studio dock for graph compile evidence and runtime monitor snapshots.
+- `AgentSurfaceScope` makes graph/editor/node scope explicit at the UI boundary.
 
 Existing graph sidebar and Monaco editor surfaces reuse these controls instead of each implementing their own AI toolbar styling and context usage logic.
-
-## Agent Debug Surface
-
-The Agent Debug dock is a Studio-native evidence view for graph/runtime debugging:
-
-- Compile current graph and display service graph count, service IDs, warnings, and errors.
-- Refresh bridge-backed service rows and selected service monitor evidence.
-- Trigger the existing Studio deploy action without bypassing compile/deploy safety.
-
-This dock is intentionally separate from the Service Monitor. Service Monitor remains the operational control table; Agent Debug is a compact evidence surface for human and agent debugging workflows.
 
 ## Provider Layer
 

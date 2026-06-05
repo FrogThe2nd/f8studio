@@ -4,7 +4,10 @@ import json
 from pathlib import Path
 import uuid
 
-from f8pystudio.app.debug_monaco_editor import load_session_editor_target, load_session_editor_targets
+from f8pystudio.editor_assist.session_targets import (
+    load_python_script_editor_target,
+    load_python_script_editor_targets,
+)
 
 
 def _editable_policy(*collections: str) -> dict[str, object]:
@@ -175,12 +178,12 @@ def _write_session(tmp_path: Path) -> Path:
     return path
 
 
-def test_load_session_editor_target_reads_matching_node_and_code() -> None:
+def test_load_python_script_editor_target_reads_matching_node_and_code() -> None:
     temp_dir = Path(".tmp") / "test_monaco_editor_debug" / uuid.uuid4().hex
     temp_dir.mkdir(parents=True, exist_ok=True)
     path = _write_session(temp_dir)
 
-    target = load_session_editor_target(path)
+    target = load_python_script_editor_target(path)
 
     assert target.node_id == "nodeA"
     assert target.spec.operatorClass == "f8.python_script"
@@ -193,7 +196,7 @@ def test_load_session_editor_target_reads_matching_node_and_code() -> None:
     assert tuple(field.name for field in target.context.state_fields) == ("code",)
 
 
-def test_load_session_editor_target_falls_back_to_state_default() -> None:
+def test_load_python_script_editor_target_falls_back_to_state_default() -> None:
     temp_dir = Path(".tmp") / "test_monaco_editor_debug" / uuid.uuid4().hex
     temp_dir.mkdir(parents=True, exist_ok=True)
     path = _write_session(temp_dir)
@@ -202,17 +205,17 @@ def test_load_session_editor_target_falls_back_to_state_default() -> None:
     del node["custom"]["code"]
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
-    target = load_session_editor_target(path)
+    target = load_python_script_editor_target(path)
 
     assert target.code == "print('default')\n"
 
 
-def test_load_session_editor_targets_returns_all_matching_nodes() -> None:
+def test_load_python_script_editor_targets_returns_all_matching_nodes() -> None:
     temp_dir = Path(".tmp") / "test_monaco_editor_debug" / uuid.uuid4().hex
     temp_dir.mkdir(parents=True, exist_ok=True)
     path = _write_session(temp_dir)
 
-    targets = load_session_editor_targets(path)
+    targets = load_python_script_editor_targets(path)
 
     assert [target.node_id for target in targets] == ["nodeA", "nodeB"]
     assert [target.code for target in targets] == ["print('live')\n", "print('live b')\n"]

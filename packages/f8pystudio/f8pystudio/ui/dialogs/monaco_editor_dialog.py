@@ -13,7 +13,6 @@ from ...ui.support.webengine_utils import (
     configure_webengine_local_content_access,
     set_webengine_html,
 )
-from .ai_context_inspector import AiContextInspectorDialog
 from ..support.monaco_editor_host import _ask_save_before_close, open_code_editor_dialog, open_code_editor_window
 from ..support.monaco_editor_page import MonacoEditorPageConfig, build_monaco_editor_html
 from ..support.studio_theme import studio_dark_theme
@@ -85,8 +84,6 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
             scope=AgentSurfaceScope.EDITOR,
             parent=self,
         )
-        self._ctx_btn.inspect_context_requested.connect(self._inspect_context)  # type: ignore[attr-defined]
-        self._ctx_btn.inspect_graph_context_requested.connect(self._inspect_graph_context)  # type: ignore[attr-defined]
 
         self._agent_settings = AgentQuickSettingsController(
             store=self._controller.ai_store(),
@@ -245,16 +242,6 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
 
     def _reposition_ai_panel(self) -> None:
         self._agent_settings.reposition_inside(self._view)
-
-    def _inspect_context(self) -> None:
-        report = self._controller.ai_bridge().get_context_report()
-        dlg = AiContextInspectorDialog(report, self)
-        dlg.exec()
-
-    def _inspect_graph_context(self) -> None:
-        report = self._controller.ai_bridge().get_chat_context_report()
-        dlg = AiContextInspectorDialog(report, self)
-        dlg.exec()
 
     def _open_full_ai_config(self) -> None:
         from .ai_provider_config_dialog import AiProviderConfigDialog
