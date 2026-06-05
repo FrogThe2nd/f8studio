@@ -16,7 +16,6 @@ from ...nodegraph.viewer import F8StudioNodeViewer
 from ...ui.support.ui_notifications import show_info, show_warning
 from ...ui.support.webengine_utils import flush_qt_deferred_deletes
 from ..support.runtime_state_sync import RuntimeStateSyncController
-from ..agents.agent_debug_widget import AgentDebugWidget
 from ..widgets.layers_panel import LayersPanelWidget
 from ..widgets.node_property_panel import F8StudioSingleNodePropertiesWidget
 from ..widgets.service_log_widget import ServiceLogDock
@@ -118,7 +117,6 @@ class F8StudioMainWin(
     _node_library_dock: QtWidgets.QDockWidget
     _layers_dock: QtWidgets.QDockWidget
     _ai_assist_dock: QtWidgets.QDockWidget
-    _agent_debug_dock: QtWidgets.QDockWidget
     _service_manager: ServiceManagerWidget | None
     _asset_cloud_sync_client: VariantSyncClient | None
     _subscription_sync_service: SubscriptionSyncService | None
@@ -130,7 +128,6 @@ class F8StudioMainWin(
     _node_library_widget: F8StudioNodeLibraryWidget | None
     _unsubscribe_asset_cache_changed: Callable[[], None] | None
     _ai_assist_sidebar: AiAssistSidebarWidget | None
-    _agent_debug_widget: AgentDebugWidget | None
     _auto_load_worker: _ProjectAutoLoadWorker | None
     _runtime_state_sync: RuntimeStateSyncController
     _global_hotkey_controller: ControlPanelGlobalHotkeyController
@@ -174,7 +171,6 @@ class F8StudioMainWin(
         self._node_library_widget = None
         self._unsubscribe_asset_cache_changed = None
         self._ai_assist_sidebar = None
-        self._agent_debug_widget = None
         self._deferred_startup_scheduled = False
         self._deferred_startup_completed = False
         self._closing = False
@@ -341,16 +337,6 @@ class F8StudioMainWin(
         except RuntimeError:
             logger.debug("failed to deleteLater AI Assist sidebar", exc_info=True)
 
-    def _shutdown_agent_debug_widget(self) -> None:
-        widget = self._agent_debug_widget
-        self._agent_debug_widget = None
-        if widget is None:
-            return
-        try:
-            widget.deleteLater()
-        except RuntimeError:
-            logger.debug("failed to deleteLater Agent Debug widget", exc_info=True)
-
     def _teardown_graph_nodes_for_exit(self) -> None:
         try:
             nodes = list(self.studio_graph.all_nodes() or [])
@@ -418,7 +404,6 @@ class F8StudioMainWin(
             self._subscription_sync_service = None
         self._run_shutdown_step("global-hotkeys-close", self._global_hotkey_controller.close)
         self._run_shutdown_step("ai-assist-sidebar-shutdown", self._shutdown_ai_assist_sidebar)
-        self._run_shutdown_step("agent-debug-widget-shutdown", self._shutdown_agent_debug_widget)
         self._run_shutdown_step("graph-node-teardown", self._teardown_graph_nodes_for_exit)
         self._run_shutdown_step("bridge-stop", self.stop_bridge)
         self._run_shutdown_step("qt-deferred-delete-flush", flush_qt_deferred_deletes)

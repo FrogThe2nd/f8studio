@@ -208,18 +208,33 @@ class AgentDebugWidget(QtWidgets.QWidget):
             self._summary.setText(f"Compile failed: {type(exc).__name__}: {exc}")
             self._evidence.setPlainText(_json_text({"compile": {"valid": False, "error": f"{type(exc).__name__}: {exc}"}}))
             return
-        service_graphs = list(compiled.service_graphs or [])
+        per_service = dict(compiled.per_service)
+        service_ids = sorted(str(service_id) for service_id in per_service)
+        global_graph = compiled.global_graph
+        warnings = list(compiled.warnings)
+        per_service_summaries = [
+            {
+                "serviceId": service_id,
+                "nodeCount": len(list(per_service[service_id].nodes or ())),
+                "edgeCount": len(list(per_service[service_id].edges or ())),
+            }
+            for service_id in service_ids
+        ]
         payload = {
             "compile": {
                 "valid": True,
-                "warnings": list(compiled.warnings or ()),
-                "serviceGraphCount": len(service_graphs),
-                "serviceIds": [str(graph.serviceId or "") for graph in service_graphs],
+                "warnings": warnings,
+                "global": {
+                    "serviceCount": len(list(global_graph.services or ())),
+                    "nodeCount": len(list(global_graph.nodes or ())),
+                    "edgeCount": len(list(global_graph.edges or ())),
+                },
+                "perServiceCount": len(per_service),
+                "serviceIds": service_ids,
+                "perService": per_service_summaries,
             }
         }
-        self._summary.setText(
-            f"Compile ok: {len(service_graphs)} service graph(s), {len(list(compiled.warnings or ()))} warning(s)."
-        )
+        self._summary.setText(f"Compile ok: {len(per_service)} service graph(s), {len(warnings)} warning(s).")
         self._evidence.setPlainText(_json_text(payload))
 
     @QtCore.Slot()

@@ -19,7 +19,6 @@ if TYPE_CHECKING:
     from ..widgets.node_property_panel import F8StudioSingleNodePropertiesWidget
     from ..widgets.service_log_widget import ServiceLogDock
     from .service_manager_widget import ServiceManagerWidget
-    from ..agents.agent_debug_widget import AgentDebugWidget
     from f8pystudio.bridge.studio_bridge import PyStudioServiceBridge
     from f8pystudio.automation.gui_host import StudioAutomationHost
     from f8pystudio.automation.observation_store import RuntimeObservationStore
@@ -38,7 +37,6 @@ class MainWindowRuntimeMixin:
         _bridge: PyStudioServiceBridge
         _log_dock: ServiceLogDock
         _service_manager: ServiceManagerWidget | None
-        _agent_debug_widget: AgentDebugWidget | None
         _prop_editor: F8StudioSingleNodePropertiesWidget
         _runtime_state_sync: RuntimeStateSyncController
         _monitor_alert_notifier: MonitorAlertNotifier
@@ -216,8 +214,6 @@ class MainWindowRuntimeMixin:
                 self._monitor_alert_notifier.handle_snapshot(payload_obj, parent=self)
             if self._service_manager is not None:
                 self._service_manager.queue_monitor_refresh()
-            if self._agent_debug_widget is not None:
-                self._agent_debug_widget.refresh()
             return
         if command == "state.update":
             payload = dict(cmd.payload or {})

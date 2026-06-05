@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from qtpy import QtWidgets
 
+from f8pysdk.specs import F8RuntimeGraph, F8RuntimeService
 from f8pystudio.monitoring.service_rows import ServiceMonitorRow
+from f8pystudio.nodegraph.runtime_compiler import CompiledRuntimeGraphs
 from f8pystudio.ui.agents.agent_debug_widget import AgentDebugServiceRow, AgentDebugServiceTableModel, AgentDebugWidget
 
 
@@ -95,3 +97,51 @@ def test_agent_debug_widget_refreshes_runtime_evidence() -> None:
     evidence = widget._evidence.toPlainText()
     assert '"serviceId": "svc-a"' in evidence
     assert '"running": true' in evidence
+
+
+def test_agent_debug_widget_compile_uses_per_service_graphs(monkeypatch) -> None:
+    _ensure_app()
+    bridge = _Bridge()
+    global_graph = F8RuntimeGraph(
+        graphId="global",
+        revision="r1",
+        services=[F8RuntimeService(serviceId="svc-a", serviceClass="f8.pyengine")],
+        nodes=[],
+        edges=[],
+    )
+    service_graph = F8RuntimeGraph(
+        graphId="global.svc-a",
+        revision="r1",
+        services=[F8RuntimeService(serviceId="svc-a", serviceClass="f8.pyengine")],
+        nodes=[],
+        edges=[],
+    )
+    compiled = CompiledRuntimeGraphs(
+        global_graph=global_graph,
+        per_service={"svc-a": service_graph},
+        warnings=("warning-a",),
+    )
+
+    def fake_compile_runtime_graphs_from_studio(studio_graph: object) -> CompiledRuntimeGraphs:
+        assert studio_graph is graph
+        return compiled
+
+    graph = object()
+    monkeypatch.setattr(
+        "f8pystudio.ui.agents.agent_debug_widget.compile_runtime_graphs_from_studio",
+        fake_compile_runtime_graphs_from_studio,
+    )
+    widget = AgentDebugWidget(
+        bridge=bridge,  # type: ignore[arg-type]
+        studio_graph=graph,
+        deploy_requested=lambda: None,
+    )
+
+    widget.compile_graph()
+
+    evidence = widget._evidence.toPlainText()
+    assert "Compile ok: 1 service graph(s), 1 warning(s)." == widget._summary.text()
+    assert '"perServiceCount": 1' in evidence
+    assert '"serviceIds": [' in evidence
+    assert '"svc-a"' in evidence
+    assert '"warning-a"' in evidence
