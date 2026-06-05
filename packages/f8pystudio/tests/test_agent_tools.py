@@ -52,6 +52,36 @@ def test_studio_automation_tools_forward_graph_snapshot_to_automation_client(
     assert calls == [("graph.snapshot", None)]
 
 
+def test_studio_automation_tools_forward_graph_build_plan_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, dict[str, object] | None]] = []
+
+    class FakeClient:
+        def call(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+            calls.append((method, params))
+            return {"ok": True}
+
+    monkeypatch.setattr(
+        "f8pystudio.agents.tools.studio.AutomationClient.from_connection_file",
+        lambda path: FakeClient(),
+    )
+
+    tools = StudioAutomationTools(connection_file="/tmp/f8-connection.json")
+    plan = {"summary": "x", "requirement": {"goal": "x"}, "nodes": [{"nodeType": "n", "nodeId": "n"}]}
+
+    assert tools.graph_build_from_goal("build wave") == {"ok": True}
+    assert tools.graph_match_library("build wave", limit=3) == {"ok": True}
+    assert tools.graph_preview_build_plan(plan) == {"ok": True}
+    assert tools.graph_apply_build_plan(plan, confirm=True) == {"ok": True}
+    assert calls == [
+        ("graph.buildFromGoal", {"goal": "build wave", "limit": 24}),
+        ("graph.matchLibrary", {"goal": "build wave", "limit": 3}),
+        ("graph.previewBuildPlan", {"plan": plan}),
+        ("graph.applyBuildPlan", {"plan": plan, "confirm": True}),
+    ]
+
+
 def test_runtime_invoke_command_requires_confirm() -> None:
     tools = StudioAutomationTools()
 
@@ -626,7 +656,57 @@ def test_workflow_tools_preview_goal_and_auto_layout(monkeypatch: pytest.MonkeyP
         def snapshot(self) -> FakeSnapshot:
             return FakeSnapshot()
 
+        def node_catalog(self) -> dict[str, object]:
+            return {
+                "nodes": [
+                    {
+                        "nodeType": "svc.f8.test",
+                        "label": "Test Engine",
+                        "kind": "service",
+                        "serviceClass": "f8.test",
+                        "operatorClass": "",
+                        "inputs": [],
+                        "outputs": [],
+                        "stateFields": [],
+                    },
+                    {
+                        "nodeType": "f8.test.wave",
+                        "label": "Wave Source",
+                        "kind": "operator",
+                        "serviceClass": "f8.test",
+                        "operatorClass": "wave",
+                        "inputs": [],
+                        "outputs": [{"name": "value", "kind": "data"}],
+                        "stateFields": [{"name": "hz", "description": "Frequency"}],
+                    },
+                    {
+                        "nodeType": "f8.test.range_map",
+                        "label": "Range Map",
+                        "kind": "operator",
+                        "serviceClass": "f8.test",
+                        "operatorClass": "range_map",
+                        "inputs": [{"name": "value", "kind": "data"}],
+                        "outputs": [{"name": "value", "kind": "data"}],
+                        "stateFields": [{"name": "outMax", "description": "Output maximum"}],
+                    },
+                    {
+                        "nodeType": "f8.test.viz.wave",
+                        "label": "Viz Wave",
+                        "kind": "operator",
+                        "serviceClass": "f8.test",
+                        "operatorClass": "viz.wave",
+                        "inputs": [{"name": "y", "kind": "data"}],
+                        "outputs": [],
+                        "stateFields": [],
+                    },
+                ]
+            }
+
         def preview_patch(self, patch: object) -> FakePreview:
+            self.patch = patch
+            return FakePreview()
+
+        def apply_patch(self, patch: object) -> FakePreview:
             self.patch = patch
             return FakePreview()
 
@@ -639,10 +719,111 @@ def test_workflow_tools_preview_goal_and_auto_layout(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr("f8pystudio.agents.tools.graph.StudioGraphAutomationAdapter", FakeAdapter)
     tools = LocalStudioGraphTools(LocalStudioGraphToolExecutor("graph"))
 
-    goal = "Use pyengine to output a 1Hz sine wave mapped from 0-100"
+    goal = "Create a 1Hz wave, map it to 0-100, and show it in viz wave"
     workflow = tools.graph_build_from_goal(goal)["workflow"]
-    assert workflow["status"] == "previewed"
-    assert workflow["samplePort"] == {"nodeId": "pyengine_sine_0_100", "port": "value"}
+    assert workflow["status"] == "planning_required"
+    assert workflow["planSchema"]["type"] == "GraphBuildPlan"
+    assert workflow["nextTools"] == ["graph_preview_build_plan", "graph_apply_build_plan", "graph_debug_service"]
+    assert [item["nodeType"] for item in workflow["libraryMatches"]["candidates"][:2]] == [
+        "f8.test.viz.wave",
+        "f8.test.wave",
+    ]
+
+    matches = tools.graph_match_library(goal, limit=2)["matches"]
+    assert matches["queryTerms"]
+    assert len(matches["candidates"]) == 2
+
+    plan = {
+        "summary": "Create a wave processing graph with visualization.",
+        "requirement": {
+            "goal": goal,
+            "serviceHints": ["f8.test"],
+            "operatorHints": ["wave", "range_map", "viz.wave"],
+            "dataFlowHints": ["wave.value -> range.value -> viz.y"],
+            "validationHints": ["sample mapped.value in runtime"],
+            "visualizationHints": ["viz wave y"],
+        },
+        "nodes": [
+            {
+                "nodeType": "svc.f8.test",
+                "nodeId": "test_service",
+                "name": "Test Engine",
+                "role": "Service container",
+                "position": [0, 0],
+            },
+            {
+                "nodeType": "f8.test.wave",
+                "nodeId": "wave_source",
+                "name": "1 Hz Wave",
+                "role": "Signal source",
+                "stateValues": {"svcId": "test_service", "hz": 1.0},
+                "position": [120, 80],
+            },
+            {
+                "nodeType": "f8.test.range_map",
+                "nodeId": "mapped_wave",
+                "name": "0-100 Map",
+                "role": "Range transform",
+                "stateValues": {"svcId": "test_service", "outMin": 0.0, "outMax": 100.0},
+                "position": [360, 80],
+            },
+            {
+                "nodeType": "f8.test.viz.wave",
+                "nodeId": "wave_viz",
+                "name": "Wave Viz",
+                "role": "Visualization",
+                "stateValues": {"svcId": "test_service"},
+                "position": [600, 80],
+            },
+        ],
+        "connections": [
+            {
+                "fromNodeId": "wave_source",
+                "fromPort": "value",
+                "toNodeId": "mapped_wave",
+                "toPort": "value",
+                "reason": "Map the source value.",
+            },
+            {
+                "fromNodeId": "mapped_wave",
+                "fromPort": "value",
+                "toNodeId": "wave_viz",
+                "toPort": "y",
+                "reason": "Visualize mapped output.",
+            },
+        ],
+        "validationTargets": [
+            {
+                "serviceId": "test_service",
+                "nodeId": "mapped_wave",
+                "port": "value",
+                "description": "Mapped output remains in 0-100.",
+                "expectedMin": 0.0,
+                "expectedMax": 100.0,
+            }
+        ],
+    }
+
+    preview_workflow = tools.graph_preview_build_plan(plan)["workflow"]
+    assert preview_workflow["status"] == "previewed"
+    assert preview_workflow["patch"]["expectedRevision"] == 9
+    assert preview_workflow["patch"]["ops"][0] == {
+        "op": "createNode",
+        "nodeType": "svc.f8.test",
+        "nodeId": "test_service",
+        "name": "Test Engine",
+        "pos": [0.0, 0.0],
+        "selected": False,
+    }
+    assert preview_workflow["patch"]["ops"][-1]["op"] == "connectPorts"
+    assert preview_workflow["delivery"]["status"] == "previewed"
+
+    with pytest.raises(ValueError, match="confirm=true"):
+        tools.graph_apply_build_plan(plan)
+
+    applied_workflow = tools.graph_apply_build_plan(plan, confirm=True)["workflow"]
+    assert applied_workflow["status"] == "applied"
+    assert applied_workflow["diagnostics"] == {"issues": [], "summary": {"nodeCount": 2}}
 
     layout = tools.graph_auto_layout(selected_only=True)["workflow"]
     assert layout["status"] == "previewed"

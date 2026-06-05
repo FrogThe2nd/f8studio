@@ -9,6 +9,13 @@ from typing import Any, Protocol
 
 from qtpy import QtCore
 
+from f8pystudio.agents.graph_builder import (
+    decode_graph_build_plan,
+    delivery_report_for_plan,
+    graph_build_plan_schema_hint,
+    graph_patch_from_build_plan,
+    match_graph_library_candidates,
+)
 from f8pystudio.agents.tool_events import (
     StudioAgentApprovalRequest,
     StudioAgentToolTrace,
@@ -18,11 +25,6 @@ from f8pystudio.agents.tool_events import (
     summarize_tool_params,
     summarize_tool_result,
     tool_method_to_name,
-)
-from f8pystudio.agents.workflows.pyengine_sine_graph import (
-    build_pyengine_sine_0_100_patch,
-    pyengine_sine_expected_range,
-    pyengine_sine_sample_port,
 )
 from f8pystudio.automation.domain import GraphPatch, MoveNodeOp, SetNodeStateOp, decode_graph_patch, graph_patch_to_dict
 from f8pystudio.automation.graph_adapter import StudioGraphAutomationAdapter
@@ -353,6 +355,12 @@ class LocalStudioGraphToolExecutor(QtCore.QObject):
             return {"preview": preview.to_dict(), "snapshot": self._adapter.snapshot().to_dict()}
         if method == "graph.buildFromGoal":
             return self._graph_build_from_goal(params)
+        if method == "graph.matchLibrary":
+            return self._graph_match_library(params)
+        if method == "graph.previewBuildPlan":
+            return self._graph_preview_build_plan(params)
+        if method == "graph.applyBuildPlan":
+            return self._graph_apply_build_plan(params)
         if method == "graph.debugService":
             return self._graph_debug_service(params)
         if method == "graph.autoLayout":
@@ -604,48 +612,76 @@ class LocalStudioGraphToolExecutor(QtCore.QObject):
         goal = str(params.get("goal") or "").strip()
         if not goal:
             raise ValueError("graph_build_from_goal requires goal")
-        normalized_goal = goal.lower()
-        if not _goal_matches_pyengine_sine(normalized_goal):
-            return {
-                "workflow": {
-                    "name": "graph_build_from_goal",
-                    "status": "unsupported_goal",
-                    "summary": "No typed workflow matched this goal.",
-                    "goal": goal,
-                    "supportedGoals": [
-                        "Build a pyengine graph that outputs a 1 Hz sine wave mapped to the 0-100 range.",
-                    ],
-                }
+        matches = match_graph_library_candidates(
+            goal=goal,
+            node_catalog=self._adapter.node_catalog(),
+            limit=int(params.get("limit") or 24),
+        )
+        return {
+            "workflow": {
+                "name": "graph_build_from_goal",
+                "status": "planning_required",
+                "summary": "Matched graph library candidates. Create a GraphBuildPlan, then call graph_preview_build_plan.",
+                "goal": goal,
+                "libraryMatches": matches.to_dict(),
+                "planSchema": graph_build_plan_schema_hint(),
+                "nextTools": ["graph_preview_build_plan", "graph_apply_build_plan", "graph_debug_service"],
             }
-
-        patch = build_pyengine_sine_0_100_patch(expected_revision=self._adapter.revision())
-        patch_payload = graph_patch_to_dict(patch)
-        preview = self._adapter.preview_patch(patch)
-        workflow: dict[str, Any] = {
-            "name": "graph_build_from_goal",
-            "status": "previewed",
-            "summary": "Prepared typed PyEngine 1 Hz sine 0-100 graph.",
-            "goal": goal,
-            "patch": patch_payload,
-            "preview": preview.to_dict(),
-            "samplePort": {
-                "nodeId": pyengine_sine_sample_port()[0],
-                "port": pyengine_sine_sample_port()[1],
-            },
-            "expectedRange": list(pyengine_sine_expected_range()),
         }
-        apply_workflow = not bool(params.get("previewOnly", True))
-        if not apply_workflow:
-            return {"workflow": workflow}
+
+    def _graph_match_library(self, params: dict[str, Any]) -> dict[str, Any]:
+        goal = _required_text(params, "goal")
+        matches = match_graph_library_candidates(
+            goal=goal,
+            node_catalog=self._adapter.node_catalog(),
+            limit=int(params.get("limit") or 24),
+        )
+        return {"matches": matches.to_dict()}
+
+    def _graph_preview_build_plan(self, params: dict[str, Any]) -> dict[str, Any]:
+        plan = decode_graph_build_plan(params.get("plan"))
+        patch = graph_patch_from_build_plan(plan, expected_revision=self._adapter.revision())
+        preview = self._adapter.preview_patch(patch)
+        delivery = delivery_report_for_plan(plan=plan, preview=preview.to_dict(), applied=False)
+        return {
+            "workflow": {
+                "name": "graph_preview_build_plan",
+                "status": "previewed",
+                "summary": "Previewed typed GraphBuildPlan.",
+                "plan": plan.to_dict(),
+                "patch": graph_patch_to_dict(patch),
+                "preview": preview.to_dict(),
+                "delivery": delivery.to_dict(),
+            }
+        }
+
+    def _graph_apply_build_plan(self, params: dict[str, Any]) -> dict[str, Any]:
         if not bool(params.get("confirm")):
-            raise ValueError("graph_build_from_goal apply requires confirm=true")
-        applied = self._adapter.apply_patch(patch)
+            raise ValueError("graph_apply_build_plan requires confirm=true")
+        plan = decode_graph_build_plan(params.get("plan"))
+        patch = graph_patch_from_build_plan(plan, expected_revision=self._adapter.revision())
+        preview = self._adapter.apply_patch(patch)
         self._notify_graph_patch_applied()
-        workflow["status"] = "applied"
-        workflow["summary"] = "Applied typed PyEngine 1 Hz sine 0-100 graph."
-        workflow["applyPreview"] = applied.to_dict()
-        workflow["snapshot"] = self._adapter.snapshot().to_dict()
-        return {"workflow": workflow}
+        diagnostics = self._adapter.diagnostics()
+        delivery = delivery_report_for_plan(
+            plan=plan,
+            preview=preview.to_dict(),
+            applied=True,
+            diagnostics=diagnostics,
+        )
+        return {
+            "workflow": {
+                "name": "graph_apply_build_plan",
+                "status": "applied",
+                "summary": "Applied typed GraphBuildPlan.",
+                "plan": plan.to_dict(),
+                "patch": graph_patch_to_dict(patch),
+                "preview": preview.to_dict(),
+                "diagnostics": diagnostics,
+                "delivery": delivery.to_dict(),
+                "snapshot": self._adapter.snapshot().to_dict(),
+            }
+        }
 
     def _graph_debug_service(self, params: dict[str, Any]) -> dict[str, Any]:
         service_id = str(params.get("serviceId") or "").strip()
@@ -806,6 +842,9 @@ class LocalStudioGraphTools:
             self.graph_preview_patch,
             self.graph_apply_patch,
             self.graph_build_from_goal,
+            self.graph_match_library,
+            self.graph_preview_build_plan,
+            self.graph_apply_build_plan,
             self.graph_debug_service,
             self.graph_auto_layout,
             self.graph_fix_container_bindings,
@@ -916,14 +955,25 @@ class LocalStudioGraphTools:
     def graph_build_from_goal(
         self,
         goal: str,
-        preview_only: bool = True,
-        confirm: bool = False,
+        limit: int = 24,
     ) -> dict[str, Any]:
-        """Build a typed graph workflow from a supported natural-language goal; can preview or apply the patch."""
+        """Match graph library candidates for a natural-language goal and return the typed GraphBuildPlan schema."""
         return self.executor.call(
             "graph.buildFromGoal",
-            {"goal": goal, "previewOnly": bool(preview_only), "confirm": bool(confirm)},
+            {"goal": goal, "limit": int(limit)},
         )
+
+    def graph_match_library(self, goal: str, limit: int = 24) -> dict[str, Any]:
+        """Search the node catalog for service/operator candidates relevant to a graph build goal."""
+        return self.executor.call("graph.matchLibrary", {"goal": goal, "limit": int(limit)})
+
+    def graph_preview_build_plan(self, plan: dict[str, Any]) -> dict[str, Any]:
+        """Convert a typed GraphBuildPlan into a GraphPatch and validate it without changing the graph."""
+        return self.executor.call("graph.previewBuildPlan", {"plan": plan})
+
+    def graph_apply_build_plan(self, plan: dict[str, Any], confirm: bool = False) -> dict[str, Any]:
+        """Apply a typed GraphBuildPlan to the current graph; requires confirm=true or GUI approval."""
+        return self.executor.call("graph.applyBuildPlan", {"plan": plan, "confirm": bool(confirm)})
 
     def graph_debug_service(self, service_id: str = "", limit: int = 100, log_limit: int = 100) -> dict[str, Any]:
         """Collect diagnostics, compile metadata, monitor snapshots, and logs for a service debugging pass."""
@@ -1159,11 +1209,11 @@ def _approval_spec_for_method(method: str, params: dict[str, Any]) -> _ToolAppro
             description="Call a command on a running runtime service.",
             confirm_error_message="runtime_invoke_command requires confirm=true",
         )
-    if method == "graph.buildFromGoal" and not bool(params.get("previewOnly", True)):
+    if method == "graph.applyBuildPlan":
         return _ToolApprovalSpec(
-            title="Build Graph From Goal",
-            description="Apply the generated typed workflow patch to the current graph.",
-            confirm_error_message="graph_build_from_goal apply requires confirm=true",
+            title="Apply Graph Build Plan",
+            description="Create and connect nodes from the typed graph build plan.",
+            confirm_error_message="graph_apply_build_plan requires confirm=true",
         )
     if method == "graph.autoLayout" and bool(params.get("apply", False)):
         return _ToolApprovalSpec(
@@ -1178,15 +1228,6 @@ def _approval_spec_for_method(method: str, params: dict[str, Any]) -> _ToolAppro
             confirm_error_message="graph_fix_container_bindings apply requires confirm=true",
         )
     return None
-
-
-def _goal_matches_pyengine_sine(goal: str) -> bool:
-    text = str(goal or "").lower()
-    has_pyengine = "pyengine" in text or "py engine" in text
-    has_wave = "sine" in text or "sin" in text or "正弦" in text
-    has_hz = "1hz" in text or "1 hz" in text or "1赫兹" in text
-    has_range = "0-100" in text or "0 to 100" in text or "0 到 100" in text
-    return has_pyengine and has_wave and has_hz and has_range
 
 
 def _stored_state_to_dict(value: StoredStateValue | None) -> dict[str, Any] | None:

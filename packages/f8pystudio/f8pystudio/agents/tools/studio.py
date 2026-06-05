@@ -110,6 +110,26 @@ class StudioAutomationTools:
     ) -> dict[str, Any]:
         return self._client(connection_file).call("graph.applyPatch", {"patch": patch, "confirm": bool(confirm)})
 
+    def graph_build_from_goal(self, goal: str, limit: int = 24, connection_file: str = "") -> dict[str, Any]:
+        return self._client(connection_file).call("graph.buildFromGoal", {"goal": goal, "limit": int(limit)})
+
+    def graph_match_library(self, goal: str, limit: int = 24, connection_file: str = "") -> dict[str, Any]:
+        return self._client(connection_file).call("graph.matchLibrary", {"goal": goal, "limit": int(limit)})
+
+    def graph_preview_build_plan(self, plan: dict[str, Any], connection_file: str = "") -> dict[str, Any]:
+        return self._client(connection_file).call("graph.previewBuildPlan", {"plan": plan})
+
+    def graph_apply_build_plan(
+        self,
+        plan: dict[str, Any],
+        confirm: bool = False,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return self._client(connection_file).call(
+            "graph.applyBuildPlan",
+            {"plan": plan, "confirm": bool(confirm)},
+        )
+
     def graph_compile(self, connection_file: str = "") -> dict[str, Any]:
         return self._client(connection_file).call("graph.compile")
 
@@ -220,8 +240,9 @@ class StudioAutomationTools:
 
     def plan_graph_change_prompt(self, goal: str) -> str:
         return (
-            "Inspect f8studio://graph/diagnostics, f8studio://graph/current, and f8studio://catalog/nodes, "
-            "then propose a GraphPatch. "
+            "Inspect f8studio://graph/diagnostics, f8studio://graph/current, and f8studio://catalog/nodes. "
+            "Use graph_build_from_goal or graph_match_library to choose candidate nodes, then produce a typed "
+            "GraphBuildPlan and preview it with graph_preview_build_plan before applying. "
             f"Goal: {goal}"
         )
 

@@ -115,6 +115,26 @@ def _create_server() -> Any:
         return tools.graph_apply_patch(patch=patch, confirm=confirm, connection_file=connection_file)
 
     @server.tool()
+    def graph_build_from_goal(goal: str, limit: int = 24, connection_file: str = "") -> dict[str, Any]:
+        return tools.graph_build_from_goal(goal=goal, limit=limit, connection_file=connection_file)
+
+    @server.tool()
+    def graph_match_library(goal: str, limit: int = 24, connection_file: str = "") -> dict[str, Any]:
+        return tools.graph_match_library(goal=goal, limit=limit, connection_file=connection_file)
+
+    @server.tool()
+    def graph_preview_build_plan(plan: dict[str, Any], connection_file: str = "") -> dict[str, Any]:
+        return tools.graph_preview_build_plan(plan=plan, connection_file=connection_file)
+
+    @server.tool()
+    def graph_apply_build_plan(
+        plan: dict[str, Any],
+        confirm: bool = False,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return tools.graph_apply_build_plan(plan=plan, confirm=confirm, connection_file=connection_file)
+
+    @server.tool()
     def graph_compile(connection_file: str = "") -> dict[str, Any]:
         return tools.graph_compile(connection_file=connection_file)
 

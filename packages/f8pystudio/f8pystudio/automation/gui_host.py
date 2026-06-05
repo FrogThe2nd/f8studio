@@ -17,11 +17,18 @@ from f8pystudio.nodegraph.runtime_compiler import compile_runtime_graphs_from_st
 
 from .client import wait_for_connection_file
 from .control_protocol import AutomationConnectionInfo
-from .domain import decode_graph_patch
+from .domain import decode_graph_patch, graph_patch_to_dict
 from .graph_adapter import StudioGraphAutomationAdapter
 from .local_server import LocalAutomationServer
 from .observation_store import RuntimeObservationStore
 from .paths import automation_dir, default_port_file, default_token_file
+from f8pystudio.agents.graph_builder import (
+    decode_graph_build_plan,
+    delivery_report_for_plan,
+    graph_build_plan_schema_hint,
+    graph_patch_from_build_plan,
+    match_graph_library_candidates,
+)
 from f8pystudio.automation.library_catalog import (
     operator_detail_payload,
     operator_library_payload,
@@ -197,6 +204,14 @@ class StudioAutomationHost(QtCore.QObject):
             preview = self._graph_adapter.apply_patch(patch)
             self._schedule_studio_runtime_sync()
             return {"preview": preview.to_dict(), "snapshot": self._graph_adapter.snapshot().to_dict()}
+        if method == "graph.buildFromGoal":
+            return self._graph_build_from_goal(params)
+        if method == "graph.matchLibrary":
+            return self._graph_match_library(params)
+        if method == "graph.previewBuildPlan":
+            return self._graph_preview_build_plan(params)
+        if method == "graph.applyBuildPlan":
+            return self._graph_apply_build_plan(params)
         if method == "graph.compile":
             return {"compile": self._graph_adapter.compile_graph()}
         if method == "library.services":
@@ -250,6 +265,79 @@ class StudioAutomationHost(QtCore.QObject):
             "deploy": deploy_result,
             "compileWarnings": list(compiled.warnings or ()),
             "compile": self._graph_adapter.compile_graph(),
+        }
+
+    def _graph_build_from_goal(self, params: dict[str, Any]) -> dict[str, Any]:
+        goal = _required_text(params, "goal")
+        matches = match_graph_library_candidates(
+            goal=goal,
+            node_catalog=self._graph_adapter.node_catalog(),
+            limit=int(params.get("limit") or 24),
+        )
+        return {
+            "workflow": {
+                "name": "graph_build_from_goal",
+                "status": "planning_required",
+                "summary": "Matched graph library candidates. Create a GraphBuildPlan, then call graph_preview_build_plan.",
+                "goal": goal,
+                "libraryMatches": matches.to_dict(),
+                "planSchema": graph_build_plan_schema_hint(),
+                "nextTools": ["graph_preview_build_plan", "graph_apply_build_plan"],
+            }
+        }
+
+    def _graph_match_library(self, params: dict[str, Any]) -> dict[str, Any]:
+        goal = _required_text(params, "goal")
+        matches = match_graph_library_candidates(
+            goal=goal,
+            node_catalog=self._graph_adapter.node_catalog(),
+            limit=int(params.get("limit") or 24),
+        )
+        return {"matches": matches.to_dict()}
+
+    def _graph_preview_build_plan(self, params: dict[str, Any]) -> dict[str, Any]:
+        plan = decode_graph_build_plan(params.get("plan"))
+        patch = graph_patch_from_build_plan(plan, expected_revision=self._graph_adapter.revision())
+        preview = self._graph_adapter.preview_patch(patch)
+        delivery = delivery_report_for_plan(plan=plan, preview=preview.to_dict(), applied=False)
+        return {
+            "workflow": {
+                "name": "graph_preview_build_plan",
+                "status": "previewed",
+                "summary": "Previewed typed GraphBuildPlan.",
+                "plan": plan.to_dict(),
+                "patch": graph_patch_to_dict(patch),
+                "preview": preview.to_dict(),
+                "delivery": delivery.to_dict(),
+            }
+        }
+
+    def _graph_apply_build_plan(self, params: dict[str, Any]) -> dict[str, Any]:
+        if not bool(params.get("confirm")):
+            raise ValueError("graph_apply_build_plan requires confirm=true")
+        plan = decode_graph_build_plan(params.get("plan"))
+        patch = graph_patch_from_build_plan(plan, expected_revision=self._graph_adapter.revision())
+        preview = self._graph_adapter.apply_patch(patch)
+        self._schedule_studio_runtime_sync()
+        diagnostics = self._graph_adapter.diagnostics()
+        delivery = delivery_report_for_plan(
+            plan=plan,
+            preview=preview.to_dict(),
+            applied=True,
+            diagnostics=diagnostics,
+        )
+        return {
+            "workflow": {
+                "name": "graph_apply_build_plan",
+                "status": "applied",
+                "summary": "Applied typed GraphBuildPlan.",
+                "plan": plan.to_dict(),
+                "patch": graph_patch_to_dict(patch),
+                "preview": preview.to_dict(),
+                "diagnostics": diagnostics,
+                "delivery": delivery.to_dict(),
+                "snapshot": self._graph_adapter.snapshot().to_dict(),
+            }
         }
 
     def _runtime_service_status(self, service_id: str) -> dict[str, Any]:
