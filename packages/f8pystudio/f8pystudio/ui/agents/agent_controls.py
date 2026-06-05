@@ -23,7 +23,7 @@ class AgentSurfaceScope(Enum):
     NODE = "node"
 
 
-class AgentContextReportBridge(Protocol):
+class AgentContextBreakdownBridge(Protocol):
     context_usage_updated: QtCore.Signal
 
     def get_context_breakdown(self) -> dict[str, object]: ...
@@ -45,7 +45,7 @@ _CONTEXT_STYLE_BY_SCOPE: dict[AgentSurfaceScope, AgentContextUsageStyle] = {
 class AgentContextUsageButton(QtWidgets.QToolButton):
     def __init__(
         self,
-        bridge: AgentContextReportBridge,
+        bridge: AgentContextBreakdownBridge,
         *,
         scope: AgentSurfaceScope,
         parent: QtWidgets.QWidget | None = None,
