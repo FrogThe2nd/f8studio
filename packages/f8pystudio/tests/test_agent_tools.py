@@ -536,6 +536,27 @@ def test_local_studio_graph_tools_codeact_profile_is_diagnostic_only() -> None:
     assert "runtime_invoke_command" not in names
 
 
+def test_local_studio_graph_tools_node_editor_profile_is_inspection_and_preview_only() -> None:
+    tools = LocalStudioGraphTools(StudioAutomationTools())
+
+    names = tools.available_node_editor_tool_names()
+
+    assert "graph_ui_context" in names
+    assert "graph_node_detail" in names
+    assert "graph_connections" in names
+    assert "graph_compile" in names
+    assert "graph_preview_patch" in names
+    assert "graph_preview_build_plan" in names
+    assert "runtime_sample_port" in names
+    assert "logs_read" in names
+    assert "graph_apply_patch" not in names
+    assert "graph_apply_build_plan" not in names
+    assert "runtime_deploy" not in names
+    assert "runtime_service_deploy" not in names
+    assert "runtime_write_state" not in names
+    assert "runtime_invoke_command" not in names
+
+
 def test_runtime_action_tool_can_use_gui_approval(monkeypatch: pytest.MonkeyPatch) -> None:
     _ensure_app()
     approvals: list[dict[str, object]] = []

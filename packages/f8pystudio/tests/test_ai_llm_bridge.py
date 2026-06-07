@@ -16,6 +16,8 @@ from f8pystudio.agents.qt_bridge import AiLlmBridge
 from f8pystudio.agents.registry import ModelInfo, ProviderConfig
 from f8pystudio.agents.runtime import StudioAgentEvent, StudioAgentRequest
 from f8pystudio.agents.store import AiProviderStore
+from f8pystudio.editor_assist.agent_context import EditorDocumentContext
+from f8pystudio.editor_assist.agent_scope import EditorAgentScope
 from f8pystudio.editor_assist.workspace import (
     EditorAssistContext,
     EditorAssistDataInPort,
@@ -301,6 +303,8 @@ def test_agent_request_uses_chat_tools_and_auto_graph_context() -> None:
     request = bridge._agent_request(request_id="rid-chat", mode="chat")
 
     assert request.tools == (graph_snapshot,)
+    assert request.graph_tool_names == ("graph_snapshot",)
+    assert request.agent_surface == "graph"
     assert request.graph_context_snapshot is not None
     assert request.graph_context_snapshot.selection_label == "Auto Node"
     prompt = bridge._get_system_prompt("Base prompt.")
@@ -324,6 +328,204 @@ def test_agent_request_keeps_graph_tools_out_of_inline_requests() -> None:
     request = bridge._agent_request(request_id="rid-inline", mode="inline")
 
     assert request.tools == ()
+
+
+def test_editor_request_uses_shared_sidebar_session_with_node_context_and_plan_tools() -> None:
+    temp_dir = Path(".tmp") / "test_ai_llm_bridge" / uuid.uuid4().hex
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    store_path = temp_dir / "ai_providers.json"
+    with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+        bridge = AiLlmBridge(AiProviderStore())
+
+    def graph_node_detail() -> dict[str, object]:
+        return {"detail": {"nodeId": "script-1"}}
+
+    provider_calls: list[str] = []
+
+    def graph_context_provider() -> GraphContextSnapshot:
+        provider_calls.append("called")
+        return GraphContextSnapshot(
+            selection_label="Script Node",
+            selected_node_ids=("script-1",),
+            total_selected_count=1,
+            total_one_hop_count=2,
+            total_connection_count=2,
+        )
+
+    bridge.set_editor_agent_scope(
+        EditorAgentScope.node_field(
+            graph_id="graph:unit",
+            node_id="script-1",
+            field_name="code",
+        )
+    )
+    bridge.set_agent_tools((graph_node_detail,))
+    bridge.set_graph_context_snapshot_provider(graph_context_provider)
+
+    chat_request = bridge._agent_request(request_id="rid-node-chat", mode="chat")
+    plan_request = bridge._agent_request(request_id="rid-node-plan", mode="plan")
+    edit_request = bridge._agent_request(request_id="rid-node-edit", mode="edit")
+    inline_request = bridge._agent_request(request_id="rid-node-inline", mode="inline")
+
+    assert chat_request.session_key is not None
+    assert chat_request.session_key.scope == "sidebar"
+    assert chat_request.session_key.conversation_id == ""
+    assert chat_request.tools == (graph_node_detail,)
+    assert chat_request.graph_tool_names == ("graph_node_detail",)
+    assert chat_request.agent_surface == "node_editor"
+    assert chat_request.graph_context_snapshot is not None
+    assert chat_request.graph_context_snapshot.selection_label == "Script Node"
+    assert plan_request.tools == (graph_node_detail,)
+    assert edit_request.tools == ()
+    assert inline_request.tools == ()
+    assert inline_request.session_key is not None
+    assert inline_request.session_key.scope == "editor"
+    assert inline_request.session_key.node_id == "script-1"
+    assert inline_request.session_key.editor_id == "code:inline"
+    assert inline_request.agent_surface == "editor"
+    assert provider_calls
+
+    prompt = bridge._get_system_prompt("Base prompt.")
+    assert "PyStudio Node Editor Agent" in prompt
+    assert "upstream inputs" in prompt
+    assert "High-frequency runtime telemetry" in prompt
+    assert "`graph_node_detail`" in prompt
+    assert "graph_apply_patch" not in prompt
+
+
+def test_editor_conversation_slots_share_graph_scope_and_active_conversation(tmp_path: Path) -> None:
+    store_path = tmp_path / "ai_providers.json"
+    conversation_store = StudioConversationStore(storage_path=tmp_path / "ai_conversations.json")
+    with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+        bridge = AiLlmBridge(AiProviderStore(), conversation_store=conversation_store)
+
+    bridge.set_editor_agent_scope(
+        EditorAgentScope.node_field(
+            graph_id="graph-1",
+            node_id="script-1",
+            field_name="code",
+        )
+    )
+
+    assert bridge.default_conversation_scope() == "graph"
+    assert bridge.default_conversation_id() == ""
+
+    created = bridge.create_conversation("")
+    conversation_id = str(created["conversationId"])
+    saved = bridge.save_conversation_messages(
+        conversation_id,
+        "",
+        json.dumps([{"role": "user", "content": "inspect upstream", "createdAtMs": 1}]),
+    )
+    summaries = bridge.list_conversations("")
+    request = bridge._agent_request(request_id="rid-node-chat", mode="chat")
+
+    assert bridge.default_conversation_id() == conversation_id
+    assert saved["scope"] == "graph"
+    assert len(summaries) == 1
+    assert summaries[0]["conversationId"] == conversation_id
+    assert summaries[0]["title"] == "inspect upstream"
+    assert summaries[0]["scope"] == "graph"
+    assert summaries[0]["messageCount"] == 1
+    assert request.session_key is not None
+    assert request.session_key.scope == "sidebar"
+    assert request.session_key.conversation_id == conversation_id
+
+
+def test_editor_bridge_uses_active_conversation_selected_by_sidebar_bridge(tmp_path: Path) -> None:
+    store_path = tmp_path / "ai_providers.json"
+    conversation_store = StudioConversationStore(storage_path=tmp_path / "ai_conversations.json")
+    with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+        provider_store = AiProviderStore()
+
+    sidebar_bridge = AiLlmBridge(provider_store, conversation_store=conversation_store)
+    editor_bridge = AiLlmBridge(provider_store, conversation_store=conversation_store)
+    editor_bridge.set_editor_agent_scope(
+        EditorAgentScope.node_field(
+            graph_id="graph-1",
+            node_id="script-1",
+            field_name="code",
+        )
+    )
+
+    record = sidebar_bridge.create_conversation("graph")
+    conversation_id = str(record["conversationId"])
+
+    assert editor_bridge.default_conversation_scope() == "graph"
+    assert editor_bridge.default_conversation_id() == conversation_id
+
+    editor_bridge.set_active_conversation(conversation_id)
+    request = editor_bridge._agent_request(request_id="rid-editor-chat", mode="chat")
+
+    assert request.session_key is not None
+    assert request.session_key.scope == "sidebar"
+    assert request.session_key.conversation_id == conversation_id
+    assert request.agent_surface == "node_editor"
+
+    second_record = sidebar_bridge.create_conversation("graph")
+    second_conversation_id = str(second_record["conversationId"])
+    second_request = editor_bridge._agent_request(request_id="rid-editor-chat-2", mode="chat")
+
+    assert second_request.session_key is not None
+    assert second_request.session_key.scope == "sidebar"
+    assert second_request.session_key.conversation_id == second_conversation_id
+
+
+def test_chat_request_uses_active_editor_document_context_provider(tmp_path: Path) -> None:
+    store_path = tmp_path / "ai_providers.json"
+    with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+        store = AiProviderStore()
+
+    store.save_provider(
+        ProviderConfig(
+            provider_id="openai",
+            display_name="OpenAI",
+            inference_service="openai_chat_completion",
+            endpoint="https://example.test/v1",
+            chat_model_id="gpt-4.1",
+            cached_models=[ModelInfo(model_id="gpt-4.1", display_name="GPT-4.1")],
+        ),
+        emit=False,
+    )
+    store.save_active_providers("openai", "openai")
+    bridge = AiLlmBridge(store, conversation_store=StudioConversationStore(storage_path=tmp_path / "conversations.json"))
+    captured_requests: list[StudioAgentRequest] = []
+
+    def _live_document_context() -> EditorDocumentContext:
+        return EditorDocumentContext(
+            code="print('live from editor')\n",
+            selection="'live from editor'",
+            language="python",
+        )
+
+    def _capture_start(request: StudioAgentRequest, *, on_chunk, on_done) -> None:
+        captured_requests.append(request)
+
+    bridge.set_editor_agent_scope(
+        EditorAgentScope.node_field(
+            graph_id="graph-live",
+            node_id="script-1",
+            field_name="code",
+        )
+    )
+    bridge.set_editor_document_context_provider(_live_document_context)
+    with patch.object(bridge, "_start_stream_request", _capture_start):
+        bridge.request_chat(
+            "rid-live-editor",
+            json.dumps([{"role": "user", "content": "explain current selection"}]),
+            "",
+            "",
+            "",
+        )
+
+    assert len(captured_requests) == 1
+    request = captured_requests[0]
+    assert request.code == "print('live from editor')\n"
+    assert request.selection == "'live from editor'"
+    assert request.document_language == "python"
+    assert request.agent_surface == "node_editor"
+    assert request.session_key is not None
+    assert request.session_key.scope == "sidebar"
 
 
 def test_bridge_publishes_tool_trace_and_resolves_approval(tmp_path: Path) -> None:

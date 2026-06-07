@@ -7,6 +7,7 @@ from qtpy import QtWidgets
 
 from ...agents.codeact import StudioAgentSkillStatus
 from ...agents.graph_context import GraphContextSnapshot
+from ...editor_assist.agent_context import EditorAgentContext
 from ..support.ai_context_controls import set_status_label_text
 
 logger = logging.getLogger(__name__)
@@ -17,7 +18,10 @@ class _AiAssistSidebarToolbarHost(Protocol):
     _current_selected_snapshot_preview: GraphContextSnapshot | None
     _graph_tool_count: int
     _graph_tool_names: tuple[str, ...]
+    _active_tool_count: int
+    _active_tool_names: tuple[str, ...]
     _graph_skill_statuses: tuple[StudioAgentSkillStatus, ...]
+    _active_editor_context: EditorAgentContext | None
     _selected_node_label: QtWidgets.QLabel
     _tools_button: QtWidgets.QToolButton
     _tools_menu: QtWidgets.QMenu
@@ -30,8 +34,12 @@ class AiAssistSidebarToolbarMixin:
         host = cast(_AiAssistSidebarToolbarHost, self)
         selection_mode = host._selection_mode
         selected_snapshot = host._current_selected_snapshot_preview
+        editor_context = host._active_editor_context
 
-        if selection_mode == "active" and selected_snapshot is not None:
+        if editor_context is not None:
+            selected_text = f"Edit: {editor_context.display_label()}"
+            selected_tooltip = editor_context.tooltip_text()
+        elif selection_mode == "active" and selected_snapshot is not None:
             selected_text = f"Sel: {selected_snapshot.selection_label}"
             selected_tooltip = (
                 f"Selected nodes: {selected_snapshot.total_selected_count}\n"
@@ -44,12 +52,17 @@ class AiAssistSidebarToolbarMixin:
         set_status_label_text(host._selected_node_label, selected_text, max_width=host._selected_node_label.maximumWidth())
         host._selected_node_label.setToolTip(selected_tooltip)
 
-        tool_count = int(host._graph_tool_count)
+        tool_count = int(host._active_tool_count)
         if tool_count > 0:
             host._tools_button.setText(f"Tools: {tool_count}")
-            host._tools_button.setToolTip(
-                "PyStudio graph, library, runtime, monitor, and log tools are available to the chat agent."
-            )
+            if editor_context is not None:
+                host._tools_button.setToolTip(
+                    "PyStudio editor inspection and preview tools are available to the chat agent."
+                )
+            else:
+                host._tools_button.setToolTip(
+                    "PyStudio graph, library, runtime, monitor, and log tools are available to the chat agent."
+                )
         else:
             host._tools_button.setText("Tools: off")
             host._tools_button.setToolTip("Graph tools are not available because no Studio graph was attached to this sidebar.")
@@ -68,8 +81,8 @@ class AiAssistSidebarToolbarMixin:
         menu = host._tools_menu
         menu.clear()
 
-        if host._graph_tool_names:
-            for tool_name in host._graph_tool_names:
+        if host._active_tool_names:
+            for tool_name in host._active_tool_names:
                 action = menu.addAction(str(tool_name))
                 action.setEnabled(False)
         else:

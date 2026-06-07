@@ -14,6 +14,7 @@ from ...nodegraph.edge_rules import EDGE_KIND_DATA, EDGE_KIND_EXEC, EDGE_KIND_ST
 from ...ui.support.qt_lifecycle import qt_runtime_error_is_object_deleted
 from ...ui.support.studio_theme import label_qss, studio_dark_theme
 from ...ui.support.ui_icons import StudioIcon, icon_for
+from ...editor_assist.agent_context import EditorAgentContext
 from ..support.service_inventory import collect_declared_services
 from ..widgets.layers_panel import LayersPanelWidget
 from ..widgets.node_property_panel import F8StudioSingleNodePropertiesWidget
@@ -290,6 +291,17 @@ class MainWindowUiMixin:
         )
         self._ai_assist_sidebar = sidebar
         self._replace_dock_widget(self._ai_assist_dock, sidebar)
+
+    def open_ai_assist_for_editor(self, context: EditorAgentContext) -> None:
+        self._ensure_ai_assist_sidebar()
+        sidebar = self._ai_assist_sidebar
+        if sidebar is None:
+            return
+        sidebar.activate_editor_context(context)
+        self._ai_assist_dock.show()
+        self._ai_assist_dock.raise_()
+        self._ai_assist_dock.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+        sidebar.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
 
     def _require_asset_cloud_sync_client(self) -> VariantSyncClient:
         sync_client = self._asset_cloud_sync_client

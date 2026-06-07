@@ -11,6 +11,9 @@ from qtpy import QtCore, QtWidgets
 
 from f8pysdk.specs import F8OperatorSpec
 
+from f8pystudio.agents.graph_context import GraphContextSnapshot
+from f8pystudio.editor_assist.agent_context import EditorAgentContext, EditorDocumentContext
+from f8pystudio.editor_assist.agent_scope import EditorAgentScope
 from f8pystudio.ui.mainwin.ai_assist_sidebar import AiAssistSidebarWidget
 from f8pystudio.ui.support.ai_assist_page import build_ai_assist_html
 from f8pystudio.ui.support import webengine_utils
@@ -320,6 +323,63 @@ def test_sidebar_supports_multi_select_ui_context(monkeypatch) -> None:
         "primaryNodeId": "node-b",
         "primaryNodeSource": "propertyPanel",
     }
+
+
+def test_sidebar_activates_editor_context_without_replacing_visible_session(monkeypatch) -> None:
+    widget, _graph = _make_sidebar(monkeypatch)
+
+    context = EditorAgentContext(
+        title="Script Node - code",
+        language="python",
+        assist_context=None,
+        assist_context_provider=None,
+        agent_scope=EditorAgentScope.node_field(
+            graph_id="graph:sidebar",
+            node_id="script-1",
+            field_name="code",
+        ),
+        document_context_provider=lambda: EditorDocumentContext(
+            code="print('sidebar')\n",
+            selection="'sidebar'",
+            language="python",
+        ),
+        graph_context_snapshot_provider=lambda: GraphContextSnapshot(
+            selection_label="Script Node",
+            selected_node_ids=("script-1",),
+            total_selected_count=1,
+            total_one_hop_count=2,
+            total_connection_count=2,
+        ),
+        agent_tools=(lambda: {"unused": True},),
+    )
+
+    widget.activate_editor_context(context)
+    request = widget._ai_bridge._agent_request(request_id="rid-editor-sidebar", mode="chat")
+
+    assert widget._selected_node_label.text().startswith("Edit:")
+    assert "Script Node - code" in widget._selected_node_label.toolTip()
+    assert widget.graph_ui_context() == {
+        "graphRevision": 7,
+        "selectedNodeIds": ["script-1"],
+        "selectionLabel": "Script Node - code",
+        "selectionCount": 1,
+        "propertyPanelNodeId": "script-1",
+        "primaryNodeId": "script-1",
+        "primaryNodeSource": "nodeEditor",
+    }
+    assert request.session_key is not None
+    assert request.session_key.scope == "sidebar"
+    assert request.agent_surface == "node_editor"
+    assert request.tools == widget._graph_tools.available_node_editor_tools()
+    assert "graph_apply_patch" not in widget._active_tool_names
+    assert "runtime_deploy" not in widget._active_tool_names
+
+    widget.clear_editor_context()
+    restored_request = widget._ai_bridge._agent_request(request_id="rid-graph-sidebar", mode="chat")
+
+    assert widget._selected_node_label.text() == "Sel: none"
+    assert restored_request.agent_surface == "graph"
+    assert restored_request.tools == widget._graph_tools.available_tools()
 
 
 def test_ai_assist_html_includes_tool_trace_and_approval_handlers() -> None:

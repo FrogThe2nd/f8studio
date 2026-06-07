@@ -135,6 +135,8 @@ def build_system_prompt(
     assist_context: EditorAssistContext | None,
     graph_context_snapshot: GraphContextSnapshot | None,
     graph_tools_enabled: bool = False,
+    graph_tool_names: tuple[str, ...] = (),
+    agent_surface: str = "graph",
 ) -> str:
     language = current_document_language(document_language=document_language, assist_context=assist_context)
     language_guidance = ""
@@ -160,32 +162,59 @@ def build_system_prompt(
     if graph_block:
         blocks.append(graph_block)
     if graph_tools_enabled:
-        blocks.append(
-            "\n".join(
-                [
-                    "## PyStudio Graph Tools",
-                    "- You already have graph tools available in this chat session; do not ask the user to manually expose MCP tools.",
-                    "- Available inspection tools: `studio_status`, `graph_ui_context`, `graph_snapshot`, `graph_find_nodes`, `graph_node_detail`, `graph_connections`, `graph_diagnostics`, `node_catalog`, `service_library`, `operator_library`, `operator_detail`, `graph_session`, `graph_compile`, `runtime_services`, `runtime_service_status`, `runtime_read_state`, `runtime_watch_state`, `monitor_report`, `monitor_service`, `logs_read`.",
-                    "- Available action tools: `graph_preview_patch`, `graph_apply_patch`, `graph_build_from_goal`, `graph_match_library`, `graph_preview_build_plan`, `graph_apply_build_plan`, `graph_debug_service`, `graph_auto_layout`, `graph_fix_container_bindings`, `runtime_deploy`, `runtime_service_deploy`, `runtime_set_service_active`, `runtime_set_managed_active`, `runtime_service_process`, `runtime_write_state`, `runtime_sample_port`, `runtime_invoke_command`.",
-                    "- Use `graph_diagnostics` first when debugging graph structure, compile failures, or container/service binding issues.",
-                    "- Use `graph_ui_context` first when the user says current node, selected nodes, this node, or the node shown in properties.",
-                    "- Use `graph_find_nodes` and `graph_node_detail` to choose relevant nodes yourself; do not require the user to manually add graph context before you inspect the graph.",
-                    "- Use `graph_snapshot` for current nodes/edges/selection and `graph_connections` for wiring around a node.",
-                    "- Use `node_catalog` for valid canvas node types and ports.",
-                    "- Use `service_library`, `operator_library`, and `operator_detail` to choose valid node/service/operator schemas before constructing patches.",
-                    "- For graph construction from a user goal, use `graph_build_from_goal` or `graph_match_library` to gather candidates, inspect exact schemas, create a typed GraphBuildPlan, call `graph_preview_build_plan`, then call `graph_apply_build_plan` only after approval or a clear user build instruction.",
-                    "- Do not rely on hardcoded goal workflows; choose nodes from the live catalog/library and construct the typed plan from the user's intent.",
-                    "- Use `graph_debug_service` for a bundled diagnostics/compile/monitor/log pass around one service.",
-                    "- Use `graph_fix_container_bindings` when diagnostics report operators outside a service container or bound to a missing/mismatched service.",
-                    "- Use `graph_auto_layout` to preview or apply a tidy node layout after creating or repairing graph structure.",
-                    "- Use `runtime_services`, `monitor_service`, `runtime_read_state`, `runtime_watch_state`, `runtime_sample_port`, and `logs_read` when debugging a running graph.",
-                    "- Use `graph_preview_patch` before applying a non-trivial graph edit, then use `graph_apply_patch` when the user asks you to make the graph change.",
-                    "- Destructive or runtime-affecting actions may show a GUI approval card; preview first, then request/apply only when the user's instruction is clear.",
-                    "- GraphPatch operations use camelCase fields: `expectedRevision`, `ops`, `op`, `nodeType`, `nodeId`, `fromNodeId`, `fromPort`, `toNodeId`, and `toPort`.",
-                ]
-            )
-        )
+        blocks.append(_graph_tool_guidance(agent_surface=agent_surface, tool_names=graph_tool_names))
     return "\n\n".join(blocks)
+
+
+def _graph_tool_guidance(*, agent_surface: str, tool_names: tuple[str, ...]) -> str:
+    normalized_surface = str(agent_surface or "graph").strip().lower()
+    resolved_tool_names = tuple(str(name or "").strip() for name in tool_names if str(name or "").strip())
+    available_line = _available_tool_names_line(resolved_tool_names)
+    if normalized_surface == "node_editor":
+        return "\n".join(
+            [
+                "## PyStudio Node Editor Agent",
+                "- You are assisting with one editable field on a node inside a larger PyStudio graph.",
+                "- Use graph tools to inspect the focused node, upstream inputs, downstream consumers, schemas, compile diagnostics, runtime samples, monitor data, and logs when that evidence matters.",
+                "- The editor may provide a focused snapshot, but it is not the whole graph. Use `graph_ui_context`, `graph_node_detail`, and `graph_connections` instead of asking the user to describe wiring manually.",
+                "- Keep generated code explicit, type-safe, and refactor-friendly. Avoid `getattr`, `setattr`, `hasattr`, `__dict__` mutation, and string-dispatched methods unless the schema is truly dynamic.",
+                "- Avoid silent broad exception handling. Catch narrow exceptions, log/report actionable context at UI/runtime boundaries, and let core logic fail clearly.",
+                "- High-frequency runtime telemetry such as latency, FPS, frame counters, and per-frame output counts belongs on monitor/data channels, not service state fields.",
+                "- This editor profile is inspection and preview oriented. Do not claim you can directly apply graph patches, deploy services, write remote state, or invoke runtime commands unless those tools are explicitly available.",
+                "- For non-trivial graph edits, prepare or preview a typed plan/patch and explain the change; leave final graph mutation to the graph-level agent workflow or an explicit approved action.",
+                "- For edit mode, return only the complete rewritten document, with no explanation or markdown fences.",
+                available_line,
+            ]
+        )
+    return "\n".join(
+        [
+            "## PyStudio Graph Tools",
+            "- You already have graph tools available in this chat session; do not ask the user to manually expose MCP tools.",
+            available_line,
+            "- Use `graph_diagnostics` first when debugging graph structure, compile failures, or container/service binding issues.",
+            "- Use `graph_ui_context` first when the user says current node, selected nodes, this node, or the node shown in properties.",
+            "- Use `graph_find_nodes` and `graph_node_detail` to choose relevant nodes yourself; do not require the user to manually add graph context before you inspect the graph.",
+            "- Use `graph_snapshot` for current nodes/edges/selection and `graph_connections` for wiring around a node.",
+            "- Use `node_catalog` for valid canvas node types and ports.",
+            "- Use `service_library`, `operator_library`, and `operator_detail` to choose valid node/service/operator schemas before constructing patches.",
+            "- For graph construction from a user goal, use `graph_build_from_goal` or `graph_match_library` to gather candidates, inspect exact schemas, create a typed GraphBuildPlan, call `graph_preview_build_plan`, then call `graph_apply_build_plan` only after approval or a clear user build instruction.",
+            "- Do not rely on hardcoded goal workflows; choose nodes from the live catalog/library and construct the typed plan from the user's intent.",
+            "- Use `graph_debug_service` for a bundled diagnostics/compile/monitor/log pass around one service.",
+            "- Use `graph_fix_container_bindings` when diagnostics report operators outside a service container or bound to a missing/mismatched service.",
+            "- Use `graph_auto_layout` to preview or apply a tidy node layout after creating or repairing graph structure.",
+            "- Use `runtime_services`, `monitor_service`, `runtime_read_state`, `runtime_watch_state`, `runtime_sample_port`, and `logs_read` when debugging a running graph.",
+            "- Use `graph_preview_patch` before applying a non-trivial graph edit, then use `graph_apply_patch` when the user asks you to make the graph change.",
+            "- Destructive or runtime-affecting actions may show a GUI approval card; preview first, then request/apply only when the user's instruction is clear.",
+            "- GraphPatch operations use camelCase fields: `expectedRevision`, `ops`, `op`, `nodeType`, `nodeId`, `fromNodeId`, `fromPort`, `toNodeId`, and `toPort`.",
+        ]
+    )
+
+
+def _available_tool_names_line(tool_names: tuple[str, ...]) -> str:
+    if not tool_names:
+        return "- Available tools are provided by the current PyStudio surface."
+    names = ", ".join(f"`{name}`" for name in tool_names)
+    return f"- Available tools in this surface: {names}."
 
 
 def build_chat_messages(

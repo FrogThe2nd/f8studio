@@ -9,15 +9,20 @@ from typing import Any, Callable
 
 from qtpy import QtCore
 
+from ..agents.conversations import StudioConversationStore, shared_conversation_store
 from ..agents.qt_bridge import AiLlmBridge
+from ..agents.graph_context import GraphContextSnapshot
 from ..agents.store import AiProviderStore
 from ..ui.support.ai_assist_state import QtAiPanelStateStore
 from ..ui.support.editor_assist_bridge import PythonEditorAssistBridge
+from .agent_context import EditorAgentContext, EditorDocumentContext
+from .agent_scope import EditorAgentScope
 from .workspace import EditorAssistContext
 
 logger = logging.getLogger(__name__)
 
 _SHARED_AI_STORE: AiProviderStore | None = None
+_SHARED_CONVERSATION_STORE: StudioConversationStore | None = None
 # Editor assist callbacks cross UI, Qt signal, and user-supplied save/context
 # providers. Keep the editor responsive, but make every boundary explicit.
 _EDITOR_ASSIST_CALLBACK_ERRORS = (Exception,)
@@ -29,6 +34,13 @@ def shared_ai_store() -> AiProviderStore:
     if _SHARED_AI_STORE is None:
         _SHARED_AI_STORE = AiProviderStore()
     return _SHARED_AI_STORE
+
+
+def shared_ai_conversation_store() -> StudioConversationStore:
+    global _SHARED_CONVERSATION_STORE
+    if _SHARED_CONVERSATION_STORE is None:
+        _SHARED_CONVERSATION_STORE = shared_conversation_store()
+    return _SHARED_CONVERSATION_STORE
 
 
 def assist_context_requires_python(context: EditorAssistContext | None) -> bool:
@@ -196,6 +208,12 @@ class EditorSessionState:
     target_exists_provider: Callable[[], bool] | None = None
     assist_context: EditorAssistContext | None = None
     assist_context_provider: Callable[[], EditorAssistContext | None] | None = None
+    agent_scope: EditorAgentScope | None = None
+    agent_tools: tuple[Any, ...] = ()
+    agent_context_providers: tuple[Any, ...] = ()
+    graph_context_snapshot_provider: Callable[[], GraphContextSnapshot | None] | None = None
+    retained_agent_dependencies: tuple[Any, ...] = ()
+    agent_sidebar_launcher: Callable[[EditorAgentContext], None] | None = None
 
 
 class EditorAssistContextController(QtCore.QObject):
@@ -311,6 +329,12 @@ class EditorSessionController(QtCore.QObject):
         target_exists_provider: Callable[[], bool] | None = None,
         assist_context: EditorAssistContext | None = None,
         assist_context_provider: Callable[[], EditorAssistContext | None] | None = None,
+        agent_scope: EditorAgentScope | None = None,
+        agent_tools: tuple[Any, ...] = (),
+        agent_context_providers: tuple[Any, ...] = (),
+        graph_context_snapshot_provider: Callable[[], GraphContextSnapshot | None] | None = None,
+        retained_agent_dependencies: tuple[Any, ...] = (),
+        agent_sidebar_launcher: Callable[[EditorAgentContext], None] | None = None,
         close_on_save: bool = True,
         parent: QtCore.QObject | None = None,
     ) -> None:
@@ -332,11 +356,26 @@ class EditorSessionController(QtCore.QObject):
             target_exists_provider=target_exists_provider,
             assist_context=resolved_context,
             assist_context_provider=assist_context_provider,
+            agent_scope=agent_scope,
+            agent_tools=tuple(agent_tools),
+            agent_context_providers=tuple(agent_context_providers),
+            graph_context_snapshot_provider=graph_context_snapshot_provider,
+            retained_agent_dependencies=tuple(retained_agent_dependencies),
+            agent_sidebar_launcher=agent_sidebar_launcher,
         )
         self._ai_store = shared_ai_store()
-        self._ai_bridge = AiLlmBridge(self._ai_store, state_store=QtAiPanelStateStore(), parent=self)
+        self._ai_bridge = AiLlmBridge(
+            self._ai_store,
+            state_store=QtAiPanelStateStore(),
+            conversation_store=shared_ai_conversation_store(),
+            parent=self,
+        )
         self._ai_bridge.set_document_language(self._state.language)
         self._ai_bridge.set_assist_context(self._state.assist_context)
+        self._ai_bridge.set_editor_agent_scope(self._state.agent_scope)
+        self._ai_bridge.set_agent_tools(self._state.agent_tools)
+        self._ai_bridge.set_agent_codeact_context_providers(self._state.agent_context_providers)
+        self._ai_bridge.set_graph_context_snapshot_provider(self._state.graph_context_snapshot_provider)
         self._assist_bridge: PythonEditorAssistBridge | None = None
         if effective_language.lower() == "python" and assist_context_requires_python(self._state.assist_context):
             self._assist_bridge = PythonEditorAssistBridge(
@@ -389,6 +428,12 @@ class EditorSessionController(QtCore.QObject):
     def assist_context_provider(self) -> Callable[[], EditorAssistContext | None] | None:
         return self._state.assist_context_provider
 
+    def agent_sidebar_launcher(self) -> Callable[[EditorAgentContext], None] | None:
+        return self._state.agent_sidebar_launcher
+
+    def set_agent_sidebar_launcher(self, launcher: Callable[[EditorAgentContext], None] | None) -> None:
+        self._state = replace(self._state, agent_sidebar_launcher=launcher)
+
     def set_save_handler(self, save_handler: Callable[[str], bool | None] | None) -> None:
         self._state = replace(self._state, save_handler=save_handler)
 
@@ -435,6 +480,29 @@ class EditorSessionController(QtCore.QObject):
 
     def request_close(self) -> None:
         self.close_requested.emit()
+
+    def launch_agent_sidebar(self, document_context_provider: Callable[[], EditorDocumentContext]) -> bool:
+        launcher = self._state.agent_sidebar_launcher
+        if launcher is None:
+            return False
+        context = EditorAgentContext(
+            title=self._state.title,
+            language=self._state.language,
+            assist_context=self._state.assist_context,
+            assist_context_provider=self._state.assist_context_provider,
+            agent_scope=self._state.agent_scope,
+            document_context_provider=document_context_provider,
+            graph_context_snapshot_provider=self._state.graph_context_snapshot_provider,
+            agent_tools=self._state.agent_tools,
+            agent_context_providers=self._state.agent_context_providers,
+            retained_agent_dependencies=self._state.retained_agent_dependencies,
+        )
+        try:
+            launcher(context)
+        except _EDITOR_ASSIST_CALLBACK_ERRORS as exc:
+            logger.exception("Editor agent sidebar launcher failed", exc_info=exc)
+            return False
+        return True
 
     def shutdown(self) -> None:
         self._context_controller.stop()

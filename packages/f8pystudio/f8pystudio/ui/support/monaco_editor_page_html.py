@@ -8,6 +8,10 @@ from typing import Callable
 
 from qtpy import QtWidgets
 
+from ...agents.graph_context import GraphContextSnapshot
+from ...editor_assist.agent_context import EditorAgentContext
+from ...editor_assist.agent_scope import EditorAgentScope
+from ...editor_assist.session import EditorSessionKey
 from ...editor_assist.workspace import EditorAssistContext
 
 __all__ = [
@@ -24,6 +28,7 @@ class MonacoEditorPageConfig:
     language: str
     monaco_base_url: str
     python_assist_enabled: bool = False
+    shared_agent_sidebar_enabled: bool = False
     theme: str = "vs-dark"
     prism_asset_html: str = ""
 
@@ -37,6 +42,7 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
         "language": str(config.language or "plaintext").strip() or "plaintext",
         "theme": str(config.theme or "vs-dark").strip() or "vs-dark",
         "pythonAssistEnabled": bool(config.python_assist_enabled),
+        "sharedAgentSidebarEnabled": bool(config.shared_agent_sidebar_enabled),
     }
     initial_json = json.dumps(initial, ensure_ascii=False)
     html = f"""
@@ -128,6 +134,17 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
         try {{
           if (!window._f8_editor) return "";
           return window._f8_editor.getValue();
+        }} catch (e) {{
+          return "";
+        }}
+      }};
+      window._f8_getSelection = function() {{
+        try {{
+          if (!window._f8_editor) return "";
+          const model = window._f8_editor.getModel();
+          const selection = window._f8_editor.getSelection();
+          if (!model || !selection) return "";
+          return model.getValueInRange(selection) || "";
         }} catch (e) {{
           return "";
         }}
@@ -866,6 +883,33 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
         flex-shrink: 0;
       }}
       .f8-new-chat:hover {{ background: #45475a; color: #cdd6f4; }}
+      #f8-ai-conversation-select {{
+        min-width: 0;
+        max-width: 128px;
+        height: 28px;
+        background: #1e1e2e;
+        color: #cdd6f4;
+        border: 1px solid #45475a;
+        border-radius: 4px;
+        font-size: 11px;
+        padding: 0 6px;
+        outline: none;
+      }}
+      #f8-ai-conversation-select:hover {{
+        border-color: #585b70;
+      }}
+      #f8-ai-delete-conversation {{
+        background: transparent;
+        border: none;
+        border-radius: 4px;
+        color: #a6adc8;
+        width: 28px; height: 28px;
+        cursor: pointer;
+        transition: all 0.1s;
+        display: flex; align-items: center; justify-content: center;
+        flex-shrink: 0;
+      }}
+      #f8-ai-delete-conversation:hover {{ background: #45475a; color: #f38ba8; }}
       #f8-ai-messages {{
         flex: 1;
         overflow-y: auto;
@@ -993,7 +1037,7 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
       #f8-ai-stop:active {{ transform: scale(0.95); }}
       #f8-ai-stop.visible {{ display: flex; }}
       
-      #f8-ai-attach-btn svg, .f8-new-chat svg {{ width: 18px; height: 18px; stroke-width: 1.5; }}
+      #f8-ai-attach-btn svg, .f8-new-chat svg, #f8-ai-delete-conversation svg {{ width: 18px; height: 18px; stroke-width: 1.5; }}
       #f8-ai-send:hover {{ background: #d0bcff; }}
       #f8-ai-thinking {{
         display: none;
@@ -1138,6 +1182,14 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
       window._f8_attachments = [];
       window._f8_currentRid = null;
       window._f8_aiSignalsConnected = false;
+      window._f8_conversations = [];
+      window._f8_currentConversationId = '';
+      window._f8_conversationScope = 'graph';
+      window._f8_defaultConversationId = '';
+      window._f8_loadingConversation = false;
+      window._f8_forceEmbeddedAiPanel = false;
+      window._f8_embeddedAiPanelInitialized = false;
+      window._f8_embeddedConversationsInitialized = false;
       const F8_AI_PANEL_MIN_WIDTH = 240;
       const F8_AI_PANEL_DEFAULT_WIDTH = 320;
       const F8_AI_PANEL_MAX_WIDTH = 800;
@@ -1263,6 +1315,176 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
         }} catch (err) {{ return false; }}
       }}
 
+      function _f8_useSharedAgentSidebar() {{
+        const init = window.__F8_INITIAL__ || {{}};
+        return Boolean(init.sharedAgentSidebarEnabled) && !Boolean(window._f8_forceEmbeddedAiPanel);
+      }}
+
+      function _f8_callBridge(method, args, callback) {{
+        if (!method) return undefined;
+        const params = Array.isArray(args) ? args.slice() : [];
+        if (callback) params.push(callback);
+        const result = method.apply(window._f8_aiAssist, params);
+        if (callback && result !== undefined) callback(result);
+        return result;
+      }}
+
+      function _f8_cloneAttachments(attachments) {{
+        if (!Array.isArray(attachments)) return [];
+        return attachments.map(function(item) {{
+          return {{
+            name: String(item && item.name ? item.name : ''),
+            content: String(item && item.content ? item.content : ''),
+            mime: String(item && item.mime ? item.mime : 'image/png')
+          }};
+        }});
+      }}
+
+      function _f8_persistableMessages() {{
+        return window._f8_chatMessages.map(function(message) {{
+          const out = {{
+            role: String(message.role || ''),
+            content: String(message.content || ''),
+            createdAtMs: Number(message.createdAtMs || 0)
+          }};
+          if (Array.isArray(message.attachments) && message.attachments.length > 0) {{
+            out.attachments = _f8_cloneAttachments(message.attachments);
+          }}
+          return out;
+        }});
+      }}
+
+      function _f8_saveConversation(afterSave) {{
+        if (!window._f8_aiAssist || !window._f8_aiAssist.save_conversation_messages) {{
+          if (afterSave) afterSave(null);
+          return;
+        }}
+        if (window._f8_loadingConversation) {{
+          if (afterSave) afterSave(null);
+          return;
+        }}
+        _f8_callBridge(window._f8_aiAssist.save_conversation_messages, [
+          window._f8_currentConversationId || window._f8_defaultConversationId || '',
+          window._f8_conversationScope || 'graph',
+          JSON.stringify(_f8_persistableMessages())
+        ], function(saved) {{
+          if (saved && saved.conversationId) {{
+            window._f8_currentConversationId = String(saved.conversationId || '');
+            _f8_refreshConversationList(window._f8_currentConversationId);
+          }}
+          if (afterSave) afterSave(saved || null);
+        }});
+      }}
+
+      function _f8_renderConversationList(selectedId) {{
+        const select = document.getElementById('f8-ai-conversation-select');
+        if (!select) return;
+        select.innerHTML = '';
+        window._f8_conversations.forEach(function(item) {{
+          const option = document.createElement('option');
+          option.value = String(item.conversationId || '');
+          option.textContent = String(item.title || 'New conversation');
+          select.appendChild(option);
+        }});
+        if (selectedId) select.value = selectedId;
+      }}
+
+      function _f8_refreshConversationList(selectedId) {{
+        if (!window._f8_aiAssist || !window._f8_aiAssist.list_conversations) return;
+        _f8_callBridge(window._f8_aiAssist.list_conversations, [window._f8_conversationScope || 'graph'], function(rows) {{
+          window._f8_conversations = Array.isArray(rows) ? rows : [];
+          _f8_renderConversationList(selectedId || window._f8_currentConversationId);
+        }});
+      }}
+
+      function _f8_loadConversation(conversationId) {{
+        if (!window._f8_aiAssist || !window._f8_aiAssist.load_conversation) return;
+        _f8_callBridge(window._f8_aiAssist.load_conversation, [String(conversationId || '')], function(record) {{
+          if (!record || !record.conversationId) return;
+          window._f8_loadingConversation = true;
+          try {{
+            window._f8_currentConversationId = String(record.conversationId || '');
+            if (window._f8_aiAssist.set_active_conversation) {{
+              window._f8_aiAssist.set_active_conversation(window._f8_currentConversationId);
+            }}
+            window._f8_chatMessages = Array.isArray(record.messages) ? record.messages.map(function(message) {{
+              return {{
+                role: String(message.role || ''),
+                content: String(message.content || ''),
+                attachments: Array.isArray(message.attachments) ? _f8_cloneAttachments(message.attachments) : [],
+                createdAtMs: Number(message.createdAtMs || 0)
+              }};
+            }}) : [];
+            const msgs = document.getElementById('f8-ai-messages');
+            if (msgs) msgs.innerHTML = '';
+            if (window._f8_chatMessages.length === 0) {{
+              _f8_appendMessage('assistant', 'How can I help?');
+            }} else {{
+              window._f8_chatMessages.forEach(function(message) {{
+                _f8_appendMessage(message.role === 'assistant' ? 'assistant' : 'user', message.content || '');
+              }});
+            }}
+            if (window._f8_aiAssist.update_chat_context) {{
+              window._f8_aiAssist.update_chat_context(JSON.stringify(window._f8_chatMessages));
+            }}
+            _f8_renderConversationList(window._f8_currentConversationId);
+          }} finally {{
+            window._f8_loadingConversation = false;
+          }}
+        }});
+      }}
+
+      function _f8_initializeConversations() {{
+        window._f8_embeddedConversationsInitialized = true;
+        if (!window._f8_aiAssist) {{
+          _f8_newConversation();
+          return;
+        }}
+        const loadRows = function() {{
+          _f8_loadConversationRows();
+        }};
+        const loadDefaultId = function() {{
+          if (window._f8_aiAssist.default_conversation_id) {{
+            _f8_callBridge(window._f8_aiAssist.default_conversation_id, [], function(defaultId) {{
+              window._f8_defaultConversationId = String(defaultId || '');
+              loadRows();
+            }});
+          }} else {{
+            loadRows();
+          }}
+        }};
+        if (window._f8_aiAssist.default_conversation_scope) {{
+          _f8_callBridge(window._f8_aiAssist.default_conversation_scope, [], function(scope) {{
+            window._f8_conversationScope = String(scope || 'graph');
+            loadDefaultId();
+          }});
+        }} else {{
+          loadDefaultId();
+        }}
+      }}
+
+      function _f8_loadConversationRows() {{
+        if (!window._f8_aiAssist.list_conversations) {{
+          _f8_newConversation();
+          return;
+        }}
+        _f8_callBridge(window._f8_aiAssist.list_conversations, [window._f8_conversationScope || 'graph'], function(rows) {{
+          window._f8_conversations = Array.isArray(rows) ? rows : [];
+          _f8_renderConversationList('');
+          const defaultId = String(window._f8_defaultConversationId || '');
+          const defaultRecord = window._f8_conversations.find(function(item) {{
+            return String(item.conversationId || '') === defaultId;
+          }});
+          if (defaultRecord) {{
+            _f8_loadConversation(defaultRecord.conversationId);
+          }} else if (window._f8_conversations.length > 0) {{
+            _f8_loadConversation(window._f8_conversations[0].conversationId);
+          }} else {{
+            _f8_newConversation();
+          }}
+        }});
+      }}
+
       function _f8_setupAiPanel() {{
         const panel = document.getElementById('f8-ai-panel');
         const toggle = document.getElementById('f8-ai-toggle');
@@ -1276,6 +1498,13 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
         const attachments = document.getElementById('f8-ai-attachments');
 
         if (!panel || !toggle) return;
+        if (_f8_useSharedAgentSidebar()) {{
+          panel.style.display = 'none';
+          toggle.style.display = 'none';
+          return;
+        }}
+        if (window._f8_embeddedAiPanelInitialized) return;
+        window._f8_embeddedAiPanelInitialized = true;
 
         // Restore saved states
         let savedOpen = false;
@@ -1379,6 +1608,14 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
         
         const newChatBtn = document.querySelector('.f8-new-chat');
         if (newChatBtn) newChatBtn.addEventListener('click', _f8_newConversation);
+        const deleteChatBtn = document.getElementById('f8-ai-delete-conversation');
+        if (deleteChatBtn) deleteChatBtn.addEventListener('click', _f8_deleteConversation);
+        const conversationSelect = document.getElementById('f8-ai-conversation-select');
+        if (conversationSelect) {{
+          conversationSelect.addEventListener('change', function() {{
+            if (conversationSelect.value) _f8_loadConversation(conversationSelect.value);
+          }});
+        }}
 
         _f8_setupAiResizer();
       }}
@@ -1429,14 +1666,43 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
       }}
 
       function _f8_newConversation() {{
-        const msgs = document.getElementById('f8-ai-messages');
-        if (msgs) msgs.innerHTML = '';
-        window._f8_chatMessages = [];
-        if (window._f8_aiAssist && window._f8_aiAssist.reset_chat_history) {{
-          window._f8_aiAssist.reset_chat_history();
+        const applyRecord = function(record) {{
+          window._f8_currentConversationId = record && record.conversationId ? String(record.conversationId || '') : '';
+          if (window._f8_aiAssist && window._f8_aiAssist.set_active_conversation) {{
+            window._f8_aiAssist.set_active_conversation(window._f8_currentConversationId);
+          }}
+          window._f8_chatMessages = [];
+          if (window._f8_aiAssist && window._f8_aiAssist.reset_chat_history) {{
+            window._f8_aiAssist.reset_chat_history();
+          }}
+          if (window._f8_aiAssist && window._f8_aiAssist.update_chat_context) {{
+            window._f8_aiAssist.update_chat_context('[]');
+          }}
+          const msgs = document.getElementById('f8-ai-messages');
+          if (msgs) msgs.innerHTML = '';
+          _f8_appendMessage('assistant', 'How can I help?');
+          _f8_clearAttachments();
+          _f8_refreshConversationList(window._f8_currentConversationId);
+        }};
+        if (window._f8_aiAssist && window._f8_aiAssist.create_conversation) {{
+          _f8_callBridge(window._f8_aiAssist.create_conversation, [window._f8_conversationScope || 'graph'], applyRecord);
+        }} else {{
+          applyRecord(null);
         }}
-        _f8_appendMessage('assistant', 'Chat reset. Context cleared.');
-        _f8_clearAttachments();
+      }}
+
+      function _f8_deleteConversation() {{
+        if (!window._f8_currentConversationId || !window._f8_aiAssist || !window._f8_aiAssist.delete_conversation) return;
+        _f8_callBridge(window._f8_aiAssist.delete_conversation, [window._f8_currentConversationId], function() {{
+          _f8_callBridge(window._f8_aiAssist.list_conversations, [window._f8_conversationScope || 'graph'], function(rows) {{
+            window._f8_conversations = Array.isArray(rows) ? rows : [];
+            if (window._f8_conversations.length > 0) {{
+              _f8_loadConversation(window._f8_conversations[0].conversationId);
+            }} else {{
+              _f8_newConversation();
+            }}
+          }});
+        }});
       }}
 
       function _f8_sendMessage() {{
@@ -1457,28 +1723,30 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
         const rid = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()));
         const thinking = document.getElementById('f8-ai-thinking');
         
-        window._f8_chatMessages.push({{role: 'user', content: text, attachments: window._f8_attachments}});
-        if (thinking) thinking.classList.add('visible');
-        const assistantEl = _f8_appendMessage('assistant', '');
-        
-        window._f8_currentRid = rid;
-        document.getElementById('f8-ai-send').style.display = 'none';
-        document.getElementById('f8-ai-stop').classList.add('visible');
+        const pendingAttachments = _f8_cloneAttachments(window._f8_attachments);
+        window._f8_chatMessages.push({{role: 'user', content: text, attachments: pendingAttachments, createdAtMs: Date.now()}});
+        _f8_saveConversation(function() {{
+          if (thinking) thinking.classList.add('visible');
+          const assistantEl = _f8_appendMessage('assistant', '');
 
-        const attachmentsPayload = JSON.stringify(window._f8_attachments);
-        
-        if (window._f8_aiMode === 'chat') {{
-          window._f8_chatRequests[rid] = {{ assistantEl, thinking }};
-          window._f8_aiAssist.request_chat(rid, JSON.stringify(window._f8_chatMessages), code, selection, attachmentsPayload);
-        }} else if (window._f8_aiMode === 'edit') {{
-          // Original edit mode used 'statusEl' and didn't push to chatMessages yet
-          window._f8_editRequests[rid] = {{ statusEl: assistantEl, thinking }}; 
-          window._f8_aiAssist.request_edit(rid, code, text, JSON.stringify(window._f8_chatMessages), attachmentsPayload);
-        }} else if (window._f8_aiMode === 'plan') {{
-          window._f8_planRequests[rid] = {{ assistantEl, thinking }};
-          window._f8_aiAssist.request_plan(rid, text, code, JSON.stringify(window._f8_chatMessages), attachmentsPayload);
-        }}
-        _f8_clearAttachments();
+          window._f8_currentRid = rid;
+          document.getElementById('f8-ai-send').style.display = 'none';
+          document.getElementById('f8-ai-stop').classList.add('visible');
+
+          const attachmentsPayload = JSON.stringify(pendingAttachments);
+
+          if (window._f8_aiMode === 'chat') {{
+            window._f8_chatRequests[rid] = {{ assistantEl, thinking }};
+            window._f8_aiAssist.request_chat(rid, JSON.stringify(window._f8_chatMessages), code, selection, attachmentsPayload);
+          }} else if (window._f8_aiMode === 'edit') {{
+            window._f8_editRequests[rid] = {{ statusEl: assistantEl, thinking }};
+            window._f8_aiAssist.request_edit(rid, code, text, JSON.stringify(window._f8_chatMessages), attachmentsPayload);
+          }} else if (window._f8_aiMode === 'plan') {{
+            window._f8_planRequests[rid] = {{ assistantEl, thinking }};
+            window._f8_aiAssist.request_plan(rid, text, code, JSON.stringify(window._f8_chatMessages), attachmentsPayload);
+          }}
+          _f8_clearAttachments();
+        }});
       }}
 
       function _f8_stopMessage() {{
@@ -1919,7 +2187,8 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
                 assistantEl.dataset.raw = cur ? (cur + '\\n\\n' + errText) : errText;
                 assistantEl.innerHTML = _f8_md(assistantEl.dataset.raw);
               }} else {{
-                window._f8_chatMessages.push({{role: 'assistant', content: assistantEl.dataset.raw || ''}});
+                window._f8_chatMessages.push({{role: 'assistant', content: assistantEl.dataset.raw || '', createdAtMs: Date.now()}});
+                _f8_saveConversation();
               }}
               if (window._f8_aiAssist.update_chat_context) {{
                 window._f8_aiAssist.update_chat_context(JSON.stringify(window._f8_chatMessages));
@@ -1945,6 +2214,8 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
               if (request.statusEl && request.statusEl.parentNode) {{
                 request.statusEl.parentNode.removeChild(request.statusEl);
               }}
+              window._f8_chatMessages.push({{role: 'assistant', content: 'Prepared an edit for review.', createdAtMs: Date.now()}});
+              _f8_saveConversation();
               _f8_showDiff(newCode);
             }});
           }}
@@ -1992,6 +2263,11 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
                 _f8_sendMessage();
               }});
               assistantEl.appendChild(confirmBtn);
+              window._f8_chatMessages.push({{role: 'assistant', content: assistantEl.dataset.raw || '', createdAtMs: Date.now()}});
+              _f8_saveConversation();
+              if (window._f8_aiAssist.update_chat_context) {{
+                window._f8_aiAssist.update_chat_context(JSON.stringify(window._f8_chatMessages));
+              }}
             }});
           }}
           window._f8_aiSignalsConnected = true;
@@ -2001,7 +2277,26 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
 
         _f8_setupInlineSuggestions();
         _f8_setupAiPanel();
+        if (!_f8_useSharedAgentSidebar()) {{
+          _f8_initializeConversations();
+        }}
       }}
+      window._f8_openEmbeddedAiPanel = function() {{
+        const panel = document.getElementById('f8-ai-panel');
+        const toggle = document.getElementById('f8-ai-toggle');
+        if (!panel || !toggle) return;
+        window._f8_forceEmbeddedAiPanel = true;
+        panel.style.display = '';
+        toggle.style.display = '';
+        _f8_setupAiPanel();
+        if (!window._f8_embeddedConversationsInitialized) {{
+          _f8_initializeConversations();
+        }}
+        _f8_setAiPanelOpen(panel, toggle, true);
+        if (window._f8_aiAssist && window._f8_aiAssist.set_ui_state) {{
+          window._f8_aiAssist.set_ui_state('ai_panel_open', true);
+        }}
+      }};
     </script>
   </head>
   <body>
@@ -2032,11 +2327,15 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
             <textarea id="f8-ai-input" placeholder="Ask AI anything..." rows="1"></textarea>
             <div class="f8-input-toolbar">
               <div class="f8-toolbar-left">
+                <select id="f8-ai-conversation-select" title="Conversation"></select>
                 <button id="f8-ai-attach-btn" title="Upload Image">
                   <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 7l-6.5 6.5a1.5 1.5 0 0 0 3 3l6.5 -6.5a3 3 0 0 0 -6 -6l-6.5 6.5a4.5 4.5 0 0 0 9 9l6.5 -6.5"/></svg>
                 </button>
                 <button class="f8-new-chat" title="New Chat">
                     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0 -18"/><path d="M12 8v8"/><path d="M8 12h8"/></svg>
+                </button>
+                <button id="f8-ai-delete-conversation" title="Delete Conversation">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12"/><path d="M9 7V4h6v3"/></svg>
                 </button>
               </div>
               <button id="f8-ai-send" title="Send Message">
@@ -2064,6 +2363,12 @@ def open_code_editor_dialog(
     language: str,
     assist_context: EditorAssistContext | None = None,
     assist_context_provider: Callable[[], EditorAssistContext | None] | None = None,
+    agent_scope: EditorAgentScope | None = None,
+    agent_tools: tuple[object, ...] = (),
+    agent_context_providers: tuple[object, ...] = (),
+    graph_context_snapshot_provider: Callable[[], GraphContextSnapshot | None] | None = None,
+    retained_agent_dependencies: tuple[object, ...] = (),
+    agent_sidebar_launcher: Callable[[EditorAgentContext], None] | None = None,
 ) -> str | None:
     from .monaco_editor_host import open_code_editor_dialog as open_hosted_code_editor_dialog
 
@@ -2074,6 +2379,12 @@ def open_code_editor_dialog(
         language=language,
         assist_context=assist_context,
         assist_context_provider=assist_context_provider,
+        agent_scope=agent_scope,
+        agent_tools=agent_tools,
+        agent_context_providers=agent_context_providers,
+        graph_context_snapshot_provider=graph_context_snapshot_provider,
+        retained_agent_dependencies=retained_agent_dependencies,
+        agent_sidebar_launcher=agent_sidebar_launcher,
     )
 
 
@@ -2083,9 +2394,17 @@ def open_code_editor_window(
     title: str,
     code: str,
     language: str,
-    on_saved: Callable[[str], None],
+    on_saved: Callable[[str], bool | None],
+    target_exists_provider: Callable[[], bool] | None = None,
     assist_context: EditorAssistContext | None = None,
     assist_context_provider: Callable[[], EditorAssistContext | None] | None = None,
+    session_key: EditorSessionKey | None = None,
+    agent_scope: EditorAgentScope | None = None,
+    agent_tools: tuple[object, ...] = (),
+    agent_context_providers: tuple[object, ...] = (),
+    graph_context_snapshot_provider: Callable[[], GraphContextSnapshot | None] | None = None,
+    retained_agent_dependencies: tuple[object, ...] = (),
+    agent_sidebar_launcher: Callable[[EditorAgentContext], None] | None = None,
 ) -> QtWidgets.QDialog:
     from .monaco_editor_host import open_code_editor_window as open_hosted_code_editor_window
 
@@ -2095,6 +2414,14 @@ def open_code_editor_window(
         code=code,
         language=language,
         on_saved=on_saved,
+        target_exists_provider=target_exists_provider,
         assist_context=assist_context,
         assist_context_provider=assist_context_provider,
+        session_key=session_key,
+        agent_scope=agent_scope,
+        agent_tools=agent_tools,
+        agent_context_providers=agent_context_providers,
+        graph_context_snapshot_provider=graph_context_snapshot_provider,
+        retained_agent_dependencies=retained_agent_dependencies,
+        agent_sidebar_launcher=agent_sidebar_launcher,
     )

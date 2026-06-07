@@ -10,9 +10,13 @@ from NodeGraphQt.custom_widgets.properties_bin.node_property_widgets import Prop
 
 from qtpy import QtCore, QtGui, QtWidgets
 
+from ....agents.graph_context import GraphContextSnapshot, build_graph_context_snapshot
+from ....agents.tools import LocalStudioGraphToolExecutor, LocalStudioGraphTools
+from ....editor_assist.agent_context import EditorAgentContext
 from ....nodegraph.node_graph import F8StudioGraph
 from ....nodegraph.node_base import F8StudioBaseNode
 from ...dialogs.node_spec_edit_dialogs import _F8EditStateFieldDialog
+from ...support.node_property_support import resolve_node
 from ...support.node_property_support import node_missing_lock_info
 from ...support.studio_theme import label_qss, qss_rgba, studio_dark_theme, transparent_header_qss
 from .common import _PROPERTY_PANEL_MIN_WIDTH, _TAB_HEADER_STYLE, _set_read_only_widget
@@ -24,6 +28,31 @@ from .state_fields_mixin import NodePropertyStateFieldsMixin
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _NodeEditorGraphUiContextSource:
+    graph: Any | None
+    node_id: str
+    node_name: str
+
+    def graph_ui_context(self) -> dict[str, Any]:
+        node_id = str(self.node_id or "").strip()
+        return {
+            "graphRevision": _graph_revision(self.graph),
+            "selectedNodeIds": [node_id] if node_id else [],
+            "selectionLabel": str(self.node_name or "").strip() or node_id,
+            "selectionCount": 1 if node_id else 0,
+            "propertyPanelNodeId": node_id,
+            "primaryNodeId": node_id,
+            "primaryNodeSource": "nodeEditor",
+        }
+
+
+@dataclass(frozen=True)
+class _NodeEditorAgentToolBundle:
+    tools: tuple[object, ...] = ()
+    retained_dependencies: tuple[object, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -61,12 +90,24 @@ class F8StudioNodePropEditorWidget(
         inspect_mode: bool = False,
         outer_scroll_getter: Callable[[], int] | None = None,
         outer_scroll_restorer: Callable[[int], None] | None = None,
+        agent_runtime_bridge: Any | None = None,
+        agent_log_source: Any | None = None,
+        agent_observation_source: Any | None = None,
+        on_graph_patch_applied: Callable[[], None] | None = None,
+        agent_sidebar_launcher: Callable[[EditorAgentContext], None] | None = None,
     ):
         super(F8StudioNodePropEditorWidget, self).__init__(parent)
         self._node = node
         self._inspect_mode = bool(inspect_mode)
         self._outer_scroll_getter = outer_scroll_getter
         self._outer_scroll_restorer = outer_scroll_restorer
+        self._agent_runtime_bridge = agent_runtime_bridge
+        self._agent_log_source = agent_log_source
+        self._agent_observation_source = agent_observation_source
+        self._agent_graph_patch_callback = on_graph_patch_applied
+        self._agent_sidebar_launcher = agent_sidebar_launcher
+        self._node_agent_tool_bundle = self._build_node_agent_tool_bundle()
+        self._node_agent_context_providers: tuple[object, ...] = ()
         self.__node_id = node.id
         self.__tab_windows = {}
         self.__tab = QtWidgets.QTabWidget(self)
@@ -277,6 +318,84 @@ class F8StudioNodePropEditorWidget(
         """
         return self.__node_id
 
+    def graph_ui_context(self) -> dict[str, Any]:
+        node_id = str(self.__node_id or "").strip()
+        return {
+            "graphRevision": self._graph_revision(),
+            "selectedNodeIds": [node_id] if node_id else [],
+            "selectionLabel": self._node_display_name(),
+            "selectionCount": 1 if node_id else 0,
+            "propertyPanelNodeId": node_id,
+            "primaryNodeId": node_id,
+            "primaryNodeSource": "nodeEditor",
+        }
+
+    def node_agent_tools(self) -> tuple[object, ...]:
+        return self._node_agent_tool_bundle.tools
+
+    def node_agent_retained_dependencies(self) -> tuple[object, ...]:
+        return self._node_agent_tool_bundle.retained_dependencies
+
+    def node_agent_context_providers(self) -> tuple[object, ...]:
+        return self._node_agent_context_providers
+
+    def node_agent_sidebar_launcher(self) -> Callable[[EditorAgentContext], None] | None:
+        return self._agent_sidebar_launcher
+
+    def node_graph_context_snapshot_provider(self, node_id: str) -> Callable[[], GraphContextSnapshot | None]:
+        target_node_id = str(node_id or "").strip()
+        graph = self._graph()
+
+        def _provider() -> GraphContextSnapshot | None:
+            node = resolve_node(graph, target_node_id)
+            if node is None:
+                return None
+            return build_graph_context_snapshot(graph, node)
+
+        return _provider
+
+    def _build_node_agent_tool_bundle(self) -> _NodeEditorAgentToolBundle:
+        if self._inspect_mode:
+            return _NodeEditorAgentToolBundle()
+        graph = self._graph()
+        if graph is None:
+            return _NodeEditorAgentToolBundle()
+        node_id = str(self.__node_id or "").strip()
+        ui_context_source = _NodeEditorGraphUiContextSource(
+            graph=graph,
+            node_id=node_id,
+            node_name=self._node_display_name(),
+        )
+        executor = LocalStudioGraphToolExecutor(
+            graph,
+            bridge=self._agent_runtime_bridge,
+            log_source=self._agent_log_source,
+            observation_source=self._agent_observation_source,
+            ui_context_source=ui_context_source,
+            on_graph_patch_applied=self._agent_graph_patch_callback,
+        )
+        tools = LocalStudioGraphTools(executor)
+        return _NodeEditorAgentToolBundle(
+            tools=tuple(tools.available_node_editor_tools()),
+            retained_dependencies=(executor, tools, ui_context_source),
+        )
+
+    def _graph(self) -> Any | None:
+        try:
+            return self._node.graph
+        except (AttributeError, RuntimeError, TypeError):
+            return None
+
+    def _graph_revision(self) -> int | None:
+        return _graph_revision(self._graph())
+
+    def _node_display_name(self) -> str:
+        try:
+            text = str(self._node.name() or "").strip()
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            text = ""
+        return text or str(self.__node_id or "")
+
 
 class F8StudioPropertiesBinWidget(PropertiesBinWidget):
     """
@@ -314,6 +433,11 @@ class F8StudioSingleNodePropertiesWidget(
         super().__init__(parent)
         self._node_graph = node_graph
         self._inspect_mode = bool(inspect_mode)
+        self._agent_runtime_bridge: Any | None = None
+        self._agent_log_source: Any | None = None
+        self._agent_observation_source: Any | None = None
+        self._agent_graph_patch_callback: Callable[[], None] | None = None
+        self._agent_sidebar_launcher: Callable[[EditorAgentContext], None] | None = None
         self._node_id: str | None = None
         self._editor: F8StudioNodePropEditorWidget | None = None
         self._block_signal = False
@@ -351,6 +475,21 @@ class F8StudioSingleNodePropertiesWidget(
 
         self._wire_graph_signals()
         QtCore.QTimer.singleShot(0, self._sync_container_width)
+
+    def set_agent_tool_dependencies(
+        self,
+        *,
+        runtime_bridge: Any | None,
+        log_source: Any | None,
+        observation_source: Any | None,
+        on_graph_patch_applied: Callable[[], None] | None = None,
+        agent_sidebar_launcher: Callable[[EditorAgentContext], None] | None = None,
+    ) -> None:
+        self._agent_runtime_bridge = runtime_bridge
+        self._agent_log_source = log_source
+        self._agent_observation_source = observation_source
+        self._agent_graph_patch_callback = on_graph_patch_applied
+        self._agent_sidebar_launcher = agent_sidebar_launcher
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # type: ignore[override]
         super().resizeEvent(event)
@@ -395,6 +534,11 @@ class F8StudioSingleNodePropertiesWidget(
             inspect_mode=self._inspect_mode,
             outer_scroll_getter=self._outer_scroll_position,
             outer_scroll_restorer=self._restore_outer_scroll_position,
+            agent_runtime_bridge=self._agent_runtime_bridge,
+            agent_log_source=self._agent_log_source,
+            agent_observation_source=self._agent_observation_source,
+            on_graph_patch_applied=self._agent_graph_patch_callback,
+            agent_sidebar_launcher=self._agent_sidebar_launcher,
         )
 
     def property_editor_for_node_id(self, node_id: str) -> F8StudioNodePropEditorWidget | None:
@@ -402,3 +546,13 @@ class F8StudioSingleNodePropertiesWidget(
         if not node_id or node_id != self._node_id:
             return None
         return self._editor
+
+
+def _graph_revision(graph: Any | None) -> int | None:
+    if graph is None:
+        return None
+    try:
+        undo_stack = graph._undo_stack
+        return int(undo_stack.index())
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return None

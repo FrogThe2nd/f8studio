@@ -472,3 +472,47 @@ def test_monaco_editor_ai_panel_toggle_keeps_reopen_control_visible() -> None:
     assert "body.f8-ai-open #f8-ai-toggle" in html
     assert 'id="f8-ai-toggle" title="Show AI Assist" aria-expanded="false"' in html
     assert "panel.style.width = isOpen ? (document.documentElement.style.getPropertyValue" not in html
+
+
+def test_monaco_editor_ai_panel_uses_persistent_scoped_conversations() -> None:
+    html = build_monaco_editor_html(
+        MonacoEditorPageConfig(
+            code="print('hello')\n",
+            language="python",
+            monaco_base_url="https://cdn.jsdelivr.net/npm/monaco-editor/min",
+            python_assist_enabled=True,
+        )
+    )
+
+    assert "default_conversation_scope" in html
+    assert "default_conversation_id" in html
+    assert "list_conversations" in html
+    assert "save_conversation_messages" in html
+    assert "load_conversation" in html
+    assert "set_active_conversation" in html
+    assert "f8-ai-conversation-select" in html
+    assert "f8-ai-delete-conversation" in html
+    assert "window._f8_conversationScope || 'graph'" in html
+    assert "_f8_initializeConversations();" in html
+    assert "[window._f8_conversationScope || 'graph', defaultId]" not in html
+
+
+def test_monaco_editor_can_hide_embedded_ai_panel_for_shared_sidebar() -> None:
+    html = build_monaco_editor_html(
+        MonacoEditorPageConfig(
+            code="print('hello')\n",
+            language="python",
+            monaco_base_url="https://cdn.jsdelivr.net/npm/monaco-editor/min",
+            python_assist_enabled=True,
+            shared_agent_sidebar_enabled=True,
+        )
+    )
+
+    assert '"sharedAgentSidebarEnabled": true' in html
+    assert "function _f8_useSharedAgentSidebar()" in html
+    assert "panel.style.display = 'none';" in html
+    assert "toggle.style.display = 'none';" in html
+    assert "window._f8_openEmbeddedAiPanel = function()" in html
+    assert "window._f8_forceEmbeddedAiPanel = true;" in html
+    assert "window._f8_embeddedAiPanelInitialized" in html
+    assert "if (!_f8_useSharedAgentSidebar())" in html

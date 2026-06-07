@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 _SCHEMA_VERSION = "f8studio-ai-conversations/1"
 _DEFAULT_TITLE = "New conversation"
+_SHARED_CONVERSATION_STORE: StudioConversationStore | None = None
 
 
 @dataclass(frozen=True)
@@ -81,6 +82,7 @@ class StudioConversationStore:
     def __init__(self, *, storage_path: Path | None = None) -> None:
         self._storage_path = storage_path or self._resolve_storage_path()
         self._conversations: dict[str, StudioConversationRecord] = {}
+        self._active_conversation_id = ""
         self._lock = threading.RLock()
         self._load()
 
@@ -106,6 +108,14 @@ class StudioConversationStore:
     def get_conversation(self, conversation_id: str) -> StudioConversationRecord | None:
         with self._lock:
             return self._conversations.get(str(conversation_id or "").strip())
+
+    def active_conversation_id(self) -> str:
+        with self._lock:
+            return self._active_conversation_id
+
+    def set_active_conversation_id(self, conversation_id: str) -> None:
+        with self._lock:
+            self._active_conversation_id = str(conversation_id or "").strip()
 
     def ensure_conversation(
         self,
@@ -190,6 +200,8 @@ class StudioConversationStore:
             removed = self._conversations.pop(normalized_id, None)
             if removed is None:
                 return False
+            if self._active_conversation_id == normalized_id:
+                self._active_conversation_id = ""
             self._persist()
             return True
 
@@ -234,6 +246,13 @@ class StudioConversationStore:
     @staticmethod
     def _resolve_storage_path() -> Path:
         return Path.home() / ".config" / "Feel8" / "ai_conversations.json"
+
+
+def shared_conversation_store() -> StudioConversationStore:
+    global _SHARED_CONVERSATION_STORE
+    if _SHARED_CONVERSATION_STORE is None:
+        _SHARED_CONVERSATION_STORE = StudioConversationStore()
+    return _SHARED_CONVERSATION_STORE
 
 
 def decode_conversation_messages(raw: str) -> tuple[StudioConversationMessage, ...]:

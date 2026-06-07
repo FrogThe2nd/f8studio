@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from types import FunctionType, MethodType
 from typing import Any
 from qtpy import QtCore, QtGui, QtWidgets
 
@@ -11,6 +12,7 @@ from ...agents.codeact import (
     build_codeact_context_provider,
     codeact_skill_status,
 )
+from ...editor_assist.agent_context import EditorAgentContext
 from ...agents.graph_context import GraphContextSnapshot
 from ...agents.qt_bridge import AiLlmBridge
 from ...agents.store import AiProviderStore
@@ -59,7 +61,10 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
         self._graph_tools: LocalStudioGraphTools | None = None
         self._graph_tool_count = 0
         self._graph_tool_names: tuple[str, ...] = ()
+        self._active_tool_count = 0
+        self._active_tool_names: tuple[str, ...] = ()
         self._graph_skill_statuses: tuple[StudioAgentSkillStatus, ...] = ()
+        self._active_editor_context: EditorAgentContext | None = None
         self._selection_mode = "none"
         self._current_selection_label = ""
         self._current_selected_snapshot_preview: GraphContextSnapshot | None = None
@@ -95,6 +100,8 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
             self._ai_bridge.set_agent_codeact_context_providers(() if codeact_provider is None else (codeact_provider,))
             self._ai_bridge.set_agent_skill_statuses((codeact_status,))
             self._graph_skill_statuses = self._ai_bridge.agent_skill_statuses()
+            self._active_tool_count = self._graph_tool_count
+            self._active_tool_names = self._graph_tool_names
         
         # 2. UI Components
         from PySide6 import QtWebChannel, QtWebEngineWidgets  # type: ignore[import-not-found]
@@ -196,6 +203,43 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
         self._wire_graph_signals()
         self._refresh_context_toolbar()
 
+    def activate_editor_context(self, context: EditorAgentContext) -> None:
+        self._active_editor_context = context
+        active_tools = context.agent_tools
+        active_tool_names = _agent_tool_names(context)
+        if self._graph_tools is not None:
+            active_tools = self._graph_tools.available_node_editor_tools()
+            active_tool_names = self._graph_tools.available_node_editor_tool_names()
+        self._ai_bridge.set_document_language(str(context.language or "plaintext"))
+        self._ai_bridge.set_assist_context(context.current_assist_context())
+        self._ai_bridge.set_editor_agent_scope(context.agent_scope)
+        self._ai_bridge.set_editor_document_context_provider(context.current_document_context)
+        self._ai_bridge.set_graph_context_snapshot_provider(context.graph_context_snapshot_provider)
+        self._ai_bridge.set_agent_tools(tuple(active_tools))
+        self._ai_bridge.set_agent_codeact_context_providers(context.agent_context_providers)
+        self._active_tool_count = len(active_tools)
+        self._active_tool_names = tuple(active_tool_names)
+        self._refresh_context_toolbar()
+
+    def clear_editor_context(self) -> None:
+        if self._active_editor_context is None:
+            return
+        self._active_editor_context = None
+        self._ai_bridge.set_document_language("plaintext")
+        self._ai_bridge.set_assist_context(None)
+        self._ai_bridge.set_editor_agent_scope(None)
+        self._ai_bridge.set_editor_document_context_provider(None)
+        self._ai_bridge.set_graph_context_snapshot_provider(None)
+        if self._graph_tools is not None:
+            self._ai_bridge.set_agent_tools(self._graph_tools.available_tools())
+            self._active_tool_count = self._graph_tool_count
+            self._active_tool_names = self._graph_tool_names
+        else:
+            self._ai_bridge.set_agent_tools(())
+            self._active_tool_count = 0
+            self._active_tool_names = ()
+        self._refresh_context_toolbar()
+
     def shutdown(self) -> None:
         if self._shutdown_started:
             return
@@ -238,6 +282,18 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
         dlg.exec()
 
     def graph_ui_context(self) -> dict[str, Any]:
+        editor_context = self._active_editor_context
+        if editor_context is not None and editor_context.agent_scope is not None:
+            node_id = str(editor_context.agent_scope.node_id or "").strip()
+            return {
+                "graphRevision": _graph_revision(self._studio_graph),
+                "selectedNodeIds": [node_id] if node_id else [],
+                "selectionLabel": editor_context.display_label(),
+                "selectionCount": 1 if node_id else 0,
+                "propertyPanelNodeId": node_id,
+                "primaryNodeId": node_id,
+                "primaryNodeSource": "nodeEditor",
+            }
         property_panel_node_id = ""
         editor = self._property_editor
         if editor is not None:
@@ -280,3 +336,15 @@ def _graph_revision(graph: object | None) -> int | None:
         return int(undo_stack.index())
     except (AttributeError, RuntimeError, TypeError, ValueError):
         return None
+
+
+def _agent_tool_names(context: EditorAgentContext) -> tuple[str, ...]:
+    names: list[str] = []
+    for tool in context.agent_tools:
+        name = ""
+        if isinstance(tool, (FunctionType, MethodType)):
+            name = tool.__name__
+        text = str(name or type(tool).__name__).strip()
+        if text:
+            names.append(text)
+    return tuple(names)

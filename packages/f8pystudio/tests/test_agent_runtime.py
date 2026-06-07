@@ -259,6 +259,17 @@ def test_session_registry_can_restore_and_serialize_agent_session(monkeypatch: p
     }
 
 
+def test_shared_session_registry_returns_single_process_instance(monkeypatch: pytest.MonkeyPatch) -> None:
+    import f8pystudio.agents.sessions as sessions_module
+
+    monkeypatch.setattr(sessions_module, "_SHARED_AGENT_SESSION_REGISTRY", None)
+
+    first = sessions_module.shared_agent_session_registry()
+    second = sessions_module.shared_agent_session_registry()
+
+    assert first is second
+
+
 def test_runtime_reasoning_option_is_limited_to_openai_responses(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

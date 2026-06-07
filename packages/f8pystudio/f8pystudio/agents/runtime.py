@@ -30,7 +30,7 @@ from .prompts import (
     strip_code_fence,
 )
 from .registry import ProviderConfig
-from .sessions import StudioAgentSessionKey, StudioAgentSessionRegistry
+from .sessions import StudioAgentSessionKey, StudioAgentSessionRegistry, shared_agent_session_registry
 from .store import AiProviderStore
 
 logger = logging.getLogger(__name__)
@@ -73,8 +73,10 @@ class StudioAgentRequest:
     graph_context_snapshot: GraphContextSnapshot | None = None
     attachments: tuple[StudioAgentAttachment, ...] = ()
     tools: tuple[Any, ...] = ()
+    graph_tool_names: tuple[str, ...] = ()
     context_providers: tuple[Any, ...] = ()
     session_key: StudioAgentSessionKey | None = None
+    agent_surface: str = "graph"
     inline_provider_id: str = ""
     inline_model_id: str = ""
     chat_provider_id: str = ""
@@ -114,7 +116,7 @@ class StudioAgentRuntime:
     ) -> None:
         self._store = store
         self._log_prompt_payload = log_prompt_payload
-        self._session_registry = session_registry or StudioAgentSessionRegistry()
+        self._session_registry = session_registry or shared_agent_session_registry()
         self._abort_events: dict[str, _AbortRequestState] = {}
         self._stream_first_event_timeout_s = _positive_timeout(
             stream_first_event_timeout_s,
@@ -303,6 +305,8 @@ class StudioAgentRuntime:
                 assist_context=request.assist_context,
                 graph_context_snapshot=request.graph_context_snapshot,
                 graph_tools_enabled=bool(request.tools),
+                graph_tool_names=request.graph_tool_names,
+                agent_surface=request.agent_surface,
             )
             messages = build_edit_messages(
                 history=list(request.messages),
@@ -320,6 +324,8 @@ class StudioAgentRuntime:
                 assist_context=request.assist_context,
                 graph_context_snapshot=request.graph_context_snapshot,
                 graph_tools_enabled=bool(request.tools),
+                graph_tool_names=request.graph_tool_names,
+                agent_surface=request.agent_surface,
             )
             messages = build_plan_messages(
                 history=list(request.messages),
@@ -337,6 +343,8 @@ class StudioAgentRuntime:
                 assist_context=request.assist_context,
                 graph_context_snapshot=request.graph_context_snapshot,
                 graph_tools_enabled=bool(request.tools),
+                graph_tool_names=request.graph_tool_names,
+                agent_surface=request.agent_surface,
             )
             user_text = (
                 "Return only the code text that should be inserted at the cursor. "
@@ -352,6 +360,8 @@ class StudioAgentRuntime:
             assist_context=request.assist_context,
             graph_context_snapshot=request.graph_context_snapshot,
             graph_tools_enabled=bool(request.tools),
+            graph_tool_names=request.graph_tool_names,
+            agent_surface=request.agent_surface,
         )
         messages = build_chat_messages(
             history=list(request.messages),

@@ -73,12 +73,22 @@ class _FakeEditor(QtWidgets.QWidget):
         inspect_mode: bool = False,
         outer_scroll_getter=None,
         outer_scroll_restorer=None,
+        agent_runtime_bridge=None,
+        agent_log_source=None,
+        agent_observation_source=None,
+        on_graph_patch_applied=None,
+        agent_sidebar_launcher=None,
     ):
         super().__init__(parent)
         self.node = node
         self.inspect_mode = bool(inspect_mode)
         self.outer_scroll_getter = outer_scroll_getter
         self.outer_scroll_restorer = outer_scroll_restorer
+        self.agent_runtime_bridge = agent_runtime_bridge
+        self.agent_log_source = agent_log_source
+        self.agent_observation_source = agent_observation_source
+        self.on_graph_patch_applied = on_graph_patch_applied
+        self.agent_sidebar_launcher = agent_sidebar_launcher
         self.restored_state: _NodePropEditorViewState | None = None
         current_tab = None if node is None else node.current_tab
         scroll_positions = {} if node is None else node.scroll_positions
@@ -206,6 +216,18 @@ def test_property_panel_keeps_same_tab_and_scroll_when_switching_nodes(monkeypat
     monkeypatch.setattr(editor_module, "F8StudioNodePropEditorWidget", _FakeEditor)
 
     widget = F8StudioSingleNodePropertiesWidget(node_graph=_FakeGraph())
+    runtime_bridge = object()
+    log_source = object()
+    observation_source = object()
+    graph_patch_applied = lambda: None
+    agent_sidebar_launcher = lambda _context: None
+    widget.set_agent_tool_dependencies(
+        runtime_bridge=runtime_bridge,
+        log_source=log_source,
+        observation_source=observation_source,
+        on_graph_patch_applied=graph_patch_applied,
+        agent_sidebar_launcher=agent_sidebar_launcher,
+    )
 
     node_a = _FakeNode(
         id="nodeA",
@@ -222,6 +244,11 @@ def test_property_panel_keeps_same_tab_and_scroll_when_switching_nodes(monkeypat
 
     widget.set_node(node_a)
     assert isinstance(widget._editor, _FakeEditor)
+    assert widget._editor.agent_runtime_bridge is runtime_bridge
+    assert widget._editor.agent_log_source is log_source
+    assert widget._editor.agent_observation_source is observation_source
+    assert widget._editor.on_graph_patch_applied is graph_patch_applied
+    assert widget._editor.agent_sidebar_launcher is agent_sidebar_launcher
     widget._scroll.verticalScrollBar().setValue(37)
     previous_scroll_value = widget._scroll.verticalScrollBar().value()
 

@@ -228,6 +228,13 @@ class F8StudioMainWin(
         self._bridge = bridge or PyStudioServiceBridge(PyStudioServiceBridgeConfig(), parent=self)
         if bridge is not None and self._bridge.parent() is None:
             self._bridge.setParent(self)
+        self._prop_editor.set_agent_tool_dependencies(
+            runtime_bridge=self._bridge,
+            log_source=self._log_dock,
+            observation_source=self._runtime_observations,
+            on_graph_patch_applied=self._schedule_studio_runtime_sync,
+            agent_sidebar_launcher=self.open_ai_assist_for_editor,
+        )
         self._apply_kill_managed_services_on_exit_enabled(
             enabled=self._kill_managed_services_on_exit_enabled,
             persist=False,

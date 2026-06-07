@@ -44,6 +44,7 @@ from .conversations import (
     StudioConversationStore,
     StudioConversationSummary,
     decode_conversation_messages,
+    shared_conversation_store,
 )
 from .model_catalog import (
     ModelCatalogResult,
@@ -58,6 +59,7 @@ from .runtime import (
     StudioAgentRequest,
     StudioAgentRuntime,
 )
+from .sessions import shared_agent_session_registry
 from .store import AiProviderStore
 from .tools import StudioAutomationTools, StudioMCPStdioConfig, build_studio_mcp_stdio_tool
 
@@ -108,6 +110,8 @@ __all__ = [
     "codeact_availability",
     "codeact_skill_status",
     "decode_conversation_messages",
+    "shared_agent_session_registry",
+    "shared_conversation_store",
     "strip_code_fence",
     "supports_endpoint_model_discovery",
 ]

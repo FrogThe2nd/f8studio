@@ -15,6 +15,9 @@ from ...editor_assist.session import (
     python_assist_warning,
     resolve_assist_context,
 )
+from ...agents.graph_context import GraphContextSnapshot
+from ...editor_assist.agent_context import EditorAgentContext
+from ...editor_assist.agent_scope import EditorAgentScope
 from ...editor_assist.workspace import EditorAssistContext
 from ...ui.support.ui_notifications import show_warning
 
@@ -145,6 +148,12 @@ class MonacoEditorHostDialog(QtWidgets.QDialog):
         target_exists_provider: TargetExistsProvider | None,
         assist_context: EditorAssistContext | None,
         assist_context_provider: Callable[[], EditorAssistContext | None] | None,
+        agent_scope: EditorAgentScope | None,
+        agent_tools: tuple[object, ...],
+        agent_context_providers: tuple[object, ...],
+        graph_context_snapshot_provider: Callable[[], GraphContextSnapshot | None] | None,
+        retained_agent_dependencies: tuple[object, ...],
+        agent_sidebar_launcher: Callable[[EditorAgentContext], None] | None,
     ) -> bool:
         editor_widget = self._sessions.get(session_key.as_id())
         if editor_widget is None:
@@ -161,6 +170,7 @@ class MonacoEditorHostDialog(QtWidgets.QDialog):
         controller = editor_widget.controller()
         controller.set_save_handler(on_saved)
         controller.set_target_exists_provider(target_exists_provider)
+        controller.set_agent_sidebar_launcher(agent_sidebar_launcher)
         requested_title = str(title or "Edit Code")
         needs_replace = (
             controller.title() != requested_title
@@ -183,6 +193,12 @@ class MonacoEditorHostDialog(QtWidgets.QDialog):
             target_exists_provider=target_exists_provider,
             assist_context=resolved_context,
             assist_context_provider=assist_context_provider,
+            agent_scope=agent_scope,
+            agent_tools=agent_tools,
+            agent_context_providers=agent_context_providers,
+            graph_context_snapshot_provider=graph_context_snapshot_provider,
+            retained_agent_dependencies=retained_agent_dependencies,
+            agent_sidebar_launcher=agent_sidebar_launcher,
             close_on_save=False,
             parent=self,
         )
@@ -342,6 +358,12 @@ def open_code_editor_dialog(
     language: str,
     assist_context: EditorAssistContext | None = None,
     assist_context_provider: Callable[[], EditorAssistContext | None] | None = None,
+    agent_scope: EditorAgentScope | None = None,
+    agent_tools: tuple[object, ...] = (),
+    agent_context_providers: tuple[object, ...] = (),
+    graph_context_snapshot_provider: Callable[[], GraphContextSnapshot | None] | None = None,
+    retained_agent_dependencies: tuple[object, ...] = (),
+    agent_sidebar_launcher: Callable[[EditorAgentContext], None] | None = None,
 ) -> str | None:
     from ..dialogs.monaco_editor_dialog import F8MonacoEditorDialog
 
@@ -351,6 +373,12 @@ def open_code_editor_dialog(
         language=language,
         assist_context=assist_context,
         assist_context_provider=assist_context_provider,
+        agent_scope=agent_scope,
+        agent_tools=agent_tools,
+        agent_context_providers=agent_context_providers,
+        graph_context_snapshot_provider=graph_context_snapshot_provider,
+        retained_agent_dependencies=retained_agent_dependencies,
+        agent_sidebar_launcher=agent_sidebar_launcher,
         close_on_save=True,
     )
     warn_text = python_assist_warning(controller.assist_context())
@@ -373,6 +401,12 @@ def open_code_editor_window(
     assist_context: EditorAssistContext | None = None,
     assist_context_provider: Callable[[], EditorAssistContext | None] | None = None,
     session_key: EditorSessionKey | None = None,
+    agent_scope: EditorAgentScope | None = None,
+    agent_tools: tuple[object, ...] = (),
+    agent_context_providers: tuple[object, ...] = (),
+    graph_context_snapshot_provider: Callable[[], GraphContextSnapshot | None] | None = None,
+    retained_agent_dependencies: tuple[object, ...] = (),
+    agent_sidebar_launcher: Callable[[EditorAgentContext], None] | None = None,
 ) -> QtWidgets.QDialog:
     host = _host_dialog(parent)
     if session_key is not None and host.refresh_session(
@@ -384,6 +418,12 @@ def open_code_editor_window(
         target_exists_provider=target_exists_provider,
         assist_context=assist_context,
         assist_context_provider=assist_context_provider,
+        agent_scope=agent_scope,
+        agent_tools=agent_tools,
+        agent_context_providers=agent_context_providers,
+        graph_context_snapshot_provider=graph_context_snapshot_provider,
+        retained_agent_dependencies=retained_agent_dependencies,
+        agent_sidebar_launcher=agent_sidebar_launcher,
     ):
         host.show()
         host.raise_()
@@ -404,6 +444,12 @@ def open_code_editor_window(
         target_exists_provider=target_exists_provider,
         assist_context=assist_context,
         assist_context_provider=assist_context_provider,
+        agent_scope=agent_scope,
+        agent_tools=agent_tools,
+        agent_context_providers=agent_context_providers,
+        graph_context_snapshot_provider=graph_context_snapshot_provider,
+        retained_agent_dependencies=retained_agent_dependencies,
+        agent_sidebar_launcher=agent_sidebar_launcher,
         close_on_save=False,
     )
     warn_text = python_assist_warning(controller.assist_context())

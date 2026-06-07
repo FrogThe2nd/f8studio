@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+_SHARED_AGENT_SESSION_REGISTRY: StudioAgentSessionRegistry | None = None
+
 
 @dataclass(frozen=True)
 class StudioAgentSessionKey:
@@ -96,3 +98,10 @@ class StudioAgentSessionRegistry:
 
     def clear(self, key: StudioAgentSessionKey) -> None:
         self._sessions.pop(key.as_id(), None)
+
+
+def shared_agent_session_registry() -> StudioAgentSessionRegistry:
+    global _SHARED_AGENT_SESSION_REGISTRY
+    if _SHARED_AGENT_SESSION_REGISTRY is None:
+        _SHARED_AGENT_SESSION_REGISTRY = StudioAgentSessionRegistry()
+    return _SHARED_AGENT_SESSION_REGISTRY

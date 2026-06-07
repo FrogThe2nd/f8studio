@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
+import weakref
 from typing import Any
 
 from qtpy import QtCore, QtGui, QtWidgets
 
+from ...editor_assist.agent_context import EditorDocumentContext
 from ...editor_assist.session import EditorSessionController
 from ...ui.agents import AgentContextUsageButton, AgentQuickSettingsController, AgentSurfaceScope
 from ...ui.support.web_asset_utils import render_prism_asset_html, resolve_monaco_base_url as resolve_web_monaco_base_url
@@ -15,7 +17,9 @@ from ...ui.support.webengine_utils import (
 )
 from ..support.monaco_editor_host import _ask_save_before_close, open_code_editor_dialog, open_code_editor_window
 from ..support.monaco_editor_page import MonacoEditorPageConfig, build_monaco_editor_html
+from ..support.qt_lifecycle import qt_object_is_valid
 from ..support.studio_theme import studio_dark_theme
+from ..support.ui_icons import StudioIcon, icon_for
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +88,12 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
             scope=AgentSurfaceScope.EDITOR,
             parent=self,
         )
+        self._open_ai_sidebar_btn = QtWidgets.QToolButton(self)
+        self._open_ai_sidebar_btn.setIcon(icon_for(self._open_ai_sidebar_btn, StudioIcon.MESSAGE_CHATBOT))
+        self._open_ai_sidebar_btn.setText("AI Assist")
+        self._open_ai_sidebar_btn.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._open_ai_sidebar_btn.setToolTip("Open the shared AI Assist sidebar with this editor as context")
+        self._open_ai_sidebar_btn.clicked.connect(self._open_shared_ai_sidebar)  # type: ignore[attr-defined]
 
         self._agent_settings = AgentQuickSettingsController(
             store=self._controller.ai_store(),
@@ -132,6 +142,7 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
 
         bottom_bar = QtWidgets.QHBoxLayout()
         bottom_bar.addWidget(self._ctx_btn)
+        bottom_bar.addWidget(self._open_ai_sidebar_btn)
         bottom_bar.addWidget(self._ai_panel_btn)
         bottom_bar.addStretch()
         bottom_bar.addLayout(editor_buttons)
@@ -210,6 +221,37 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
             return self._controller.code()
         return str(result["value"] or "")
 
+    def _read_selection_from_page(self) -> str:
+        page = self._view.page()
+        if page is None:
+            return ""
+        result = {"value": ""}
+        loop = QtCore.QEventLoop(self)
+        timer = QtCore.QTimer(self)
+        timer.setSingleShot(True)
+        timer.setInterval(800)
+        timer.timeout.connect(loop.quit)  # type: ignore[attr-defined]
+
+        def _on_value(value: Any) -> None:
+            result["value"] = "" if value is None else str(value)
+            if loop.isRunning():
+                loop.quit()
+
+        try:
+            page.runJavaScript("window._f8_getSelection && window._f8_getSelection();", _on_value)  # type: ignore[call-arg]
+            timer.start()
+            loop.exec()
+        except (AttributeError, RuntimeError, TypeError):
+            return ""
+        return str(result["value"] or "")
+
+    def _current_document_context(self) -> EditorDocumentContext:
+        return EditorDocumentContext(
+            code=self._read_code_from_page(),
+            selection=self._read_selection_from_page(),
+            language=self._controller.language(),
+        )
+
     def _load_page(self) -> None:
         monaco_base_url = _resolve_monaco_base_url()
         html = build_monaco_editor_html(
@@ -218,6 +260,7 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
                 language=self._controller.language(),
                 monaco_base_url=monaco_base_url,
                 python_assist_enabled=self._controller.assist_bridge() is not None,
+                shared_agent_sidebar_enabled=self._controller.agent_sidebar_launcher() is not None,
                 prism_asset_html=render_prism_asset_html(
                     languages=("python", "javascript", "bash", "json", "lua", "cpp", "c"),
                 ),
@@ -248,6 +291,31 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
 
         dlg = AiProviderConfigDialog(self._controller.ai_store(), self)
         dlg.exec()
+
+    @QtCore.Slot()
+    def _open_shared_ai_sidebar(self) -> None:
+        widget_ref = weakref.ref(self)
+        language = self._controller.language()
+
+        def _document_context_provider() -> EditorDocumentContext:
+            widget = widget_ref()
+            if widget is None or not qt_object_is_valid(widget):
+                return EditorDocumentContext(code="", selection="", language=language)
+            return widget._current_document_context()
+
+        launched = self._controller.launch_agent_sidebar(_document_context_provider)
+        if launched:
+            return
+        self._open_embedded_ai_panel()
+
+    def _open_embedded_ai_panel(self) -> None:
+        page = self._view.page()
+        if page is None:
+            return
+        try:
+            page.runJavaScript("window._f8_openEmbeddedAiPanel && window._f8_openEmbeddedAiPanel();")
+        except (AttributeError, RuntimeError, TypeError):
+            logger.exception("Failed to open embedded editor AI panel")
 
     @QtCore.Slot(bool)
     def _on_dirty_changed(self, dirty: bool) -> None:

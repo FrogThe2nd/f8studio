@@ -9,13 +9,16 @@ import os
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from types import FunctionType, MethodType
 from typing import Any
 
 from qtpy import QtCore, QtGui  # type: ignore[import-not-found]
 
-from f8pystudio.agents.conversations import StudioConversationStore, decode_conversation_messages
+from f8pystudio.agents.conversations import StudioConversationStore, decode_conversation_messages, shared_conversation_store
 from f8pystudio.agents.graph_context import GraphContextSnapshot, format_graph_context_report
 from f8pystudio.agents.codeact import StudioAgentSkillStatus
+from f8pystudio.editor_assist.agent_context import EditorDocumentContext
+from f8pystudio.editor_assist.agent_scope import EditorAgentScope
 from f8pystudio.editor_assist.workspace import EditorAssistContext
 from f8pystudio.ui.support.editor_assist_bridge import PythonEditorAssistBridge
 
@@ -47,6 +50,8 @@ from .store import AiProviderStore
 logger = logging.getLogger(__name__)
 
 _LSP_INLINE_BOUNDARY_ERRORS = (Exception,)
+_GRAPH_CONTEXT_PROVIDER_ERRORS = (Exception,)
+_EDITOR_DOCUMENT_CONTEXT_PROVIDER_ERRORS = (Exception,)
 
 
 def _env_flag(name: str) -> bool:
@@ -90,7 +95,7 @@ class AiLlmBridge(QtCore.QObject):
         super().__init__(parent)
         self._store = store
         self._state_store = state_store or MemoryAiPanelStateStore()
-        self._conversation_store = conversation_store or StudioConversationStore()
+        self._conversation_store = conversation_store or shared_conversation_store()
         self._runtime = StudioAgentRuntime(self._store, log_prompt_payload=self._log_prompt_payload)
 
         self._inline_provider_id = self._store.active_inline_provider
@@ -109,8 +114,12 @@ class AiLlmBridge(QtCore.QObject):
 
         self._document_language = "plaintext"
         self._auto_chat_context_snapshot: GraphContextSnapshot | None = None
-        self._active_conversation_id = ""
+        self._graph_context_snapshot_provider: Callable[[], GraphContextSnapshot | None] | None = None
+        self._editor_document_context_provider: Callable[[], EditorDocumentContext] | None = None
+        self._editor_agent_scope: EditorAgentScope | None = None
+        self._active_conversation_id = self._conversation_store.active_conversation_id()
         self._agent_tools: tuple[Any, ...] = ()
+        self._agent_tool_names: tuple[str, ...] = ()
         self._agent_codeact_context_providers: tuple[Any, ...] = ()
         self._agent_skill_statuses: tuple[StudioAgentSkillStatus, ...] = ()
         self._assist_context: EditorAssistContext | None = None
@@ -151,8 +160,27 @@ class AiLlmBridge(QtCore.QObject):
         self._refresh_system_tokens()
         self.chat_context_snapshot_changed.emit(snapshot is not None, node_name)
 
+    def set_graph_context_snapshot_provider(
+        self,
+        provider: Callable[[], GraphContextSnapshot | None] | None,
+    ) -> None:
+        self._graph_context_snapshot_provider = provider
+        self._refresh_system_tokens()
+
+    def set_editor_document_context_provider(
+        self,
+        provider: Callable[[], EditorDocumentContext] | None,
+    ) -> None:
+        self._editor_document_context_provider = provider
+        self._refresh_system_tokens()
+
+    def set_editor_agent_scope(self, scope: EditorAgentScope | None) -> None:
+        self._editor_agent_scope = scope if scope is not None and scope.is_valid() else None
+        self._refresh_system_tokens()
+
     def set_agent_tools(self, tools: tuple[Any, ...]) -> None:
         self._agent_tools = tuple(tools)
+        self._agent_tool_names = _tool_names_for_prompt(self._agent_tools)
         self._refresh_system_tokens()
 
     def set_agent_codeact_context_providers(self, context_providers: tuple[Any, ...]) -> None:
@@ -217,6 +245,8 @@ class AiLlmBridge(QtCore.QObject):
             assist_context=self._assist_context,
             graph_context_snapshot=self._effective_chat_context_snapshot(),
             graph_tools_enabled=bool(self._tools_for_mode("chat")),
+            graph_tool_names=self._tool_names_for_mode("chat"),
+            agent_surface=self._agent_surface_for_mode("chat"),
         )
 
     def _log_prompt_payload(self, mode: str, system_prompt: str, messages: list[dict[str, Any]]) -> None:
@@ -280,14 +310,28 @@ class AiLlmBridge(QtCore.QObject):
         logger.debug("AI chat history reset requested by user")
         self._clear_chat_context_snapshot()
 
+    @QtCore.Slot(result=str)
+    def default_conversation_scope(self) -> str:
+        return self._default_conversation_scope()
+
+    @QtCore.Slot(result=str)
+    def default_conversation_id(self) -> str:
+        return self._default_conversation_id()
+
     @QtCore.Slot(str, result="QVariantList")
     def list_conversations(self, scope: str = "graph") -> list[dict[str, Any]]:
-        return [summary.to_dict() for summary in self._conversation_store.list_conversations(scope=str(scope or "graph"))]
+        resolved_scope = self._conversation_scope(scope)
+        return [summary.to_dict() for summary in self._conversation_store.list_conversations(scope=resolved_scope)]
 
+    @QtCore.Slot(str, str, result="QVariantMap")
     @QtCore.Slot(str, result="QVariantMap")
-    def create_conversation(self, scope: str = "graph") -> dict[str, Any]:
-        record = self._conversation_store.ensure_conversation(scope=str(scope or "graph"))
+    def create_conversation(self, scope: str = "graph", conversation_id: str = "") -> dict[str, Any]:
+        record = self._conversation_store.ensure_conversation(
+            str(conversation_id or "").strip(),
+            scope=self._conversation_scope(scope),
+        )
         self._active_conversation_id = record.conversation_id
+        self._conversation_store.set_active_conversation_id(record.conversation_id)
         return record.to_dict()
 
     @QtCore.Slot(str, result="QVariantMap")
@@ -296,6 +340,7 @@ class AiLlmBridge(QtCore.QObject):
         if record is None:
             return {}
         self._active_conversation_id = record.conversation_id
+        self._conversation_store.set_active_conversation_id(record.conversation_id)
         return record.to_dict()
 
     @QtCore.Slot(str, result=bool)
@@ -304,6 +349,7 @@ class AiLlmBridge(QtCore.QObject):
         deleted = self._conversation_store.delete_conversation(deleted_id)
         if deleted and self._active_conversation_id == deleted_id:
             self._active_conversation_id = ""
+            self._conversation_store.set_active_conversation_id("")
         return deleted
 
     @QtCore.Slot(str, str, str, result="QVariantMap")
@@ -315,10 +361,11 @@ class AiLlmBridge(QtCore.QObject):
             return {}
         record = self._conversation_store.save_messages(
             str(conversation_id or ""),
-            scope=str(scope or "graph"),
+            scope=self._conversation_scope(scope),
             messages=messages,
         )
         self._active_conversation_id = record.conversation_id
+        self._conversation_store.set_active_conversation_id(record.conversation_id)
         self._last_messages = [message.to_dict() for message in messages]
         self._chat_tokens = sum(approx_tokens(message.content) for message in messages)
         self._emit_context_usage()
@@ -327,6 +374,7 @@ class AiLlmBridge(QtCore.QObject):
     @QtCore.Slot(str)
     def set_active_conversation(self, conversation_id: str) -> None:
         self._active_conversation_id = str(conversation_id or "").strip()
+        self._conversation_store.set_active_conversation_id(self._active_conversation_id)
 
     @QtCore.Slot(str)
     def abort_request(self, request_id: str) -> None:
@@ -480,16 +528,26 @@ class AiLlmBridge(QtCore.QObject):
             self.chat_done.emit(rid, "No model selected")
             return
 
+        effective_code, effective_selection = self._effective_document_context(
+            code=code,
+            selection=selection,
+        )
         system_prompt = self._get_system_prompt(SYSTEM_PROMPT_CODE)
-        messages = self._build_chat_messages(history, code, selection, system_prompt, _attachments_to_dicts(attachments))
+        messages = self._build_chat_messages(
+            history,
+            effective_code,
+            effective_selection,
+            system_prompt,
+            _attachments_to_dicts(attachments),
+        )
         self._update_context_tokens(messages)
 
         request = self._agent_request(
             request_id=rid,
             mode="chat",
             messages=tuple(history),
-            code=code,
-            selection=selection,
+            code=effective_code,
+            selection=effective_selection,
             attachments=tuple(attachments),
             chat_model_id=model_id,
         )
@@ -539,11 +597,15 @@ class AiLlmBridge(QtCore.QObject):
             self.edit_result_ready.emit(rid, "", "No model selected")
             return
 
+        effective_code, _effective_selection = self._effective_document_context(
+            code=code,
+            selection="",
+        )
         request = self._agent_request(
             request_id=rid,
             mode="edit",
             messages=tuple(history),
-            code=code,
+            code=effective_code,
             instruction=instruction,
             attachments=tuple(attachments),
             chat_model_id=model_id,
@@ -583,11 +645,15 @@ class AiLlmBridge(QtCore.QObject):
             self.plan_done.emit(rid, "No model selected")
             return
 
+        effective_code, _effective_selection = self._effective_document_context(
+            code=code,
+            selection="",
+        )
         request = self._agent_request(
             request_id=rid,
             mode="plan",
             messages=tuple(history),
-            code=code,
+            code=effective_code,
             task_description=task_description,
             attachments=tuple(attachments),
             chat_model_id=model_id,
@@ -698,8 +764,10 @@ class AiLlmBridge(QtCore.QObject):
             graph_context_snapshot=self._effective_chat_context_snapshot(),
             attachments=attachments,
             tools=self._tools_for_mode(mode),
+            graph_tool_names=self._tool_names_for_mode(mode),
             context_providers=self._context_providers_for_mode(mode),
-            session_key=self._session_key_for_mode(mode, self._active_conversation_id),
+            session_key=self._session_key_for_mode(mode, self._resolved_active_conversation_id()),
+            agent_surface=self._agent_surface_for_mode(mode),
             inline_provider_id=self._inline_provider_id,
             inline_model_id=str(inline_model_id or self._inline_model_id or ""),
             chat_provider_id=self._chat_provider_id,
@@ -708,20 +776,85 @@ class AiLlmBridge(QtCore.QObject):
         )
 
     def _effective_chat_context_snapshot(self) -> GraphContextSnapshot | None:
+        provider = self._graph_context_snapshot_provider
+        if provider is not None:
+            try:
+                return provider()
+            except _GRAPH_CONTEXT_PROVIDER_ERRORS as exc:
+                logger.exception("AI graph context snapshot provider failed", exc_info=exc)
+                return self._auto_chat_context_snapshot
         return self._auto_chat_context_snapshot
 
+    def _effective_document_context(self, *, code: str, selection: str) -> tuple[str, str]:
+        requested_code = str(code or "")
+        requested_selection = str(selection or "")
+        provider = self._editor_document_context_provider
+        if provider is None:
+            return requested_code, requested_selection
+        try:
+            context = provider()
+        except _EDITOR_DOCUMENT_CONTEXT_PROVIDER_ERRORS as exc:
+            logger.exception("AI editor document context provider failed", exc_info=exc)
+            return requested_code, requested_selection
+        provider_code = str(context.code or "")
+        provider_selection = str(context.selection or "")
+        language = str(context.language or "").strip().lower()
+        if language:
+            self._document_language = language
+        return requested_code or provider_code, requested_selection or provider_selection
+
     def _tools_for_mode(self, mode: AgentRequestMode) -> tuple[Any, ...]:
+        if self._editor_agent_scope is not None and mode in ("chat", "plan"):
+            return self._agent_tools
         if mode == "chat":
             return self._agent_tools
         return ()
 
     def _context_providers_for_mode(self, mode: AgentRequestMode) -> tuple[Any, ...]:
+        if self._editor_agent_scope is not None and mode in ("chat", "plan"):
+            return self._agent_codeact_context_providers
         if mode == "chat":
             return self._agent_codeact_context_providers
         return ()
 
-    @staticmethod
-    def _session_key_for_mode(mode: AgentRequestMode, conversation_id: str = "") -> StudioAgentSessionKey:
+    def _tool_names_for_mode(self, mode: AgentRequestMode) -> tuple[str, ...]:
+        if not self._tools_for_mode(mode):
+            return ()
+        return self._agent_tool_names
+
+    def _agent_surface_for_mode(self, mode: AgentRequestMode) -> str:
+        if self._editor_agent_scope is None:
+            return "graph"
+        if mode == "inline":
+            return "editor"
+        return "node_editor"
+
+    def _default_conversation_scope(self) -> str:
+        return "graph"
+
+    def _default_conversation_id(self) -> str:
+        return self._conversation_store.active_conversation_id()
+
+    def _conversation_scope(self, scope: str) -> str:
+        return str(scope or self._default_conversation_scope()).strip() or self._default_conversation_scope()
+
+    def _resolved_active_conversation_id(self) -> str:
+        active_id = self._conversation_store.active_conversation_id()
+        if active_id:
+            return active_id
+        return str(self._active_conversation_id or "").strip()
+
+    def _session_key_for_mode(self, mode: AgentRequestMode, conversation_id: str = "") -> StudioAgentSessionKey:
+        scope = self._editor_agent_scope
+        if scope is not None and mode == "inline":
+            return StudioAgentSessionKey.editor(
+                graph_id=scope.graph_id,
+                node_id=scope.node_id,
+                editor_id=f"{scope.field_name}:inline",
+            )
+        if scope is not None:
+            resolved_conversation_id = str(conversation_id or "").strip()
+            return StudioAgentSessionKey.sidebar(conversation_id=resolved_conversation_id)
         if mode == "inline":
             return StudioAgentSessionKey.editor(editor_id="inline")
         return StudioAgentSessionKey.sidebar(conversation_id=str(conversation_id or ""))
@@ -765,7 +898,7 @@ class AiLlmBridge(QtCore.QObject):
         payload = _agent_session_payload_for_request(state, request=request, provider=provider)
         self._conversation_store.save_agent_session(
             conversation_id,
-            scope="graph",
+            scope=_conversation_scope_for_session_key(key),
             agent_session=payload,
         )
 
@@ -951,3 +1084,23 @@ def _agent_session_payload_matches_request(
         and str(payload.get("endpoint") or "") == provider.endpoint
         and str(payload.get("modelId") or "") == model_id
     )
+
+
+def _conversation_scope_for_session_key(key: StudioAgentSessionKey) -> str:
+    if key.scope == "node":
+        return "node"
+    if key.scope == "editor":
+        return "editor"
+    return "graph"
+
+
+def _tool_names_for_prompt(tools: tuple[Any, ...]) -> tuple[str, ...]:
+    names: list[str] = []
+    for tool in tools:
+        if isinstance(tool, (FunctionType, MethodType)):
+            name = str(tool.__name__ or "").strip()
+        else:
+            name = type(tool).__name__.strip()
+        if name:
+            names.append(name)
+    return tuple(names)

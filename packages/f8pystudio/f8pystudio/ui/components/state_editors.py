@@ -15,6 +15,9 @@ from typing import Any, Callable
 
 from qtpy import QtCore, QtGui, QtWidgets
 
+from ...agents.graph_context import GraphContextSnapshot
+from ...editor_assist.agent_context import EditorAgentContext
+from ...editor_assist.agent_scope import EditorAgentScope
 from ...editor_assist.session import EditorSessionKey
 from ...editor_assist.workspace import EditorAssistContext
 from ...ui.support.qt_lifecycle import qt_object_is_valid
@@ -51,6 +54,12 @@ class F8CodeButtonEditor(QtWidgets.QWidget):
         self._persisted_value_setter: Callable[[str], bool | None] | None = None
         self._persisted_target_exists_provider: Callable[[], bool] | None = None
         self._editor_session_key: EditorSessionKey | None = None
+        self._editor_agent_scope: EditorAgentScope | None = None
+        self._agent_tools: tuple[object, ...] = ()
+        self._agent_context_providers: tuple[object, ...] = ()
+        self._graph_context_snapshot_provider: Callable[[], GraphContextSnapshot | None] | None = None
+        self._retained_agent_dependencies: tuple[object, ...] = ()
+        self._agent_sidebar_launcher: Callable[[EditorAgentContext], None] | None = None
         self._editor_window: QtWidgets.QDialog | None = None
 
         self._btn = QtWidgets.QPushButton("Edit...")
@@ -92,6 +101,27 @@ class F8CodeButtonEditor(QtWidgets.QWidget):
 
     def set_editor_session_key(self, session_key: EditorSessionKey | None) -> None:
         self._editor_session_key = session_key
+
+    def set_editor_agent_scope(self, scope: EditorAgentScope | None) -> None:
+        self._editor_agent_scope = scope
+
+    def set_agent_tools(self, tools: tuple[object, ...]) -> None:
+        self._agent_tools = tuple(tools)
+
+    def set_agent_context_providers(self, context_providers: tuple[object, ...]) -> None:
+        self._agent_context_providers = tuple(context_providers)
+
+    def set_graph_context_snapshot_provider(
+        self,
+        provider: Callable[[], GraphContextSnapshot | None] | None,
+    ) -> None:
+        self._graph_context_snapshot_provider = provider
+
+    def set_retained_agent_dependencies(self, dependencies: tuple[object, ...]) -> None:
+        self._retained_agent_dependencies = tuple(dependencies)
+
+    def set_agent_sidebar_launcher(self, launcher: Callable[[EditorAgentContext], None] | None) -> None:
+        self._agent_sidebar_launcher = launcher
 
     def set_editor_assist_context(self, context: EditorAssistContext | None) -> None:
         self._assist_context = context
@@ -163,6 +193,12 @@ class F8CodeButtonEditor(QtWidgets.QWidget):
             assist_context=self._assist_context,
             assist_context_provider=self._assist_context_provider,
             session_key=self._editor_session_key,
+            agent_scope=self._editor_agent_scope,
+            agent_tools=self._agent_tools,
+            agent_context_providers=self._agent_context_providers,
+            graph_context_snapshot_provider=self._graph_context_snapshot_provider,
+            retained_agent_dependencies=self._retained_agent_dependencies,
+            agent_sidebar_launcher=self._agent_sidebar_launcher,
         )
         self._editor_window = dlg
         dlg.destroyed.connect(self._on_editor_destroyed)  # type: ignore[attr-defined]

@@ -18,6 +18,7 @@ from f8pysdk.specs import (
     can_delete as _policy_can_delete,
 )
 
+from ....editor_assist.agent_scope import EditorAgentScope
 from ....nodegraph.node_base import F8StudioBaseNode
 from ....nodegraph.node_graph import F8StudioGraph
 from ....nodegraph.node_text_fields import node_text_editor_binding
@@ -184,6 +185,21 @@ class NodePropertyEditorBuildMixin(NodePropertyEditorTabsMixin):
             widget.set_persisted_value_setter(text_binding.value_setter)
             widget.set_persisted_target_exists_provider(text_binding.target_exists)
             widget.set_editor_session_key(text_binding.session_key)
+            widget.set_editor_agent_scope(
+                EditorAgentScope.node_field(
+                    graph_id=text_binding.session_key.scope,
+                    node_id=node_id,
+                    field_name=prop_name,
+                )
+            )
+            try:
+                widget.set_agent_tools(host.node_agent_tools())
+                widget.set_agent_context_providers(host.node_agent_context_providers())
+                widget.set_graph_context_snapshot_provider(host.node_graph_context_snapshot_provider(node_id))
+                widget.set_retained_agent_dependencies(host.node_agent_retained_dependencies())
+                widget.set_agent_sidebar_launcher(host.node_agent_sidebar_launcher())
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                logger.exception("Failed to attach node-scoped agent tools for property '%s'", prop_name)
         widget.set_editor_assist_context(
             build_editor_assist_context(
                 graph,

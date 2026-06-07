@@ -4,10 +4,14 @@ import json
 import threading
 from pathlib import Path
 
+import pytest
+
+import f8pystudio.agents.conversations as conversations_module
 from f8pystudio.agents.conversations import (
     StudioConversationMessage,
     StudioConversationStore,
     decode_conversation_messages,
+    shared_conversation_store,
 )
 
 
@@ -141,3 +145,20 @@ def test_conversation_store_preserves_messages_when_agent_session_saves_from_wor
     assert saved is not None
     assert [message.content for message in saved.messages] == ["first", "second"]
     assert saved.agent_session == {"sessionId": "worker-session"}
+
+
+def test_shared_conversation_store_returns_single_process_instance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(conversations_module, "_SHARED_CONVERSATION_STORE", None)
+    monkeypatch.setattr(
+        StudioConversationStore,
+        "_resolve_storage_path",
+        staticmethod(lambda: tmp_path / "ai_conversations.json"),
+    )
+
+    first = shared_conversation_store()
+    second = shared_conversation_store()
+
+    assert first is second
