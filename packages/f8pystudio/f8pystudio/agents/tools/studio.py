@@ -133,6 +133,54 @@ class StudioAutomationTools:
             {"plan": plan, "confirm": bool(confirm)},
         )
 
+    def graph_debug_service(
+        self,
+        service_id: str = "",
+        limit: int = 100,
+        log_limit: int = 100,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return self._client(connection_file).call(
+            "graph.debugService",
+            {"serviceId": service_id, "limit": int(limit), "logLimit": int(log_limit)},
+        )
+
+    def graph_auto_layout(
+        self,
+        selected_only: bool = False,
+        apply: bool = False,
+        confirm: bool = False,
+        spacing_x: float = 260.0,
+        spacing_y: float = 150.0,
+        origin_x: float = 0.0,
+        origin_y: float = 0.0,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return self._client(connection_file).call(
+            "graph.autoLayout",
+            {
+                "selectedOnly": bool(selected_only),
+                "apply": bool(apply),
+                "confirm": bool(confirm),
+                "spacingX": float(spacing_x),
+                "spacingY": float(spacing_y),
+                "originX": float(origin_x),
+                "originY": float(origin_y),
+            },
+        )
+
+    def graph_fix_container_bindings(
+        self,
+        service_id: str = "",
+        apply: bool = False,
+        confirm: bool = False,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return self._client(connection_file).call(
+            "graph.fixContainerBindings",
+            {"serviceId": service_id, "apply": bool(apply), "confirm": bool(confirm)},
+        )
+
     def graph_compile(self, connection_file: str = "") -> dict[str, Any]:
         return self._client(connection_file).call("graph.compile")
 
@@ -143,12 +191,71 @@ class StudioAutomationTools:
         self,
         confirm: bool = False,
         wait: bool = True,
+        timeout_s: float = 20.0,
         connection_file: str = "",
     ) -> dict[str, Any]:
-        return self._client(connection_file).call("runtime.deploy", {"confirm": bool(confirm), "wait": bool(wait)})
+        return self._client(connection_file).call(
+            "runtime.deploy",
+            {"confirm": bool(confirm), "wait": bool(wait), "timeoutS": float(timeout_s)},
+        )
+
+    def runtime_service_deploy(
+        self,
+        service_id: str,
+        timeout_s: float = 10.0,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return self._client(connection_file).call(
+            "runtime.serviceDeploy",
+            {"serviceId": service_id, "timeoutS": float(timeout_s)},
+        )
+
+    def runtime_services(self, connection_file: str = "") -> dict[str, Any]:
+        return self._client(connection_file).call("runtime.services")
 
     def runtime_service_status(self, service_id: str = "", connection_file: str = "") -> dict[str, Any]:
         return self._client(connection_file).call("runtime.serviceStatus", {"serviceId": service_id})
+
+    def runtime_set_service_active(
+        self,
+        service_id: str,
+        active: bool,
+        confirm: bool = False,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return self._client(connection_file).call(
+            "runtime.setServiceActive",
+            {"serviceId": service_id, "active": bool(active), "confirm": bool(confirm)},
+        )
+
+    def runtime_set_managed_active(
+        self,
+        active: bool,
+        confirm: bool = False,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return self._client(connection_file).call(
+            "runtime.setManagedActive",
+            {"active": bool(active), "confirm": bool(confirm)},
+        )
+
+    def runtime_service_process(
+        self,
+        service_id: str,
+        action: str,
+        service_class: str = "",
+        confirm: bool = False,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return self._client(connection_file).call(
+            "runtime.serviceProcess",
+            {
+                "serviceId": service_id,
+                "action": action,
+                "serviceClass": service_class,
+                "confirm": bool(confirm),
+            },
+        )
 
     def runtime_read_state(
         self,
@@ -168,11 +275,20 @@ class StudioAutomationTools:
         node_id: str,
         field: str,
         value: Any,
+        timeout_s: float = 2.0,
+        confirm: bool = False,
         connection_file: str = "",
     ) -> dict[str, Any]:
         return self._client(connection_file).call(
             "runtime.writeState",
-            {"serviceId": service_id, "nodeId": node_id, "field": field, "value": value},
+            {
+                "serviceId": service_id,
+                "nodeId": node_id,
+                "field": field,
+                "value": value,
+                "timeoutS": float(timeout_s),
+                "confirm": bool(confirm),
+            },
         )
 
     def runtime_watch_state(
@@ -180,15 +296,15 @@ class StudioAutomationTools:
         service_id: str,
         node_id: str,
         field: str,
-        duration_ms: int = 1000,
         after_ts_ms: int = 0,
+        timeout_s: float = 1.0,
         connection_file: str = "",
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "serviceId": service_id,
             "nodeId": node_id,
             "field": field,
-            "durationMs": int(duration_ms),
+            "timeoutS": float(timeout_s),
         }
         if int(after_ts_ms) > 0:
             payload["afterTsMs"] = int(after_ts_ms)
@@ -232,14 +348,39 @@ class StudioAutomationTools:
         call: str,
         args: Any = None,
         confirm: bool = False,
+        timeout_s: float = 2.0,
         connection_file: str = "",
     ) -> dict[str, Any]:
         if not bool(confirm):
             raise ValueError("runtime_invoke_command requires confirm=true")
         return self._client(connection_file).call(
             "runtime.invokeCommand",
-            {"serviceId": service_id, "call": call, "args": args},
+            {
+                "serviceId": service_id,
+                "call": call,
+                "args": args,
+                "confirm": bool(confirm),
+                "timeoutS": float(timeout_s),
+            },
         )
+
+    def monitor_report(self, connection_file: str = "") -> dict[str, Any]:
+        return self._client(connection_file).call("monitor.report")
+
+    def monitor_service(self, service_id: str, limit: int = 500, connection_file: str = "") -> dict[str, Any]:
+        return self._client(connection_file).call("monitor.service", {"serviceId": service_id, "limit": int(limit)})
+
+    def logs_read(
+        self,
+        service_id: str = "",
+        limit: int = 200,
+        minimum_level: int | None = None,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"serviceId": service_id, "limit": int(limit)}
+        if minimum_level is not None:
+            payload["minimumLevel"] = int(minimum_level)
+        return self._client(connection_file).call("logs.read", payload)
 
     def plan_graph_change_prompt(self, goal: str) -> str:
         return (

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import secrets
 import stat
@@ -17,7 +18,7 @@ from f8pystudio.nodegraph.runtime_compiler import compile_runtime_graphs_from_st
 
 from .client import wait_for_connection_file
 from .control_protocol import AutomationConnectionInfo
-from .domain import decode_graph_patch, graph_patch_to_dict
+from .domain import GraphPatch, MoveNodeOp, SetNodeStateOp, decode_graph_patch, graph_patch_to_dict
 from .graph_adapter import StudioGraphAutomationAdapter
 from .local_server import LocalAutomationServer
 from .observation_store import RuntimeObservationStore
@@ -214,6 +215,12 @@ class StudioAutomationHost(QtCore.QObject):
             return self._graph_preview_build_plan(params)
         if method == "graph.applyBuildPlan":
             return self._graph_apply_build_plan(params)
+        if method == "graph.debugService":
+            return self._graph_debug_service(params)
+        if method == "graph.autoLayout":
+            return self._graph_auto_layout(params)
+        if method == "graph.fixContainerBindings":
+            return self._graph_fix_container_bindings(params)
         if method == "graph.compile":
             return {"compile": self._graph_adapter.compile_graph()}
         if method == "library.services":
@@ -226,14 +233,30 @@ class StudioAutomationHost(QtCore.QObject):
             if not bool(params.get("confirm")):
                 raise ValueError("runtime.deploy requires confirm=true")
             return self._runtime_deploy(params)
+        if method == "runtime.serviceDeploy":
+            return self._runtime_service_deploy(params)
+        if method == "runtime.services":
+            return self._runtime_services()
         if method == "runtime.serviceStatus":
             return {"service": self._runtime_service_status(str(params.get("serviceId") or ""))}
+        if method == "runtime.setServiceActive":
+            return self._runtime_set_service_active(params)
+        if method == "runtime.setManagedActive":
+            return self._runtime_set_managed_active(params)
+        if method == "runtime.serviceProcess":
+            return self._runtime_service_process(params)
         if method == "runtime.writeState":
             return self._runtime_write_state(params)
         if method == "runtime.readMonitor":
             return {"monitor": self._runtime_read_monitor(params)}
         if method == "runtime.invokeCommand":
             return self._runtime_invoke_command(params)
+        if method == "monitor.report":
+            return self._monitor_report()
+        if method == "monitor.service":
+            return self._monitor_service(params)
+        if method == "logs.read":
+            return self._logs_read(params)
         raise ValueError(f"unsupported automation method: {method}")
 
     def _dispatch_server_thread(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -268,6 +291,45 @@ class StudioAutomationHost(QtCore.QObject):
             "compileWarnings": list(compiled.warnings or ()),
             "compile": self._graph_adapter.compile_graph(),
         }
+
+    def _runtime_service_deploy(self, params: dict[str, Any]) -> dict[str, Any]:
+        service_id = _required_text(params, "serviceId")
+        compiled = compile_runtime_graphs_from_studio(self._graph)
+        return {
+            "deploy": self._bridge.deploy_service_and_wait(
+                service_id,
+                compiled=compiled,
+                timeout_s=float(params.get("timeoutS") or 10.0),
+            )
+        }
+
+    def _runtime_services(self) -> dict[str, Any]:
+        return {"services": [_monitor_row_to_dict(row) for row in self._bridge.list_service_monitor_rows()]}
+
+    def _runtime_set_service_active(self, params: dict[str, Any]) -> dict[str, Any]:
+        service_id = _required_text(params, "serviceId")
+        active = bool(params.get("active"))
+        self._bridge.set_service_active(service_id, active)
+        return {"submitted": True, "serviceId": service_id, "active": active}
+
+    def _runtime_set_managed_active(self, params: dict[str, Any]) -> dict[str, Any]:
+        active = bool(params.get("active"))
+        self._bridge.set_managed_active(active)
+        return {"submitted": True, "active": active}
+
+    def _runtime_service_process(self, params: dict[str, Any]) -> dict[str, Any]:
+        service_id = _required_text(params, "serviceId")
+        action = str(params.get("action") or "").strip().lower()
+        service_class = str(params.get("serviceClass") or "").strip() or None
+        if action == "start":
+            self._bridge.start_service(service_id, service_class=service_class)
+        elif action == "stop":
+            self._bridge.stop_service(service_id)
+        elif action == "restart":
+            self._bridge.restart_service(service_id, service_class=service_class)
+        else:
+            raise ValueError("runtime.serviceProcess action must be start, stop, or restart")
+        return {"submitted": True, "serviceId": service_id, "action": action}
 
     def _graph_ui_context(self) -> dict[str, Any]:
         snapshot = self._graph_adapter.snapshot()
@@ -464,6 +526,152 @@ class StudioAutomationHost(QtCore.QObject):
             )
         }
 
+    def _monitor_report(self) -> dict[str, Any]:
+        return {"monitor": self._bridge.export_monitor_report()}
+
+    def _monitor_service(self, params: dict[str, Any]) -> dict[str, Any]:
+        service_id = _required_text(params, "serviceId")
+        limit = int(params.get("limit") or 500)
+        return {
+            "latest": self._bridge.get_latest_monitor_snapshot(service_id),
+            "stream": self._bridge.get_monitor_snapshot_stream(service_id, limit=limit),
+        }
+
+    def _logs_read(self, params: dict[str, Any]) -> dict[str, Any]:
+        minimum_level = params.get("minimumLevel")
+        resolved_minimum_level = int(minimum_level) if minimum_level is not None else None
+        return {
+            "logs": self._main_window._log_dock.export_logs(
+                service_id=str(params.get("serviceId") or ""),
+                limit=int(params.get("limit") or 200),
+                minimum_level=resolved_minimum_level,
+            )
+        }
+
+    def _graph_debug_service(self, params: dict[str, Any]) -> dict[str, Any]:
+        service_id = str(params.get("serviceId") or "").strip()
+        status: dict[str, Any] | None = None
+        monitor: dict[str, Any] | None = None
+        logs: dict[str, Any] | None = None
+        if service_id:
+            status = self._runtime_service_status(service_id)
+            monitor = self._monitor_service({"serviceId": service_id, "limit": int(params.get("limit") or 100)})
+            logs = self._logs_read({"serviceId": service_id, "limit": int(params.get("logLimit") or 100)})["logs"]
+        diagnostics = self._graph_adapter.diagnostics()
+        compile_payload = self._graph_adapter.compile_graph()
+        issue_count = len(list(diagnostics.get("issues") or []))
+        return {
+            "workflow": {
+                "name": "graph_debug_service",
+                "status": "completed",
+                "summary": f"Collected service debug bundle; diagnostics issues={issue_count}.",
+                "serviceId": service_id,
+                "service": status,
+                "monitor": monitor,
+                "logs": logs,
+                "diagnostics": diagnostics,
+                "compile": compile_payload,
+            }
+        }
+
+    def _graph_auto_layout(self, params: dict[str, Any]) -> dict[str, Any]:
+        selected_only = bool(params.get("selectedOnly", False))
+        apply_layout = bool(params.get("apply", False)) or bool(params.get("confirm", False))
+        snapshot = self._graph_adapter.snapshot()
+        nodes = [node for node in snapshot.nodes if not selected_only or node.selected]
+        if not nodes:
+            return {
+                "workflow": {
+                    "name": "graph_auto_layout",
+                    "status": "no_nodes",
+                    "summary": "No nodes matched the layout scope.",
+                    "patch": graph_patch_to_dict(GraphPatch(expected_revision=snapshot.revision, ops=(), label="auto layout")),
+                }
+            }
+        columns = max(1, int(math.ceil(math.sqrt(float(len(nodes))))))
+        spacing_x = float(params.get("spacingX") or 260.0)
+        spacing_y = float(params.get("spacingY") or 150.0)
+        origin_x = float(params.get("originX") or 0.0)
+        origin_y = float(params.get("originY") or 0.0)
+        ops: list[MoveNodeOp] = []
+        for index, node in enumerate(sorted(nodes, key=lambda item: item.node_id)):
+            row = index // columns
+            col = index % columns
+            ops.append(MoveNodeOp(node_id=node.node_id, pos=(origin_x + col * spacing_x, origin_y + row * spacing_y)))
+        patch = GraphPatch(expected_revision=snapshot.revision, label="agent auto layout", ops=tuple(ops))
+        preview = self._graph_adapter.preview_patch(patch)
+        workflow = {
+            "name": "graph_auto_layout",
+            "status": "previewed",
+            "summary": f"Prepared auto layout for {len(ops)} nodes.",
+            "patch": graph_patch_to_dict(patch),
+            "preview": preview.to_dict(),
+        }
+        if not apply_layout:
+            return {"workflow": workflow}
+        if not bool(params.get("confirm")):
+            raise ValueError("graph_auto_layout apply requires confirm=true")
+        applied = self._graph_adapter.apply_patch(patch)
+        self._schedule_studio_runtime_sync()
+        workflow["status"] = "applied"
+        workflow["summary"] = f"Applied auto layout to {len(ops)} nodes."
+        workflow["applyPreview"] = applied.to_dict()
+        return {"workflow": workflow}
+
+    def _graph_fix_container_bindings(self, params: dict[str, Any]) -> dict[str, Any]:
+        apply_fix = bool(params.get("apply", False)) or bool(params.get("confirm", False))
+        snapshot = self._graph_adapter.snapshot()
+        diagnostics = self._graph_adapter.diagnostics()
+        issues = [issue for issue in list(diagnostics.get("issues") or []) if isinstance(issue, dict)]
+        services_by_class: dict[str, str] = {}
+        for node in snapshot.nodes:
+            if node.kind == "service" and node.service_class:
+                services_by_class.setdefault(node.service_class, node.node_id)
+
+        ops: list[SetNodeStateOp] = []
+        unresolved: list[dict[str, Any]] = []
+        for issue in issues:
+            code = str(issue.get("code") or "")
+            if code not in {
+                "operator_missing_service_container",
+                "operator_service_container_missing",
+                "operator_service_class_mismatch",
+            }:
+                continue
+            node_id = str(issue.get("nodeId") or "").strip()
+            details = issue.get("details")
+            detail_map = details if isinstance(details, dict) else {}
+            service_class = str(detail_map.get("serviceClass") or detail_map.get("operatorServiceClass") or "").strip()
+            service_id = str(params.get("serviceId") or "").strip() or services_by_class.get(service_class, "")
+            if not node_id or not service_id:
+                unresolved.append({"nodeId": node_id, "serviceClass": service_class, "code": code})
+                continue
+            ops.append(SetNodeStateOp(node_id=node_id, field="svcId", value=service_id))
+
+        patch = GraphPatch(expected_revision=snapshot.revision, label="agent fix container bindings", ops=tuple(ops))
+        preview = self._graph_adapter.preview_patch(patch) if ops else None
+        workflow: dict[str, Any] = {
+            "name": "graph_fix_container_bindings",
+            "status": "previewed" if ops else "no_fix_available",
+            "summary": f"Prepared {len(ops)} service-container binding fixes; unresolved={len(unresolved)}.",
+            "patch": graph_patch_to_dict(patch),
+            "preview": None if preview is None else preview.to_dict(),
+            "unresolved": unresolved,
+        }
+        if not apply_fix:
+            return {"workflow": workflow}
+        if not ops:
+            return {"workflow": workflow}
+        if not bool(params.get("confirm")):
+            raise ValueError("graph_fix_container_bindings apply requires confirm=true")
+        applied = self._graph_adapter.apply_patch(patch)
+        self._schedule_studio_runtime_sync()
+        workflow["status"] = "applied"
+        workflow["summary"] = f"Applied {len(ops)} service-container binding fixes."
+        workflow["applyPreview"] = applied.to_dict()
+        workflow["diagnosticsAfter"] = self._graph_adapter.diagnostics()
+        return {"workflow": workflow}
+
     def _schedule_studio_runtime_sync(self) -> None:
         try:
             self._main_window._schedule_studio_runtime_sync()
@@ -534,6 +742,29 @@ def _optional_int_param(params: dict[str, Any], key: str) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _monitor_row_to_dict(row: Any) -> dict[str, Any]:
+    return {
+        "serviceId": str(row.service_id),
+        "serviceClass": str(row.service_class),
+        "running": bool(row.running),
+        "alive": row.alive,
+        "ready": row.ready,
+        "active": row.active,
+        "cpuProcessPercent": row.cpu_process_percent,
+        "memoryRssBytes": row.memory_rss_bytes,
+        "gpuUtilPercent": row.gpu_util_percent,
+        "latencyMsP95": row.latency_ms_p95,
+        "waitMsP95": row.wait_ms_p95,
+        "errorCountWindow": row.error_count_window,
+        "currentErrorNodeId": str(row.current_error_node_id),
+        "currentErrorCode": str(row.current_error_code),
+        "currentErrorMessage": str(row.current_error_message),
+        "currentErrorSeverity": str(row.current_error_severity),
+        "currentErrorTsMs": row.current_error_ts_ms,
+        "latestSnapshot": row.latest_snapshot,
+    }
 
 
 def launch_pystudio_with_automation(

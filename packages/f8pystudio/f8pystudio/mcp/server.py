@@ -111,6 +111,14 @@ def _create_server() -> Any:
         )
 
     @server.tool()
+    def graph_session(connection_file: str = "") -> dict[str, Any]:
+        return tools.graph_session(connection_file=connection_file)
+
+    @server.tool()
+    def graph_compile(connection_file: str = "") -> dict[str, Any]:
+        return tools.graph_compile(connection_file=connection_file)
+
+    @server.tool()
     def graph_preview_patch(patch: dict[str, Any], connection_file: str = "") -> dict[str, Any]:
         return tools.graph_preview_patch(patch=patch, connection_file=connection_file)
 
@@ -139,16 +147,145 @@ def _create_server() -> Any:
         return tools.graph_apply_build_plan(plan=plan, confirm=confirm, connection_file=connection_file)
 
     @server.tool()
-    def graph_compile(connection_file: str = "") -> dict[str, Any]:
-        return tools.graph_compile(connection_file=connection_file)
+    def graph_debug_service(
+        service_id: str = "",
+        limit: int = 100,
+        log_limit: int = 100,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return tools.graph_debug_service(
+            service_id=service_id,
+            limit=limit,
+            log_limit=log_limit,
+            connection_file=connection_file,
+        )
 
     @server.tool()
-    def runtime_deploy(confirm: bool = False, wait: bool = True, connection_file: str = "") -> dict[str, Any]:
-        return tools.runtime_deploy(confirm=confirm, wait=wait, connection_file=connection_file)
+    def graph_auto_layout(
+        selected_only: bool = False,
+        apply: bool = False,
+        confirm: bool = False,
+        spacing_x: float = 260.0,
+        spacing_y: float = 150.0,
+        origin_x: float = 0.0,
+        origin_y: float = 0.0,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return tools.graph_auto_layout(
+            selected_only=selected_only,
+            apply=apply,
+            confirm=confirm,
+            spacing_x=spacing_x,
+            spacing_y=spacing_y,
+            origin_x=origin_x,
+            origin_y=origin_y,
+            connection_file=connection_file,
+        )
+
+    @server.tool()
+    def graph_fix_container_bindings(
+        service_id: str = "",
+        apply: bool = False,
+        confirm: bool = False,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return tools.graph_fix_container_bindings(
+            service_id=service_id,
+            apply=apply,
+            confirm=confirm,
+            connection_file=connection_file,
+        )
+
+    @server.tool()
+    def runtime_deploy(
+        confirm: bool = False,
+        wait: bool = True,
+        timeout_s: float = 20.0,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return tools.runtime_deploy(confirm=confirm, wait=wait, timeout_s=timeout_s, connection_file=connection_file)
+
+    @server.tool()
+    def runtime_service_deploy(
+        service_id: str,
+        timeout_s: float = 10.0,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return tools.runtime_service_deploy(
+            service_id=service_id,
+            timeout_s=timeout_s,
+            connection_file=connection_file,
+        )
+
+    @server.tool()
+    def runtime_services(connection_file: str = "") -> dict[str, Any]:
+        return tools.runtime_services(connection_file=connection_file)
 
     @server.tool()
     def runtime_service_status(service_id: str = "", connection_file: str = "") -> dict[str, Any]:
         return tools.runtime_service_status(service_id=service_id, connection_file=connection_file)
+
+    @server.tool()
+    def runtime_set_service_active(
+        service_id: str,
+        active: bool,
+        confirm: bool = False,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return tools.runtime_set_service_active(
+            service_id=service_id,
+            active=active,
+            confirm=confirm,
+            connection_file=connection_file,
+        )
+
+    @server.tool()
+    def runtime_set_managed_active(
+        active: bool,
+        confirm: bool = False,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return tools.runtime_set_managed_active(
+            active=active,
+            confirm=confirm,
+            connection_file=connection_file,
+        )
+
+    @server.tool()
+    def runtime_service_process(
+        service_id: str,
+        action: str,
+        service_class: str = "",
+        confirm: bool = False,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return tools.runtime_service_process(
+            service_id=service_id,
+            action=action,
+            service_class=service_class,
+            confirm=confirm,
+            connection_file=connection_file,
+        )
+
+    @server.tool()
+    def runtime_write_state(
+        service_id: str,
+        node_id: str,
+        field: str,
+        value: Any,
+        timeout_s: float = 2.0,
+        confirm: bool = False,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return tools.runtime_write_state(
+            service_id=service_id,
+            node_id=node_id,
+            field=field,
+            value=value,
+            timeout_s=timeout_s,
+            confirm=confirm,
+            connection_file=connection_file,
+        )
 
     @server.tool()
     def runtime_read_state(service_id: str, node_id: str, field: str, connection_file: str = "") -> dict[str, Any]:
@@ -160,42 +297,22 @@ def _create_server() -> Any:
         )
 
     @server.tool()
-    def runtime_write_state(
-        service_id: str,
-        node_id: str,
-        field: str,
-        value: Any,
-        connection_file: str = "",
-    ) -> dict[str, Any]:
-        return tools.runtime_write_state(
-            service_id=service_id,
-            node_id=node_id,
-            field=field,
-            value=value,
-            connection_file=connection_file,
-        )
-
-    @server.tool()
     def runtime_watch_state(
         service_id: str,
         node_id: str,
         field: str,
-        duration_ms: int = 1000,
         after_ts_ms: int = 0,
+        timeout_s: float = 1.0,
         connection_file: str = "",
     ) -> dict[str, Any]:
         return tools.runtime_watch_state(
             service_id=service_id,
             node_id=node_id,
             field=field,
-            duration_ms=duration_ms,
             after_ts_ms=after_ts_ms,
+            timeout_s=timeout_s,
             connection_file=connection_file,
         )
-
-    @server.tool()
-    def runtime_read_monitor(service_id: str = "", limit: int = 500, connection_file: str = "") -> dict[str, Any]:
-        return tools.runtime_read_monitor(service_id=service_id, limit=limit, connection_file=connection_file)
 
     @server.tool()
     def runtime_sample_port(
@@ -225,6 +342,7 @@ def _create_server() -> Any:
         call: str,
         args: Any = None,
         confirm: bool = False,
+        timeout_s: float = 2.0,
         connection_file: str = "",
     ) -> dict[str, Any]:
         return tools.runtime_invoke_command(
@@ -232,6 +350,29 @@ def _create_server() -> Any:
             call=call,
             args=args,
             confirm=confirm,
+            timeout_s=timeout_s,
+            connection_file=connection_file,
+        )
+
+    @server.tool()
+    def monitor_report(connection_file: str = "") -> dict[str, Any]:
+        return tools.monitor_report(connection_file=connection_file)
+
+    @server.tool()
+    def monitor_service(service_id: str, limit: int = 500, connection_file: str = "") -> dict[str, Any]:
+        return tools.monitor_service(service_id=service_id, limit=limit, connection_file=connection_file)
+
+    @server.tool()
+    def logs_read(
+        service_id: str = "",
+        limit: int = 200,
+        minimum_level: int | None = None,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return tools.logs_read(
+            service_id=service_id,
+            limit=limit,
+            minimum_level=minimum_level,
             connection_file=connection_file,
         )
 
@@ -261,7 +402,7 @@ def _create_server() -> Any:
 
     @server.resource("f8studio://runtime/monitor")
     def runtime_monitor() -> dict[str, Any]:
-        return tools.runtime_read_monitor()
+        return tools.monitor_report()
 
     @server.resource("f8studio://session/current")
     def current_session() -> dict[str, Any]:

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import ast
 import sys
 import threading
 import types
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 from f8pysdk.service_runtime_tools.inventory.catalog import ServiceCatalog
@@ -22,12 +24,50 @@ from f8pystudio.agents.tools.graph import LocalStudioGraphToolExecutor, LocalStu
 from f8pystudio.agents.tools.mcp import StudioMCPStdioConfig, build_studio_mcp_stdio_tool
 from f8pystudio.agents.tools.studio import StudioAutomationTools
 
+PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "f8pystudio"
+MCP_EXTERNAL_TOOLS = ("studio_launch", "studio_attach")
+
 
 def _ensure_app() -> QtWidgets.QApplication:
     app = QtWidgets.QApplication.instance()
     if isinstance(app, QtWidgets.QApplication):
         return app
     return QtWidgets.QApplication([])
+
+
+def _class_method_names(path: Path, class_name: str) -> tuple[str, ...]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == class_name:
+            return tuple(child.name for child in node.body if isinstance(child, ast.FunctionDef))
+    raise AssertionError(f"Class not found: {class_name}")
+
+
+def _mcp_tool_names(path: Path) -> tuple[str, ...]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "_create_server":
+            tool_names: list[str] = []
+            for child in node.body:
+                if not isinstance(child, ast.FunctionDef):
+                    continue
+                for decorator in child.decorator_list:
+                    if isinstance(decorator, ast.Call) and isinstance(decorator.func, ast.Attribute):
+                        if decorator.func.attr == "tool":
+                            tool_names.append(child.name)
+            return tuple(tool_names)
+    raise AssertionError("_create_server not found")
+
+
+def test_external_mcp_tool_api_matches_local_graph_agent_tools() -> None:
+    tools = LocalStudioGraphTools(StudioAutomationTools())
+    expected_graph_tool_names = tools.available_tool_names()
+    studio_method_names = _class_method_names(PACKAGE_ROOT / "agents" / "tools" / "studio.py", "StudioAutomationTools")
+    mcp_tool_names = _mcp_tool_names(PACKAGE_ROOT / "mcp" / "server.py")
+
+    for name in expected_graph_tool_names:
+        assert name in studio_method_names
+    assert tuple(name for name in mcp_tool_names if name not in MCP_EXTERNAL_TOOLS) == expected_graph_tool_names
 
 
 def test_studio_automation_tools_forward_graph_snapshot_to_automation_client(
