@@ -8,7 +8,6 @@ from qtpy import QtCore, QtGui, QtWidgets
 
 from ...editor_assist.agent_context import EditorDocumentContext
 from ...editor_assist.session import EditorSessionController
-from ...ui.agents import AgentContextUsageButton, AgentQuickSettingsController, AgentSurfaceScope
 from ...ui.support.web_asset_utils import render_prism_asset_html, resolve_monaco_base_url as resolve_web_monaco_base_url
 from ...ui.support.webengine_utils import (
     configure_default_webengine_profile,
@@ -18,7 +17,6 @@ from ...ui.support.webengine_utils import (
 from ..support.monaco_editor_host import _ask_save_before_close, open_code_editor_dialog, open_code_editor_window
 from ..support.monaco_editor_page import MonacoEditorPageConfig, build_monaco_editor_html
 from ..support.qt_lifecycle import qt_object_is_valid
-from ..support.studio_theme import studio_dark_theme
 from ..support.ui_icons import StudioIcon, icon_for
 
 logger = logging.getLogger(__name__)
@@ -77,36 +75,18 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
 
         self._web_channel: Any = QtWebChannel.QWebChannel(self._view.page())
         self._web_channel.registerObject("f8EditorUi", self._ui_bridge)
-        self._web_channel.registerObject("aiAssist", self._controller.ai_bridge())
         assist_bridge = self._controller.assist_bridge()
         if assist_bridge is not None:
             self._web_channel.registerObject("pyAssist", assist_bridge)
         self._view.page().setWebChannel(self._web_channel)
 
-        self._ctx_btn = AgentContextUsageButton(
-            self._controller.ai_bridge(),
-            scope=AgentSurfaceScope.EDITOR,
-            parent=self,
-        )
         self._open_ai_sidebar_btn = QtWidgets.QToolButton(self)
         self._open_ai_sidebar_btn.setIcon(icon_for(self._open_ai_sidebar_btn, StudioIcon.MESSAGE_CHATBOT))
         self._open_ai_sidebar_btn.setText("AI Assist")
         self._open_ai_sidebar_btn.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self._open_ai_sidebar_btn.setToolTip("Open the shared AI Assist sidebar with this editor as context")
+        self._open_ai_sidebar_btn.setToolTip("Open the AI Assist sidebar with this editor as context")
+        self._open_ai_sidebar_btn.setEnabled(self._controller.agent_sidebar_launcher() is not None)
         self._open_ai_sidebar_btn.clicked.connect(self._open_shared_ai_sidebar)  # type: ignore[attr-defined]
-
-        self._agent_settings = AgentQuickSettingsController(
-            store=self._controller.ai_store(),
-            bridge=self._controller.ai_bridge(),
-            host=self,
-            panel_parent=self,
-            scope=AgentSurfaceScope.EDITOR,
-        )
-        self._ai_panel_btn = self._agent_settings.button
-        self._ai_panel_btn.toggled.connect(self._on_ai_panel_toggle)  # type: ignore[attr-defined]
-        self._ai_quick_panel = self._agent_settings.panel
-        self._ai_quick_panel.open_full_config_requested.connect(self._open_full_ai_config)  # type: ignore[attr-defined]
-        self._ai_quick_panel.raise_()
 
         editor_buttons = QtWidgets.QHBoxLayout()
         editor_buttons.setContentsMargins(0, 0, 0, 0)
@@ -141,9 +121,7 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
         editor_layout.addWidget(self._view, 1)
 
         bottom_bar = QtWidgets.QHBoxLayout()
-        bottom_bar.addWidget(self._ctx_btn)
         bottom_bar.addWidget(self._open_ai_sidebar_btn)
-        bottom_bar.addWidget(self._ai_panel_btn)
         bottom_bar.addStretch()
         bottom_bar.addLayout(editor_buttons)
 
@@ -192,10 +170,6 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
         if close_after:
             self.accept_requested.emit()
         return True
-
-    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # type: ignore[override]
-        super().resizeEvent(event)
-        self._reposition_ai_panel()
 
     def _read_code_from_page(self) -> str:
         page = self._view.page()
@@ -260,7 +234,6 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
                 language=self._controller.language(),
                 monaco_base_url=monaco_base_url,
                 python_assist_enabled=self._controller.assist_bridge() is not None,
-                shared_agent_sidebar_enabled=self._controller.agent_sidebar_launcher() is not None,
                 prism_asset_html=render_prism_asset_html(
                     languages=("python", "javascript", "bash", "json", "lua", "cpp", "c"),
                 ),
@@ -278,20 +251,6 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
             return
         self.save_current(close_after=self._controller.close_on_save())
 
-    @QtCore.Slot(bool)
-    def _on_ai_panel_toggle(self, checked: bool) -> None:
-        if checked:
-            self._reposition_ai_panel()
-
-    def _reposition_ai_panel(self) -> None:
-        self._agent_settings.reposition_inside(self._view)
-
-    def _open_full_ai_config(self) -> None:
-        from .ai_provider_config_dialog import AiProviderConfigDialog
-
-        dlg = AiProviderConfigDialog(self._controller.ai_store(), self)
-        dlg.exec()
-
     @QtCore.Slot()
     def _open_shared_ai_sidebar(self) -> None:
         widget_ref = weakref.ref(self)
@@ -303,19 +262,8 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
                 return EditorDocumentContext(code="", selection="", language=language)
             return widget._current_document_context()
 
-        launched = self._controller.launch_agent_sidebar(_document_context_provider)
-        if launched:
-            return
-        self._open_embedded_ai_panel()
-
-    def _open_embedded_ai_panel(self) -> None:
-        page = self._view.page()
-        if page is None:
-            return
-        try:
-            page.runJavaScript("window._f8_openEmbeddedAiPanel && window._f8_openEmbeddedAiPanel();")
-        except (AttributeError, RuntimeError, TypeError):
-            logger.exception("Failed to open embedded editor AI panel")
+        if not self._controller.launch_agent_sidebar(_document_context_provider):
+            logger.warning("AI Assist sidebar launcher is not configured for editor '%s'", self._controller.title())
 
     @QtCore.Slot(bool)
     def _on_dirty_changed(self, dirty: bool) -> None:

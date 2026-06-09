@@ -34,10 +34,6 @@ def effective_chat_model_id(cfg: ProviderConfig, selected_model_id: str) -> str:
     return str(selected_model_id or cfg.chat_model_id or first_model_id(cfg)).strip()
 
 
-def effective_inline_model_id(cfg: ProviderConfig, selected_model_id: str) -> str:
-    return str(selected_model_id or cfg.inline_model_id or first_model_id(cfg)).strip()
-
-
 def build_chat_client(selection: AgentClientSelection) -> Any:
     cfg = selection.provider
     model_id = str(selection.model_id or "").strip()

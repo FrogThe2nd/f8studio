@@ -8,7 +8,6 @@ from f8pystudio.agents.clients import (
     AgentClientSelection,
     build_chat_client,
     effective_chat_model_id,
-    effective_inline_model_id,
 )
 from f8pystudio.agents.registry import ModelCapabilities, ModelInfo, ProviderConfig
 
@@ -18,7 +17,6 @@ def test_effective_model_id_uses_selected_then_provider_then_first_cached() -> N
         provider_id="openai",
         display_name="OpenAI",
         cached_models=[ModelInfo(model_id="first", display_name="First")],
-        inline_model_id="inline",
         chat_model_id="chat",
     )
 
@@ -26,11 +24,6 @@ def test_effective_model_id_uses_selected_then_provider_then_first_cached() -> N
     assert effective_chat_model_id(cfg, "") == "chat"
     cfg.chat_model_id = ""
     assert effective_chat_model_id(cfg, "") == "first"
-
-    assert effective_inline_model_id(cfg, "selected") == "selected"
-    assert effective_inline_model_id(cfg, "") == "inline"
-    cfg.inline_model_id = ""
-    assert effective_inline_model_id(cfg, "") == "first"
 
 
 def test_effective_model_id_fallback_skips_non_agent_models() -> None:
@@ -48,7 +41,6 @@ def test_effective_model_id_fallback_skips_non_agent_models() -> None:
     )
 
     assert effective_chat_model_id(cfg, "") == "gpt-5"
-    assert effective_inline_model_id(cfg, "") == "gpt-5"
 
 
 def test_openai_responses_client_uses_agent_framework_openai(monkeypatch: pytest.MonkeyPatch) -> None:

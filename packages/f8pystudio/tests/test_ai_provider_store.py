@@ -1,9 +1,10 @@
 """Unit tests for agents.store JSON round-trip, model cache, and defaults merge."""
 from __future__ import annotations
 
+import json
+import time
 from pathlib import Path
 from unittest.mock import patch
-import time
 
 import pytest
 from qtpy import QtTest, QtWidgets  # type: ignore[import-not-found]
@@ -49,14 +50,12 @@ class TestCapabilitiesCodec:
         restored = _capabilities_from_dict(d)
         assert restored.model_kind == "agent"
         assert restored.supports_agent_chat
-        assert restored.supports_fim == caps.supports_fim
         assert restored.supports_reasoning == caps.supports_reasoning
         assert restored.reasoning_levels == caps.reasoning_levels
         assert restored.max_context_tokens == caps.max_context_tokens
 
     def test_round_trip_full(self) -> None:
         caps = ModelCapabilities(
-            supports_fim=True,
             supports_reasoning=True,
             reasoning_levels=("low", "medium", "high"),
             max_context_tokens=200_000,
@@ -112,7 +111,6 @@ class TestProviderCodec:
             endpoint="https://api.anthropic.com",
             api_version="",
             cached_models=[ModelInfo(model_id="claude-3-7", display_name="Claude 3.7")],
-            inline_model_id="claude-3-7",
             chat_model_id="claude-3-7",
             reasoning_level="high",
         )
@@ -183,6 +181,51 @@ class TestAiProviderStore:
         reloaded = store2.provider_by_id("openai")
         assert reloaded is not None
         assert reloaded.api_key == "sk-test-123"
+
+    def test_legacy_inline_provider_fields_are_dropped_on_save(self, tmp_path: Path) -> None:
+        store_path = tmp_path / "ai_providers.json"
+        legacy_payload = {
+            "active_inline_provider": "openai",
+            "active_chat_provider": "openai",
+            "providers": [
+                {
+                    "provider_id": "openai",
+                    "display_name": "OpenAI",
+                    "inference_service": "openai_responses",
+                    "cached_models": [
+                        {
+                            "model_id": "gpt-4.1",
+                            "display_name": "GPT-4.1",
+                            "capabilities": {
+                                "model_kind": "agent",
+                                "supports_agent_chat": True,
+                                "supports_fim": True,
+                            },
+                            "health_status": "unknown",
+                        }
+                    ],
+                    "inline_model_id": "gpt-4.1",
+                    "chat_model_id": "gpt-4.1",
+                    "reasoning_level": "",
+                }
+            ],
+        }
+        store_path.write_text(json.dumps(legacy_payload), encoding="utf-8")
+
+        with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+            store = AiProviderStore()
+
+        provider = store.provider_by_id("openai")
+        assert provider is not None
+        assert store.active_chat_provider == "openai"
+        assert provider.chat_model_id == "gpt-4.1"
+
+        store.save_active_chat_provider("openai")
+
+        migrated_payload = json.loads(store_path.read_text(encoding="utf-8"))
+        assert "active_inline_provider" not in migrated_payload
+        assert "inline_model_id" not in migrated_payload["providers"][0]
+        assert "supports_fim" not in migrated_payload["providers"][0]["cached_models"][0]["capabilities"]
 
     def test_save_new_provider(self, tmp_path: Path) -> None:
         store = self._make_store(tmp_path)
@@ -265,7 +308,6 @@ class TestAiProviderStore:
         assert updated.cached_models[0].display_name == "qwen-vl-reasoning"
         assert updated.cached_models[0].capabilities.supports_vision
         assert updated.cached_models[0].capabilities.supports_reasoning
-        assert updated.inline_model_id == "qwen-vl-reasoning"
         assert updated.chat_model_id == "qwen-vl-reasoning"
 
     def test_add_cached_non_agent_model_does_not_set_defaults(self, tmp_path: Path) -> None:
@@ -284,7 +326,6 @@ class TestAiProviderStore:
         assert updated is not None
         assert updated.cached_models[0].capabilities.model_kind == "image"
         assert not updated.cached_models[0].capabilities.supports_agent_chat
-        assert updated.inline_model_id == ""
         assert updated.chat_model_id == ""
 
     def test_add_cached_model_updates_duplicate_display_name(self, tmp_path: Path) -> None:
@@ -315,7 +356,6 @@ class TestAiProviderStore:
                 ModelInfo(model_id="a", display_name="A"),
                 ModelInfo(model_id="b", display_name="B"),
             ],
-            inline_model_id="a",
             chat_model_id="b",
         )
         store.save_provider(cfg)
@@ -326,7 +366,6 @@ class TestAiProviderStore:
         assert updated is not None
         assert removed_count == 2
         assert updated.cached_models == []
-        assert updated.inline_model_id == ""
         assert updated.chat_model_id == ""
 
     def test_test_models_async_routes_through_provider_connectivity_boundary(self, tmp_path: Path) -> None:

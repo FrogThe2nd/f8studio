@@ -13,19 +13,6 @@ SYSTEM_PROMPT_CODE = (
     "When providing explanations, be brief."
 )
 
-SYSTEM_PROMPT_EDIT = (
-    "You are a document editing assistant. "
-    "The user will provide the current document and an instruction. "
-    "Return ONLY the complete rewritten document; no explanation, no markdown fences, no comments about changes."
-)
-
-SYSTEM_PROMPT_PLAN = (
-    "You are a thoughtful coding assistant. First ask any clarifying questions "
-    "needed to understand the task. Then create a numbered plan. "
-    "When the user approves the plan, you may proceed step by step. "
-    "Be concise."
-)
-
 
 def approx_tokens(text: str) -> int:
     return max(1, math.ceil(len(text) / 4))
@@ -182,7 +169,7 @@ def _graph_tool_guidance(*, agent_surface: str, tool_names: tuple[str, ...]) -> 
                 "- High-frequency runtime telemetry such as latency, FPS, frame counters, and per-frame output counts belongs on monitor/data channels, not service state fields.",
                 "- This editor profile is inspection and preview oriented. Do not claim you can directly apply graph patches, deploy services, write remote state, or invoke runtime commands unless those tools are explicitly available.",
                 "- For non-trivial graph edits, prepare or preview a typed plan/patch and explain the change; leave final graph mutation to the graph-level agent workflow or an explicit approved action.",
-                "- For edit mode, return only the complete rewritten document, with no explanation or markdown fences.",
+                "- When the user explicitly asks for a complete document rewrite, return the complete rewritten document with no markdown fences.",
                 available_line,
             ]
         )
@@ -242,72 +229,6 @@ def build_chat_messages(
         messages.append(_history_message_to_prompt_message(item))
 
     return _attach_images_to_last_user_message(messages, attachments)
-
-
-def build_edit_messages(
-    *,
-    history: list[dict[str, Any]],
-    code: str,
-    instruction: str,
-    system_prompt: str,
-    document_language: str,
-    attachments: list[dict[str, str]] | None = None,
-) -> list[dict[str, Any]]:
-    fence_language = "" if document_language in {"", "plaintext"} else document_language
-    messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
-    for item in history:
-        role = str(item.get("role") or "")
-        if role != "system":
-            messages.append(_history_message_to_prompt_message(item))
-
-    user_content = (
-        f"Instruction: {instruction}\n\n"
-        f"Current {document_language} document:\n```{fence_language}\n{code}\n```"
-    )
-    messages.append({"role": "user", "content": user_content})
-    return _attach_images_to_last_user_message(messages, attachments)
-
-
-def build_plan_messages(
-    *,
-    history: list[dict[str, Any]],
-    code: str,
-    task_description: str,
-    system_prompt: str,
-    document_language: str,
-    attachments: list[dict[str, str]] | None = None,
-) -> list[dict[str, Any]]:
-    fence_language = "" if document_language in {"", "plaintext"} else document_language
-    messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
-    if code:
-        messages.append(
-            {
-                "role": "user",
-                "content": f"Current {document_language} document:\n```{fence_language}\n{code}\n```",
-            }
-        )
-        messages.append({"role": "assistant", "content": "I can see the current document. What would you like me to do?"})
-    for item in history:
-        role = str(item.get("role") or "")
-        if role != "system":
-            messages.append(_history_message_to_prompt_message(item))
-    if task_description:
-        messages.append({"role": "user", "content": str(task_description)})
-    return _attach_images_to_last_user_message(messages, attachments)
-
-
-def strip_code_fence(text: str) -> str:
-    stripped = str(text or "")
-    think_end = stripped.rfind("</think>")
-    if think_end != -1:
-        stripped = stripped[think_end + len("</think>"):]
-    stripped = stripped.strip()
-    lines = stripped.splitlines()
-    if lines and lines[0].startswith("```"):
-        lines.pop(0)
-    if lines and lines[-1].strip() == "```":
-        lines.pop()
-    return "\n".join(lines)
 
 
 def _attach_images_to_last_user_message(

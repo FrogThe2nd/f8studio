@@ -209,21 +209,18 @@ def test_debug_prompt_flag_logs_payload() -> None:
     warning_mock.assert_called_once()
 
 
-def test_selection_state_exposes_public_bridge_choices() -> None:
+def test_selection_state_exposes_shared_agent_model_choice() -> None:
     temp_dir = Path(".tmp") / "test_ai_llm_bridge" / uuid.uuid4().hex
     temp_dir.mkdir(parents=True, exist_ok=True)
     store_path = temp_dir / "ai_providers.json"
     with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
         bridge = AiLlmBridge(AiProviderStore())
 
-    bridge.set_inline_model("openai", "gpt-4.1")
     bridge.set_chat_model("anthropic", "claude-opus-4-5")
     bridge.set_reasoning_level("high")
 
     selection_state = bridge.selection_state()
 
-    assert selection_state.inline_provider_id == "openai"
-    assert selection_state.inline_model_id == "gpt-4.1"
     assert selection_state.chat_provider_id == "anthropic"
     assert selection_state.chat_model_id == "claude-opus-4-5"
     assert selection_state.reasoning_level == "high"
@@ -300,7 +297,7 @@ def test_agent_request_uses_chat_tools_and_auto_graph_context() -> None:
         )
     )
 
-    request = bridge._agent_request(request_id="rid-chat", mode="chat")
+    request = bridge._agent_request(request_id="rid-chat")
 
     assert request.tools == (graph_snapshot,)
     assert request.graph_tool_names == ("graph_snapshot",)
@@ -313,24 +310,7 @@ def test_agent_request_uses_chat_tools_and_auto_graph_context() -> None:
     assert "graph_snapshot" in prompt
 
 
-def test_agent_request_keeps_graph_tools_out_of_inline_requests() -> None:
-    temp_dir = Path(".tmp") / "test_ai_llm_bridge" / uuid.uuid4().hex
-    temp_dir.mkdir(parents=True, exist_ok=True)
-    store_path = temp_dir / "ai_providers.json"
-    with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
-        bridge = AiLlmBridge(AiProviderStore())
-
-    def graph_snapshot() -> dict[str, object]:
-        return {"snapshot": {"nodeCount": 1}}
-
-    bridge.set_agent_tools((graph_snapshot,))
-
-    request = bridge._agent_request(request_id="rid-inline", mode="inline")
-
-    assert request.tools == ()
-
-
-def test_editor_request_uses_shared_sidebar_session_with_node_context_and_plan_tools() -> None:
+def test_editor_request_uses_shared_sidebar_session_with_node_context_and_tools() -> None:
     temp_dir = Path(".tmp") / "test_ai_llm_bridge" / uuid.uuid4().hex
     temp_dir.mkdir(parents=True, exist_ok=True)
     store_path = temp_dir / "ai_providers.json"
@@ -362,27 +342,16 @@ def test_editor_request_uses_shared_sidebar_session_with_node_context_and_plan_t
     bridge.set_agent_tools((graph_node_detail,))
     bridge.set_graph_context_snapshot_provider(graph_context_provider)
 
-    chat_request = bridge._agent_request(request_id="rid-node-chat", mode="chat")
-    plan_request = bridge._agent_request(request_id="rid-node-plan", mode="plan")
-    edit_request = bridge._agent_request(request_id="rid-node-edit", mode="edit")
-    inline_request = bridge._agent_request(request_id="rid-node-inline", mode="inline")
+    request = bridge._agent_request(request_id="rid-node-chat")
 
-    assert chat_request.session_key is not None
-    assert chat_request.session_key.scope == "sidebar"
-    assert chat_request.session_key.conversation_id == ""
-    assert chat_request.tools == (graph_node_detail,)
-    assert chat_request.graph_tool_names == ("graph_node_detail",)
-    assert chat_request.agent_surface == "node_editor"
-    assert chat_request.graph_context_snapshot is not None
-    assert chat_request.graph_context_snapshot.selection_label == "Script Node"
-    assert plan_request.tools == (graph_node_detail,)
-    assert edit_request.tools == ()
-    assert inline_request.tools == ()
-    assert inline_request.session_key is not None
-    assert inline_request.session_key.scope == "editor"
-    assert inline_request.session_key.node_id == "script-1"
-    assert inline_request.session_key.editor_id == "code:inline"
-    assert inline_request.agent_surface == "editor"
+    assert request.session_key is not None
+    assert request.session_key.scope == "sidebar"
+    assert request.session_key.conversation_id == ""
+    assert request.tools == (graph_node_detail,)
+    assert request.graph_tool_names == ("graph_node_detail",)
+    assert request.agent_surface == "node_editor"
+    assert request.graph_context_snapshot is not None
+    assert request.graph_context_snapshot.selection_label == "Script Node"
     assert provider_calls
 
     prompt = bridge._get_system_prompt("Base prompt.")
@@ -418,7 +387,7 @@ def test_editor_conversation_slots_share_graph_scope_and_active_conversation(tmp
         json.dumps([{"role": "user", "content": "inspect upstream", "createdAtMs": 1}]),
     )
     summaries = bridge.list_conversations("")
-    request = bridge._agent_request(request_id="rid-node-chat", mode="chat")
+    request = bridge._agent_request(request_id="rid-node-chat")
 
     assert bridge.default_conversation_id() == conversation_id
     assert saved["scope"] == "graph"
@@ -455,7 +424,7 @@ def test_editor_bridge_uses_active_conversation_selected_by_sidebar_bridge(tmp_p
     assert editor_bridge.default_conversation_id() == conversation_id
 
     editor_bridge.set_active_conversation(conversation_id)
-    request = editor_bridge._agent_request(request_id="rid-editor-chat", mode="chat")
+    request = editor_bridge._agent_request(request_id="rid-editor-chat")
 
     assert request.session_key is not None
     assert request.session_key.scope == "sidebar"
@@ -464,7 +433,7 @@ def test_editor_bridge_uses_active_conversation_selected_by_sidebar_bridge(tmp_p
 
     second_record = sidebar_bridge.create_conversation("graph")
     second_conversation_id = str(second_record["conversationId"])
-    second_request = editor_bridge._agent_request(request_id="rid-editor-chat-2", mode="chat")
+    second_request = editor_bridge._agent_request(request_id="rid-editor-chat-2")
 
     assert second_request.session_key is not None
     assert second_request.session_key.scope == "sidebar"
@@ -487,7 +456,7 @@ def test_chat_request_uses_active_editor_document_context_provider(tmp_path: Pat
         ),
         emit=False,
     )
-    store.save_active_providers("openai", "openai")
+    store.save_active_chat_provider("openai")
     bridge = AiLlmBridge(store, conversation_store=StudioConversationStore(storage_path=tmp_path / "conversations.json"))
     captured_requests: list[StudioAgentRequest] = []
 
@@ -580,7 +549,7 @@ def test_bridge_exposes_persistent_conversation_slots(tmp_path: Path) -> None:
     )
     summaries = bridge.list_conversations("graph")
     loaded = bridge.load_conversation(conversation_id)
-    request = bridge._agent_request(request_id="rid-chat", mode="chat")
+    request = bridge._agent_request(request_id="rid-chat")
 
     assert saved["conversationId"] == conversation_id
     assert saved["title"] == "Build a sine graph"
@@ -619,11 +588,11 @@ def test_bridge_persists_and_restores_non_responses_agent_session(tmp_path: Path
         ),
         emit=False,
     )
-    store.save_active_providers("openai", "openai")
+    store.save_active_chat_provider("openai")
     bridge = AiLlmBridge(store, conversation_store=conversation_store)
     record = bridge.create_conversation("graph")
     conversation_id = str(record["conversationId"])
-    request = bridge._agent_request(request_id="rid-chat", mode="chat", chat_model_id="gpt-4.1")
+    request = bridge._agent_request(request_id="rid-chat", chat_model_id="gpt-4.1")
     assert request.session_key is not None
 
     with patch.object(bridge._runtime, "serialize_session", return_value={"sessionId": "maf-session"}):
@@ -662,11 +631,11 @@ def test_bridge_saves_agent_session_to_request_conversation_when_ui_switches(tmp
         ),
         emit=False,
     )
-    store.save_active_providers("openai", "openai")
+    store.save_active_chat_provider("openai")
     bridge = AiLlmBridge(store, conversation_store=conversation_store)
     first = bridge.create_conversation("graph")
     first_id = str(first["conversationId"])
-    request = bridge._agent_request(request_id="rid-chat", mode="chat", chat_model_id="gpt-4.1")
+    request = bridge._agent_request(request_id="rid-chat", chat_model_id="gpt-4.1")
     assert request.session_key is not None
     second = bridge.create_conversation("graph")
     second_id = str(second["conversationId"])
@@ -700,10 +669,10 @@ def test_bridge_does_not_persist_responses_agent_session(tmp_path: Path) -> None
         ),
         emit=False,
     )
-    store.save_active_providers("openai", "openai")
+    store.save_active_chat_provider("openai")
     bridge = AiLlmBridge(store, conversation_store=conversation_store)
     record = bridge.create_conversation("graph")
-    request = bridge._agent_request(request_id="rid-chat", mode="chat", chat_model_id="gpt-4.1")
+    request = bridge._agent_request(request_id="rid-chat", chat_model_id="gpt-4.1")
     assert request.session_key is not None
 
     with patch.object(bridge._runtime, "serialize_session", return_value={"sessionId": "maf-session"}):
@@ -755,7 +724,7 @@ def test_stream_request_thread_reports_unexpected_runtime_exception(tmp_path: Pa
         ),
         emit=False,
     )
-    store.save_active_providers("openai", "openai")
+    store.save_active_chat_provider("openai")
     bridge = AiLlmBridge(store)
     bridge._runtime = _FailingStreamRuntime()
     spy = QtTest.QSignalSpy(bridge.chat_done)

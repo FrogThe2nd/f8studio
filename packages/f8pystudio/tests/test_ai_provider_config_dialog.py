@@ -39,7 +39,6 @@ def test_provider_dialog_exposes_inference_service_and_manual_model_controls(tmp
         assert dialog._discover_btn.isEnabled()
         assert dialog._model_id_edit.placeholderText() == "model ID"
         assert dialog._add_model_btn.text() == "Add Model"
-        assert not dialog._inline_model_combo.isEditable()
         assert not dialog._chat_model_combo.isEditable()
     finally:
         dialog.close()
@@ -216,10 +215,7 @@ def test_provider_dialog_filters_non_agent_models_from_selectors(tmp_path: Path)
         dialog._current_provider_id = "custom_lab"
         dialog._load_form(custom)
 
-        inline_ids = [dialog._inline_model_combo.itemData(i) for i in range(dialog._inline_model_combo.count())]
         chat_ids = [dialog._chat_model_combo.itemData(i) for i in range(dialog._chat_model_combo.count())]
-        assert "gpt-5" in inline_ids
-        assert "gpt-image-2" not in inline_ids
         assert "gpt-5" in chat_ids
         assert "gpt-image-2" not in chat_ids
     finally:

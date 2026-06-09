@@ -92,7 +92,6 @@ def inference_service_display_name(service: ProviderInferenceService) -> str:
 class ModelCapabilities:
     model_kind: ModelKind = "agent"
     supports_agent_chat: bool = True
-    supports_fim: bool = False
     supports_reasoning: bool = False
     supports_vision: bool = False
     reasoning_levels: tuple[ReasoningLevel, ...] = ()
@@ -142,7 +141,6 @@ class ProviderConfig:
     endpoint: str = ""
     api_version: str = ""
     cached_models: list[ModelInfo] = field(default_factory=list)
-    inline_model_id: str = ""
     chat_model_id: str = ""
     reasoning_level: str = ""
 

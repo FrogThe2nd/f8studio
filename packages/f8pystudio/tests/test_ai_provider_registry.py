@@ -20,19 +20,16 @@ from f8pystudio.agents.registry import (
 class TestModelCapabilities:
     def test_defaults(self) -> None:
         caps = ModelCapabilities()
-        assert caps.supports_fim is False
         assert caps.supports_reasoning is False
         assert caps.reasoning_levels == ()
         assert caps.max_context_tokens == 128_000
 
     def test_custom_values(self) -> None:
         caps = ModelCapabilities(
-            supports_fim=True,
             supports_reasoning=True,
             reasoning_levels=("low", "high"),
             max_context_tokens=200_000,
         )
-        assert caps.supports_fim is True
         assert caps.reasoning_levels == ("low", "high")
         assert caps.max_context_tokens == 200_000
 
@@ -54,7 +51,6 @@ class TestProviderConfig:
         assert cfg.endpoint == ""
         assert cfg.api_version == ""
         assert cfg.cached_models == []
-        assert cfg.inline_model_id == ""
         assert cfg.chat_model_id == ""
         assert cfg.reasoning_level == ""
 

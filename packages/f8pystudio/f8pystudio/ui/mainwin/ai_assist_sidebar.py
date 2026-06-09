@@ -15,7 +15,7 @@ from ...agents.codeact import (
 from ...editor_assist.agent_context import EditorAgentContext
 from ...agents.graph_context import GraphContextSnapshot
 from ...agents.qt_bridge import AiLlmBridge
-from ...agents.store import AiProviderStore
+from ...agents.store import shared_ai_provider_store
 from ...agents.tools import LocalStudioGraphToolExecutor, LocalStudioGraphTools
 from ...ui.agents import AgentQuickSettingsController, AgentSurfaceScope
 from ...ui.support.ai_assist_state import QtAiPanelStateStore
@@ -72,7 +72,7 @@ class AiAssistSidebarWidget(AiAssistSidebarToolbarMixin, AiAssistSidebarGraphCon
         theme_palette = studio_dark_theme().palette
         
         # 1. Setup AI components
-        self._ai_store = AiProviderStore()
+        self._ai_store = shared_ai_provider_store()
         self._ai_bridge = AiLlmBridge(self._ai_store, state_store=QtAiPanelStateStore(), parent=self)
         if studio_graph is not None:
             self._graph_tool_executor = LocalStudioGraphToolExecutor(

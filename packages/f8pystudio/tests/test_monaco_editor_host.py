@@ -427,7 +427,7 @@ def test_close_deleted_target_prompts_and_keeps_tab_when_user_declines(monkeypat
     host.close()
 
 
-def test_monaco_editor_page_routes_ai_requests_through_request_maps() -> None:
+def test_monaco_editor_page_exposes_python_lsp_without_agent_bridge() -> None:
     html = build_monaco_editor_html(
         MonacoEditorPageConfig(
             code="print('hello')\n",
@@ -437,23 +437,21 @@ def test_monaco_editor_page_routes_ai_requests_through_request_maps() -> None:
         )
     )
 
-    send_message_block = html.split("function _f8_sendMessage() {", 1)[1].split("window._f8_attachments = [];", 1)[0]
-    assert "window._f8_chatRequests = Object.create(null);" in html
-    assert "window._f8_editRequests = Object.create(null);" in html
-    assert "window._f8_planRequests = Object.create(null);" in html
-    assert html.count("chat_chunk_ready.connect") >= 1
-    assert html.count("chat_done.connect") >= 1
-    assert html.count("edit_result_ready.connect") >= 1
-    assert html.count("plan_step_ready.connect") >= 1
-    assert html.count("plan_done.connect") >= 1
-    assert ".chat_chunk_ready.connect" not in send_message_block
-    assert ".chat_done.connect" not in send_message_block
-    assert ".edit_result_ready.connect" not in send_message_block
-    assert ".plan_step_ready.connect" not in send_message_block
-    assert ".plan_done.connect" not in send_message_block
+    assert "window._f8_pyAssist = null;" in html
+    assert "channel.objects.pyAssist" in html
+    assert "completion_ready" in html
+    assert "hover_ready" in html
+    assert "signature_help_ready" in html
+    assert "diagnostics_ready" in html
+    assert "request_completions" in html
+    assert "request_hover" in html
+    assert "request_signature_help" in html
+    assert "sync_document" in html
+    assert "aiAssist" not in html
+    assert "_f8_aiAssist" not in html
 
 
-def test_monaco_editor_ai_panel_toggle_keeps_reopen_control_visible() -> None:
+def test_monaco_editor_page_does_not_include_legacy_embedded_agent_ui() -> None:
     html = build_monaco_editor_html(
         MonacoEditorPageConfig(
             code="print('hello')\n",
@@ -463,56 +461,27 @@ def test_monaco_editor_ai_panel_toggle_keeps_reopen_control_visible() -> None:
         )
     )
 
-    assert "function _f8_normalizeAiPanelWidth(value)" in html
-    assert "function _f8_normalizeAiPanelOpen(value)" in html
-    assert "const F8_AI_PANEL_MIN_WIDTH = 240;" in html
-    assert "function _f8_setAiPanelOpen(panel, toggle, open)" in html
-    assert "document.body.classList.toggle('f8-ai-open', isOpen);" in html
-    assert "panel.style.width = isOpen ? width + 'px' : '0px';" in html
-    assert "body.f8-ai-open #f8-ai-toggle" in html
-    assert 'id="f8-ai-toggle" title="Show AI Assist" aria-expanded="false"' in html
-    assert "panel.style.width = isOpen ? (document.documentElement.style.getPropertyValue" not in html
-
-
-def test_monaco_editor_ai_panel_uses_persistent_scoped_conversations() -> None:
-    html = build_monaco_editor_html(
-        MonacoEditorPageConfig(
-            code="print('hello')\n",
-            language="python",
-            monaco_base_url="https://cdn.jsdelivr.net/npm/monaco-editor/min",
-            python_assist_enabled=True,
-        )
+    forbidden_fragments = (
+        "window._f8_chatRequests",
+        "window._f8_editRequests",
+        "window._f8_planRequests",
+        "f8-ai-panel",
+        "f8-ai-toggle",
+        "sharedAgentSidebarEnabled",
+        "request_chat",
+        "request_edit",
+        "request_plan",
+        "request_inline_suggestion",
+        "chat_chunk_ready",
+        "chat_done",
+        "edit_result_ready",
+        "plan_step_ready",
+        "plan_done",
+        "inline_suggestion_ready",
+        "default_conversation_scope",
+        "list_conversations",
+        "save_conversation_messages",
+        "window._f8_openEmbeddedAiPanel",
     )
-
-    assert "default_conversation_scope" in html
-    assert "default_conversation_id" in html
-    assert "list_conversations" in html
-    assert "save_conversation_messages" in html
-    assert "load_conversation" in html
-    assert "set_active_conversation" in html
-    assert "f8-ai-conversation-select" in html
-    assert "f8-ai-delete-conversation" in html
-    assert "window._f8_conversationScope || 'graph'" in html
-    assert "_f8_initializeConversations();" in html
-    assert "[window._f8_conversationScope || 'graph', defaultId]" not in html
-
-
-def test_monaco_editor_can_hide_embedded_ai_panel_for_shared_sidebar() -> None:
-    html = build_monaco_editor_html(
-        MonacoEditorPageConfig(
-            code="print('hello')\n",
-            language="python",
-            monaco_base_url="https://cdn.jsdelivr.net/npm/monaco-editor/min",
-            python_assist_enabled=True,
-            shared_agent_sidebar_enabled=True,
-        )
-    )
-
-    assert '"sharedAgentSidebarEnabled": true' in html
-    assert "function _f8_useSharedAgentSidebar()" in html
-    assert "panel.style.display = 'none';" in html
-    assert "toggle.style.display = 'none';" in html
-    assert "window._f8_openEmbeddedAiPanel = function()" in html
-    assert "window._f8_forceEmbeddedAiPanel = true;" in html
-    assert "window._f8_embeddedAiPanelInitialized" in html
-    assert "if (!_f8_useSharedAgentSidebar())" in html
+    for fragment in forbidden_fragments:
+        assert fragment not in html

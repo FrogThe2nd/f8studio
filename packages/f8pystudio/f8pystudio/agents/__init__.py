@@ -13,15 +13,10 @@ from .graph_context import (
 )
 from .prompts import (
     SYSTEM_PROMPT_CODE,
-    SYSTEM_PROMPT_EDIT,
-    SYSTEM_PROMPT_PLAN,
     approx_tokens,
     build_chat_messages,
-    build_edit_messages,
-    build_plan_messages,
     build_system_prompt,
     format_assist_context,
-    strip_code_fence,
 )
 from .registry import (
     DEFAULT_PROVIDERS,
@@ -60,7 +55,7 @@ from .runtime import (
     StudioAgentRuntime,
 )
 from .sessions import shared_agent_session_registry
-from .store import AiProviderStore
+from .store import AiProviderStore, shared_ai_provider_store
 from .tools import StudioAutomationTools, StudioMCPStdioConfig, build_studio_mcp_stdio_tool
 
 __all__ = [
@@ -87,8 +82,6 @@ __all__ = [
     "StudioConversationStore",
     "StudioConversationSummary",
     "SYSTEM_PROMPT_CODE",
-    "SYSTEM_PROMPT_EDIT",
-    "SYSTEM_PROMPT_PLAN",
     "StudioAgentAttachment",
     "StudioCodeActConfig",
     "StudioAgentEvent",
@@ -101,8 +94,6 @@ __all__ = [
     "build_codeact_context_provider",
     "build_studio_mcp_stdio_tool",
     "build_chat_messages",
-    "build_edit_messages",
-    "build_plan_messages",
     "build_system_prompt",
     "format_graph_context_report",
     "format_graph_context_snapshot",
@@ -111,7 +102,7 @@ __all__ = [
     "codeact_skill_status",
     "decode_conversation_messages",
     "shared_agent_session_registry",
+    "shared_ai_provider_store",
     "shared_conversation_store",
-    "strip_code_fence",
     "supports_endpoint_model_discovery",
 ]

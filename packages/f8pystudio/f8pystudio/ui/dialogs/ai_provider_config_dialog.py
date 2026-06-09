@@ -5,7 +5,7 @@ Allows users to:
   - Add / edit / delete AI providers
   - Configure Agent Framework inference service, endpoint URL, API key
   - Discover endpoint model IDs or add model IDs manually
-  - Select default inline and chat models
+  - Select the default shared agent model
 """
 from __future__ import annotations
 
@@ -168,14 +168,9 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
         self._model_table.setMaximumHeight(150)
         form.addRow("", self._model_table)
 
-        # Per-task model selectors
-        self._inline_model_combo = QtWidgets.QComboBox()
-        form.addRow("Inline Model:", self._inline_model_combo)
-
         self._chat_model_combo = QtWidgets.QComboBox()
-        form.addRow("Chat/Edit Model:", self._chat_model_combo)
+        form.addRow("Agent Model:", self._chat_model_combo)
 
-        self._setup_combo_search(self._inline_model_combo)
         self._setup_combo_search(self._chat_model_combo)
 
         self._reasoning_combo = QtWidgets.QComboBox()
@@ -210,7 +205,7 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
             self._name_edit, self._inference_service_combo, self._endpoint_edit,
             self._api_version_edit, self._key_edit, self._discover_btn, self._test_btn, self._remove_model_btn,
             self._model_id_edit, self._add_model_btn, self._model_table,
-            self._inline_model_combo, self._chat_model_combo, self._reasoning_combo,
+            self._chat_model_combo, self._reasoning_combo,
         ]
         self._set_form_enabled(False)
         self._current_provider_id: str = ""
@@ -285,12 +280,9 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
 
     def _refresh_model_combos(self, cfg: ProviderConfig) -> None:
         self._model_table.setRowCount(0)
-        self._inline_model_combo.blockSignals(True)
         self._chat_model_combo.blockSignals(True)
         try:
-            self._inline_model_combo.clear()
             self._chat_model_combo.clear()
-            self._inline_model_combo.addItem("(none)", "")
             self._chat_model_combo.addItem("(none)", "")
             
             for m in cfg.cached_models:
@@ -312,21 +304,14 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
                 self._model_table.setItem(row, 2, id_item)
                 
                 if m.health_status != "error" and supports_agent_chat_model(m):
-                    self._inline_model_combo.addItem(m.full_display_label, m.model_id)
                     self._chat_model_combo.addItem(m.full_display_label, m.model_id)
 
             # Restore selection
-            for i in range(self._inline_model_combo.count()):
-                if self._inline_model_combo.itemData(i) == cfg.inline_model_id:
-                    self._inline_model_combo.setCurrentIndex(i)
-                    break
-
             for i in range(self._chat_model_combo.count()):
                 if self._chat_model_combo.itemData(i) == cfg.chat_model_id:
                     self._chat_model_combo.setCurrentIndex(i)
                     break
         finally:
-            self._inline_model_combo.blockSignals(False)
             self._chat_model_combo.blockSignals(False)
 
         levels = ["(none)", "low", "medium", "high"]
@@ -348,9 +333,6 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
         cfg.endpoint = self._endpoint_edit.text().strip()
         cfg.api_version = self._api_version_edit.text().strip()
         cfg.api_key = self._key_edit.text().strip()
-
-        inline_idx = self._inline_model_combo.currentIndex()
-        cfg.inline_model_id = str(self._inline_model_combo.itemData(inline_idx) or "") if inline_idx >= 0 else ""
 
         chat_idx = self._chat_model_combo.currentIndex()
         cfg.chat_model_id = str(self._chat_model_combo.itemData(chat_idx) or "") if chat_idx >= 0 else ""

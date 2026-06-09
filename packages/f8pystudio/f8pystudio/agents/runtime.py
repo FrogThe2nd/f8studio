@@ -16,18 +16,12 @@ from .clients import (
     AgentFrameworkImportError,
     build_chat_client,
     effective_chat_model_id,
-    effective_inline_model_id,
 )
 from .prompts import (
     SYSTEM_PROMPT_CODE,
-    SYSTEM_PROMPT_EDIT,
-    SYSTEM_PROMPT_PLAN,
     build_chat_messages,
-    build_edit_messages,
-    build_plan_messages,
     build_system_prompt,
     current_document_language,
-    strip_code_fence,
 )
 from .registry import ProviderConfig
 from .sessions import StudioAgentSessionKey, StudioAgentSessionRegistry, shared_agent_session_registry
@@ -35,7 +29,7 @@ from .store import AiProviderStore
 
 logger = logging.getLogger(__name__)
 
-AgentRequestMode = Literal["chat", "edit", "plan", "inline"]
+AgentRequestMode = Literal["chat"]
 _STREAM_QUEUE_MAX_SIZE = 32
 _DEFAULT_STREAM_FIRST_EVENT_TIMEOUT_S = 120.0
 _DEFAULT_STREAM_IDLE_TIMEOUT_S = 120.0
@@ -64,10 +58,6 @@ class StudioAgentRequest:
     messages: tuple[dict[str, Any], ...] = ()
     code: str = ""
     selection: str = ""
-    instruction: str = ""
-    task_description: str = ""
-    prefix: str = ""
-    suffix: str = ""
     document_language: str = "plaintext"
     assist_context: EditorAssistContext | None = None
     graph_context_snapshot: GraphContextSnapshot | None = None
@@ -77,8 +67,6 @@ class StudioAgentRequest:
     context_providers: tuple[Any, ...] = ()
     session_key: StudioAgentSessionKey | None = None
     agent_surface: str = "graph"
-    inline_provider_id: str = ""
-    inline_model_id: str = ""
     chat_provider_id: str = ""
     chat_model_id: str = ""
     reasoning_level: str = ""
@@ -145,12 +133,6 @@ class StudioAgentRuntime:
         self._abort_events.clear()
 
     async def run_text(self, request: StudioAgentRequest) -> str:
-        if request.mode == "edit":
-            result = await self._run_non_streaming(request, max_tokens=8192)
-            return strip_code_fence(result)
-        if request.mode == "inline":
-            result = await self._run_non_streaming(request, max_tokens=256)
-            return _clean_inline_text(result)
         return await self._run_non_streaming(request, max_tokens=4096)
 
     async def run_stream(self, request: StudioAgentRequest) -> AsyncIterator[StudioAgentEvent]:
@@ -274,7 +256,7 @@ class StudioAgentRuntime:
         return self._session_for_request(request)
 
     def _provider_for_request(self, request: StudioAgentRequest) -> ProviderConfig:
-        provider_id = request.inline_provider_id if request.mode == "inline" else request.chat_provider_id
+        provider_id = request.chat_provider_id
         if provider_id:
             provider = self._store.provider_by_id(provider_id)
             if provider is not None:
@@ -285,10 +267,7 @@ class StudioAgentRuntime:
         raise AgentRuntimeUnavailableError("No AI provider configured")
 
     def _model_for_request(self, request: StudioAgentRequest, provider: ProviderConfig) -> str:
-        if request.mode == "inline":
-            model_id = effective_inline_model_id(provider, request.inline_model_id)
-        else:
-            model_id = effective_chat_model_id(provider, request.chat_model_id)
+        model_id = effective_chat_model_id(provider, request.chat_model_id)
         if not model_id:
             raise AgentRuntimeUnavailableError("No model selected")
         return model_id
@@ -298,62 +277,6 @@ class StudioAgentRuntime:
             document_language=request.document_language,
             assist_context=request.assist_context,
         )
-        if request.mode == "edit":
-            system_prompt = build_system_prompt(
-                SYSTEM_PROMPT_EDIT,
-                document_language=document_language,
-                assist_context=request.assist_context,
-                graph_context_snapshot=request.graph_context_snapshot,
-                graph_tools_enabled=bool(request.tools),
-                graph_tool_names=request.graph_tool_names,
-                agent_surface=request.agent_surface,
-            )
-            messages = build_edit_messages(
-                history=list(request.messages),
-                code=request.code,
-                instruction=request.instruction,
-                system_prompt=system_prompt,
-                document_language=document_language,
-                attachments=_attachments_to_dicts(request.attachments),
-            )
-            return _messages_to_agent_framework_content(messages), system_prompt
-        if request.mode == "plan":
-            system_prompt = build_system_prompt(
-                SYSTEM_PROMPT_PLAN,
-                document_language=document_language,
-                assist_context=request.assist_context,
-                graph_context_snapshot=request.graph_context_snapshot,
-                graph_tools_enabled=bool(request.tools),
-                graph_tool_names=request.graph_tool_names,
-                agent_surface=request.agent_surface,
-            )
-            messages = build_plan_messages(
-                history=list(request.messages),
-                code=request.code,
-                task_description=request.task_description,
-                system_prompt=system_prompt,
-                document_language=document_language,
-                attachments=_attachments_to_dicts(request.attachments),
-            )
-            return _messages_to_agent_framework_content(messages), system_prompt
-        if request.mode == "inline":
-            system_prompt = build_system_prompt(
-                SYSTEM_PROMPT_CODE,
-                document_language=document_language,
-                assist_context=request.assist_context,
-                graph_context_snapshot=request.graph_context_snapshot,
-                graph_tools_enabled=bool(request.tools),
-                graph_tool_names=request.graph_tool_names,
-                agent_surface=request.agent_surface,
-            )
-            user_text = (
-                "Return only the code text that should be inserted at the cursor. "
-                "Do not include markdown fences or explanations.\n\n"
-                f"Prefix:\n```{document_language}\n{request.prefix}\n```\n\n"
-                f"Suffix:\n```{document_language}\n{request.suffix}\n```"
-            )
-            return [{"role": "user", "content": user_text}], system_prompt
-
         system_prompt = build_system_prompt(
             SYSTEM_PROMPT_CODE,
             document_language=document_language,
@@ -462,15 +385,6 @@ def _response_update_text(update: Any) -> str:
     if isinstance(update, AgentResponseUpdate):
         return update.text
     raise TypeError(f"Expected AgentResponseUpdate, got {type(update).__name__}")
-
-
-def _clean_inline_text(text: str) -> str:
-    lines = str(text or "").splitlines()
-    if lines and lines[0].startswith("```"):
-        lines.pop(0)
-    if lines and lines[-1].strip() == "```":
-        lines.pop()
-    return "\n".join(lines)
 
 
 async def _stream_agent_events(

@@ -50,7 +50,6 @@ def copy_provider(provider: ProviderConfig) -> ProviderConfig:
         endpoint=provider.endpoint,
         api_version=provider.api_version,
         cached_models=[copy_model(model) for model in provider.cached_models],
-        inline_model_id=provider.inline_model_id,
         chat_model_id=provider.chat_model_id,
         reasoning_level=provider.reasoning_level,
     )
@@ -183,7 +182,7 @@ def discover_endpoint_model_catalog(provider: ProviderConfig, *, timeout_s: floa
                 status="error",
                 message=(
                     f"Endpoint returned {parsed_catalog.skipped_non_agent_count} non-agent model(s), "
-                    "but no chat/edit agent models."
+                    "but no agent chat models."
                 ),
                 skipped_non_agent_count=parsed_catalog.skipped_non_agent_count,
             )

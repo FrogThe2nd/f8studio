@@ -9,11 +9,7 @@ from typing import Any, Callable
 
 from qtpy import QtCore
 
-from ..agents.conversations import StudioConversationStore, shared_conversation_store
-from ..agents.qt_bridge import AiLlmBridge
 from ..agents.graph_context import GraphContextSnapshot
-from ..agents.store import AiProviderStore
-from ..ui.support.ai_assist_state import QtAiPanelStateStore
 from ..ui.support.editor_assist_bridge import PythonEditorAssistBridge
 from .agent_context import EditorAgentContext, EditorDocumentContext
 from .agent_scope import EditorAgentScope
@@ -21,26 +17,10 @@ from .workspace import EditorAssistContext
 
 logger = logging.getLogger(__name__)
 
-_SHARED_AI_STORE: AiProviderStore | None = None
-_SHARED_CONVERSATION_STORE: StudioConversationStore | None = None
 # Editor assist callbacks cross UI, Qt signal, and user-supplied save/context
 # providers. Keep the editor responsive, but make every boundary explicit.
 _EDITOR_ASSIST_CALLBACK_ERRORS = (Exception,)
 _EDITOR_ASSIST_BRIDGE_SHUTDOWN_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
-
-
-def shared_ai_store() -> AiProviderStore:
-    global _SHARED_AI_STORE
-    if _SHARED_AI_STORE is None:
-        _SHARED_AI_STORE = AiProviderStore()
-    return _SHARED_AI_STORE
-
-
-def shared_ai_conversation_store() -> StudioConversationStore:
-    global _SHARED_CONVERSATION_STORE
-    if _SHARED_CONVERSATION_STORE is None:
-        _SHARED_CONVERSATION_STORE = shared_conversation_store()
-    return _SHARED_CONVERSATION_STORE
 
 
 def assist_context_requires_python(context: EditorAssistContext | None) -> bool:
@@ -363,19 +343,6 @@ class EditorSessionController(QtCore.QObject):
             retained_agent_dependencies=tuple(retained_agent_dependencies),
             agent_sidebar_launcher=agent_sidebar_launcher,
         )
-        self._ai_store = shared_ai_store()
-        self._ai_bridge = AiLlmBridge(
-            self._ai_store,
-            state_store=QtAiPanelStateStore(),
-            conversation_store=shared_ai_conversation_store(),
-            parent=self,
-        )
-        self._ai_bridge.set_document_language(self._state.language)
-        self._ai_bridge.set_assist_context(self._state.assist_context)
-        self._ai_bridge.set_editor_agent_scope(self._state.agent_scope)
-        self._ai_bridge.set_agent_tools(self._state.agent_tools)
-        self._ai_bridge.set_agent_codeact_context_providers(self._state.agent_context_providers)
-        self._ai_bridge.set_graph_context_snapshot_provider(self._state.graph_context_snapshot_provider)
         self._assist_bridge: PythonEditorAssistBridge | None = None
         if effective_language.lower() == "python" and assist_context_requires_python(self._state.assist_context):
             self._assist_bridge = PythonEditorAssistBridge(
@@ -384,7 +351,6 @@ class EditorSessionController(QtCore.QObject):
                 context=self._state.assist_context,
                 parent=self,
             )
-            self._ai_bridge.set_lsp_bridge(self._assist_bridge)
         self._context_controller = EditorAssistContextController(
             initial_context=self._state.assist_context,
             provider=assist_context_provider,
@@ -394,12 +360,6 @@ class EditorSessionController(QtCore.QObject):
         self._context_controller.refresh_failed.connect(self.context_reload_failed)  # type: ignore[attr-defined]
         if self._assist_bridge is not None:
             self._context_controller.start()
-
-    def ai_store(self) -> AiProviderStore:
-        return self._ai_store
-
-    def ai_bridge(self) -> AiLlmBridge:
-        return self._ai_bridge
 
     def assist_bridge(self) -> PythonEditorAssistBridge | None:
         return self._assist_bridge
@@ -517,7 +477,6 @@ class EditorSessionController(QtCore.QObject):
     @QtCore.Slot(object)
     def _on_context_changed(self, context_obj: object) -> None:
         context = context_obj if isinstance(context_obj, EditorAssistContext) else None
-        self._ai_bridge.set_assist_context(context)
         bridge = self._assist_bridge
         if bridge is None:
             self._state = replace(self._state, assist_context=context)

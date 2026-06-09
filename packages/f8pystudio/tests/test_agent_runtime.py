@@ -166,42 +166,8 @@ def _store(tmp_path: Path) -> AiProviderStore:
         cached_models=[ModelInfo(model_id="gpt-4.1", display_name="GPT-4.1")],
     )
     store.save_provider(cfg, emit=False)
-    store.save_active_providers("openai", "openai")
+    store.save_active_chat_provider("openai")
     return store
-
-
-def test_runtime_runs_edit_through_agent_framework_and_strips_fence(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    FakeAgent.calls.clear()
-    FakeAgent.stream_mode = "normal"
-    _install_fake_agent_framework(monkeypatch)
-    monkeypatch.setattr("f8pystudio.agents.runtime.build_chat_client", lambda _selection: object())
-
-    runtime = StudioAgentRuntime(_store(tmp_path))
-    result = asyncio.run(
-        runtime.run_text(
-            StudioAgentRequest(
-                request_id="edit-1",
-                mode="edit",
-                code="print('old')",
-                instruction="make it ok",
-                chat_provider_id="openai",
-                chat_model_id="gpt-4.1",
-                reasoning_level="high",
-                session_key=StudioAgentSessionKey.sidebar(),
-            )
-        )
-    )
-
-    assert result == "print('ok')"
-    assert FakeAgent.calls
-    call = FakeAgent.calls[0]
-    assert call["stream"] is False
-    assert call["session"] is None
-    assert call["options"] == {"max_tokens": 8192, "store": False, "reasoning": {"effort": "high"}}
-    assert "document editing assistant" in str(call["instructions"])
 
 
 def test_runtime_non_streaming_keeps_session_for_non_responses_services(

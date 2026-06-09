@@ -20,36 +20,24 @@ from f8pystudio.agents.codeact import StudioAgentSkillStatus
 from f8pystudio.editor_assist.agent_context import EditorDocumentContext
 from f8pystudio.editor_assist.agent_scope import EditorAgentScope
 from f8pystudio.editor_assist.workspace import EditorAssistContext
-from f8pystudio.ui.support.editor_assist_bridge import PythonEditorAssistBridge
 
 from .prompts import (
     SYSTEM_PROMPT_CODE,
-    SYSTEM_PROMPT_EDIT,
-    SYSTEM_PROMPT_PLAN,
     approx_tokens,
     build_chat_messages,
     build_system_prompt,
     current_document_language,
     format_assist_context,
-    strip_code_fence,
 )
 from .model_catalog import supports_agent_chat_model
 from .registry import ProviderConfig, ProviderInferenceService
-from .runtime import (
-    AgentRequestMode,
-    AgentRuntimeError,
-    StudioAgentAttachment,
-    StudioAgentEvent,
-    StudioAgentRequest,
-    StudioAgentRuntime,
-)
+from .runtime import StudioAgentAttachment, StudioAgentEvent, StudioAgentRequest, StudioAgentRuntime
 from .sessions import StudioAgentSessionKey
 from .state_store import AiPanelStateStore, MemoryAiPanelStateStore
 from .store import AiProviderStore
 
 logger = logging.getLogger(__name__)
 
-_LSP_INLINE_BOUNDARY_ERRORS = (Exception,)
 _GRAPH_CONTEXT_PROVIDER_ERRORS = (Exception,)
 _EDITOR_DOCUMENT_CONTEXT_PROVIDER_ERRORS = (Exception,)
 
@@ -61,8 +49,6 @@ def _env_flag(name: str) -> bool:
 
 @dataclass(frozen=True)
 class AiBridgeSelectionState:
-    inline_provider_id: str
-    inline_model_id: str
     chat_provider_id: str
     chat_model_id: str
     reasoning_level: str
@@ -74,12 +60,8 @@ _AGENT_SESSION_DISABLED_SERVICES: frozenset[ProviderInferenceService] = frozense
 
 
 class AiLlmBridge(QtCore.QObject):
-    inline_suggestion_ready = QtCore.Signal(str, str)
     chat_chunk_ready = QtCore.Signal(str, str)
     chat_done = QtCore.Signal(str, str)
-    edit_result_ready = QtCore.Signal(str, str, str)
-    plan_step_ready = QtCore.Signal(str, str)
-    plan_done = QtCore.Signal(str, str)
     context_usage_updated = QtCore.Signal(int, int)
     chat_context_snapshot_changed = QtCore.Signal(bool, str)
     tool_trace_ready = QtCore.Signal(str, str)
@@ -97,13 +79,6 @@ class AiLlmBridge(QtCore.QObject):
         self._state_store = state_store or MemoryAiPanelStateStore()
         self._conversation_store = conversation_store or shared_conversation_store()
         self._runtime = StudioAgentRuntime(self._store, log_prompt_payload=self._log_prompt_payload)
-
-        self._inline_provider_id = self._store.active_inline_provider
-        self._inline_model_id = ""
-        if self._inline_provider_id:
-            inline_cfg = self._store.provider_by_id(self._inline_provider_id)
-            if inline_cfg is not None:
-                self._inline_model_id = inline_cfg.inline_model_id
 
         self._chat_provider_id = self._store.active_chat_provider
         self._chat_model_id = ""
@@ -123,7 +98,6 @@ class AiLlmBridge(QtCore.QObject):
         self._agent_codeact_context_providers: tuple[Any, ...] = ()
         self._agent_skill_statuses: tuple[StudioAgentSkillStatus, ...] = ()
         self._assist_context: EditorAssistContext | None = None
-        self._lsp_bridge: PythonEditorAssistBridge | None = None
         self._tool_approval_resolver: Callable[[str, bool], None] | None = None
         self._active_stream_request_id = ""
         self._active_stream_lock = threading.Lock()
@@ -138,9 +112,6 @@ class AiLlmBridge(QtCore.QObject):
         self._last_messages: list[dict[str, Any]] = []
         self._debug_prompt = _env_flag("F8_AI_DEBUG_PROMPT")
         self._refresh_system_tokens()
-
-    def set_lsp_bridge(self, bridge: PythonEditorAssistBridge | None) -> None:
-        self._lsp_bridge = bridge
 
     def set_assist_context(self, context: EditorAssistContext | None) -> None:
         self._assist_context = context
@@ -222,8 +193,6 @@ class AiLlmBridge(QtCore.QObject):
         if cfg is not None:
             reasoning_level = str(cfg.reasoning_level or "")
         return AiBridgeSelectionState(
-            inline_provider_id=self._inline_provider_id,
-            inline_model_id=self._inline_model_id,
             chat_provider_id=self._chat_provider_id,
             chat_model_id=self._chat_model_id,
             reasoning_level=reasoning_level,
@@ -244,9 +213,9 @@ class AiLlmBridge(QtCore.QObject):
             document_language=self._document_language,
             assist_context=self._assist_context,
             graph_context_snapshot=self._effective_chat_context_snapshot(),
-            graph_tools_enabled=bool(self._tools_for_mode("chat")),
-            graph_tool_names=self._tool_names_for_mode("chat"),
-            agent_surface=self._agent_surface_for_mode("chat"),
+            graph_tools_enabled=bool(self._agent_tools),
+            graph_tool_names=self._agent_tool_names if self._agent_tools else (),
+            agent_surface=self._agent_surface(),
         )
 
     def _log_prompt_payload(self, mode: str, system_prompt: str, messages: list[dict[str, Any]]) -> None:
@@ -268,18 +237,6 @@ class AiLlmBridge(QtCore.QObject):
             logger.exception("Failed to dump F8_AI_DEBUG_PROMPT payload")
 
     @QtCore.Slot(str, str)
-    def set_inline_model(self, provider_id: str, model_id: str) -> None:
-        self._inline_provider_id = str(provider_id or "")
-        self._inline_model_id = str(model_id or "")
-        if self._inline_provider_id:
-            cfg = self._store.provider_by_id(self._inline_provider_id)
-            if cfg is not None:
-                cfg.inline_model_id = self._inline_model_id
-                self._store.save_provider(cfg, emit=False)
-        self._store.save_active_providers(self._inline_provider_id, self._chat_provider_id)
-        logger.debug("AI inline model: provider=%s model=%s", self._inline_provider_id, self._inline_model_id)
-
-    @QtCore.Slot(str, str)
     def set_chat_model(self, provider_id: str, model_id: str) -> None:
         self._chat_provider_id = str(provider_id or "")
         self._chat_model_id = str(model_id or "")
@@ -288,7 +245,7 @@ class AiLlmBridge(QtCore.QObject):
             if cfg is not None:
                 cfg.chat_model_id = self._chat_model_id
                 self._store.save_provider(cfg, emit=False)
-        self._store.save_active_providers(self._inline_provider_id, self._chat_provider_id)
+        self._store.save_active_chat_provider(self._chat_provider_id)
         logger.debug("AI chat model: provider=%s model=%s", self._chat_provider_id, self._chat_model_id)
 
     @QtCore.Slot(str)
@@ -441,71 +398,6 @@ class AiLlmBridge(QtCore.QObject):
     def get_ui_state(self, key: str, default: Any = None) -> Any:
         return self._state_store.get_value(str(key), default)
 
-    @QtCore.Slot(str, str, str, int, int)
-    def request_inline_suggestion(self, request_id: str, prefix: str, suffix: str, line: int, column: int) -> None:
-        rid = str(request_id or "")
-        if self._inline_provider_id == "lsp":
-            self._request_lsp_inline_suggestion(rid=rid, line=int(line), column=int(column))
-            return
-
-        cfg = self._chat_provider(for_inline=True)
-        if cfg is None:
-            self.inline_suggestion_ready.emit(rid, "")
-            return
-        model_id = self._inline_model_id or cfg.inline_model_id or self._first_model_id(cfg)
-        if not model_id:
-            self.inline_suggestion_ready.emit(rid, "")
-            return
-
-        request = self._agent_request(
-            request_id=rid,
-            mode="inline",
-            prefix=str(prefix or ""),
-            suffix=str(suffix or ""),
-            inline_model_id=model_id,
-        )
-        self._start_text_request(request, lambda text, err: self._on_inline_result(rid, text, err))
-
-    def _request_lsp_inline_suggestion(self, *, rid: str, line: int, column: int) -> None:
-        bridge = self._lsp_bridge
-        if bridge is None:
-            self.inline_suggestion_ready.emit(rid, "")
-            return
-
-        def _handle_lsp() -> None:
-            try:
-                items = bridge.inline_completion_items(
-                    line=line,
-                    column=column,
-                    request_id="inline-" + rid,
-                )
-                text = ""
-                if items:
-                    first_item = items[0]
-                    text = str(first_item.get("insertText") or first_item.get("label", ""))
-                self.inline_suggestion_ready.emit(rid, text)
-            except _LSP_INLINE_BOUNDARY_ERRORS:
-                logger.exception("LSP inline suggestion failed request_id=%s line=%s column=%s", rid, line, column)
-                self.inline_suggestion_ready.emit(rid, "")
-
-        threading.Thread(target=_handle_lsp, daemon=True, name=f"f8-ai-lsp-inline-{rid}").start()
-
-    def _on_inline_result(self, rid: str, text: str, err: str | None) -> None:
-        if err:
-            logger.debug("inline suggestion error request_id=%s error=%s", rid, err)
-            self.inline_suggestion_ready.emit(rid, "")
-            return
-        self.inline_suggestion_ready.emit(rid, self._clean_inline_text(str(text or "")))
-
-    @staticmethod
-    def _clean_inline_text(text: str) -> str:
-        lines = str(text or "").splitlines()
-        if lines and lines[0].startswith("```"):
-            lines.pop(0)
-        if lines and lines[-1].strip() == "```":
-            lines.pop()
-        return "\n".join(lines)
-
     @QtCore.Slot(str, str, str, str, str)
     def request_chat(
         self,
@@ -519,7 +411,7 @@ class AiLlmBridge(QtCore.QObject):
         history = self._history_from_json(messages_json, purpose="chat")
         attachments = self._attachments_from_json(attachments_json, purpose="chat")
 
-        cfg = self._chat_provider(for_inline=False)
+        cfg = self._chat_provider()
         if cfg is None:
             self.chat_done.emit(rid, "No AI provider configured")
             return
@@ -544,7 +436,6 @@ class AiLlmBridge(QtCore.QObject):
 
         request = self._agent_request(
             request_id=rid,
-            mode="chat",
             messages=tuple(history),
             code=effective_code,
             selection=effective_selection,
@@ -575,96 +466,6 @@ class AiLlmBridge(QtCore.QObject):
             attachments=attachments,
         )
 
-    @QtCore.Slot(str, str, str, str, str)
-    def request_edit(
-        self,
-        request_id: str,
-        code: str,
-        instruction: str,
-        messages_json: str,
-        attachments_json: str = "",
-    ) -> None:
-        rid = str(request_id or "")
-        history = self._history_from_json(messages_json, purpose="edit")
-        attachments = self._attachments_from_json(attachments_json, purpose="edit")
-
-        cfg = self._chat_provider(for_inline=False)
-        if cfg is None:
-            self.edit_result_ready.emit(rid, "", "No AI provider configured")
-            return
-        model_id = self._chat_model_id or cfg.chat_model_id or self._first_model_id(cfg)
-        if not model_id:
-            self.edit_result_ready.emit(rid, "", "No model selected")
-            return
-
-        effective_code, _effective_selection = self._effective_document_context(
-            code=code,
-            selection="",
-        )
-        request = self._agent_request(
-            request_id=rid,
-            mode="edit",
-            messages=tuple(history),
-            code=effective_code,
-            instruction=instruction,
-            attachments=tuple(attachments),
-            chat_model_id=model_id,
-        )
-        self._restore_agent_session_for_request(request)
-        self._start_text_request(request, lambda text, err: self._on_edit_result(rid, text, err))
-
-    def _on_edit_result(self, rid: str, text: str, err: str | None) -> None:
-        if err:
-            self.edit_result_ready.emit(rid, "", str(err))
-            return
-        self.edit_result_ready.emit(rid, self._strip_code_fence(str(text or "")), "")
-
-    @staticmethod
-    def _strip_code_fence(text: str) -> str:
-        return strip_code_fence(text)
-
-    @QtCore.Slot(str, str, str, str, str)
-    def request_plan(
-        self,
-        request_id: str,
-        task_description: str,
-        code: str,
-        messages_json: str,
-        attachments_json: str = "",
-    ) -> None:
-        rid = str(request_id or "")
-        history = self._history_from_json(messages_json, purpose="plan")
-        attachments = self._attachments_from_json(attachments_json, purpose="plan")
-
-        cfg = self._chat_provider(for_inline=False)
-        if cfg is None:
-            self.plan_done.emit(rid, "No AI provider configured")
-            return
-        model_id = self._chat_model_id or cfg.chat_model_id or self._first_model_id(cfg)
-        if not model_id:
-            self.plan_done.emit(rid, "No model selected")
-            return
-
-        effective_code, _effective_selection = self._effective_document_context(
-            code=code,
-            selection="",
-        )
-        request = self._agent_request(
-            request_id=rid,
-            mode="plan",
-            messages=tuple(history),
-            code=effective_code,
-            task_description=task_description,
-            attachments=tuple(attachments),
-            chat_model_id=model_id,
-        )
-        self._restore_agent_session_for_request(request)
-        self._start_stream_request(
-            request,
-            on_chunk=lambda text: self.plan_step_ready.emit(rid, text),
-            on_done=lambda error: self.plan_done.emit(rid, error),
-        )
-
     @QtCore.Slot(str)
     def update_code_context(self, code: str) -> None:
         self._last_code = str(code or "")
@@ -683,7 +484,7 @@ class AiLlmBridge(QtCore.QObject):
         self.context_usage_updated.emit(used, total)
 
     def _max_context_tokens(self) -> int:
-        cfg = self._chat_provider(for_inline=False)
+        cfg = self._chat_provider()
         if cfg is None:
             return 128_000
         model_id = self._chat_model_id or cfg.chat_model_id
@@ -693,10 +494,9 @@ class AiLlmBridge(QtCore.QObject):
                     return model.capabilities.max_context_tokens
         return 128_000
 
-    def _chat_provider(self, *, for_inline: bool) -> ProviderConfig | None:
-        provider_id = self._inline_provider_id if for_inline else self._chat_provider_id
-        if provider_id:
-            cfg = self._store.provider_by_id(provider_id)
+    def _chat_provider(self) -> ProviderConfig | None:
+        if self._chat_provider_id:
+            cfg = self._store.provider_by_id(self._chat_provider_id)
             if cfg is not None:
                 return cfg
         providers = self._store.providers()
@@ -737,39 +537,27 @@ class AiLlmBridge(QtCore.QObject):
         self,
         *,
         request_id: str,
-        mode: AgentRequestMode,
         messages: tuple[dict[str, Any], ...] = (),
         code: str = "",
         selection: str = "",
-        instruction: str = "",
-        task_description: str = "",
-        prefix: str = "",
-        suffix: str = "",
         attachments: tuple[StudioAgentAttachment, ...] = (),
-        inline_model_id: str = "",
         chat_model_id: str = "",
     ) -> StudioAgentRequest:
         return StudioAgentRequest(
             request_id=str(request_id or ""),
-            mode=mode,
+            mode="chat",
             messages=messages,
             code=str(code or ""),
             selection=str(selection or ""),
-            instruction=str(instruction or ""),
-            task_description=str(task_description or ""),
-            prefix=str(prefix or ""),
-            suffix=str(suffix or ""),
             document_language=self._current_document_language(),
             assist_context=self._assist_context,
             graph_context_snapshot=self._effective_chat_context_snapshot(),
             attachments=attachments,
-            tools=self._tools_for_mode(mode),
-            graph_tool_names=self._tool_names_for_mode(mode),
-            context_providers=self._context_providers_for_mode(mode),
-            session_key=self._session_key_for_mode(mode, self._resolved_active_conversation_id()),
-            agent_surface=self._agent_surface_for_mode(mode),
-            inline_provider_id=self._inline_provider_id,
-            inline_model_id=str(inline_model_id or self._inline_model_id or ""),
+            tools=self._agent_tools,
+            graph_tool_names=self._agent_tool_names if self._agent_tools else (),
+            context_providers=self._agent_codeact_context_providers,
+            session_key=self._session_key(self._resolved_active_conversation_id()),
+            agent_surface=self._agent_surface(),
             chat_provider_id=self._chat_provider_id,
             chat_model_id=str(chat_model_id or self._chat_model_id or ""),
             reasoning_level=self.selection_state().reasoning_level,
@@ -803,30 +591,9 @@ class AiLlmBridge(QtCore.QObject):
             self._document_language = language
         return requested_code or provider_code, requested_selection or provider_selection
 
-    def _tools_for_mode(self, mode: AgentRequestMode) -> tuple[Any, ...]:
-        if self._editor_agent_scope is not None and mode in ("chat", "plan"):
-            return self._agent_tools
-        if mode == "chat":
-            return self._agent_tools
-        return ()
-
-    def _context_providers_for_mode(self, mode: AgentRequestMode) -> tuple[Any, ...]:
-        if self._editor_agent_scope is not None and mode in ("chat", "plan"):
-            return self._agent_codeact_context_providers
-        if mode == "chat":
-            return self._agent_codeact_context_providers
-        return ()
-
-    def _tool_names_for_mode(self, mode: AgentRequestMode) -> tuple[str, ...]:
-        if not self._tools_for_mode(mode):
-            return ()
-        return self._agent_tool_names
-
-    def _agent_surface_for_mode(self, mode: AgentRequestMode) -> str:
+    def _agent_surface(self) -> str:
         if self._editor_agent_scope is None:
             return "graph"
-        if mode == "inline":
-            return "editor"
         return "node_editor"
 
     def _default_conversation_scope(self) -> str:
@@ -844,26 +611,14 @@ class AiLlmBridge(QtCore.QObject):
             return active_id
         return str(self._active_conversation_id or "").strip()
 
-    def _session_key_for_mode(self, mode: AgentRequestMode, conversation_id: str = "") -> StudioAgentSessionKey:
-        scope = self._editor_agent_scope
-        if scope is not None and mode == "inline":
-            return StudioAgentSessionKey.editor(
-                graph_id=scope.graph_id,
-                node_id=scope.node_id,
-                editor_id=f"{scope.field_name}:inline",
-            )
-        if scope is not None:
-            resolved_conversation_id = str(conversation_id or "").strip()
-            return StudioAgentSessionKey.sidebar(conversation_id=resolved_conversation_id)
-        if mode == "inline":
-            return StudioAgentSessionKey.editor(editor_id="inline")
+    def _session_key(self, conversation_id: str = "") -> StudioAgentSessionKey:
         return StudioAgentSessionKey.sidebar(conversation_id=str(conversation_id or ""))
 
     def _restore_agent_session_for_request(self, request: StudioAgentRequest) -> None:
         key = request.session_key
         if key is None:
             return
-        provider = self._chat_provider(for_inline=request.mode == "inline")
+        provider = self._chat_provider()
         if provider is None or provider.inference_service in _AGENT_SESSION_DISABLED_SERVICES:
             return
         session_key = key.as_id()
@@ -886,7 +641,7 @@ class AiLlmBridge(QtCore.QObject):
         key = request.session_key
         if key is None:
             return
-        provider = self._chat_provider(for_inline=request.mode == "inline")
+        provider = self._chat_provider()
         if provider is None or provider.inference_service in _AGENT_SESSION_DISABLED_SERVICES:
             return
         conversation_id = key.conversation_id
@@ -901,32 +656,6 @@ class AiLlmBridge(QtCore.QObject):
             scope=_conversation_scope_for_session_key(key),
             agent_session=payload,
         )
-
-    def _start_text_request(
-        self,
-        request: StudioAgentRequest,
-        on_result: Callable[[str, str | None], None],
-    ) -> None:
-        def _worker() -> None:
-            try:
-                text = asyncio.run(self._runtime.run_text(request))
-            except AgentRuntimeError as exc:
-                logger.warning(
-                    "Studio agent text request failed mode=%s request_id=%s error=%s",
-                    request.mode,
-                    request.request_id,
-                    exc,
-                )
-                on_result("", str(exc))
-                return
-            except Exception as exc:
-                logger.exception("Studio agent text request crashed mode=%s request_id=%s", request.mode, request.request_id)
-                on_result("", f"{type(exc).__name__}: {exc}")
-                return
-            self._save_agent_session_for_request(request)
-            on_result(text, None)
-
-        threading.Thread(target=_worker, daemon=True, name=f"f8-agent-text-{request.request_id}").start()
 
     def _start_stream_request(
         self,
@@ -1065,7 +794,7 @@ def _agent_session_payload_for_request(
         "providerId": provider.provider_id,
         "inferenceService": provider.inference_service,
         "endpoint": provider.endpoint,
-        "modelId": request.inline_model_id if request.mode == "inline" else request.chat_model_id,
+        "modelId": request.chat_model_id,
         "state": dict(state),
     }
 
@@ -1076,13 +805,12 @@ def _agent_session_payload_matches_request(
     request: StudioAgentRequest,
     provider: ProviderConfig,
 ) -> bool:
-    model_id = request.inline_model_id if request.mode == "inline" else request.chat_model_id
     return (
         str(payload.get("schemaVersion") or "") == "f8studio-maf-agent-session/1"
         and str(payload.get("providerId") or "") == provider.provider_id
         and str(payload.get("inferenceService") or "") == provider.inference_service
         and str(payload.get("endpoint") or "") == provider.endpoint
-        and str(payload.get("modelId") or "") == model_id
+        and str(payload.get("modelId") or "") == request.chat_model_id
     )
 
 

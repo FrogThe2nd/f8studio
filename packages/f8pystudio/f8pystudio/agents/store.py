@@ -32,13 +32,13 @@ from .registry import (
 )
 
 logger = logging.getLogger(__name__)
+_SHARED_AI_PROVIDER_STORE: AiProviderStore | None = None
 
 
 def _capabilities_to_dict(caps: ModelCapabilities) -> dict[str, Any]:
     return {
         "model_kind": caps.model_kind,
         "supports_agent_chat": caps.supports_agent_chat,
-        "supports_fim": caps.supports_fim,
         "supports_reasoning": caps.supports_reasoning,
         "supports_vision": caps.supports_vision,
         "reasoning_levels": list(caps.reasoning_levels),
@@ -58,7 +58,6 @@ def _capabilities_from_dict(payload: dict[str, Any]) -> ModelCapabilities:
     return ModelCapabilities(
         model_kind=cast(ModelKind, model_kind_raw),
         supports_agent_chat=bool(payload["supports_agent_chat"]),
-        supports_fim=bool(payload.get("supports_fim", False)),
         supports_reasoning=bool(payload.get("supports_reasoning", False)),
         supports_vision=bool(payload.get("supports_vision", False)),
         reasoning_levels=tuple(str(level) for level in payload.get("reasoning_levels", [])),  # type: ignore[arg-type]
@@ -99,7 +98,6 @@ def _provider_to_dict(provider: ProviderConfig) -> dict[str, Any]:
         "endpoint": provider.endpoint,
         "api_version": provider.api_version,
         "cached_models": [_model_to_dict(model) for model in provider.cached_models],
-        "inline_model_id": provider.inline_model_id,
         "chat_model_id": provider.chat_model_id,
         "reasoning_level": provider.reasoning_level,
     }
@@ -119,7 +117,6 @@ def _provider_from_dict(payload: dict[str, Any]) -> ProviderConfig:
         endpoint=str(payload.get("endpoint", "")),
         api_version=str(payload.get("api_version", "")),
         cached_models=[_model_from_dict(dict(model)) for model in payload.get("cached_models", [])],
-        inline_model_id=str(payload.get("inline_model_id", "")),
         chat_model_id=str(payload.get("chat_model_id", "")),
         reasoning_level=str(payload.get("reasoning_level", "")),
     )
@@ -135,7 +132,6 @@ class AiProviderStore(QtCore.QObject):
     def __init__(self, parent: QtCore.QObject | None = None) -> None:
         super().__init__(parent)
         self._providers: list[ProviderConfig] = []
-        self.active_inline_provider: str = ""
         self.active_chat_provider: str = ""
         self._storage_path = self._resolve_storage_path()
         self._models_fetch_finished.connect(self._record_models_fetch_result)  # type: ignore[attr-defined]
@@ -164,8 +160,7 @@ class AiProviderStore(QtCore.QObject):
         if emit:
             self.providers_changed.emit()
 
-    def save_active_providers(self, inline_id: str, chat_id: str) -> None:
-        self.active_inline_provider = str(inline_id or "")
+    def save_active_chat_provider(self, chat_id: str) -> None:
         self.active_chat_provider = str(chat_id or "")
         self._persist()
 
@@ -196,8 +191,6 @@ class AiProviderStore(QtCore.QObject):
             health_status="unknown",
         )
         cfg.cached_models.append(model)
-        if supports_agent_chat_model(model) and not cfg.inline_model_id:
-            cfg.inline_model_id = normalized_model_id
         if supports_agent_chat_model(model) and not cfg.chat_model_id:
             cfg.chat_model_id = normalized_model_id
         self.save_provider(cfg)
@@ -215,8 +208,6 @@ class AiProviderStore(QtCore.QObject):
         removed_count = before - len(cfg.cached_models)
         if removed_count <= 0:
             return 0
-        if cfg.inline_model_id in ids_to_remove:
-            cfg.inline_model_id = ""
         if cfg.chat_model_id in ids_to_remove:
             cfg.chat_model_id = ""
         self.save_provider(cfg)
@@ -359,7 +350,6 @@ class AiProviderStore(QtCore.QObject):
                 if isinstance(data, list):
                     provider_list = data
                 elif isinstance(data, dict):
-                    self.active_inline_provider = str(data.get("active_inline_provider", ""))
                     self.active_chat_provider = str(data.get("active_chat_provider", ""))
                     provider_list = data.get("providers", [])
 
@@ -385,10 +375,16 @@ class AiProviderStore(QtCore.QObject):
         try:
             self._storage_path.parent.mkdir(parents=True, exist_ok=True)
             payload = {
-                "active_inline_provider": self.active_inline_provider,
                 "active_chat_provider": self.active_chat_provider,
                 "providers": [_provider_to_dict(provider) for provider in self._providers],
             }
             self._storage_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         except OSError:
             logger.exception("Failed to persist AI provider config to %s", self._storage_path)
+
+
+def shared_ai_provider_store() -> AiProviderStore:
+    global _SHARED_AI_PROVIDER_STORE
+    if _SHARED_AI_PROVIDER_STORE is None:
+        _SHARED_AI_PROVIDER_STORE = AiProviderStore()
+    return _SHARED_AI_PROVIDER_STORE

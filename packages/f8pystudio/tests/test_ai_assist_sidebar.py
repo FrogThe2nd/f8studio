@@ -14,6 +14,7 @@ from f8pysdk.specs import F8OperatorSpec
 from f8pystudio.agents.graph_context import GraphContextSnapshot
 from f8pystudio.editor_assist.agent_context import EditorAgentContext, EditorDocumentContext
 from f8pystudio.editor_assist.agent_scope import EditorAgentScope
+from f8pystudio.agents.store import AiProviderStore
 from f8pystudio.ui.mainwin.ai_assist_sidebar import AiAssistSidebarWidget
 from f8pystudio.ui.support.ai_assist_page import build_ai_assist_html
 from f8pystudio.ui.support import webengine_utils
@@ -150,7 +151,9 @@ def _make_sidebar(monkeypatch) -> tuple[AiAssistSidebarWidget, _FakeGraph]:
     temp_dir = Path(".tmp") / "test_ai_assist_sidebar" / uuid.uuid4().hex
     temp_dir.mkdir(parents=True, exist_ok=True)
     store_path = temp_dir / "ai_providers.json"
-    with patch("f8pystudio.ui.mainwin.ai_assist_sidebar.AiProviderStore._resolve_storage_path", return_value=store_path):
+    with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+        store = AiProviderStore()
+    with patch("f8pystudio.ui.mainwin.ai_assist_sidebar.shared_ai_provider_store", return_value=store):
         widget = AiAssistSidebarWidget(studio_graph=graph)
     return widget, graph
 
@@ -270,7 +273,9 @@ def test_sidebar_injects_runtime_bridge_and_logs_into_graph_tools(monkeypatch) -
     temp_dir = Path(".tmp") / "test_ai_assist_sidebar" / uuid.uuid4().hex
     temp_dir.mkdir(parents=True, exist_ok=True)
     store_path = temp_dir / "ai_providers.json"
-    with patch("f8pystudio.ui.mainwin.ai_assist_sidebar.AiProviderStore._resolve_storage_path", return_value=store_path):
+    with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+        store = AiProviderStore()
+    with patch("f8pystudio.ui.mainwin.ai_assist_sidebar.shared_ai_provider_store", return_value=store):
         widget = AiAssistSidebarWidget(
             studio_graph=graph,
             runtime_bridge=runtime_bridge,
@@ -304,7 +309,9 @@ def test_sidebar_supports_multi_select_ui_context(monkeypatch) -> None:
     temp_dir = Path(".tmp") / "test_ai_assist_sidebar" / uuid.uuid4().hex
     temp_dir.mkdir(parents=True, exist_ok=True)
     store_path = temp_dir / "ai_providers.json"
-    with patch("f8pystudio.ui.mainwin.ai_assist_sidebar.AiProviderStore._resolve_storage_path", return_value=store_path):
+    with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+        store = AiProviderStore()
+    with patch("f8pystudio.ui.mainwin.ai_assist_sidebar.shared_ai_provider_store", return_value=store):
         widget = AiAssistSidebarWidget(studio_graph=graph, property_editor=property_editor)
     first = _make_node("node-a", "Node A")
     second = _make_node("node-b", "Node B")
@@ -354,7 +361,7 @@ def test_sidebar_activates_editor_context_without_replacing_visible_session(monk
     )
 
     widget.activate_editor_context(context)
-    request = widget._ai_bridge._agent_request(request_id="rid-editor-sidebar", mode="chat")
+    request = widget._ai_bridge._agent_request(request_id="rid-editor-sidebar")
 
     assert widget._selected_node_label.text().startswith("Edit:")
     assert "Script Node - code" in widget._selected_node_label.toolTip()
@@ -375,7 +382,7 @@ def test_sidebar_activates_editor_context_without_replacing_visible_session(monk
     assert "runtime_deploy" not in widget._active_tool_names
 
     widget.clear_editor_context()
-    restored_request = widget._ai_bridge._agent_request(request_id="rid-graph-sidebar", mode="chat")
+    restored_request = widget._ai_bridge._agent_request(request_id="rid-graph-sidebar")
 
     assert widget._selected_node_label.text() == "Sel: none"
     assert restored_request.agent_surface == "graph"
