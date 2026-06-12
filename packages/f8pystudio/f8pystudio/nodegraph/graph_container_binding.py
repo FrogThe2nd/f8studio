@@ -452,7 +452,8 @@ class GraphContainerBindingMixin:
 
     def _rebind_container_children(self) -> None:
         """
-        Rebuild container -> operator bindings from geometry.
+        Rebuild container -> operator bindings from saved service ids first,
+        then use geometry as a compatibility fallback for older sessions.
 
         This is used after session load to restore:
         - container dragging moves operators
@@ -475,7 +476,8 @@ class GraphContainerBindingMixin:
         for op in operators:
             op.view._container_item = None
 
-        # Rebind operators based on intersecting container geometry.
+        # Rebind operators from persisted svcId values first. The service binding
+        # is semantic graph data; geometry is only a visual fallback.
         for op in operators:
             if op.spec.serviceClass == _CANVAS_SERVICE_CLASS_:
                 # Studio (editor-local) operators belong to the built-in PyStudio service.
@@ -488,16 +490,79 @@ class GraphContainerBindingMixin:
                     pass
                 continue
 
+            service_id = ""
+            try:
+                service_id = str(op.svcId or "").strip()
+            except (AttributeError, RuntimeError, TypeError):
+                service_id = ""
+            if service_id:
+                container = self._container_by_id(service_id)
+                if container is None:
+                    logger.warning(
+                        'Operator "%s" references missing service container "%s" after load.',
+                        _item_id(op),
+                        service_id,
+                    )
+                    continue
+                if op.spec.serviceClass != container.spec.serviceClass:
+                    logger.warning(
+                        'Operator "%s" references incompatible service container "%s" after load.',
+                        _item_id(op),
+                        service_id,
+                    )
+                    continue
+                try:
+                    container.add_child(op)
+                except (AttributeError, RuntimeError, TypeError):
+                    logger.exception(
+                        "Failed to restore operator container reference operator=%s container=%s.",
+                        _item_id(op),
+                        service_id,
+                    )
+                continue
+
             container = self._container_at_node(op)
             if container is None:
                 # Leave as orphan so user can fix placement manually.
-                op.svcId = ""  # type: ignore[attr-defined]
-                try:
-                    if "svcId" in op.model.properties or "svcId" in op.model.custom_properties:
-                        op.set_property("svcId", "", push_undo=False)
-                except (AttributeError, RuntimeError, TypeError):
-                    pass
-                logger.warning('Operator "%s" is not inside any container after load.', op.name())
+                logger.warning('Operator "%s" is not inside any container after load.', _item_id(op))
                 continue
 
             self._bind_operator_to_container(op, container)
+
+    def _restore_container_children_from_service_ids(self) -> None:
+        """
+        Rebuild container child references from persisted operator svcId values
+        without changing those values.
+        """
+        containers: list[_BASE_CONTAINER_CLS_] = []
+        operators: list[BaseNode] = []
+        for node in self.all_nodes():
+            if self._is_container_node(node):
+                containers.append(node)
+            elif self._is_operator_node(node):
+                operators.append(node)
+
+        for container in containers:
+            container._child_nodes = []
+            container.view._child_views = []
+
+        for op in operators:
+            op.view._container_item = None
+            service_id = ""
+            try:
+                service_id = str(op.svcId or "").strip()
+            except (AttributeError, RuntimeError, TypeError):
+                service_id = ""
+            if not service_id:
+                continue
+            container = self._container_by_id(service_id)
+            if container is None:
+                continue
+            try:
+                container.add_child(op)
+            except (AttributeError, RuntimeError, TypeError):
+                logger.exception(
+                    "Failed to restore operator container reference operator=%s container=%s.",
+                    _item_id(op),
+                    service_id,
+                )

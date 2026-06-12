@@ -43,6 +43,8 @@ class ServiceBusConfig:
     state_cache_max_entries: int = 8192
     data_input_max_buffers: int = 4096
     data_input_default_queue_size: int = 256
+    data_output_debug_max_ports: int = 256
+    data_output_debug_history_size: int = 16
     monitor_enabled: bool = True
     monitor_interval_ms: int = 1000
     monitor_window_ms: int = 30000
@@ -67,6 +69,8 @@ class ServiceBusConfig:
             state_cache_max_entries=max(0, int(self.state_cache_max_entries)),
             data_input_max_buffers=max(0, int(self.data_input_max_buffers)),
             data_input_default_queue_size=max(1, int(self.data_input_default_queue_size)),
+            data_output_debug_max_ports=max(0, int(self.data_output_debug_max_ports)),
+            data_output_debug_history_size=max(1, min(int(self.data_output_debug_history_size), 128)),
             monitor_enabled=bool(self.monitor_enabled),
             monitor_interval_ms=max(200, int(self.monitor_interval_ms)),
             monitor_window_ms=max(1000, int(self.monitor_window_ms)),

@@ -74,6 +74,68 @@ def test_graph_patch_preview_restores_session() -> None:
     assert graph.serialize_session() == before
 
 
+def test_graph_patch_preview_preserves_revision_for_unbound_operator_inside_container() -> None:
+    graph = _graph_with_pyengine_nodes()
+    adapter = StudioGraphAutomationAdapter(graph)
+    catalog = adapter.node_catalog()
+    service_node_type = next(
+        item["nodeType"]
+        for item in catalog["nodes"]
+        if item["kind"] == "service" and item["serviceClass"] == PYENGINE_SERVICE_CLASS
+    )
+    operator_node_type = next(
+        item["nodeType"]
+        for item in catalog["nodes"]
+        if item["kind"] == "operator" and item["operatorClass"] == "f8.python_script"
+    )
+    create_patch = decode_graph_patch(
+        {
+            "expectedRevision": adapter.revision(),
+            "ops": [
+                {
+                    "op": "createNode",
+                    "nodeType": service_node_type,
+                    "nodeId": "pyengine_service",
+                    "name": "PyEngine Service",
+                    "pos": [0, 0],
+                },
+                {
+                    "op": "createNode",
+                    "nodeType": operator_node_type,
+                    "nodeId": "vam_script",
+                    "name": "VAM Script",
+                    "pos": [80, 80],
+                },
+            ],
+        }
+    )
+    create_preview = adapter.apply_patch(create_patch)
+    assert create_preview.valid is True
+    before_revision = adapter.revision()
+    before_detail = adapter.node_detail("vam_script")
+    assert before_detail["runtimeBinding"]["serviceId"] == ""
+
+    ports_patch = decode_graph_patch(
+        {
+            "expectedRevision": before_revision,
+            "ops": [
+                {
+                    "op": "setNodePorts",
+                    "nodeId": "vam_script",
+                    "dataInPorts": [{"name": "skeletons", "valueSchema": {"type": "any"}, "required": False}],
+                }
+            ],
+        }
+    )
+
+    preview = adapter.preview_patch(ports_patch)
+    after_detail = adapter.node_detail("vam_script")
+
+    assert preview.valid is True
+    assert adapter.revision() == before_revision
+    assert after_detail["runtimeBinding"]["serviceId"] == ""
+
+
 def test_graph_patch_rejects_stale_revision() -> None:
     graph = _graph_with_pystudio_nodes()
     adapter = StudioGraphAutomationAdapter(graph)
@@ -175,3 +237,325 @@ def test_graph_adapter_diagnostics_reports_orphan_service_operator() -> None:
     assert preview.valid is True
     issue_codes = {str(issue["code"]) for issue in diagnostics["issues"]}
     assert "operator_missing_service_container" in issue_codes
+
+
+def test_graph_patch_set_svc_id_updates_runtime_binding() -> None:
+    graph = _graph_with_pyengine_nodes()
+    adapter = StudioGraphAutomationAdapter(graph)
+    catalog = adapter.node_catalog()
+    service_node_type = next(
+        item["nodeType"]
+        for item in catalog["nodes"]
+        if item["kind"] == "service" and item["serviceClass"] == PYENGINE_SERVICE_CLASS
+    )
+    operator_node_type = next(
+        item["nodeType"]
+        for item in catalog["nodes"]
+        if item["kind"] == "operator" and item["operatorClass"] == "f8.python_script"
+    )
+    create_patch = decode_graph_patch(
+        {
+            "expectedRevision": adapter.revision(),
+            "ops": [
+                {
+                    "op": "createNode",
+                    "nodeType": service_node_type,
+                    "nodeId": "pyengine_service",
+                    "name": "PyEngine Service",
+                    "pos": [0, 0],
+                },
+                {
+                    "op": "createNode",
+                    "nodeType": operator_node_type,
+                    "nodeId": "vam_script",
+                    "name": "VAM Script",
+                    "pos": [80, 80],
+                },
+            ],
+        }
+    )
+    create_preview = adapter.apply_patch(create_patch)
+    assert create_preview.valid is True
+    before_detail = adapter.node_detail("vam_script")
+    assert before_detail["runtimeBinding"]["serviceId"] == ""
+
+    bind_patch = decode_graph_patch(
+        {
+            "expectedRevision": adapter.revision(),
+            "ops": [
+                {
+                    "op": "setNodeState",
+                    "nodeId": "vam_script",
+                    "field": "svcId",
+                    "value": "pyengine_service",
+                }
+            ],
+        }
+    )
+
+    bind_preview = adapter.apply_patch(bind_patch)
+    detail = adapter.node_detail("vam_script")
+    diagnostics = adapter.diagnostics()
+    issue_codes = {str(issue["code"]) for issue in diagnostics["issues"]}
+
+    assert bind_preview.valid is True
+    assert detail["stateValues"]["svcId"] == "pyengine_service"
+    assert detail["runtimeBinding"]["serviceId"] == "pyengine_service"
+    assert "operator_missing_service_container" not in issue_codes
+    assert "operator_service_container_missing" not in issue_codes
+
+
+def test_graph_patch_set_svc_id_expands_service_container_boundary() -> None:
+    graph = _graph_with_pyengine_nodes()
+    adapter = StudioGraphAutomationAdapter(graph)
+    catalog = adapter.node_catalog()
+    service_node_type = next(
+        item["nodeType"]
+        for item in catalog["nodes"]
+        if item["kind"] == "service" and item["serviceClass"] == PYENGINE_SERVICE_CLASS
+    )
+    operator_node_type = next(
+        item["nodeType"]
+        for item in catalog["nodes"]
+        if item["kind"] == "operator" and item["operatorClass"] == "f8.python_script"
+    )
+    create_patch = decode_graph_patch(
+        {
+            "expectedRevision": adapter.revision(),
+            "ops": [
+                {
+                    "op": "createNode",
+                    "nodeType": service_node_type,
+                    "nodeId": "pyengine_service",
+                    "name": "PyEngine Service",
+                    "pos": [0, 0],
+                },
+                {
+                    "op": "createNode",
+                    "nodeType": operator_node_type,
+                    "nodeId": "vam_script",
+                    "name": "VAM Script",
+                    "pos": [900, 700],
+                },
+            ],
+        }
+    )
+    create_preview = adapter.apply_patch(create_patch)
+    assert create_preview.valid is True
+    before_bind_session = graph.serialize_session()
+
+    bind_patch = decode_graph_patch(
+        {
+            "expectedRevision": adapter.revision(),
+            "ops": [
+                {
+                    "op": "setNodeState",
+                    "nodeId": "vam_script",
+                    "field": "svcId",
+                    "value": "pyengine_service",
+                }
+            ],
+        }
+    )
+
+    preview = adapter.preview_patch(bind_patch)
+    assert preview.valid is True
+    assert set(preview.changed_node_ids) == {"pyengine_service", "vam_script"}
+    assert graph.serialize_session() == before_bind_session
+
+    applied = adapter.apply_patch(bind_patch)
+    session_payload = graph.serialize_session()
+    nodes = session_payload["layout"]["nodes"]
+    service_layout = nodes["pyengine_service"]
+    operator_layout = nodes["vam_script"]
+    service_pos = service_layout["pos"]
+    operator_pos = operator_layout["pos"]
+    service_right = float(service_pos[0]) + float(service_layout["width"])
+    service_bottom = float(service_pos[1]) + float(service_layout["height"])
+    operator_right = float(operator_pos[0]) + float(operator_layout["width"])
+    operator_bottom = float(operator_pos[1]) + float(operator_layout["height"])
+
+    assert applied.valid is True
+    assert set(applied.changed_node_ids) == {"pyengine_service", "vam_script"}
+    assert service_right >= operator_right
+    assert service_bottom >= operator_bottom
+
+    graph._undo_stack.undo()
+    assert graph.serialize_session() == before_bind_session
+
+
+def test_graph_patch_can_set_editable_operator_ports() -> None:
+    graph = _graph_with_pyengine_nodes()
+    adapter = StudioGraphAutomationAdapter(graph)
+    catalog = adapter.node_catalog()
+    service_node_type = next(
+        item["nodeType"]
+        for item in catalog["nodes"]
+        if item["kind"] == "service" and item["serviceClass"] == PYENGINE_SERVICE_CLASS
+    )
+    operator_node_type = next(
+        item["nodeType"]
+        for item in catalog["nodes"]
+        if item["kind"] == "operator" and item["operatorClass"] == "f8.python_script"
+    )
+    create_patch = decode_graph_patch(
+        {
+            "expectedRevision": adapter.revision(),
+            "ops": [
+                {
+                    "op": "createNode",
+                    "nodeType": service_node_type,
+                    "nodeId": "pyengine_service",
+                    "name": "PyEngine Service",
+                    "pos": [0, 0],
+                },
+                {
+                    "op": "createNode",
+                    "nodeType": operator_node_type,
+                    "nodeId": "vam_script",
+                    "name": "VAM Script",
+                    "pos": [80, 80],
+                }
+            ],
+        }
+    )
+    create_preview = adapter.apply_patch(create_patch)
+    assert create_preview.valid is True
+
+    ports_patch = decode_graph_patch(
+        {
+            "expectedRevision": adapter.revision(),
+            "ops": [
+                {
+                    "op": "setNodePorts",
+                    "nodeId": "vam_script",
+                    "dataInPorts": [
+                        {
+                            "name": "skeletons",
+                            "valueSchema": {"type": "any"},
+                            "required": False,
+                            "description": "Decoded skeleton cache.",
+                        }
+                    ],
+                    "dataOutPorts": [
+                        {
+                            "name": "status",
+                            "valueSchema": {"type": "any"},
+                            "required": False,
+                            "description": "Resolver status.",
+                        },
+                        {
+                            "name": "axes",
+                            "valueSchema": {"type": "any"},
+                            "required": False,
+                            "description": "Raw VAM axes.",
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+    preview = adapter.preview_patch(ports_patch)
+    assert preview.valid is True
+    applied = adapter.apply_patch(ports_patch)
+    detail = adapter.node_detail("vam_script")
+    snapshot = adapter.snapshot()
+
+    assert applied.valid is True
+    assert [port["name"] for port in detail["spec"]["dataInPorts"]] == ["skeletons"]
+    assert [port["name"] for port in detail["spec"]["dataOutPorts"]] == ["status", "axes"]
+    node = next(node for node in snapshot.nodes if node.node_id == "vam_script")
+    assert [port.name for port in node.inputs if port.kind == "data"] == ["[D]skeletons"]
+    assert {port.name for port in node.outputs if port.kind == "data"} == {"status[D]", "axes[D]"}
+
+
+def test_graph_patch_can_set_editable_operator_state_fields() -> None:
+    graph = _graph_with_pyengine_nodes()
+    adapter = StudioGraphAutomationAdapter(graph)
+    catalog = adapter.node_catalog()
+    service_node_type = next(
+        item["nodeType"]
+        for item in catalog["nodes"]
+        if item["kind"] == "service" and item["serviceClass"] == PYENGINE_SERVICE_CLASS
+    )
+    operator_node_type = next(
+        item["nodeType"]
+        for item in catalog["nodes"]
+        if item["kind"] == "operator" and item["operatorClass"] == "f8.python_script"
+    )
+    create_patch = decode_graph_patch(
+        {
+            "expectedRevision": adapter.revision(),
+            "ops": [
+                {
+                    "op": "createNode",
+                    "nodeType": service_node_type,
+                    "nodeId": "pyengine_service",
+                    "name": "PyEngine Service",
+                    "pos": [0, 0],
+                },
+                {
+                    "op": "createNode",
+                    "nodeType": operator_node_type,
+                    "nodeId": "vam_script",
+                    "name": "VAM Script",
+                    "pos": [80, 80],
+                },
+            ],
+        }
+    )
+    create_preview = adapter.apply_patch(create_patch)
+    assert create_preview.valid is True
+
+    state_fields_patch = decode_graph_patch(
+        {
+            "expectedRevision": adapter.revision(),
+            "ops": [
+                {
+                    "op": "setNodeStateFields",
+                    "nodeId": "vam_script",
+                    "stateFields": [
+                        {
+                            "name": "trackingMode",
+                            "label": "Tracking Mode",
+                            "description": "auto or manual target selection.",
+                            "valueSchema": {"type": "string", "default": "auto", "enum": ["auto", "manual"]},
+                            "access": "rw",
+                            "required": False,
+                            "showOnNode": True,
+                        },
+                        {
+                            "name": "availableReferenceKeys",
+                            "description": "Diagnostic reference keys.",
+                            "valueSchema": {"type": "array", "items": {"type": "string"}, "default": []},
+                            "access": "ro",
+                            "required": False,
+                            "showOnNode": False,
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+    preview = adapter.preview_patch(state_fields_patch)
+    assert preview.valid is True
+    applied = adapter.apply_patch(state_fields_patch)
+    detail = adapter.node_detail("vam_script")
+    snapshot = adapter.snapshot()
+
+    assert applied.valid is True
+    assert [field["name"] for field in detail["spec"]["stateFields"]] == [
+        "code",
+        "inputMode",
+        "trackingMode",
+        "availableReferenceKeys",
+    ]
+    node = next(node for node in snapshot.nodes if node.node_id == "vam_script")
+    assert [field.name for field in node.state_fields] == [
+        "code",
+        "inputMode",
+        "trackingMode",
+        "availableReferenceKeys",
+    ]

@@ -1,18 +1,21 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+import msgspec
+
 from ...capabilities import ComputableNode, DataReceivableNode
 from ...data import CrossPublishPolicy, DataDeliveryMode
 from ...generated import F8Edge, F8EdgeStrategyEnum
 from ...f8_naming import data_key
 from ...time_utils import now_ms
-from ...codec import decode_obj, encode_obj
+from ...codec import decode_obj, dump_json, encode_obj
 from ..internal.cache import CappedOrderedDict
 from ..internal.logging import log_error_once
 from .emit import CrossPublishPlan, DataEmitOptions
@@ -36,6 +39,26 @@ DEFAULT_DATA_EMIT_OPTIONS = DataEmitOptions()
 LOCAL_COMPUTE_DATA_EMIT_OPTIONS = DataEmitOptions.local_compute_only()
 
 
+def _payload_kind(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, dict):
+        return "json_object"
+    if isinstance(value, list):
+        return "json_array"
+    if isinstance(value, (str, int, float, bool)):
+        return "json_scalar"
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return "bytes"
+    return type(value).__name__
+
+
+def _optional_runtime_text(value: Any) -> str:
+    if value is None or isinstance(value, msgspec.UnsetType):
+        return ""
+    return str(value)
+
+
 @dataclass
 class InputBuffer:
     to_node: str
@@ -50,6 +73,25 @@ class InputBuffer:
     last_pulled_ctx_id: str | int | None = None
 
 
+@dataclass
+class OutputSnapshot:
+    from_node: str
+    from_port: str
+    value: Any
+    ts_ms: int
+    ctx_id: str | int | None
+    delivered_local: bool
+    cross_publish_decision: str
+    cross_publish_key: str
+
+
+@dataclass
+class OutputBuffer:
+    from_node: str
+    from_port: str
+    snapshots: deque[OutputSnapshot]
+
+
 class DataRouter:
     def __init__(
         self,
@@ -59,11 +101,14 @@ class DataRouter:
         data_delivery: DataDeliveryMode,
         input_max_buffers: int,
         default_queue_size: int,
+        output_debug_max_ports: int,
+        output_debug_history_size: int,
     ) -> None:
         self._bus = bus
         self._cross_publish_policy: CrossPublishPolicy = cross_publish_policy
         self._data_delivery: DataDeliveryMode = data_delivery
         self._default_queue_size = max(1, int(default_queue_size))
+        self._output_history_size = max(1, min(int(output_debug_history_size), 128))
         self._intra_data_out: DataOutRoutes = {}
         self._intra_data_in: DataOutRoutes = {}
         self._cross_in_by_key: DataCrossInRoutes = {}
@@ -71,6 +116,9 @@ class DataRouter:
         self._input_stream_keys: DataInputStreamRoutes = {}
         self._inputs: CappedOrderedDict[tuple[str, str], InputBuffer] = CappedOrderedDict(
             max_entries=max(0, int(input_max_buffers))
+        )
+        self._outputs: CappedOrderedDict[tuple[str, str], OutputBuffer] = CappedOrderedDict(
+            max_entries=max(0, int(output_debug_max_ports))
         )
         self._route_subscriptions: dict[str, Any] = {}
         self._custom_subscriptions: list[Any] = []
@@ -111,6 +159,198 @@ class DataRouter:
             return None
         return str(key)
 
+    def debug_input_buffers(
+        self,
+        *,
+        node_id: str = "",
+        port: str = "",
+        limit: int = 100,
+        include_value: bool = True,
+        max_value_bytes: int = 65536,
+    ) -> dict[str, Any]:
+        node_filter = str(node_id or "").strip()
+        port_filter = str(port or "").strip()
+        item_limit = max(1, min(int(limit), 1000))
+        entries: list[dict[str, Any]] = []
+        matched = 0
+        for (buffer_node_id, buffer_port), buffer in list(self._inputs.items()):
+            if node_filter and buffer_node_id != node_filter:
+                continue
+            if port_filter and buffer_port != port_filter:
+                continue
+            matched += 1
+            if item_limit > 0 and len(entries) >= item_limit:
+                continue
+            entries.append(
+                self._debug_input_buffer_entry(
+                    buffer,
+                    include_value=bool(include_value),
+                    max_value_bytes=max(0, int(max_value_bytes)),
+                )
+            )
+        return {
+            "serviceId": str(self._bus.service_id),
+            "active": bool(self._bus.active),
+            "nodeId": node_filter,
+            "port": port_filter,
+            "limit": item_limit,
+            "matched": matched,
+            "truncated": item_limit > 0 and matched > item_limit,
+            "buffers": entries,
+            "outputMatched": self._count_debug_outputs(node_id=node_filter, port=port_filter),
+            "outputs": self.debug_output_snapshots(
+                node_id=node_filter,
+                port=port_filter,
+                limit=item_limit,
+                include_value=bool(include_value),
+                max_value_bytes=max(0, int(max_value_bytes)),
+            ),
+        }
+
+    def _debug_input_buffer_entry(
+        self,
+        buffer: InputBuffer,
+        *,
+        include_value: bool,
+        max_value_bytes: int,
+    ) -> dict[str, Any]:
+        entry: dict[str, Any] = {
+            "nodeId": str(buffer.to_node),
+            "port": str(buffer.to_port),
+            "queueLength": len(buffer.queue),
+            "lastSeenTs": buffer.last_seen_ts,
+            "lastPulledTs": buffer.last_pulled_ts,
+            "lastSeenCtxId": buffer.last_seen_ctx_id,
+            "lastPulledCtxId": buffer.last_pulled_ctx_id,
+            "hasLastSeenValue": buffer.last_seen_value is not None,
+            "hasLastPulledValue": buffer.last_pulled_value is not None,
+        }
+        if buffer.edge is not None:
+            entry["edgeId"] = str(buffer.edge.edgeId)
+            entry["fromServiceId"] = str(buffer.edge.fromServiceId)
+            entry["fromOperatorId"] = _optional_runtime_text(buffer.edge.fromOperatorId)
+            entry["fromPort"] = str(buffer.edge.fromPort)
+        self._attach_debug_value(
+            entry,
+            key_prefix="lastSeen",
+            value=buffer.last_seen_value,
+            include_value=include_value,
+            max_value_bytes=max_value_bytes,
+        )
+        self._attach_debug_value(
+            entry,
+            key_prefix="lastPulled",
+            value=buffer.last_pulled_value,
+            include_value=include_value,
+            max_value_bytes=max_value_bytes,
+        )
+        return entry
+
+    def debug_output_snapshots(
+        self,
+        *,
+        node_id: str = "",
+        port: str = "",
+        limit: int = 100,
+        include_value: bool = True,
+        max_value_bytes: int = 65536,
+    ) -> list[dict[str, Any]]:
+        node_filter = str(node_id or "").strip()
+        port_filter = str(port or "").strip()
+        item_limit = max(1, min(int(limit), 1000))
+        entries: list[dict[str, Any]] = []
+        indexed_entries: list[tuple[int, int, dict[str, Any]]] = []
+        sequence_index = 0
+        for (buffer_node_id, buffer_port), buffer in list(self._outputs.items()):
+            if node_filter and buffer_node_id != node_filter:
+                continue
+            if port_filter and buffer_port != port_filter:
+                continue
+            for snapshot in list(buffer.snapshots):
+                indexed_entries.append(
+                    (
+                        int(snapshot.ts_ms),
+                        sequence_index,
+                        self._debug_output_snapshot_entry(
+                            snapshot,
+                            include_value=bool(include_value),
+                            max_value_bytes=max(0, int(max_value_bytes)),
+                        ),
+                    )
+                )
+                sequence_index += 1
+        indexed_entries.sort(key=lambda item: (item[0], item[1]))
+        for _, _, entry in indexed_entries[-item_limit:]:
+            entries.append(entry)
+        return entries
+
+    def _count_debug_outputs(self, *, node_id: str, port: str) -> int:
+        count = 0
+        for buffer_node_id, buffer_port in list(self._outputs.keys()):
+            if node_id and buffer_node_id != node_id:
+                continue
+            if port and buffer_port != port:
+                continue
+            buffer = self._outputs.get((buffer_node_id, buffer_port))
+            if buffer is not None:
+                count += len(buffer.snapshots)
+        return count
+
+    def _debug_output_snapshot_entry(
+        self,
+        snapshot: OutputSnapshot,
+        *,
+        include_value: bool,
+        max_value_bytes: int,
+    ) -> dict[str, Any]:
+        entry: dict[str, Any] = {
+            "nodeId": str(snapshot.from_node),
+            "port": str(snapshot.from_port),
+            "tsMs": int(snapshot.ts_ms),
+            "ctxId": snapshot.ctx_id,
+            "deliveredLocal": bool(snapshot.delivered_local),
+            "crossPublishDecision": str(snapshot.cross_publish_decision),
+            "crossPublishKey": str(snapshot.cross_publish_key),
+        }
+        self._attach_debug_value(
+            entry,
+            key_prefix="lastEmitted",
+            value=snapshot.value,
+            include_value=include_value,
+            max_value_bytes=max_value_bytes,
+        )
+        return entry
+
+    @staticmethod
+    def _attach_debug_value(
+        entry: dict[str, Any],
+        *,
+        key_prefix: str,
+        value: Any,
+        include_value: bool,
+        max_value_bytes: int,
+    ) -> None:
+        if value is None:
+            entry[f"{key_prefix}PayloadKind"] = "null"
+            return
+        json_value = dump_json(value, mode="json")
+        try:
+            encoded = json.dumps(json_value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        except (TypeError, ValueError):
+            entry[f"{key_prefix}PayloadKind"] = type(value).__name__
+            entry[f"{key_prefix}ValueSummary"] = str(type(value).__name__)
+            return
+        entry[f"{key_prefix}PayloadKind"] = _payload_kind(json_value)
+        entry[f"{key_prefix}ValueJsonBytes"] = len(encoded)
+        if not include_value:
+            entry[f"{key_prefix}ValueOmitted"] = True
+            return
+        if len(encoded) > max_value_bytes:
+            entry[f"{key_prefix}ValueOmitted"] = True
+            entry[f"{key_prefix}OmitReason"] = "value_too_large"
+            return
+        entry[f"{key_prefix}Value"] = json_value
+
     def set_cross_publish_policy(self, policy: CrossPublishPolicy) -> None:
         self._cross_publish_policy = policy
 
@@ -143,6 +383,7 @@ class DataRouter:
         input_stream_keys: DataInputStreamRoutes | None = None,
     ) -> None:
         self._inputs.clear()
+        self._outputs.clear()
         self._intra_data_out = dict(intra_data_out)
         self._intra_data_in = dict(intra_data_in)
         self._cross_in_by_key = dict(cross_in_by_key)
@@ -536,6 +777,15 @@ class DataRouter:
             force_buffer_target=force_buffer_target,
         )
         plan = self._cross_publish_plan(node_id=from_node, port=from_port)
+        self._record_output_snapshot(
+            from_node=from_node,
+            from_port=from_port,
+            value=value,
+            ts_ms=int(ts_ms),
+            ctx_id=ctx_id,
+            delivered_local=delivered,
+            cross_publish_plan=plan,
+        )
         if options.publish_cross_service and plan.will_publish:
             payload = encode_obj({"value": value, "ts": int(ts_ms)})
             await self._bus._transport.publish(plan.key, payload)
@@ -543,6 +793,39 @@ class DataRouter:
             return delivered
         self._record_skipped_cross_publish(plan=plan, publish_enabled=options.publish_cross_service)
         return delivered
+
+    def _record_output_snapshot(
+        self,
+        *,
+        from_node: str,
+        from_port: str,
+        value: Any,
+        ts_ms: int,
+        ctx_id: str | int | None,
+        delivered_local: bool,
+        cross_publish_plan: CrossPublishPlan,
+    ) -> None:
+        key = (str(from_node), str(from_port))
+        buffer = self._outputs.get(key)
+        if buffer is None:
+            buffer = OutputBuffer(
+                from_node=key[0],
+                from_port=key[1],
+                snapshots=deque(maxlen=self._output_history_size),
+            )
+            self._outputs[key] = buffer
+        buffer.snapshots.append(
+            OutputSnapshot(
+            from_node=str(from_node),
+            from_port=str(from_port),
+            value=value,
+            ts_ms=int(ts_ms),
+            ctx_id=ctx_id,
+            delivered_local=bool(delivered_local),
+            cross_publish_decision=str(cross_publish_plan.decision),
+            cross_publish_key=str(cross_publish_plan.key),
+            )
+        )
 
     def _fanout_local_routes(
         self,

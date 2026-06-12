@@ -115,6 +115,48 @@ def _create_server() -> Any:
         return tools.graph_session(connection_file=connection_file)
 
     @server.tool()
+    def project_list(connection_file: str = "") -> dict[str, Any]:
+        return tools.project_list(connection_file=connection_file)
+
+    @server.tool()
+    def project_new(
+        confirm: bool = False,
+        clear_current_project: bool = True,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return tools.project_new(
+            confirm=confirm,
+            clear_current_project=clear_current_project,
+            connection_file=connection_file,
+        )
+
+    @server.tool()
+    def project_save(
+        name: str = "",
+        description: str = "",
+        tags: list[str] | None = None,
+        project_id: str = "",
+        overwrite_project_id: str = "",
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return tools.project_save(
+            name=name,
+            description=description,
+            tags=tags,
+            project_id=project_id,
+            overwrite_project_id=overwrite_project_id,
+            connection_file=connection_file,
+        )
+
+    @server.tool()
+    def project_load(
+        project_id: str,
+        confirm: bool = False,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return tools.project_load(project_id=project_id, confirm=confirm, connection_file=connection_file)
+
+    @server.tool()
     def graph_compile(connection_file: str = "") -> dict[str, Any]:
         return tools.graph_compile(connection_file=connection_file)
 
@@ -323,6 +365,9 @@ def _create_server() -> Any:
         timeout_s: float = 2.0,
         include_value: bool = True,
         max_value_bytes: int = 65536,
+        cached_only: bool = False,
+        min_count: int = 1,
+        after_observed_at_ms: int = 0,
         connection_file: str = "",
     ) -> dict[str, Any]:
         return tools.runtime_sample_port(
@@ -333,6 +378,31 @@ def _create_server() -> Any:
             timeout_s=timeout_s,
             include_value=include_value,
             max_value_bytes=max_value_bytes,
+            connection_file=connection_file,
+        )
+
+    @server.tool()
+    def runtime_debug_data(
+        service_id: str,
+        node_id: str = "",
+        port: str = "",
+        limit: int = 100,
+        timeout_s: float = 1.0,
+        include_value: bool = True,
+        max_value_bytes: int = 65536,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return tools.runtime_debug_data(
+            service_id=service_id,
+            node_id=node_id,
+            port=port,
+            limit=limit,
+            timeout_s=timeout_s,
+            include_value=include_value,
+            max_value_bytes=max_value_bytes,
+            cached_only=cached_only,
+            min_count=min_count,
+            after_observed_at_ms=after_observed_at_ms,
             connection_file=connection_file,
         )
 
@@ -376,6 +446,18 @@ def _create_server() -> Any:
             connection_file=connection_file,
         )
 
+    @server.tool()
+    def notifications_read(
+        limit: int = 100,
+        minimum_severity: str = "",
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return tools.notifications_read(
+            limit=limit,
+            minimum_severity=minimum_severity,
+            connection_file=connection_file,
+        )
+
     @server.resource("f8studio://graph/current")
     def current_graph() -> dict[str, Any]:
         return tools.graph_snapshot()
@@ -407,6 +489,14 @@ def _create_server() -> Any:
     @server.resource("f8studio://session/current")
     def current_session() -> dict[str, Any]:
         return tools.graph_session()
+
+    @server.resource("f8studio://projects/local")
+    def local_projects() -> dict[str, Any]:
+        return tools.project_list()
+
+    @server.resource("f8studio://ui/notifications")
+    def ui_notifications() -> dict[str, Any]:
+        return tools.notifications_read()
 
     @server.prompt()
     def plan_graph_change(goal: str) -> str:

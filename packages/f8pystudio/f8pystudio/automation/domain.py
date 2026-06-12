@@ -12,6 +12,8 @@ GraphPatchOpKind = Literal[
     "disconnectPorts",
     "setNodeState",
     "setNodeName",
+    "setNodePorts",
+    "setNodeStateFields",
     "moveNode",
     "setUiOverride",
 ]
@@ -138,6 +140,21 @@ class SetNodeNameOp:
 
 
 @dataclass(frozen=True)
+class SetNodePortsOp:
+    node_id: str
+    data_in_ports: tuple[Any, ...] | None = None
+    data_out_ports: tuple[Any, ...] | None = None
+    exec_in_ports: tuple[str, ...] | None = None
+    exec_out_ports: tuple[str, ...] | None = None
+
+
+@dataclass(frozen=True)
+class SetNodeStateFieldsOp:
+    node_id: str
+    state_fields: tuple[Any, ...]
+
+
+@dataclass(frozen=True)
 class MoveNodeOp:
     node_id: str
     pos: tuple[float, float]
@@ -157,6 +174,8 @@ GraphPatchOp = (
     | DisconnectPortsOp
     | SetNodeStateOp
     | SetNodeNameOp
+    | SetNodePortsOp
+    | SetNodeStateFieldsOp
     | MoveNodeOp
     | SetUiOverrideOp
 )
@@ -274,6 +293,22 @@ def _decode_graph_patch_op(payload: JsonObject, *, index: int) -> GraphPatchOp:
             node_id=_required_str(payload, "nodeId", index=index),
             name=_required_str(payload, "name", index=index),
         )
+    if kind == "setNodePorts":
+        return SetNodePortsOp(
+            node_id=_required_str(payload, "nodeId", index=index),
+            data_in_ports=_optional_tuple(payload, "dataInPorts", index=index),
+            data_out_ports=_optional_tuple(payload, "dataOutPorts", index=index),
+            exec_in_ports=_optional_str_tuple(payload, "execInPorts", index=index),
+            exec_out_ports=_optional_str_tuple(payload, "execOutPorts", index=index),
+        )
+    if kind == "setNodeStateFields":
+        state_fields = _optional_tuple(payload, "stateFields", index=index)
+        if state_fields is None:
+            raise ValueError(f"graph patch op #{index} missing required field `stateFields`")
+        return SetNodeStateFieldsOp(
+            node_id=_required_str(payload, "nodeId", index=index),
+            state_fields=state_fields,
+        )
     if kind == "moveNode":
         return MoveNodeOp(
             node_id=_required_str(payload, "nodeId", index=index),
@@ -322,6 +357,19 @@ def _graph_patch_op_to_dict(op: GraphPatchOp) -> JsonObject:
         return {"op": "setNodeState", "nodeId": op.node_id, "field": op.field, "value": op.value}
     if isinstance(op, SetNodeNameOp):
         return {"op": "setNodeName", "nodeId": op.node_id, "name": op.name}
+    if isinstance(op, SetNodePortsOp):
+        payload: JsonObject = {"op": "setNodePorts", "nodeId": op.node_id}
+        if op.data_in_ports is not None:
+            payload["dataInPorts"] = list(op.data_in_ports)
+        if op.data_out_ports is not None:
+            payload["dataOutPorts"] = list(op.data_out_ports)
+        if op.exec_in_ports is not None:
+            payload["execInPorts"] = list(op.exec_in_ports)
+        if op.exec_out_ports is not None:
+            payload["execOutPorts"] = list(op.exec_out_ports)
+        return payload
+    if isinstance(op, SetNodeStateFieldsOp):
+        return {"op": "setNodeStateFields", "nodeId": op.node_id, "stateFields": list(op.state_fields)}
     if isinstance(op, MoveNodeOp):
         return {"op": "moveNode", "nodeId": op.node_id, "pos": [op.pos[0], op.pos[1]]}
     if isinstance(op, SetUiOverrideOp):
@@ -342,6 +390,28 @@ def _optional_int(value: Any) -> int | None:
 
 def _optional_str(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _optional_tuple(payload: JsonObject, key: str, *, index: int) -> tuple[Any, ...] | None:
+    if key not in payload:
+        return None
+    value = payload.get(key)
+    if not isinstance(value, list):
+        raise ValueError(f"graph patch op #{index} field `{key}` must be a list")
+    return tuple(value)
+
+
+def _optional_str_tuple(payload: JsonObject, key: str, *, index: int) -> tuple[str, ...] | None:
+    raw = _optional_tuple(payload, key, index=index)
+    if raw is None:
+        return None
+    out: list[str] = []
+    for item_index, item in enumerate(raw):
+        text = str(item or "").strip()
+        if not text:
+            raise ValueError(f"graph patch op #{index} field `{key}` item #{item_index} must be a non-empty string")
+        out.append(text)
+    return tuple(out)
 
 
 def _required_str(payload: JsonObject, key: str, *, index: int) -> str:

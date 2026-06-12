@@ -89,6 +89,7 @@ class F8StudioGraph(
         self.uuid_generator = shortuuid.ShortUUID()
         self._loading_session = False
         self._skip_post_load_viewer_refresh = False
+        self._skip_post_load_container_rebind = False
         self._tab_search_node_type_aliases: dict[str, str] = {}
         self._tab_search_component_ids: dict[str, str] = {}
         self._component_menu_node_types: set[str] = set()
@@ -155,6 +156,15 @@ class F8StudioGraph(
 
     def set_skip_post_load_viewer_refresh(self, skip: bool) -> None:
         self._skip_post_load_viewer_refresh = bool(skip)
+
+    def skip_post_load_viewer_refresh(self) -> bool:
+        return bool(self._skip_post_load_viewer_refresh)
+
+    def set_skip_post_load_container_rebind(self, skip: bool) -> None:
+        self._skip_post_load_container_rebind = bool(skip)
+
+    def skip_post_load_container_rebind(self) -> bool:
+        return bool(self._skip_post_load_container_rebind)
 
     def clear_undo_history(self) -> None:
         self._undo_stack.clear()

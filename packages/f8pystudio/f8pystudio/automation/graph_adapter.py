@@ -1,18 +1,28 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import logging
 from dataclasses import asdict
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from f8pysdk.codec import dump_json
+from qtpy import QtCore, QtWidgets
+
+from f8pysdk.codec import dump_json, validate_as
 from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
+from f8pysdk.specs import F8DataPortSpec, F8StateSpec, can_add, can_delete, can_edit_existing
 
 from f8pystudio.bridge.json_codec import coerce_json_value
+from f8pystudio.nodegraph.spec_mutations import set_ports, set_state_fields
 from f8pystudio.nodegraph.runtime_compiler import compile_runtime_graphs_from_studio
 from f8pystudio.nodegraph.session_schema import extract_layout
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS as STUDIO_SERVICE_CLASS
 from f8pystudio.studio_specs.identifiers import STUDIO_SERVICE_ID
+
+if TYPE_CHECKING:
+    from f8pystudio.nodegraph.container_basenode import F8StudioContainerBaseNode
+    from f8pystudio.nodegraph.operator_basenode import F8StudioOperatorBaseNode
 
 from .domain import (
     ConnectPortsOp,
@@ -28,6 +38,8 @@ from .domain import (
     GraphStateFieldSnapshot,
     MoveNodeOp,
     SetNodeNameOp,
+    SetNodePortsOp,
+    SetNodeStateFieldsOp,
     SetNodeStateOp,
     SetUiOverrideOp,
 )
@@ -36,6 +48,57 @@ logger = logging.getLogger(__name__)
 _GRAPH_READ_ERRORS = (AttributeError, KeyError, RuntimeError, TypeError, ValueError)
 _GRAPH_MUTATION_ERRORS = (AttributeError, KeyError, RuntimeError, TypeError, ValueError)
 _MAX_NODE_DETAIL_TEXT = 12000
+_RUNTIME_BINDING_STATE_FIELD = "svcId"
+_AUTO_CONTAINER_PADDING = 80.0
+_AUTO_CONTAINER_GEOMETRY_EPSILON = 0.5
+
+
+class _RuntimeServiceBindingChangeCommand(QtWidgets.QUndoCommand):
+    def __init__(self, node: Any, service_id: str) -> None:
+        super().__init__('property "{}:{}"'.format(_node_name(node), _RUNTIME_BINDING_STATE_FIELD))
+        self._node = node
+        self._old_service_id = _node_service_id(node)
+        self._new_service_id = str(service_id or "").strip()
+
+    def undo(self) -> None:
+        _apply_runtime_binding_service_id(self._node, self._old_service_id)
+        _sync_operator_container_reference_for_service_id(self._node)
+
+    def redo(self) -> None:
+        _apply_runtime_binding_service_id(self._node, self._new_service_id)
+        _sync_operator_container_reference_for_service_id(self._node)
+
+
+class _ContainerGeometryChangeCommand(QtWidgets.QUndoCommand):
+    def __init__(
+        self,
+        *,
+        container: F8StudioContainerBaseNode,
+        before: QtCore.QRectF,
+        after: QtCore.QRectF,
+    ) -> None:
+        super().__init__('resize service container "{}"'.format(_node_name(container)))
+        self._container = container
+        self._before = QtCore.QRectF(before)
+        self._after = QtCore.QRectF(after)
+
+    def undo(self) -> None:
+        _apply_container_geometry_without_child_translation(self._container, self._before)
+
+    def redo(self) -> None:
+        _apply_container_geometry_without_child_translation(self._container, self._after)
+
+
+def _is_studio_operator_node(node: Any) -> bool:
+    from f8pystudio.nodegraph.operator_basenode import F8StudioOperatorBaseNode
+
+    return isinstance(node, F8StudioOperatorBaseNode)
+
+
+def _is_studio_container_node(node: Any) -> bool:
+    from f8pystudio.nodegraph.container_basenode import F8StudioContainerBaseNode
+
+    return isinstance(node, F8StudioContainerBaseNode)
 
 
 class StudioGraphAutomationAdapter:
@@ -43,8 +106,7 @@ class StudioGraphAutomationAdapter:
         self._graph = studio_graph
 
     def revision(self) -> int:
-        undo_stack = self._graph._undo_stack
-        return int(undo_stack.index())
+        return _session_revision(self._graph.serialize_session())
 
     def snapshot(self) -> GraphSnapshot:
         nodes = sorted(list(self._graph.all_nodes() or []), key=_node_id)
@@ -314,14 +376,13 @@ class StudioGraphAutomationAdapter:
         session_payload = copy.deepcopy(self._graph.serialize_session())
         before_revision = current_revision
         try:
-            self.apply_patch(patch, validate_revision=False, push_undo=False)
+            apply_preview = self.apply_patch(patch, validate_revision=False, push_undo=False)
             compiled = compile_runtime_graphs_from_studio(self._graph)
-            changed_node_ids = tuple(sorted(_changed_node_ids(patch)))
             return GraphPatchPreview(
                 expected_revision=patch.expected_revision,
                 current_revision=before_revision,
                 valid=True,
-                changed_node_ids=changed_node_ids,
+                changed_node_ids=apply_preview.changed_node_ids,
                 compile_warnings=tuple(compiled.warnings or ()),
                 errors=(),
             )
@@ -333,10 +394,17 @@ class StudioGraphAutomationAdapter:
                 errors=(str(exc),),
             )
         finally:
+            previous_skip_rebind = bool(self._graph.skip_post_load_container_rebind())
             try:
+                self._graph.set_skip_post_load_container_rebind(True)
                 self._graph.load_session_payload(session_payload)
             except _GRAPH_MUTATION_ERRORS:
                 logger.exception("failed to restore graph after automation preview")
+            finally:
+                try:
+                    self._graph.set_skip_post_load_container_rebind(previous_skip_rebind)
+                except _GRAPH_MUTATION_ERRORS:
+                    logger.exception("failed to restore post-load container rebind setting after automation preview")
 
     def apply_patch(
         self,
@@ -358,9 +426,11 @@ class StudioGraphAutomationAdapter:
         if begin_macro:
             self._graph.begin_undo(str(patch.label or "automation patch"))
         try:
+            changed_node_ids = set(_changed_node_ids(patch))
             for op in patch.ops:
                 self._validate_op(op)
                 self._apply_op(op, push_undo=push_undo)
+            changed_node_ids.update(self._auto_expand_service_containers_for_patch(patch, push_undo=push_undo))
         finally:
             if begin_macro:
                 self._graph.end_undo()
@@ -369,7 +439,7 @@ class StudioGraphAutomationAdapter:
             expected_revision=patch.expected_revision,
             current_revision=self.revision(),
             valid=True,
-            changed_node_ids=tuple(sorted(_changed_node_ids(patch))),
+            changed_node_ids=tuple(sorted(changed_node_ids)),
             compile_warnings=tuple(compiled.warnings or ()),
         )
 
@@ -431,7 +501,7 @@ class StudioGraphAutomationAdapter:
             return
         if isinstance(op, SetNodeStateOp):
             node = self._require_node(op.node_id)
-            if not _node_has_state_field(node, op.field):
+            if not _node_has_state_field(node, op.field) and not _is_runtime_binding_state_field(op.field):
                 raise ValueError(f"node {op.node_id} has no state field {op.field!r}")
             coerce_json_value(op.value)
             return
@@ -439,6 +509,12 @@ class StudioGraphAutomationAdapter:
             self._require_node(op.node_id)
             if not op.name.strip():
                 raise ValueError("node name cannot be empty")
+            return
+        if isinstance(op, SetNodePortsOp):
+            self._validate_node_ports_op(op)
+            return
+        if isinstance(op, SetNodeStateFieldsOp):
+            self._validate_node_state_fields_op(op)
             return
         if isinstance(op, MoveNodeOp):
             self._require_node(op.node_id)
@@ -453,13 +529,12 @@ class StudioGraphAutomationAdapter:
 
     def _apply_op(self, op: object, *, push_undo: bool) -> None:
         if isinstance(op, CreateNodeOp):
-            node = self._graph.create_node(
+            node = self._graph.create_node_for_session_load(
                 op.node_type,
                 name=op.name or None,
                 selected=op.selected,
                 pos=op.pos,
                 push_undo=push_undo,
-                begin_undo_macro=False,
             )
             if node is None:
                 raise ValueError(f"failed to create node: {op.node_type}")
@@ -480,10 +555,16 @@ class StudioGraphAutomationAdapter:
             out_port.disconnect_from(in_port, push_undo=push_undo, emit_signal=True)
             return
         if isinstance(op, SetNodeStateOp):
-            self._require_node(op.node_id).set_property(op.field, coerce_json_value(op.value), push_undo=push_undo)
+            _set_node_state_value(self._require_node(op.node_id), op.field, op.value, push_undo=push_undo)
             return
         if isinstance(op, SetNodeNameOp):
             self._require_node(op.node_id).set_property("name", op.name, push_undo=push_undo)
+            return
+        if isinstance(op, SetNodePortsOp):
+            self._apply_node_ports_op(op)
+            return
+        if isinstance(op, SetNodeStateFieldsOp):
+            self._apply_node_state_fields_op(op)
             return
         if isinstance(op, MoveNodeOp):
             node = self._require_node(op.node_id)
@@ -499,6 +580,128 @@ class StudioGraphAutomationAdapter:
             node.set_ui_overrides(ui, rebuild=True)
             return
         raise TypeError(f"unsupported automation patch op: {type(op).__name__}")
+
+    def _auto_expand_service_containers_for_patch(self, patch: GraphPatch, *, push_undo: bool) -> set[str]:
+        expanded_node_ids: set[str] = set()
+        for node_id in sorted(_changed_node_ids(patch)):
+            node = self._graph.get_node_by_id(node_id)
+            if not _is_studio_operator_node(node):
+                continue
+            service_id = _node_service_id(node)
+            if not service_id:
+                continue
+
+            operator_spec = _node_spec(node)
+            if not isinstance(operator_spec, F8OperatorSpec):
+                continue
+            operator_service_class = str(operator_spec.serviceClass or "").strip()
+            if not operator_service_class or operator_service_class == STUDIO_SERVICE_CLASS:
+                continue
+
+            container = self._graph.get_node_by_id(service_id)
+            if not _is_studio_container_node(container):
+                continue
+            container_spec = _node_spec(container)
+            if not isinstance(container_spec, F8ServiceSpec):
+                continue
+            if str(container_spec.serviceClass or "").strip() != operator_service_class:
+                continue
+
+            _sync_operator_container_reference(operator=node, container=container)
+            if _expand_container_to_cover_operator(container=container, operator=node, push_undo=push_undo):
+                expanded_node_ids.add(_node_id(container))
+        return expanded_node_ids
+
+    def _validate_node_ports_op(self, op: SetNodePortsOp) -> None:
+        node = self._require_node(op.node_id)
+        spec = _node_spec(node)
+        if spec is None:
+            raise ValueError(f"node {op.node_id} has no editable spec")
+        if op.data_in_ports is None and op.data_out_ports is None and op.exec_in_ports is None and op.exec_out_ports is None:
+            raise ValueError("setNodePorts requires at least one port collection")
+        if op.data_in_ports is not None:
+            _validate_port_edit_policy(spec, collection="dataInPorts")
+            _decode_data_port_specs(op.data_in_ports, label="dataInPorts")
+        if op.data_out_ports is not None:
+            _validate_port_edit_policy(spec, collection="dataOutPorts")
+            _decode_data_port_specs(op.data_out_ports, label="dataOutPorts")
+        if op.exec_in_ports is not None:
+            if not isinstance(spec, F8OperatorSpec):
+                raise ValueError("execInPorts can only be set on operator nodes")
+            _validate_port_edit_policy(spec, collection="execInPorts")
+        if op.exec_out_ports is not None:
+            if not isinstance(spec, F8OperatorSpec):
+                raise ValueError("execOutPorts can only be set on operator nodes")
+            _validate_port_edit_policy(spec, collection="execOutPorts")
+        updated_spec = self._updated_ports_spec_for_op(node, op)
+        _validate_required_data_ports_kept(before=spec, after=updated_spec, collection="dataInPorts")
+        _validate_required_data_ports_kept(before=spec, after=updated_spec, collection="dataOutPorts")
+        coerce_json_value(dump_json(updated_spec, mode="json", by_alias=True))
+
+    def _apply_node_ports_op(self, op: SetNodePortsOp) -> None:
+        node = self._require_node(op.node_id)
+        updated_spec = self._updated_ports_spec_for_op(node, op)
+        try:
+            node.set_spec(updated_spec, rebuild=True)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            logger.exception("failed to apply node ports op nodeId=%s", op.node_id)
+            raise
+
+    def _validate_node_state_fields_op(self, op: SetNodeStateFieldsOp) -> None:
+        node = self._require_node(op.node_id)
+        spec = _node_spec(node)
+        if spec is None:
+            raise ValueError(f"node {op.node_id} has no editable spec")
+        _validate_state_field_edit_policy(spec)
+        _decode_state_field_specs(op.state_fields, label="stateFields")
+        updated_spec = self._updated_state_fields_spec_for_op(node, op)
+        _validate_required_state_fields_kept(before=spec, after=updated_spec)
+        coerce_json_value(dump_json(updated_spec, mode="json", by_alias=True))
+
+    def _apply_node_state_fields_op(self, op: SetNodeStateFieldsOp) -> None:
+        node = self._require_node(op.node_id)
+        updated_spec = self._updated_state_fields_spec_for_op(node, op)
+        try:
+            node.set_spec(updated_spec, rebuild=True)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            logger.exception("failed to apply node state fields op nodeId=%s", op.node_id)
+            raise
+
+    def _updated_ports_spec_for_op(self, node: Any, op: SetNodePortsOp) -> F8OperatorSpec | F8ServiceSpec:
+        spec = _node_spec(node)
+        if spec is None:
+            raise ValueError(f"node {op.node_id} has no editable spec")
+        data_in_ports = (
+            list(spec.dataInPorts or [])
+            if op.data_in_ports is None
+            else _decode_data_port_specs(op.data_in_ports, label="dataInPorts")
+        )
+        data_out_ports = (
+            list(spec.dataOutPorts or [])
+            if op.data_out_ports is None
+            else _decode_data_port_specs(op.data_out_ports, label="dataOutPorts")
+        )
+        if isinstance(spec, F8OperatorSpec):
+            exec_in_ports = list(spec.execInPorts or []) if op.exec_in_ports is None else list(op.exec_in_ports)
+            exec_out_ports = list(spec.execOutPorts or []) if op.exec_out_ports is None else list(op.exec_out_ports)
+            return set_ports(
+                spec,
+                data_in=data_in_ports,
+                data_out=data_out_ports,
+                exec_in=exec_in_ports,
+                exec_out=exec_out_ports,
+            )
+        return set_ports(spec, data_in=data_in_ports, data_out=data_out_ports)
+
+    def _updated_state_fields_spec_for_op(
+        self,
+        node: Any,
+        op: SetNodeStateFieldsOp,
+    ) -> F8OperatorSpec | F8ServiceSpec:
+        spec = _node_spec(node)
+        if spec is None:
+            raise ValueError(f"node {op.node_id} has no editable spec")
+        return set_state_fields(spec, state_fields=_decode_state_field_specs(op.state_fields, label="stateFields"))
 
     def _require_node(self, node_id: str) -> Any:
         node = self._graph.get_node_by_id(str(node_id or "").strip())
@@ -590,6 +793,10 @@ def _node_state_values(node: Any) -> dict[str, Any]:
             out[name] = _json_detail_value(model.get_property(name))
         except _GRAPH_READ_ERRORS:
             continue
+    binding = _node_runtime_binding(node)
+    service_id = str(binding.get("serviceId") or "").strip()
+    if service_id:
+        out.setdefault(_RUNTIME_BINDING_STATE_FIELD, service_id)
     return out
 
 
@@ -771,6 +978,102 @@ def _node_has_state_field(node: Any, field_name: str) -> bool:
     return False
 
 
+def _decode_data_port_specs(raw_ports: tuple[Any, ...], *, label: str) -> list[F8DataPortSpec]:
+    out: list[F8DataPortSpec] = []
+    seen: set[str] = set()
+    for index, raw_port in enumerate(raw_ports):
+        if not isinstance(raw_port, dict):
+            raise ValueError(f"{label} item #{index} must be an object")
+        try:
+            port = validate_as(F8DataPortSpec, raw_port)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{label} item #{index} is not a valid data port spec: {exc}") from exc
+        name = str(port.name or "").strip()
+        if not name:
+            raise ValueError(f"{label} item #{index} requires a non-empty name")
+        if name in seen:
+            raise ValueError(f"{label} contains duplicate port name: {name}")
+        seen.add(name)
+        out.append(port)
+    return out
+
+
+def _decode_state_field_specs(raw_fields: tuple[Any, ...], *, label: str) -> list[F8StateSpec]:
+    out: list[F8StateSpec] = []
+    seen: set[str] = set()
+    for index, raw_field in enumerate(raw_fields):
+        if not isinstance(raw_field, dict):
+            raise ValueError(f"{label} item #{index} must be an object")
+        try:
+            field = validate_as(F8StateSpec, raw_field)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{label} item #{index} is not a valid state field spec: {exc}") from exc
+        name = str(field.name or "").strip()
+        if not name:
+            raise ValueError(f"{label} item #{index} requires a non-empty name")
+        if name in seen:
+            raise ValueError(f"{label} contains duplicate field name: {name}")
+        seen.add(name)
+        out.append(field)
+    return out
+
+
+def _validate_port_edit_policy(
+    spec: F8OperatorSpec | F8ServiceSpec,
+    *,
+    collection: str,
+) -> None:
+    if collection == "dataInPorts":
+        can_change = bool(can_add(spec, "dataInPorts") and can_delete(spec, "dataInPorts") and can_edit_existing(spec, "dataInPorts"))
+    elif collection == "dataOutPorts":
+        can_change = bool(can_add(spec, "dataOutPorts") and can_delete(spec, "dataOutPorts") and can_edit_existing(spec, "dataOutPorts"))
+    elif collection == "execInPorts":
+        can_change = bool(can_add(spec, "execInPorts") and can_delete(spec, "execInPorts") and can_edit_existing(spec, "execInPorts"))
+    elif collection == "execOutPorts":
+        can_change = bool(can_add(spec, "execOutPorts") and can_delete(spec, "execOutPorts") and can_edit_existing(spec, "execOutPorts"))
+    else:
+        raise ValueError(f"unsupported port collection: {collection}")
+    if not can_change:
+        raise ValueError(f"node spec does not allow editing {collection}")
+
+
+def _validate_state_field_edit_policy(spec: F8OperatorSpec | F8ServiceSpec) -> None:
+    can_change = bool(
+        can_add(spec, "stateFields")
+        and can_delete(spec, "stateFields")
+        and can_edit_existing(spec, "stateFields")
+    )
+    if not can_change:
+        raise ValueError("node spec does not allow editing stateFields")
+
+
+def _validate_required_data_ports_kept(
+    *,
+    before: F8OperatorSpec | F8ServiceSpec,
+    after: F8OperatorSpec | F8ServiceSpec,
+    collection: str,
+) -> None:
+    before_ports = list(before.dataInPorts or []) if collection == "dataInPorts" else list(before.dataOutPorts or [])
+    after_ports = list(after.dataInPorts or []) if collection == "dataInPorts" else list(after.dataOutPorts or [])
+    after_names = {str(port.name or "").strip() for port in after_ports}
+    for port in before_ports:
+        name = str(port.name or "").strip()
+        if name and bool(port.required) and name not in after_names:
+            raise ValueError(f"required {collection} port cannot be removed: {name}")
+
+
+def _validate_required_state_fields_kept(
+    *,
+    before: F8OperatorSpec | F8ServiceSpec,
+    after: F8OperatorSpec | F8ServiceSpec,
+) -> None:
+    after_names = {str(field.name or "").strip() for field in list(after.stateFields or [])}
+    for field in list(before.stateFields or []):
+        name = str(field.name or "").strip()
+        if name and bool(field.required) and name not in after_names:
+            raise ValueError(f"required stateFields field cannot be removed: {name}")
+
+
 def _assign_existing_node_id(graph: Any, node: Any, node_id: str) -> None:
     normalized_node_id = str(node_id or "").strip()
     if not normalized_node_id:
@@ -788,7 +1091,206 @@ def _assign_existing_node_id(graph: Any, node: Any, node_id: str) -> None:
     if "operatorId" in model.properties or "operatorId" in model.custom_properties:
         node.set_property("operatorId", normalized_node_id, push_undo=False)
     if "svcId" in model.properties or "svcId" in model.custom_properties:
-        node.set_property("svcId", normalized_node_id, push_undo=False)
+        _set_node_state_value(node, "svcId", normalized_node_id, push_undo=False)
+
+
+def _set_node_state_value(node: Any, field: str, value: Any, *, push_undo: bool) -> None:
+    field_name = str(field or "").strip()
+    coerced_value = coerce_json_value(value)
+    if _is_runtime_binding_state_field(field_name):
+        _set_node_runtime_binding_service_id(node, coerced_value, push_undo=push_undo)
+        return
+    node.set_property(field_name, coerced_value, push_undo=push_undo)
+
+
+def _is_runtime_binding_state_field(field_name: str) -> bool:
+    return str(field_name or "").strip() == _RUNTIME_BINDING_STATE_FIELD
+
+
+def _set_node_runtime_binding_service_id(node: Any, value: Any, *, push_undo: bool) -> None:
+    service_id = "" if value is None else str(value).strip()
+    if _node_service_id(node) == service_id:
+        _sync_operator_container_reference_for_service_id(node)
+        return
+    graph = node.graph
+    if bool(push_undo) and graph is not None:
+        graph.undo_stack().push(_RuntimeServiceBindingChangeCommand(node, service_id))
+        return
+    _apply_runtime_binding_service_id(node, service_id)
+    _sync_operator_container_reference_for_service_id(node)
+
+
+def _apply_runtime_binding_service_id(node: Any, service_id: str) -> None:
+    normalized_service_id = str(service_id or "").strip()
+    node.svcId = normalized_service_id or None
+    model = node.model
+    if _RUNTIME_BINDING_STATE_FIELD in model.properties or _RUNTIME_BINDING_STATE_FIELD in model.custom_properties:
+        node.set_property(_RUNTIME_BINDING_STATE_FIELD, normalized_service_id, push_undo=False)
+
+
+def _operator_current_container(operator: F8StudioOperatorBaseNode) -> F8StudioContainerBaseNode | None:
+    container_item = operator.view._container_item
+    if container_item is None:
+        return None
+    container_id = str(container_item.id or "").strip()
+    if not container_id:
+        return None
+    graph = operator.graph
+    if graph is None:
+        return None
+    container = graph.get_node_by_id(container_id)
+    if _is_studio_container_node(container):
+        return container
+    return None
+
+
+def _sync_operator_container_reference_for_service_id(node: Any) -> None:
+    if not _is_studio_operator_node(node):
+        return
+    graph = node.graph
+    service_id = _node_service_id(node)
+    target_container = graph.get_node_by_id(service_id) if graph is not None and service_id else None
+    if _is_studio_container_node(target_container) and _operator_container_service_class_matches(
+        operator=node,
+        container=target_container,
+    ):
+        _sync_operator_container_reference(operator=node, container=target_container)
+        return
+    current_container = _operator_current_container(node)
+    if current_container is not None:
+        current_container.remove_child(node)
+
+
+def _sync_operator_container_reference(
+    *,
+    operator: F8StudioOperatorBaseNode,
+    container: F8StudioContainerBaseNode,
+) -> None:
+    current_container = _operator_current_container(operator)
+    if current_container is not None and current_container is not container:
+        current_container.remove_child(operator)
+
+    child_nodes = container.child_nodes()
+    if operator not in child_nodes:
+        container.add_child(operator)
+        return
+    if operator.view not in container.view._child_views:
+        container.view.add_child(operator.view)
+
+
+def _operator_container_service_class_matches(
+    *,
+    operator: F8StudioOperatorBaseNode,
+    container: F8StudioContainerBaseNode,
+) -> bool:
+    operator_spec = _node_spec(operator)
+    container_spec = _node_spec(container)
+    if not isinstance(operator_spec, F8OperatorSpec) or not isinstance(container_spec, F8ServiceSpec):
+        return False
+    return str(operator_spec.serviceClass or "").strip() == str(container_spec.serviceClass or "").strip()
+
+
+def _node_scene_rect(node: Any) -> QtCore.QRectF:
+    view = node.view
+    if view.scene() is not None:
+        return QtCore.QRectF(view.sceneBoundingRect())
+    pos = node.pos()
+    bounds = view.boundingRect()
+    return QtCore.QRectF(float(pos[0]), float(pos[1]), float(bounds.width()), float(bounds.height()))
+
+
+def _container_minimum_size(container: F8StudioContainerBaseNode) -> tuple[float, float]:
+    minimum_size = container.view.minimum_size
+    return (float(minimum_size[0]), float(minimum_size[1]))
+
+
+def _expanded_container_rect(
+    *,
+    container_rect: QtCore.QRectF,
+    operator_rect: QtCore.QRectF,
+) -> QtCore.QRectF:
+    padded_operator_rect = QtCore.QRectF(operator_rect)
+    padded_operator_rect.adjust(
+        -_AUTO_CONTAINER_PADDING,
+        -_AUTO_CONTAINER_PADDING,
+        _AUTO_CONTAINER_PADDING,
+        _AUTO_CONTAINER_PADDING,
+    )
+    left = min(float(container_rect.left()), float(padded_operator_rect.left()))
+    top = min(float(container_rect.top()), float(padded_operator_rect.top()))
+    right = max(_rect_right(container_rect), _rect_right(padded_operator_rect))
+    bottom = max(_rect_bottom(container_rect), _rect_bottom(padded_operator_rect))
+    return QtCore.QRectF(left, top, right - left, bottom - top)
+
+
+def _container_geometry_changed(before: QtCore.QRectF, after: QtCore.QRectF) -> bool:
+    return (
+        abs(float(before.x()) - float(after.x())) > _AUTO_CONTAINER_GEOMETRY_EPSILON
+        or abs(float(before.y()) - float(after.y())) > _AUTO_CONTAINER_GEOMETRY_EPSILON
+        or abs(float(before.width()) - float(after.width())) > _AUTO_CONTAINER_GEOMETRY_EPSILON
+        or abs(float(before.height()) - float(after.height())) > _AUTO_CONTAINER_GEOMETRY_EPSILON
+    )
+
+
+def _rect_right(rect: QtCore.QRectF) -> float:
+    return float(rect.x()) + float(rect.width())
+
+
+def _rect_bottom(rect: QtCore.QRectF) -> float:
+    return float(rect.y()) + float(rect.height())
+
+
+def _expand_container_to_cover_operator(
+    *,
+    container: F8StudioContainerBaseNode,
+    operator: F8StudioOperatorBaseNode,
+    push_undo: bool,
+) -> bool:
+    before_rect = _node_scene_rect(container)
+    desired_rect = _expanded_container_rect(
+        container_rect=before_rect,
+        operator_rect=_node_scene_rect(operator),
+    )
+    minimum_width, minimum_height = _container_minimum_size(container)
+    desired_rect.setWidth(max(float(desired_rect.width()), minimum_width))
+    desired_rect.setHeight(max(float(desired_rect.height()), minimum_height))
+    if not _container_geometry_changed(before_rect, desired_rect):
+        return False
+
+    graph = container.graph
+    if bool(push_undo) and graph is not None:
+        graph.undo_stack().push(
+            _ContainerGeometryChangeCommand(
+                container=container,
+                before=before_rect,
+                after=desired_rect,
+            )
+        )
+        return True
+    _apply_container_geometry_without_child_translation(container, desired_rect)
+    return True
+
+
+def _apply_container_geometry_without_child_translation(
+    container: F8StudioContainerBaseNode,
+    rect: QtCore.QRectF,
+) -> None:
+    child_nodes = list(container._child_nodes)
+    child_views = list(container.view._child_views)
+    container.view._child_views = []
+    try:
+        container._apply_backdrop_size(
+            width=float(rect.width()),
+            height=float(rect.height()),
+            pos_x=float(rect.x()),
+            pos_y=float(rect.y()),
+            push_undo=False,
+        )
+    finally:
+        container._child_nodes = child_nodes
+        container.view._child_views = child_views
+        for child_view in child_views:
+            child_view._container_item = container.view
 
 
 def _changed_node_ids(patch: GraphPatch) -> set[str]:
@@ -809,11 +1311,35 @@ def _changed_node_ids(patch: GraphPatch) -> set[str]:
             out.add(op.node_id)
         elif isinstance(op, SetNodeNameOp):
             out.add(op.node_id)
+        elif isinstance(op, SetNodePortsOp):
+            out.add(op.node_id)
+        elif isinstance(op, SetNodeStateFieldsOp):
+            out.add(op.node_id)
         elif isinstance(op, MoveNodeOp):
             out.add(op.node_id)
         elif isinstance(op, SetUiOverrideOp):
             out.add(op.node_id)
     return out
+
+
+def _session_revision(session_payload: dict[str, Any]) -> int:
+    revision_payload = _session_revision_payload(session_payload)
+    encoded = json.dumps(revision_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    digest = hashlib.blake2b(encoded, digest_size=8).digest()
+    return int.from_bytes(digest, byteorder="big", signed=False)
+
+
+def _session_revision_payload(session_payload: dict[str, Any]) -> dict[str, Any]:
+    payload = copy.deepcopy(session_payload)
+    layout = payload.get("layout")
+    if not isinstance(layout, dict):
+        return payload
+    nodes = layout.get("nodes")
+    if isinstance(nodes, dict):
+        for raw_node in nodes.values():
+            if isinstance(raw_node, dict):
+                raw_node.pop("selected", None)
+    return payload
 
 
 def _spec_from_node_class(node_cls: Any) -> F8OperatorSpec | F8ServiceSpec | None:

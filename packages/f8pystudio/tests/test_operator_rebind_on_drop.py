@@ -245,3 +245,21 @@ def test_on_operator_drop_still_prunes_exec_edge_to_unmoved_operator(monkeypatch
     assert in_port.connected_ports() == []
     assert out_port.disconnect_calls == [(in_port, False, False)]
     assert warnings == ["Moved operator to service `svc_new` and dropped 1 invalid connection(s)."]
+
+
+def test_rebind_container_children_restores_persisted_svc_id_before_geometry() -> None:
+    container = _FakeContainer("svc_engine", "f8.pyengine")
+    operator = _FakeOperator("op1", "f8.pyengine", "svc_engine", x=900.0, y=700.0)
+
+    graph = _new_graph()
+    nodes = {"svc_engine": container, "op1": operator}
+    graph.all_nodes = lambda: [container, operator]  # type: ignore[method-assign]
+    graph.get_node_by_id = lambda node_id: nodes.get(str(node_id))  # type: ignore[method-assign]
+    graph._container_at_node = lambda node: None  # type: ignore[method-assign]
+
+    graph._rebind_container_children()
+
+    assert operator.svcId == "svc_engine"
+    assert operator in container._child_nodes
+    assert operator.view in container.view._child_views
+    assert operator.view._container_item is container

@@ -82,6 +82,8 @@ class ServiceBusComponentFactory(Protocol):
         data_delivery: DataDeliveryMode,
         input_max_buffers: int,
         default_queue_size: int,
+        output_debug_max_ports: int,
+        output_debug_history_size: int,
     ) -> DataRouter: ...
 
     def create_state_store(
@@ -123,6 +125,8 @@ class DefaultServiceBusComponentFactory:
         data_delivery: DataDeliveryMode,
         input_max_buffers: int,
         default_queue_size: int,
+        output_debug_max_ports: int,
+        output_debug_history_size: int,
     ) -> DataRouter:
         return DataRouter(
             bus,
@@ -130,6 +134,8 @@ class DefaultServiceBusComponentFactory:
             data_delivery=data_delivery,
             input_max_buffers=input_max_buffers,
             default_queue_size=default_queue_size,
+            output_debug_max_ports=output_debug_max_ports,
+            output_debug_history_size=output_debug_history_size,
         )
 
     def create_state_store(
@@ -206,6 +212,8 @@ class ServiceBus:
         self._state_cache_max_entries = max(0, int(config.state_cache_max_entries))
         self._data_input_max_buffers = max(0, int(config.data_input_max_buffers))
         self._data_input_default_queue_size = max(1, int(config.data_input_default_queue_size))
+        self._data_output_debug_max_ports = max(0, int(config.data_output_debug_max_ports))
+        self._data_output_debug_history_size = max(1, min(int(config.data_output_debug_history_size), 128))
 
         if transport is None:
             if config.bus_backend == "zenoh":
@@ -245,6 +253,8 @@ class ServiceBus:
             data_delivery=mode,
             input_max_buffers=self._data_input_max_buffers,
             default_queue_size=self._data_input_default_queue_size,
+            output_debug_max_ports=self._data_output_debug_max_ports,
+            output_debug_history_size=self._data_output_debug_history_size,
         )
         self._state_store = self._component_factory.create_state_store(
             bus=self,

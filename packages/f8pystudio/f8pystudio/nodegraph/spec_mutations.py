@@ -190,6 +190,57 @@ def set_ports(
     return _mutate_or_copy(spec, mutate=_mutate, update=update)
 
 
+def set_state_fields(
+    spec: F8ServiceSpec | F8OperatorSpec,
+    *,
+    state_fields: Iterable[F8StateSpec],
+) -> Any:
+    requested = list(state_fields)
+
+    def _state_name(field: F8StateSpec) -> str:
+        return str(field.name or "").strip()
+
+    requested_by_name: dict[str, F8StateSpec] = {}
+    requested_order: list[str] = []
+    out: list[F8StateSpec] = []
+    consumed: set[str] = set()
+
+    for field in requested:
+        name = _state_name(field)
+        if not name:
+            continue
+        if name not in requested_by_name:
+            requested_order.append(name)
+        requested_by_name[name] = field
+
+    for field in list(spec.stateFields or []):
+        name = _state_name(field)
+        if not name:
+            continue
+        requested_field = requested_by_name.get(name)
+        if requested_field is not None:
+            out.append(requested_field)
+            consumed.add(name)
+            continue
+        if bool(field.required):
+            out.append(field)
+            consumed.add(name)
+
+    for name in requested_order:
+        if name in consumed:
+            continue
+        requested_field = requested_by_name.get(name)
+        if requested_field is None:
+            continue
+        out.append(requested_field)
+        consumed.add(name)
+
+    def _mutate(s: Any) -> None:
+        s.stateFields = out
+
+    return _mutate_or_copy(spec, mutate=_mutate, update={"stateFields": out})
+
+
 def is_service_spec(spec: Any) -> bool:
     return isinstance(spec, F8ServiceSpec)
 

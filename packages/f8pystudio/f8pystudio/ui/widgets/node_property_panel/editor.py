@@ -106,9 +106,9 @@ class F8StudioNodePropEditorWidget(
         self._agent_observation_source = agent_observation_source
         self._agent_graph_patch_callback = on_graph_patch_applied
         self._agent_sidebar_launcher = agent_sidebar_launcher
+        self.__node_id = str(node.id or "")
         self._node_agent_tool_bundle = self._build_node_agent_tool_bundle()
         self._node_agent_context_providers: tuple[object, ...] = ()
-        self.__node_id = node.id
         self.__tab_windows = {}
         self.__tab = QtWidgets.QTabWidget(self)
         self.__tab.setObjectName("f8NodePropTabs")

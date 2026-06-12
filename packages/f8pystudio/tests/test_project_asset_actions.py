@@ -481,6 +481,82 @@ def test_save_component_as_dialog_seeds_metadata_from_current_project(monkeypatc
     assert info_messages == [("Component Saved", "Saved component:\nSeed Project")]
 
 
+def test_save_project_as_dialog_can_overwrite_selected_local_project(monkeypatch, tmp_path: Path) -> None:
+    _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "project-save-as-overwrite.ini"), QtCore.QSettings.IniFormat)
+    service = ProjectStorageService(db_path=tmp_path / "assets.db", settings=settings)
+    project = service.save_project(
+        content=_session_payload("old"),
+        name="VAM Demo",
+        description="Old description",
+        tags=["old"],
+        set_current=True,
+    )
+    graph = _FakeGraph()
+    log_dock = _FakeLogDock()
+    parent = QtWidgets.QWidget()
+    captured_choice_ids: list[str] = []
+    validation_messages: dict[str, str | None] = {}
+
+    class _ProjectOverwriteDialog:
+        def __init__(
+            self,
+            *,
+            parent: QtWidgets.QWidget | None,
+            title: str,
+            name: str,
+            description: str,
+            tags: list[str],
+            overwrite_choices: list[AssetOverwriteChoice],
+            overwrite_label: str,
+            selected_asset_id: str | None = None,
+            name_validator: object | None = None,
+        ) -> None:
+            del parent
+            assert title == "Save Project As"
+            assert name == "VAM Demo"
+            assert description == "Old description"
+            assert tags == ["old"]
+            assert overwrite_label == "Overwrite Local Project"
+            assert selected_asset_id == project.projectId
+            captured_choice_ids.extend([choice.asset_id for choice in overwrite_choices])
+            assert callable(name_validator)
+            validator = cast(Callable[[str, str | None], str | None], name_validator)
+            validation_messages["selected"] = validator("VAM Demo", project.projectId)
+            validation_messages["create_new"] = validator("VAM Demo", None)
+
+        def exec(self) -> int:
+            return QtWidgets.QDialog.Accepted
+
+        def values(self) -> tuple[str, str, list[str], str | None]:
+            return ("VAM Demo", "Updated description", ["vam"], project.projectId)
+
+    monkeypatch.setattr(project_asset_actions, "ProjectStorageService", lambda: service)
+    monkeypatch.setattr(project_asset_actions, "AssetOverwriteMetaDialog", _ProjectOverwriteDialog)
+
+    session_dir, saved = project_asset_actions.save_project_as_dialog(
+        parent=parent,
+        studio_graph=graph,
+        log_dock=log_dock,
+        start_dir="/tmp/projects",
+        show_warning=lambda *_args: None,
+    )
+
+    assert session_dir == "/tmp/projects"
+    assert saved is True
+    assert captured_choice_ids == [project.projectId]
+    assert validation_messages["selected"] is None
+    assert "already exists" in str(validation_messages["create_new"])
+    assert [summary.projectId for summary in service.list_projects()] == [project.projectId]
+    stored = service.project(project.projectId)
+    assert stored is not None
+    assert stored.description == "Updated description"
+    assert stored.tags == ["vam"]
+    assert "unused" in stored.content["layout"]["nodes"]
+    assert [version.versionNumber for version in service.list_project_versions(project.projectId)] == [2, 1]
+    assert log_dock.lines == [("studio", f"[project] updated: VAM Demo ({project.projectId})\n")]
+
+
 def test_save_component_as_dialog_overwrites_only_local_drafts(monkeypatch, tmp_path: Path) -> None:
     _ensure_app()
     settings = QtCore.QSettings(str(tmp_path / "component-overwrite-drafts.ini"), QtCore.QSettings.IniFormat)

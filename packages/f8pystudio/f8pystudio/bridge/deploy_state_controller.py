@@ -20,7 +20,7 @@ from .runtime_graph_projection import (
     build_remote_watch_targets,
     build_studio_runtime_graph,
 )
-from .service_endpoint_client import request_set_remote_state
+from .service_endpoint_client import request_service_debug_data, request_set_remote_state
 from .studio_runtime_flow import apply_remote_state_watches_if_changed, install_studio_runtime_graph
 from .remote_state_watcher import WatchTarget
 from ..nodegraph.runtime_compiler import CompiledRuntimeGraphs
@@ -506,5 +506,71 @@ class DeployStateControllerMixin:
             "completed": bool(completed["completed"]),
             "samples": list(result_dict.get("samples") if isinstance(result_dict.get("samples"), list) else []),
             "timedOut": bool(result_dict.get("timedOut", False)),
+            "error": str(completed["error"] or result_dict.get("error") or ""),
+        }
+
+    def debug_runtime_data_and_wait(
+        self,
+        service_id: str,
+        node_id: str = "",
+        port: str = "",
+        *,
+        limit: int = 100,
+        timeout_s: float = 1.0,
+        include_value: bool = True,
+        max_value_bytes: int = 65536,
+    ) -> dict[str, Any]:
+        try:
+            sid = ensure_token(str(service_id), label="service_id")
+        except ValueError as exc:
+            return {"submitted": False, "completed": False, "debugData": {}, "error": str(exc)}
+        node_id_s = str(node_id or "").strip()
+        port_s = str(port or "").strip()
+        try:
+            if node_id_s:
+                node_id_s = ensure_token(node_id_s, label="node_id")
+            if port_s:
+                port_s = ensure_token(port_s, label="port")
+        except ValueError as exc:
+            return {"submitted": False, "completed": False, "debugData": {}, "error": str(exc)}
+        timeout = max(0.05, float(timeout_s))
+
+        async def _do() -> dict[str, Any]:
+            requester = await self._ensure_requester()
+            if requester is None:
+                return {"debugData": {}, "error": "requester unavailable"}
+            response = await request_service_debug_data(
+                requester,
+                service_id=sid,
+                node_id=node_id_s,
+                port=port_s,
+                limit=int(limit),
+                include_value=bool(include_value),
+                max_value_bytes=int(max_value_bytes),
+                timeout_s=timeout,
+            )
+            return {
+                "debugData": dict(response.get("result") if isinstance(response.get("result"), dict) else {}),
+                "error": str(response.get("error") or ""),
+            }
+
+        future = self._submit_async_future(
+            _do(),
+            context=f"submit debug_runtime_data_and_wait failed serviceId={sid} nodeId={node_id_s} port={port_s}",
+        )
+        if future is None:
+            return {"submitted": False, "completed": False, "debugData": {}, "error": "submit failed"}
+        completed = self._wait_for_submitted_future(
+            future,
+            timeout_s=timeout + 0.5,
+            context=f"debug_runtime_data_and_wait failed serviceId={sid} nodeId={node_id_s} port={port_s}",
+            timeout_message=f"debug_runtime_data_and_wait timed out serviceId={sid} nodeId={node_id_s} port={port_s}",
+        )
+        result = completed["result"]
+        result_dict = result if isinstance(result, dict) else {}
+        return {
+            "submitted": True,
+            "completed": bool(completed["completed"]),
+            "debugData": dict(result_dict.get("debugData") if isinstance(result_dict.get("debugData"), dict) else {}),
             "error": str(completed["error"] or result_dict.get("error") or ""),
         }

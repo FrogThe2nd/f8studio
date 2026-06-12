@@ -21,6 +21,25 @@ def main(argv: list[str] | None = None) -> int:
     launch.add_argument("--timeout", type=float, default=20.0)
 
     sub.add_parser("status", help="Show attached Studio status.")
+    notifications = sub.add_parser("notifications", help="Read recent UI notifications.")
+    notifications.add_argument("--limit", type=int, default=100)
+    notifications.add_argument("--minimum-severity", default="")
+
+    project = sub.add_parser("project", help="Project operations.")
+    project_sub = project.add_subparsers(dest="project_command", required=True)
+    project_sub.add_parser("list", help="List saved projects.")
+    project_new = project_sub.add_parser("new", help="Create a new empty project.")
+    project_new.add_argument("--confirm", action="store_true")
+    project_new.add_argument("--keep-current-project", action="store_true")
+    project_save = project_sub.add_parser("save", help="Save the current graph as a project.")
+    project_save.add_argument("--name", default="")
+    project_save.add_argument("--description", default="")
+    project_save.add_argument("--tag", dest="tags", action="append", default=[])
+    project_save.add_argument("--project-id", default="")
+    project_save.add_argument("--overwrite-project-id", default="")
+    project_load = project_sub.add_parser("load", help="Load a saved project.")
+    project_load.add_argument("--project-id", required=True)
+    project_load.add_argument("--confirm", action="store_true")
 
     graph = sub.add_parser("graph", help="Graph operations.")
     graph_sub = graph.add_subparsers(dest="graph_command", required=True)
@@ -87,6 +106,16 @@ def main(argv: list[str] | None = None) -> int:
     sample.add_argument("--include-value", action=argparse.BooleanOptionalAction, default=True)
     sample.add_argument("--max-value-bytes", type=int, default=65536)
     sample.add_argument("--cached-only", action="store_true")
+    sample.add_argument("--min-count", type=int, default=1)
+    sample.add_argument("--after-observed-at-ms", type=int, default=0)
+    debug_data = runtime_sub.add_parser("debug-data", help="Read service-local data-router input buffer snapshots.")
+    debug_data.add_argument("--service-id", required=True)
+    debug_data.add_argument("--node-id", default="")
+    debug_data.add_argument("--port", default="")
+    debug_data.add_argument("--limit", type=int, default=100)
+    debug_data.add_argument("--timeout", type=float, default=1.0)
+    debug_data.add_argument("--include-value", action=argparse.BooleanOptionalAction, default=True)
+    debug_data.add_argument("--max-value-bytes", type=int, default=65536)
 
     args = parser.parse_args(argv)
     if args.command == "launch":
@@ -102,6 +131,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "status":
         _print_json(client.call("studio.status"))
         return 0
+    if args.command == "notifications":
+        _print_json(
+            client.call(
+                "notifications.read",
+                {"limit": int(args.limit), "minimumSeverity": str(args.minimum_severity or "")},
+            )
+        )
+        return 0
+    if args.command == "project":
+        return _handle_project(client, args)
     if args.command == "graph":
         return _handle_graph(client, args)
     if args.command == "runtime":
@@ -112,6 +151,46 @@ def main(argv: list[str] | None = None) -> int:
 def _client_from_args(args: argparse.Namespace) -> AutomationClient:
     path = str(args.connection_file or "").strip() or None
     return AutomationClient.from_connection_file(path)
+
+
+def _handle_project(client: AutomationClient, args: argparse.Namespace) -> int:
+    if args.project_command == "list":
+        _print_json(client.call("project.list"))
+        return 0
+    if args.project_command == "new":
+        _print_json(
+            client.call(
+                "project.new",
+                {
+                    "confirm": bool(args.confirm),
+                    "clearCurrentProject": not bool(args.keep_current_project),
+                },
+            )
+        )
+        return 0
+    if args.project_command == "save":
+        _print_json(
+            client.call(
+                "project.save",
+                {
+                    "name": str(args.name or ""),
+                    "description": str(args.description or ""),
+                    "tags": [str(tag).strip() for tag in list(args.tags or []) if str(tag).strip()],
+                    "projectId": str(args.project_id or ""),
+                    "overwriteProjectId": str(args.overwrite_project_id or ""),
+                },
+            )
+        )
+        return 0
+    if args.project_command == "load":
+        _print_json(
+            client.call(
+                "project.load",
+                {"projectId": str(args.project_id or ""), "confirm": bool(args.confirm)},
+            )
+        )
+        return 0
+    raise ValueError(f"unsupported project command: {args.project_command}")
 
 
 def _handle_graph(client: AutomationClient, args: argparse.Namespace) -> int:
@@ -215,7 +294,26 @@ def _handle_runtime(client: AutomationClient, args: argparse.Namespace) -> int:
                     "timeoutS": float(args.timeout),
                     "includeValue": bool(args.include_value),
                     "maxValueBytes": int(args.max_value_bytes),
+                    "cachedOnly": bool(args.cached_only),
                     "subscribe": not bool(args.cached_only),
+                    "minCount": int(args.min_count),
+                    "afterObservedAtMs": int(args.after_observed_at_ms),
+                },
+            )
+        )
+        return 0
+    if args.runtime_command == "debug-data":
+        _print_json(
+            client.call(
+                "runtime.debugData",
+                {
+                    "serviceId": args.service_id,
+                    "nodeId": args.node_id,
+                    "port": args.port,
+                    "limit": int(args.limit),
+                    "timeoutS": float(args.timeout),
+                    "includeValue": bool(args.include_value),
+                    "maxValueBytes": int(args.max_value_bytes),
                 },
             )
         )

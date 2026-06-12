@@ -53,6 +53,7 @@ class RuntimeTransportServiceControlEndpointServer:
             (cmd_channel_key(sid), self._handlers._cmd),
             (svc_endpoint_key(sid, "set_state"), self._handlers._set_state),
             (svc_endpoint_key(sid, "set_rungraph"), self._handlers._set_rungraph),
+            (svc_endpoint_key(sid, "debug_data"), self._handlers._debug_data),
         )
         for key, handler in registrations:
             self._handles.append(await self._bus._transport.serve(key, self._wrap_handler(key, handler)))

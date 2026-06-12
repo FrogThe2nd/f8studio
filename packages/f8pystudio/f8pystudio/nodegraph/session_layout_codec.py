@@ -974,7 +974,10 @@ class SessionLayoutCodecMixin:
             for widget in reversed(widgets_to_freeze):
                 widget.setUpdatesEnabled(True)
                 widget.update()
-        self._rebind_container_children()
+        if bool(self._skip_post_load_container_rebind):
+            self._restore_container_children_from_service_ids()
+        else:
+            self._rebind_container_children()
         # Session load restores connections after nodes are created/drawn, which can
         # leave inline state widgets with stale editability until the user forces a refresh.
         # Do a post-load pass to apply the "state-edge => readonly" rule.

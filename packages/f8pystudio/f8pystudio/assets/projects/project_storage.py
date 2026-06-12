@@ -85,6 +85,47 @@ class ProjectStorageService:
             )
         return out
 
+    def list_projects_by_name(self, name: str) -> list[F8ProjectSummary]:
+        normalized_name = _normalize_project_name(name)
+        if not normalized_name:
+            return []
+        statement = (
+            select(
+                project_heads_table.c.project_id,
+                project_heads_table.c.name,
+                project_heads_table.c.description,
+                project_heads_table.c.tags_json,
+                project_heads_table.c.latest_version_number,
+                project_heads_table.c.created_at,
+                project_heads_table.c.updated_at,
+            )
+            .where(func.lower(project_heads_table.c.name) == normalized_name.lower())
+            .order_by(project_heads_table.c.updated_at.desc(), project_heads_table.c.project_id)
+        )
+        with self._db.connect_sqla() as conn:
+            rows = conn.execute(statement).mappings().all()
+        out: list[F8ProjectSummary] = []
+        for row in rows:
+            row_mapping = _row_mapping(row)
+            out.append(
+                F8ProjectSummary(
+                    projectId=mapping_str(row_mapping, "project_id"),
+                    name=mapping_str(row_mapping, "name"),
+                    description=mapping_str(row_mapping, "description"),
+                    tags=json_string_list_loads(row_mapping.get("tags_json")),
+                    latestVersionNumber=mapping_int(row_mapping, "latest_version_number"),
+                    createdAt=mapping_str(row_mapping, "created_at"),
+                    updatedAt=mapping_str(row_mapping, "updated_at"),
+                )
+            )
+        return out
+
+    def unique_project_by_name(self, name: str) -> F8ProjectSummary | None:
+        projects = self.list_projects_by_name(name)
+        if len(projects) == 1:
+            return projects[0]
+        return None
+
     def project(self, project_id: str) -> F8ProjectRecord | None:
         normalized_project_id = str(project_id or "").strip()
         if not normalized_project_id:
@@ -569,3 +610,7 @@ def _row_mapping(row: object) -> Mapping[object, object]:
     if not isinstance(row, Mapping):
         raise TypeError("Expected SQLAlchemy row mapping.")
     return cast(Mapping[object, object], row)
+
+
+def _normalize_project_name(name: str) -> str:
+    return str(name or "").strip()

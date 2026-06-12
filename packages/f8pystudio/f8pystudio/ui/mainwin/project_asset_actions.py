@@ -16,6 +16,7 @@ from ...assets.common import JsonObject, new_asset_id
 from ...assets.ui.component_catalog_dialog import ComponentCatalogDialog
 from ...assets.ui.component_overwrite_choices import component_draft_overwrite_choice
 from ...assets.ui.project_asset_dialogs import (
+    AssetOverwriteChoice,
     AssetVersionBrowserAction,
     AssetVersionBrowserDialog,
     AssetVersionBrowserItem,
@@ -29,7 +30,7 @@ from ...assets.components.component_models import (
     F8ComponentRecord,
     component_now_iso,
 )
-from ...assets.projects.project_models import F8ProjectRecord
+from ...assets.projects.project_models import F8ProjectRecord, F8ProjectSummary
 from ...assets.projects.project_storage import ProjectStorageService
 from ...nodegraph.graph_insert_flow import GraphInsertRequest
 from ..support.ui_notifications import show_info
@@ -124,6 +125,40 @@ def _component_seed_from_current_project() -> tuple[str, str, list[str]]:
     component_description = str(current_project.description or "")
     component_tags = [str(tag).strip() for tag in list(current_project.tags or []) if str(tag).strip()]
     return component_name, component_description, component_tags
+
+
+def _project_seed_from_current_project(service: ProjectStorageService) -> tuple[str, str, list[str], str | None]:
+    current_project = _current_project_record(service)
+    if current_project is None:
+        return "Untitled Project", "", [], None
+    project_name = str(current_project.name or "").strip() or "Untitled Project"
+    project_description = str(current_project.description or "")
+    project_tags = [str(tag).strip() for tag in list(current_project.tags or []) if str(tag).strip()]
+    return project_name, project_description, project_tags, str(current_project.projectId)
+
+
+def _project_overwrite_choice(project: F8ProjectSummary) -> AssetOverwriteChoice:
+    project_id = str(project.projectId or "").strip()
+    id_tail = project_id[-8:] if len(project_id) > 8 else project_id
+    display_label = f"{project.name} (v{project.latestVersionNumber}, {id_tail})"
+    tooltip = (
+        f"{project.name}\n"
+        f"Project ID: {project_id}\n"
+        f"Latest version: v{project.latestVersionNumber}\n"
+        f"Updated: {project.updatedAt}"
+    )
+    return AssetOverwriteChoice(
+        asset_id=project_id,
+        label=str(project.name or "").strip() or "Untitled Project",
+        description=str(project.description or ""),
+        tags=[str(tag).strip() for tag in list(project.tags or []) if str(tag).strip()],
+        display_label=display_label,
+        tooltip=tooltip,
+    )
+
+
+def _same_project_name(left: str, right: str) -> bool:
+    return str(left or "").strip().casefold() == str(right or "").strip().casefold()
 
 
 def auto_load_project(*, studio_graph: ProjectAssetGraphLike, log_dock: ProjectAssetLogDockLike) -> None:
@@ -405,26 +440,54 @@ def save_project_as_dialog(
     start_dir: str,
     show_warning: MessageDialogFn,
 ) -> tuple[str, bool]:
-    dialog = ProjectAssetMetaDialog(
+    service = ProjectStorageService()
+    seed_name, seed_description, seed_tags, current_project_id = _project_seed_from_current_project(service)
+    overwrite_choices = [_project_overwrite_choice(project) for project in service.list_projects()]
+
+    def _validate_save_project_name(candidate: str, overwrite_project_id: str | None) -> str | None:
+        selected_project_id = str(overwrite_project_id or "").strip()
+        projects = service.list_projects()
+        if selected_project_id:
+            for project in projects:
+                if str(project.projectId) == selected_project_id and _same_project_name(project.name, candidate):
+                    return None
+        for project in projects:
+            if selected_project_id and str(project.projectId) == selected_project_id:
+                continue
+            if not _same_project_name(project.name, candidate):
+                continue
+            return (
+                f"Project named '{str(candidate or '').strip()}' already exists. "
+                "Select that local project as the overwrite target, or use a different name."
+            )
+        return None
+
+    dialog = AssetOverwriteMetaDialog(
         parent=parent,
         title="Save Project As",
-        name="Untitled Project",
-        description="",
-        tags=[],
+        name=seed_name,
+        description=seed_description,
+        tags=seed_tags,
+        overwrite_choices=overwrite_choices,
+        overwrite_label="Overwrite Local Project",
+        selected_asset_id=current_project_id,
+        name_validator=_validate_save_project_name,
     )
     if dialog.exec() != QtWidgets.QDialog.Accepted:
         return str(start_dir or ""), False
 
     try:
-        name, description, tags = dialog.values()
-        record = ProjectStorageService().save_project(
+        name, description, tags, overwrite_project_id = dialog.values()
+        record = service.save_project(
             content=studio_graph.serialize_session(),
+            project_id=str(overwrite_project_id or ""),
             name=name,
             description=description,
             tags=tags,
             set_current=True,
         )
-        log_dock.append("studio", f"[project] saved: {record.name} ({record.projectId})\n")
+        action_text = "updated" if overwrite_project_id else "saved"
+        log_dock.append("studio", f"[project] {action_text}: {record.name} ({record.projectId})\n")
         return str(start_dir or ""), True
     except _PROJECT_SESSION_ACTION_ERRORS as exc:
         _report_action_exception(

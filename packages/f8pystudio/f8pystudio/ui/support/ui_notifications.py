@@ -7,7 +7,7 @@ import os
 import sys
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable
+from typing import Any, Callable
 
 from qtpy import QtCore, QtGui, QtWidgets
 
@@ -25,6 +25,7 @@ _TOAST_FADE_MS = 180
 _TOAST_BREAK_HINTS = ("/", "\\", "_", "-", ".", ":", "=", "?")
 _MAX_VISIBLE_STICKY_DETAIL_TOASTS = 3
 _ROLLUP_MAX_ITEMS = 50
+_MAX_NOTIFICATION_HISTORY = 500
 
 
 class _ToastSeverity(Enum):
@@ -73,6 +74,30 @@ class _FoldedToastSummary:
             lines.append(f"Repeat count: {self.repeat_count}")
         lines.extend(["Message:", self.message])
         return "\n".join(lines).strip()
+
+
+@dataclass
+class _NotificationHistoryEntry:
+    sequence: int
+    severity: _ToastSeverity
+    title: str
+    message: str
+    created_at_text: str
+    updated_at_text: str
+    repeat_count: int = 1
+    dedupe_key: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "sequence": self.sequence,
+            "severity": self.severity.value,
+            "title": self.title,
+            "message": self.message,
+            "createdAt": self.created_at_text,
+            "updatedAt": self.updated_at_text,
+            "repeatCount": self.repeat_count,
+            "dedupeKey": self.dedupe_key,
+        }
 
 
 _INFO_STYLE = _ToastStyle(
@@ -132,6 +157,157 @@ _ERROR_POLICY = _ToastPolicy(
 )
 
 _ACTIVE_TOASTS: list["_StudioToast"] = []
+_NOTIFICATION_HISTORY: list[_NotificationHistoryEntry] = []
+_NOTIFICATION_SEQUENCE = 0
+_NOTIFICATION_SEVERITY_RANKS = {
+    _ToastSeverity.INFO: 10,
+    _ToastSeverity.WARNING: 20,
+    _ToastSeverity.ERROR: 30,
+}
+
+
+def export_recent_notifications(*, limit: int = 100, minimum_severity: str = "") -> dict[str, Any]:
+    resolved_limit = _coerce_notification_limit(limit)
+    resolved_minimum_severity = _coerce_minimum_severity(minimum_severity)
+    minimum_rank = 0 if resolved_minimum_severity is None else _NOTIFICATION_SEVERITY_RANKS[resolved_minimum_severity]
+    filtered = [
+        entry
+        for entry in _NOTIFICATION_HISTORY
+        if _NOTIFICATION_SEVERITY_RANKS[entry.severity] >= minimum_rank
+    ]
+    recent = filtered[-resolved_limit:] if resolved_limit > 0 else []
+    return {
+        "entries": [entry.to_dict() for entry in recent],
+        "count": len(recent),
+        "storedCount": len(_NOTIFICATION_HISTORY),
+        "limit": resolved_limit,
+        "minimumSeverity": "" if resolved_minimum_severity is None else resolved_minimum_severity.value,
+    }
+
+
+def _clear_notification_history_for_tests() -> None:
+    global _NOTIFICATION_SEQUENCE
+    _NOTIFICATION_HISTORY.clear()
+    _NOTIFICATION_SEQUENCE = 0
+
+
+def _coerce_notification_limit(limit: int) -> int:
+    try:
+        value = int(limit)
+    except (TypeError, ValueError):
+        return 100
+    return max(0, min(_MAX_NOTIFICATION_HISTORY, value))
+
+
+def _coerce_minimum_severity(minimum_severity: str) -> _ToastSeverity | None:
+    text = str(minimum_severity or "").strip().upper()
+    if not text:
+        return None
+    if text == _ToastSeverity.INFO.value:
+        return _ToastSeverity.INFO
+    if text == _ToastSeverity.WARNING.value:
+        return _ToastSeverity.WARNING
+    if text == _ToastSeverity.ERROR.value:
+        return _ToastSeverity.ERROR
+    raise ValueError("minimum_severity must be INFO, WARNING, ERROR, or empty")
+
+
+def _notification_now_text() -> str:
+    return QtCore.QDateTime.currentDateTime().toString(QtCore.Qt.DateFormat.ISODate)
+
+
+def _coerce_repeat_count(repeat_count: int) -> int:
+    try:
+        value = int(repeat_count)
+    except (TypeError, ValueError):
+        return 1
+    return max(1, value)
+
+
+def _find_keyed_notification_history_entry(dedupe_key: str) -> _NotificationHistoryEntry | None:
+    for entry in reversed(_NOTIFICATION_HISTORY):
+        if entry.dedupe_key == dedupe_key:
+            return entry
+    return None
+
+
+def _find_repeated_notification_history_entry(
+    *,
+    severity: _ToastSeverity,
+    title: str,
+    message: str,
+) -> _NotificationHistoryEntry | None:
+    for entry in reversed(_NOTIFICATION_HISTORY):
+        if entry.dedupe_key:
+            continue
+        if entry.severity is not severity:
+            continue
+        if entry.title != title:
+            continue
+        if entry.message != message:
+            continue
+        return entry
+    return None
+
+
+def _append_notification_history(entry: _NotificationHistoryEntry) -> None:
+    _NOTIFICATION_HISTORY.append(entry)
+    overflow = len(_NOTIFICATION_HISTORY) - _MAX_NOTIFICATION_HISTORY
+    if overflow > 0:
+        del _NOTIFICATION_HISTORY[:overflow]
+
+
+def _record_notification(
+    *,
+    policy: _ToastPolicy,
+    title: str,
+    message: str,
+    dedupe_key: str = "",
+    repeat_count: int = 1,
+) -> None:
+    global _NOTIFICATION_SEQUENCE
+    title_text = str(title or "").strip()
+    message_text = str(message or "").strip()
+    if not title_text and not message_text:
+        return
+
+    now_text = _notification_now_text()
+    repeat_count_value = _coerce_repeat_count(repeat_count)
+    dedupe_key_text = str(dedupe_key or "").strip()
+    if dedupe_key_text:
+        keyed_entry = _find_keyed_notification_history_entry(dedupe_key_text)
+        if keyed_entry is not None:
+            keyed_entry.severity = policy.severity
+            keyed_entry.title = title_text
+            keyed_entry.message = message_text
+            keyed_entry.updated_at_text = now_text
+            keyed_entry.repeat_count = max(keyed_entry.repeat_count, repeat_count_value)
+            return
+
+    if policy.sticky and not dedupe_key_text:
+        repeated_entry = _find_repeated_notification_history_entry(
+            severity=policy.severity,
+            title=title_text,
+            message=message_text,
+        )
+        if repeated_entry is not None:
+            repeated_entry.updated_at_text = now_text
+            repeated_entry.repeat_count += repeat_count_value
+            return
+
+    _NOTIFICATION_SEQUENCE += 1
+    _append_notification_history(
+        _NotificationHistoryEntry(
+            sequence=_NOTIFICATION_SEQUENCE,
+            severity=policy.severity,
+            title=title_text,
+            message=message_text,
+            created_at_text=now_text,
+            updated_at_text=now_text,
+            repeat_count=repeat_count_value,
+            dedupe_key=dedupe_key_text,
+        )
+    )
 
 
 def _use_safe_toast_window_mode() -> bool:
@@ -927,6 +1103,13 @@ def _show_toast(
     message_text = str(message or "").strip()
     if not title_text and not message_text:
         return
+    _record_notification(
+        policy=policy,
+        title=title_text,
+        message=message_text,
+        dedupe_key=dedupe_key,
+        repeat_count=repeat_count,
+    )
     modal_fallback_parent = _modal_dialog_fallback_parent(target_parent)
     if modal_fallback_parent is not None:
         fallback(modal_fallback_parent, title_text, message_text)

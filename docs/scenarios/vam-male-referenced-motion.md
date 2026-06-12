@@ -1297,7 +1297,7 @@ Add these data output ports:
 
 | Port | Raw unit |
 | --- | --- |
-| `L0_geom` | normalized `0..1` geometry value |
+| `L0_geom` | normalized `0..1` geometry value. `0` is near `ReferenceStart`, `1` is near `ReferenceEnd`. |
 | `L1_m` | meters |
 | `L2_m` | meters |
 | `R0_turns` | signed normalized turns, `-1..1` is `-180..180 deg` |
@@ -1414,7 +1414,7 @@ def _invalid_axes(reason: str) -> dict[str, Any]:
     axes = {
         "valid": False,
         "reason": reason,
-        "L0_geom": 1.0,
+        "L0_geom": 0.0,
         "L1_m": 0.0,
         "L2_m": 0.0,
         "R0_turns": 0.0,
@@ -1425,7 +1425,7 @@ def _invalid_axes(reason: str) -> dict[str, Any]:
         "R2_deg": 0.0,
     }
     return {
-        "L0_geom": 1.0,
+        "L0_geom": 0.0,
         "L1_m": 0.0,
         "L2_m": 0.0,
         "R0_turns": 0.0,
@@ -1458,9 +1458,9 @@ def _run_axes(ctx: "F8PyEngineContext", inputs: dict[str, Any]) -> dict[str, Any
     right_meters = float(rel_pos[2])
 
     if ref_length > EPS:
-        l0_geom = 1.0 - _clamp01(axis_meters / ref_length)
+        l0_geom = _clamp01(axis_meters / ref_length)
     else:
-        l0_geom = 1.0
+        l0_geom = 0.0
 
     rotation_basis = _state_text(ctx, "rotationBasis", "reference").lower()
     if rotation_basis == "plane":
@@ -1574,7 +1574,7 @@ The compact bus fields should use raw semantic values:
 
 | Bus field | Source | Unit |
 | --- | --- | --- |
-| `L0` | `VAM Pose Axes.L0_geom` | `fraction` |
+| `L0` | `VAM Pose Axes.L0_geom` | `fraction`; `0` near `ReferenceStart`, `1` near `ReferenceEnd` |
 | `L1` | `VAM Pose Axes.L1_m` | `m` |
 | `L2` | `VAM Pose Axes.L2_m` | `m` |
 | `R0` | `VAM Pose Axes.R0_deg` | `deg` |
@@ -1631,7 +1631,9 @@ Recommended starting normalize profiles for shaft mode:
 | `R1` | fixed `Range Map` | `-30..30 deg` | `0..1` |
 | `R2` | fixed `Range Map` | `-30..30 deg` | `0..1` |
 
-To invert an axis, swap output min/max in the rack. To reduce travel, narrow
+`L0_geom` already follows the reference direction: `ReferenceStart` maps near
+`0`, `ReferenceEnd` maps near `1`. To invert an axis for a specific device or
+mounting orientation, swap output min/max in the rack. To reduce travel, narrow
 the rack's output range, for example `0.15..0.85`.
 
 ## Pose Resolver Script
@@ -1994,12 +1996,16 @@ rightMeters = targetInReference.pos[2]
 Raw semantic position axes:
 
 ```text
-L0_geom = 1 - clamp01(axisMeters / referenceFrame.length)
+L0_geom = clamp01(axisMeters / referenceFrame.length)
 L1_m = forwardMeters
 L2_m = rightMeters
 ```
 
 `L0_geom` is already normalized because it is a fraction of reference length.
+It intentionally preserves reference direction: near `ReferenceStart` is close
+to `0`, and near `ReferenceEnd` is close to `1`. If a particular output device
+or scene needs the opposite feel, invert it later in the shared output rack by
+swapping output min/max.
 `L1_m` and `L2_m` stay in meters until the normalization layer.
 
 ### Rotation Axes

@@ -493,6 +493,33 @@ def test_project_storage_updates_metadata_without_creating_new_version(tmp_path:
     assert summaries[0].latestVersionNumber == 1
 
 
+def test_project_storage_lists_projects_by_name_case_insensitive(tmp_path: Path) -> None:
+    settings = QtCore.QSettings(str(tmp_path / "project-name-lookup.ini"), QtCore.QSettings.IniFormat)
+    service = ProjectStorageService(db_path=tmp_path / "assets.db", settings=settings)
+    alpha = service.save_project(
+        content=_session_payload("alpha"),
+        name="VAM Demo",
+        description="",
+        tags=[],
+        set_current=True,
+    )
+    _ = service.save_project(
+        content=_session_payload("beta"),
+        name="Other Demo",
+        description="",
+        tags=[],
+        set_current=True,
+    )
+
+    matches = service.list_projects_by_name("  vam demo  ")
+    unique_match = service.unique_project_by_name("VAM DEMO")
+
+    assert [project.projectId for project in matches] == [alpha.projectId]
+    assert unique_match is not None
+    assert unique_match.projectId == alpha.projectId
+    assert service.unique_project_by_name("Missing") is None
+
+
 def test_project_storage_prunes_old_versions_after_reaching_history_limit(tmp_path: Path) -> None:
     settings = QtCore.QSettings(str(tmp_path / "project-prune.ini"), QtCore.QSettings.IniFormat)
     service = ProjectStorageService(db_path=tmp_path / "assets.db", settings=settings)

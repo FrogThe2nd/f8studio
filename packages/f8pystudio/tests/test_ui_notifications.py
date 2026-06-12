@@ -10,8 +10,10 @@ from f8pystudio.ui.support.ui_notifications import (
     _StudioToast,
     _TOAST_DURATION_MS,
     _TOAST_SPACING,
+    _clear_notification_history_for_tests,
     _rich_text_message,
     _use_safe_toast_window_mode,
+    export_recent_notifications,
     show_error,
     show_keyed_warning,
     show_warning,
@@ -146,6 +148,66 @@ def test_monitor_alert_notifier_ignores_info_and_clear_snapshots(monkeypatch) ->
 def _close_active_toasts() -> None:
     for toast in list(_ACTIVE_TOASTS):
         toast.close()
+    QtWidgets.QApplication.processEvents()
+
+
+def test_notification_history_exports_recent_warning_toasts() -> None:
+    _ensure_app()
+    _close_active_toasts()
+    _clear_notification_history_for_tests()
+    parent = QtWidgets.QWidget()
+    parent.setGeometry(100, 120, 920, 720)
+    parent.show()
+
+    show_warning(parent, "Container required", "Operator nodes must be placed within a service container.")
+    QtWidgets.QApplication.processEvents()
+
+    payload = export_recent_notifications(limit=10, minimum_severity="WARNING")
+
+    assert payload["count"] == 1
+    assert payload["storedCount"] == 1
+    assert payload["minimumSeverity"] == "WARNING"
+    entry = payload["entries"][0]
+    assert entry["severity"] == "WARNING"
+    assert entry["title"] == "Container required"
+    assert entry["message"] == "Operator nodes must be placed within a service container."
+    assert entry["repeatCount"] == 1
+    assert entry["createdAt"]
+    assert entry["updatedAt"]
+
+    _close_active_toasts()
+    parent.close()
+    QtWidgets.QApplication.processEvents()
+
+
+def test_notification_history_merges_repeated_and_keyed_warnings() -> None:
+    _ensure_app()
+    _close_active_toasts()
+    _clear_notification_history_for_tests()
+    parent = QtWidgets.QWidget()
+    parent.setGeometry(100, 120, 920, 720)
+    parent.show()
+
+    show_warning(parent, "Refresh failed", "network timeout")
+    show_warning(parent, "Refresh failed", "network timeout")
+    show_keyed_warning(parent, "monitor:svc:node:fp", "svc/node warning", "first", repeat_count=1)
+    show_keyed_warning(parent, "monitor:svc:node:fp", "svc/node warning", "second", repeat_count=7)
+    QtWidgets.QApplication.processEvents()
+
+    payload = export_recent_notifications(limit=10, minimum_severity="")
+
+    assert payload["count"] == 2
+    repeated_entry = payload["entries"][0]
+    keyed_entry = payload["entries"][1]
+    assert repeated_entry["title"] == "Refresh failed"
+    assert repeated_entry["repeatCount"] == 2
+    assert keyed_entry["title"] == "svc/node warning"
+    assert keyed_entry["message"] == "second"
+    assert keyed_entry["repeatCount"] == 7
+    assert keyed_entry["dedupeKey"] == "monitor:svc:node:fp"
+
+    _close_active_toasts()
+    parent.close()
     QtWidgets.QApplication.processEvents()
 
 

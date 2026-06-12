@@ -15,6 +15,7 @@ from typing import Any
 from qtpy import QtCore
 
 from f8pystudio.nodegraph.runtime_compiler import compile_runtime_graphs_from_studio
+from f8pystudio.ui.support.ui_notifications import export_recent_notifications
 
 from .client import wait_for_connection_file
 from .control_protocol import AutomationConnectionInfo
@@ -23,6 +24,7 @@ from .graph_adapter import StudioGraphAutomationAdapter
 from .local_server import LocalAutomationServer
 from .observation_store import RuntimeObservationStore
 from .paths import automation_dir, default_port_file, default_token_file
+from .projects import project_list_payload, project_load_payload, project_new_payload, project_save_payload
 from f8pystudio.agents.graph_builder import (
     decode_graph_build_plan,
     delivery_report_for_plan,
@@ -44,6 +46,7 @@ _SERVER_THREAD_METHODS = frozenset(
         "runtime.readState",
         "runtime.watchState",
         "runtime.samplePort",
+        "runtime.debugData",
     }
 )
 
@@ -172,6 +175,32 @@ class StudioAutomationHost(QtCore.QObject):
             return {"snapshot": self._graph_adapter.snapshot().to_dict()}
         if method == "graph.session":
             return {"session": self._graph_adapter.session_payload()}
+        if method == "project.list":
+            return project_list_payload()
+        if method == "project.new":
+            if not bool(params.get("confirm")):
+                raise ValueError("project.new requires confirm=true")
+            result = project_new_payload(
+                self._graph,
+                clear_current_project=bool(params.get("clearCurrentProject", True)),
+            )
+            self._schedule_studio_runtime_sync()
+            return result
+        if method == "project.save":
+            return project_save_payload(
+                self._graph,
+                name=str(params.get("name") or ""),
+                description=str(params.get("description") or ""),
+                tags=_string_list_param(params.get("tags")),
+                project_id=str(params.get("projectId") or ""),
+                overwrite_project_id=str(params.get("overwriteProjectId") or ""),
+            )
+        if method == "project.load":
+            if not bool(params.get("confirm")):
+                raise ValueError("project.load requires confirm=true")
+            result = project_load_payload(self._graph, project_id=_required_text(params, "projectId"))
+            self._schedule_studio_runtime_sync()
+            return result
         if method == "graph.uiContext":
             return {"uiContext": self._graph_ui_context()}
         if method == "graph.catalog":
@@ -257,6 +286,8 @@ class StudioAutomationHost(QtCore.QObject):
             return self._monitor_service(params)
         if method == "logs.read":
             return self._logs_read(params)
+        if method == "notifications.read":
+            return self._notifications_read(params)
         raise ValueError(f"unsupported automation method: {method}")
 
     def _dispatch_server_thread(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -265,7 +296,9 @@ class StudioAutomationHost(QtCore.QObject):
         if method == "runtime.watchState":
             return {"state": self._runtime_watch_state(params)}
         if method == "runtime.samplePort":
-            return {"samples": self._runtime_sample_port(params)}
+            return self._runtime_sample_port(params)
+        if method == "runtime.debugData":
+            return self._runtime_debug_data(params)
         raise ValueError(f"unsupported server-thread automation method: {method}")
 
     def _status(self) -> dict[str, Any]:
@@ -475,12 +508,14 @@ class StudioAutomationHost(QtCore.QObject):
             }
         return {"report": self._bridge.export_monitor_report()}
 
-    def _runtime_sample_port(self, params: dict[str, Any]) -> list[dict[str, Any]]:
+    def _runtime_sample_port(self, params: dict[str, Any]) -> dict[str, Any]:
         service_id = str(params.get("serviceId") or "").strip()
         node_id = str(params.get("nodeId") or "").strip()
         port = str(params.get("port") or "").strip()
         limit = int(params.get("limit") or 1)
         timeout_s = float(params.get("timeoutS") or 2.0)
+        cached_only = bool(params.get("cachedOnly", False))
+        min_count = int(params.get("minCount") or 1)
         if bool(params.get("subscribe", True)):
             result = self._bridge.sample_data_port_and_wait(
                 service_id,
@@ -501,15 +536,44 @@ class StudioAutomationHost(QtCore.QObject):
                         sample=sample,
                     )
             if samples:
-                return [dict(item) for item in samples if isinstance(item, dict)]
-        return self._observations.wait_port_samples(
+                return {
+                    "samples": [dict(item) for item in samples if isinstance(item, dict)],
+                    "timedOut": bool(result.get("timedOut", False)),
+                    "error": str(result.get("error") or ""),
+                    "cached": False,
+                }
+            if not cached_only:
+                return {
+                    "samples": [],
+                    "timedOut": bool(result.get("timedOut", False)),
+                    "error": str(result.get("error") or ""),
+                    "cached": False,
+                }
+        samples = self._observations.wait_port_samples(
             service_id=service_id,
             node_id=node_id,
             port=port,
-            min_count=int(params.get("minCount") or 1),
+            min_count=min_count,
             limit=limit,
             after_observed_at_ms=_optional_int_param(params, "afterObservedAtMs"),
             timeout_s=timeout_s,
+        )
+        return {
+            "samples": samples,
+            "timedOut": len(samples) < max(1, min(min_count, 100)),
+            "error": "",
+            "cached": True,
+        }
+
+    def _runtime_debug_data(self, params: dict[str, Any]) -> dict[str, Any]:
+        return self._bridge.debug_runtime_data_and_wait(
+            str(params.get("serviceId") or "").strip(),
+            str(params.get("nodeId") or "").strip(),
+            str(params.get("port") or "").strip(),
+            limit=int(params.get("limit") or 100),
+            timeout_s=float(params.get("timeoutS") or 1.0),
+            include_value=bool(params.get("includeValue", True)),
+            max_value_bytes=int(params.get("maxValueBytes") or 65536),
         )
 
     def _runtime_invoke_command(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -548,11 +612,25 @@ class StudioAutomationHost(QtCore.QObject):
             )
         }
 
+    def _notifications_read(self, params: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "notifications": export_recent_notifications(
+                limit=int(params.get("limit") or 100),
+                minimum_severity=str(params.get("minimumSeverity") or ""),
+            )
+        }
+
     def _graph_debug_service(self, params: dict[str, Any]) -> dict[str, Any]:
         service_id = str(params.get("serviceId") or "").strip()
         status: dict[str, Any] | None = None
         monitor: dict[str, Any] | None = None
         logs: dict[str, Any] | None = None
+        notifications = self._notifications_read(
+            {
+                "limit": int(params.get("notificationLimit") or 50),
+                "minimumSeverity": str(params.get("notificationMinimumSeverity") or "WARNING"),
+            }
+        )["notifications"]
         if service_id:
             status = self._runtime_service_status(service_id)
             monitor = self._monitor_service({"serviceId": service_id, "limit": int(params.get("limit") or 100)})
@@ -569,6 +647,7 @@ class StudioAutomationHost(QtCore.QObject):
                 "service": status,
                 "monitor": monitor,
                 "logs": logs,
+                "notifications": notifications,
                 "diagnostics": diagnostics,
                 "compile": compile_payload,
             }
@@ -693,6 +772,9 @@ class StudioAutomationHost(QtCore.QObject):
 
 
 def _requires_confirm(params: dict[str, Any]) -> bool:
+    method = str(params.get("method") or "")
+    if method in {"project.new", "project.load"}:
+        return True
     patch = params.get("patch")
     if not isinstance(patch, dict):
         return True
@@ -702,7 +784,7 @@ def _requires_confirm(params: dict[str, Any]) -> bool:
     for op in ops:
         if not isinstance(op, dict):
             return True
-        if str(op.get("op") or "") == "deleteNode":
+        if str(op.get("op") or "") in {"deleteNode", "setNodePorts", "setNodeStateFields"}:
             return True
     return False
 
@@ -742,6 +824,19 @@ def _optional_int_param(params: dict[str, Any], key: str) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _string_list_param(value: Any) -> list[str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise ValueError("tags must be a list of strings")
+    out: list[str] = []
+    for item in value:
+        text = str(item or "").strip()
+        if text:
+            out.append(text)
+    return out
 
 
 def _monitor_row_to_dict(row: Any) -> dict[str, Any]:

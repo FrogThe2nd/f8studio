@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from f8pystudio.automation.client import AutomationClient
-from f8pystudio.automation.gui_host import launch_pystudio_with_automation
 
 
 @dataclass(frozen=True)
@@ -16,6 +15,8 @@ class StudioAutomationTools:
         return AutomationClient.from_connection_file(target_file)
 
     def studio_launch(self, port_file: str = "", token_file: str = "", timeout_s: float = 20.0) -> dict[str, Any]:
+        from f8pystudio.automation.gui_host import launch_pystudio_with_automation
+
         return launch_pystudio_with_automation(
             port_file=port_file or None,
             token_file=token_file or None,
@@ -187,6 +188,51 @@ class StudioAutomationTools:
     def graph_session(self, connection_file: str = "") -> dict[str, Any]:
         return self._client(connection_file).call("graph.session")
 
+    def project_list(self, connection_file: str = "") -> dict[str, Any]:
+        return self._client(connection_file).call("project.list")
+
+    def project_new(
+        self,
+        confirm: bool = False,
+        clear_current_project: bool = True,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return self._client(connection_file).call(
+            "project.new",
+            {"confirm": bool(confirm), "clearCurrentProject": bool(clear_current_project)},
+        )
+
+    def project_save(
+        self,
+        name: str = "",
+        description: str = "",
+        tags: list[str] | None = None,
+        project_id: str = "",
+        overwrite_project_id: str = "",
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return self._client(connection_file).call(
+            "project.save",
+            {
+                "name": name,
+                "description": description,
+                "tags": [] if tags is None else list(tags),
+                "projectId": project_id,
+                "overwriteProjectId": overwrite_project_id,
+            },
+        )
+
+    def project_load(
+        self,
+        project_id: str,
+        confirm: bool = False,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return self._client(connection_file).call(
+            "project.load",
+            {"projectId": project_id, "confirm": bool(confirm)},
+        )
+
     def runtime_deploy(
         self,
         confirm: bool = False,
@@ -327,10 +373,40 @@ class StudioAutomationTools:
         timeout_s: float = 2.0,
         include_value: bool = True,
         max_value_bytes: int = 65536,
+        cached_only: bool = False,
+        min_count: int = 1,
+        after_observed_at_ms: int = 0,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "serviceId": service_id,
+            "nodeId": node_id,
+            "port": port,
+            "limit": int(limit),
+            "timeoutS": float(timeout_s),
+            "includeValue": bool(include_value),
+            "maxValueBytes": int(max_value_bytes),
+            "cachedOnly": bool(cached_only),
+            "minCount": int(min_count),
+            "subscribe": not bool(cached_only),
+        }
+        if int(after_observed_at_ms) > 0:
+            payload["afterObservedAtMs"] = int(after_observed_at_ms)
+        return self._client(connection_file).call("runtime.samplePort", payload)
+
+    def runtime_debug_data(
+        self,
+        service_id: str,
+        node_id: str = "",
+        port: str = "",
+        limit: int = 100,
+        timeout_s: float = 1.0,
+        include_value: bool = True,
+        max_value_bytes: int = 65536,
         connection_file: str = "",
     ) -> dict[str, Any]:
         return self._client(connection_file).call(
-            "runtime.samplePort",
+            "runtime.debugData",
             {
                 "serviceId": service_id,
                 "nodeId": node_id,
@@ -382,6 +458,17 @@ class StudioAutomationTools:
             payload["minimumLevel"] = int(minimum_level)
         return self._client(connection_file).call("logs.read", payload)
 
+    def notifications_read(
+        self,
+        limit: int = 100,
+        minimum_severity: str = "",
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return self._client(connection_file).call(
+            "notifications.read",
+            {"limit": int(limit), "minimumSeverity": minimum_severity},
+        )
+
     def plan_graph_change_prompt(self, goal: str) -> str:
         return (
             "Inspect f8studio://graph/diagnostics, f8studio://graph/current, and f8studio://catalog/nodes. "
@@ -392,8 +479,8 @@ class StudioAutomationTools:
 
     def debug_runtime_node_prompt(self, service_id: str, node_id: str) -> str:
         return (
-            "Use graph_node_detail, runtime_service_status, runtime_read_monitor, runtime_sample_port, "
-            "and runtime_read_state to diagnose "
+            "Use graph_node_detail, runtime_service_status, runtime_read_monitor, runtime_debug_data, "
+            "runtime_sample_port, and runtime_read_state to diagnose "
             f"serviceId={service_id} nodeId={node_id}."
         )
 

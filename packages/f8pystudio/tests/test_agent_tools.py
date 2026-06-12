@@ -17,9 +17,11 @@ from f8pysdk.specs import (
     F8ServiceSpec,
     string_schema,
 )
-from qtpy import QtWidgets
+from qtpy import QtCore, QtWidgets
 
+from f8pystudio.assets.projects.project_storage import ProjectStorageService
 from f8pystudio.automation.observation_store import RuntimeObservationStore
+from f8pystudio.automation.projects import project_save_payload
 from f8pystudio.agents.tools.graph import LocalStudioGraphToolExecutor, LocalStudioGraphTools
 from f8pystudio.agents.tools.mcp import StudioMCPStdioConfig, build_studio_mcp_stdio_tool
 from f8pystudio.agents.tools.studio import StudioAutomationTools
@@ -141,6 +143,159 @@ def test_studio_automation_tools_forward_graph_build_plan_calls(
         ("graph.matchLibrary", {"goal": "build wave", "limit": 3}),
         ("graph.previewBuildPlan", {"plan": plan}),
         ("graph.applyBuildPlan", {"plan": plan, "confirm": True}),
+    ]
+
+
+def test_studio_automation_tools_forward_project_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, dict[str, object] | None]] = []
+
+    class FakeClient:
+        def call(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+            calls.append((method, params))
+            return {"ok": True}
+
+    monkeypatch.setattr(
+        "f8pystudio.agents.tools.studio.AutomationClient.from_connection_file",
+        lambda path: FakeClient(),
+    )
+
+    tools = StudioAutomationTools(connection_file="/tmp/f8-connection.json")
+
+    assert tools.project_list() == {"ok": True}
+    assert tools.project_new(confirm=True, clear_current_project=False) == {"ok": True}
+    assert tools.project_save(name="VAM", description="demo", tags=["vam"], project_id="project-a") == {"ok": True}
+    assert tools.project_load(project_id="project-a", confirm=True) == {"ok": True}
+    assert calls == [
+        ("project.list", None),
+        ("project.new", {"confirm": True, "clearCurrentProject": False}),
+        (
+            "project.save",
+            {
+                "name": "VAM",
+                "description": "demo",
+                "tags": ["vam"],
+                "projectId": "project-a",
+                "overwriteProjectId": "",
+            },
+        ),
+        ("project.load", {"projectId": "project-a", "confirm": True}),
+    ]
+
+
+def test_studio_automation_tools_forward_notifications_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, dict[str, object] | None]] = []
+
+    class FakeClient:
+        def call(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+            calls.append((method, params))
+            return {"ok": True}
+
+    monkeypatch.setattr(
+        "f8pystudio.agents.tools.studio.AutomationClient.from_connection_file",
+        lambda path: FakeClient(),
+    )
+
+    tools = StudioAutomationTools(connection_file="/tmp/f8-connection.json")
+    result = tools.notifications_read(limit=5, minimum_severity="WARNING")
+
+    assert result == {"ok": True}
+    assert calls == [("notifications.read", {"limit": 5, "minimumSeverity": "WARNING"})]
+
+
+def test_studio_automation_tools_forward_runtime_debug_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, dict[str, object] | None]] = []
+
+    class FakeClient:
+        def call(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+            calls.append((method, params))
+            return {"ok": True}
+
+    monkeypatch.setattr(
+        "f8pystudio.agents.tools.studio.AutomationClient.from_connection_file",
+        lambda path: FakeClient(),
+    )
+
+    tools = StudioAutomationTools(connection_file="/tmp/f8-connection.json")
+    result = tools.runtime_debug_data(
+        service_id="svc",
+        node_id="node",
+        port="in",
+        limit=3,
+        timeout_s=0.5,
+        include_value=False,
+        max_value_bytes=128,
+    )
+
+    assert result == {"ok": True}
+    assert calls == [
+        (
+            "runtime.debugData",
+            {
+                "serviceId": "svc",
+                "nodeId": "node",
+                "port": "in",
+                "limit": 3,
+                "timeoutS": 0.5,
+                "includeValue": False,
+                "maxValueBytes": 128,
+            },
+        )
+    ]
+
+
+def test_studio_automation_tools_forward_runtime_sample_port_cached_options(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, dict[str, object] | None]] = []
+
+    class FakeClient:
+        def call(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+            calls.append((method, params))
+            return {"samples": [], "timedOut": True, "cached": True, "error": ""}
+
+    monkeypatch.setattr(
+        "f8pystudio.agents.tools.studio.AutomationClient.from_connection_file",
+        lambda path: FakeClient(),
+    )
+
+    tools = StudioAutomationTools(connection_file="/tmp/f8-connection.json")
+    result = tools.runtime_sample_port(
+        service_id="svc",
+        node_id="node",
+        port="out",
+        limit=3,
+        timeout_s=0.25,
+        include_value=False,
+        max_value_bytes=128,
+        cached_only=True,
+        min_count=2,
+        after_observed_at_ms=1234,
+    )
+
+    assert result["cached"] is True
+    assert calls == [
+        (
+            "runtime.samplePort",
+            {
+                "serviceId": "svc",
+                "nodeId": "node",
+                "port": "out",
+                "limit": 3,
+                "timeoutS": 0.25,
+                "includeValue": False,
+                "maxValueBytes": 128,
+                "cachedOnly": True,
+                "minCount": 2,
+                "subscribe": False,
+                "afterObservedAtMs": 1234,
+            },
+        )
     ]
 
 
@@ -506,7 +661,12 @@ def test_local_studio_graph_tools_dispatch_runtime_monitor_and_logs(monkeypatch:
     assert tools.monitor_service("svc", limit=7)["stream"] == [{"serviceId": "svc", "index": 1}]
     assert tools.logs_read(service_id="studio", limit=5, minimum_level=30)["logs"]["services"][0]["lines"][0]["line"] == "hello"
     assert tools.runtime_write_state("svc", "node", "gain", 2.0)["state"] == {"accepted": True}
-    assert tools.runtime_sample_port("svc", "node", "out", limit=2)["samples"] == {"samples": [{"value": 42}]}
+    assert tools.runtime_sample_port("svc", "node", "out", limit=2) == {
+        "samples": [{"value": 42}],
+        "timedOut": False,
+        "error": "",
+        "cached": False,
+    }
     assert tools.runtime_invoke_command("svc", "reset", confirm=True)["command"]["ok"] is True
     assert tools.runtime_service_process("svc", "restart", service_class="f8.test") == {
         "submitted": True,
@@ -523,6 +683,172 @@ def test_local_studio_graph_tools_dispatch_runtime_monitor_and_logs(monkeypatch:
     assert "deploy_service_and_wait" in call_names
     assert "restart_service" in call_names
     assert "invoke_remote_command_and_wait" in call_names
+
+
+def test_local_studio_graph_tools_dispatch_project_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
+    _ensure_app()
+
+    class FakePayload:
+        node_count = 0
+        edge_count = 0
+
+        def to_dict(self) -> dict[str, object]:
+            return {"nodeCount": self.node_count, "edgeCount": self.edge_count}
+
+    class FakeAdapter:
+        def __init__(self, studio_graph: object) -> None:
+            self.studio_graph = studio_graph
+
+        def revision(self) -> int:
+            return 1
+
+        def snapshot(self) -> FakePayload:
+            return FakePayload()
+
+    class FakeGraph:
+        def __init__(self) -> None:
+            self.cleared = False
+
+        def clear_session(self) -> None:
+            self.cleared = True
+
+        def load_session_payload(self, payload: dict[str, object]) -> None:
+            self.loaded = payload
+
+        def serialize_session(self) -> dict[str, object]:
+            return {"layout": {"nodes": {}}}
+
+    @dataclass(frozen=True)
+    class FakeProject:
+        projectId: str
+        name: str
+        description: str
+        tags: list[str]
+        content: dict[str, object]
+        createdAt: str = "2026-01-01T00:00:00Z"
+        updatedAt: str = "2026-01-01T00:00:00Z"
+        latestVersionNumber: int = 1
+
+    class FakeProjectStorageService:
+        current_id = ""
+        projects: dict[str, FakeProject] = {}
+
+        def current_project_id(self) -> str:
+            return self.current_id
+
+        def autosave_project_id(self) -> str:
+            return ""
+
+        def set_current_project_id(self, project_id: str) -> None:
+            type(self).current_id = str(project_id)
+
+        def list_projects(self) -> list[FakeProject]:
+            return list(self.projects.values())
+
+        def list_projects_by_name(self, name: str) -> list[FakeProject]:
+            normalized_name = str(name or "").strip().casefold()
+            return [project for project in self.projects.values() if project.name.casefold() == normalized_name]
+
+        def project(self, project_id: str) -> FakeProject | None:
+            return self.projects.get(str(project_id))
+
+        def save_project(
+            self,
+            *,
+            content: dict[str, object],
+            project_id: str = "",
+            name: str,
+            description: str,
+            tags: list[str],
+            set_current: bool = True,
+        ) -> FakeProject:
+            resolved_id = str(project_id or "project-a")
+            project = FakeProject(
+                projectId=resolved_id,
+                name=str(name),
+                description=str(description),
+                tags=list(tags),
+                content=dict(content),
+            )
+            self.projects[resolved_id] = project
+            if set_current:
+                type(self).current_id = resolved_id
+            return project
+
+    monkeypatch.setattr("f8pystudio.agents.tools.graph.StudioGraphAutomationAdapter", FakeAdapter)
+    monkeypatch.setattr("f8pystudio.automation.projects.ProjectStorageService", FakeProjectStorageService)
+
+    graph = FakeGraph()
+    tools = LocalStudioGraphTools(LocalStudioGraphToolExecutor(graph))
+
+    assert tools.project_new(confirm=True)["cleared"] is True
+    saved = tools.project_save(name="VAM Demo", description="desc", tags=["vam"])["project"]
+    assert saved["projectId"] == "project-a"
+    assert tools.project_list()["projects"][0]["name"] == "VAM Demo"
+    assert tools.project_load("project-a", confirm=True)["currentProjectId"] == "project-a"
+    assert graph.cleared is True
+
+
+def test_project_save_payload_overwrites_unique_same_name_project(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _ensure_app()
+    project_settings = QtCore.QSettings(str(tmp_path / "agent-project-save.ini"), QtCore.QSettings.IniFormat)
+    service = ProjectStorageService(db_path=tmp_path / "assets.db", settings=project_settings)
+    existing = service.save_project(
+        content={"layout": {"nodes": {"old": {}}}},
+        name="VAM Demo",
+        description="Keep description",
+        tags=["keep"],
+        set_current=True,
+    )
+
+    class FakeGraph:
+        def serialize_session(self) -> dict[str, object]:
+            return {"layout": {"nodes": {"new": {}}}}
+
+    monkeypatch.setattr("f8pystudio.automation.projects.ProjectStorageService", lambda: service)
+
+    saved = project_save_payload(FakeGraph(), name="vam demo")["project"]
+
+    assert saved["projectId"] == existing.projectId
+    assert saved["description"] == "Keep description"
+    assert saved["tags"] == ["keep"]
+    assert [project.projectId for project in service.list_projects()] == [existing.projectId]
+    stored = service.project(existing.projectId)
+    assert stored is not None
+    assert "new" in stored.content["layout"]["nodes"]
+    assert [version.versionNumber for version in service.list_project_versions(existing.projectId)] == [2, 1]
+
+
+def test_project_save_payload_requires_project_id_for_duplicate_names(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _ensure_app()
+    project_settings = QtCore.QSettings(str(tmp_path / "agent-project-duplicates.ini"), QtCore.QSettings.IniFormat)
+    service = ProjectStorageService(db_path=tmp_path / "assets.db", settings=project_settings)
+    _ = service.save_project(
+        content={"layout": {"nodes": {"one": {}}}},
+        name="VAM Demo",
+        description="",
+        tags=[],
+        set_current=True,
+    )
+    _ = service.save_project(
+        content={"layout": {"nodes": {"two": {}}}},
+        name="VAM Demo",
+        description="",
+        tags=[],
+        set_current=True,
+    )
+
+    class FakeGraph:
+        def serialize_session(self) -> dict[str, object]:
+            return {"layout": {"nodes": {"new": {}}}}
+
+    monkeypatch.setattr("f8pystudio.automation.projects.ProjectStorageService", lambda: service)
+
+    with pytest.raises(ValueError, match="Multiple projects named"):
+        project_save_payload(FakeGraph(), name="VAM Demo")
 
 
 def test_local_studio_graph_tool_traces_success_and_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -559,6 +885,80 @@ def test_local_studio_graph_tool_traces_success_and_failure(monkeypatch: pytest.
     assert "ValueError" in str(traces[3]["error"])
 
 
+def test_local_studio_graph_tool_runtime_debug_data_uses_bridge(monkeypatch: pytest.MonkeyPatch) -> None:
+    _ensure_app()
+    calls: list[dict[str, object]] = []
+
+    class FakePayload:
+        node_count = 0
+        edge_count = 0
+
+        def to_dict(self) -> dict[str, object]:
+            return {"nodeCount": self.node_count, "edgeCount": self.edge_count}
+
+    class FakeAdapter:
+        def __init__(self, studio_graph: object) -> None:
+            self.studio_graph = studio_graph
+
+        def snapshot(self) -> FakePayload:
+            return FakePayload()
+
+    class FakeBridge:
+        studio_service_id = "studio"
+        managed_active = True
+
+        def debug_runtime_data_and_wait(
+            self,
+            service_id: str,
+            node_id: str = "",
+            port: str = "",
+            *,
+            limit: int = 100,
+            timeout_s: float = 1.0,
+            include_value: bool = True,
+            max_value_bytes: int = 65536,
+        ) -> dict[str, object]:
+            calls.append(
+                {
+                    "serviceId": service_id,
+                    "nodeId": node_id,
+                    "port": port,
+                    "limit": limit,
+                    "timeoutS": timeout_s,
+                    "includeValue": include_value,
+                    "maxValueBytes": max_value_bytes,
+                }
+            )
+            return {"submitted": True, "completed": True, "debugData": {"buffers": []}, "error": ""}
+
+    monkeypatch.setattr("f8pystudio.agents.tools.graph.StudioGraphAutomationAdapter", FakeAdapter)
+    executor = LocalStudioGraphToolExecutor("graph", bridge=FakeBridge())
+    tools = LocalStudioGraphTools(executor)
+
+    result = tools.runtime_debug_data(
+        service_id="svc",
+        node_id="node",
+        port="in",
+        limit=4,
+        timeout_s=0.25,
+        include_value=False,
+        max_value_bytes=256,
+    )
+
+    assert result["submitted"] is True
+    assert calls == [
+        {
+            "serviceId": "svc",
+            "nodeId": "node",
+            "port": "in",
+            "limit": 4,
+            "timeoutS": 0.25,
+            "includeValue": False,
+            "maxValueBytes": 256,
+        }
+    ]
+
+
 def test_local_studio_graph_tools_codeact_profile_is_diagnostic_only() -> None:
     tools = LocalStudioGraphTools(StudioAutomationTools())
 
@@ -567,7 +967,9 @@ def test_local_studio_graph_tools_codeact_profile_is_diagnostic_only() -> None:
     assert "graph_snapshot" in names
     assert "graph_debug_service" in names
     assert "runtime_sample_port" in names
+    assert "runtime_debug_data" in names
     assert "logs_read" in names
+    assert "notifications_read" in names
     assert "graph_apply_patch" not in names
     assert "graph_apply_build_plan" not in names
     assert "runtime_deploy" not in names
@@ -588,7 +990,9 @@ def test_local_studio_graph_tools_node_editor_profile_is_inspection_and_preview_
     assert "graph_preview_patch" in names
     assert "graph_preview_build_plan" in names
     assert "runtime_sample_port" in names
+    assert "runtime_debug_data" in names
     assert "logs_read" in names
+    assert "notifications_read" in names
     assert "graph_apply_patch" not in names
     assert "graph_apply_build_plan" not in names
     assert "runtime_deploy" not in names

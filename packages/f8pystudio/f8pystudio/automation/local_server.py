@@ -53,7 +53,7 @@ class _AutomationLineHandler(socketserver.StreamRequestHandler):
             if request.token != self.server.token:
                 return error_response(request_id, code="unauthorized", message="invalid automation token")
             result = self.server.request_handler(request.method, request.params)
-            if isinstance(result, dict) and bool(result.get("ok")) is False and "error" in result:
+            if isinstance(result, dict) and result.get("ok") is False and "error" in result:
                 return result
             return success_response(request_id, result)
         except json.JSONDecodeError as exc:

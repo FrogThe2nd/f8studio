@@ -282,3 +282,55 @@ async def request_set_remote_state(
         reject_code="",
         reject_message="",
     )
+
+
+async def request_service_debug_data(
+    requester: RuntimeRequester,
+    *,
+    service_id: str,
+    node_id: str = "",
+    port: str = "",
+    limit: int = 100,
+    include_value: bool = True,
+    max_value_bytes: int = 65536,
+    timeout_s: float = 1.0,
+) -> dict[str, Any]:
+    sid = ensure_token(str(service_id), label="service_id")
+    node_id_s = str(node_id or "").strip()
+    port_s = str(port or "").strip()
+    if node_id_s:
+        node_id_s = ensure_token(node_id_s, label="node_id")
+    if port_s:
+        port_s = ensure_token(port_s, label="port")
+    payload = encode_obj(
+        {
+            "reqId": new_id(),
+            "args": {
+                "nodeId": node_id_s,
+                "port": port_s,
+                "limit": max(1, min(int(limit), 1000)),
+                "includeValue": bool(include_value),
+                "maxValueBytes": max(0, int(max_value_bytes)),
+            },
+            "meta": {"actor": "studio", "cmd": "debug_data"},
+        }
+    )
+    message = await requester.request(svc_endpoint_key(sid, "debug_data"), payload, timeout=float(timeout_s))
+    raw = message_data_bytes(message)
+    if not raw:
+        return {"ok": False, "result": {}, "error": "empty response"}
+    try:
+        response = decode_obj(raw)
+    except ValueError as exc:
+        return {"ok": False, "result": {}, "error": str(exc)}
+    if not bool(response.get("ok")):
+        error = response.get("error")
+        if isinstance(error, dict):
+            message_text = str(error.get("message") or "")
+            code_text = str(error.get("code") or "")
+            return {"ok": False, "result": {}, "error": message_text or code_text}
+        return {"ok": False, "result": {}, "error": str(error or "debug_data failed")}
+    result = response.get("result")
+    if isinstance(result, dict):
+        return {"ok": True, "result": result, "error": ""}
+    return {"ok": False, "result": {}, "error": "debug_data response result must be an object"}

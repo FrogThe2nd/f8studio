@@ -223,6 +223,52 @@ class ServiceBusControlHandlers:
             )
         )
 
+    async def _debug_data(self, req: Any) -> None:
+        req_id = new_id()
+        try:
+            payload = decode_obj(req.data)
+            req_id = self._req_id(str(payload.get("reqId") or ""))
+            args = payload.get("args")
+            if args is None:
+                args = {}
+            if not isinstance(args, dict):
+                raise ValueError("msgpack decode failed: field args must be an object")
+            node_id = str(args.get("nodeId") or "").strip()
+            port = str(args.get("port") or "").strip()
+            if node_id:
+                node_id = ensure_token(node_id, label="node_id")
+            if port:
+                port = ensure_token(port, label="port")
+            result = self._bus.data_router.debug_input_buffers(
+                node_id=node_id,
+                port=port,
+                limit=int(args.get("limit") or 100),
+                include_value=bool(args.get("includeValue", True)),
+                max_value_bytes=int(args.get("maxValueBytes") or 65536),
+            )
+        except (TypeError, ValueError) as exc:
+            await req.respond(
+                encode_obj(
+                    {
+                        "reqId": req_id,
+                        "ok": False,
+                        "result": None,
+                        "error": self._error(code="INVALID_ARGS", message=str(exc)),
+                    }
+                )
+            )
+            return
+        await req.respond(
+            encode_obj(
+                {
+                    "reqId": req_id,
+                    "ok": True,
+                    "result": result,
+                    "error": None,
+                }
+            )
+        )
+
     async def _terminate(self, req: Any) -> None:
         try:
             payload = decode_as(req.data, F8TerminateRequest)

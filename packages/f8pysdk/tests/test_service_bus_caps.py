@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+import asyncio
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
@@ -57,6 +58,30 @@ class ServiceBusCapTests(unittest.TestCase):
 
         buf = bus.data_router.input_buffers[("n1", "in")]
         self.assertEqual(list(buf.queue), [("v2", 2), ("v3", 3)])
+
+    def test_data_output_debug_cache_caps_ports_and_history(self) -> None:
+        async def _run() -> None:
+            bus = ServiceBus(
+                ServiceBusConfig(
+                    service_id="svc",
+                    cross_publish_policy="none",
+                    data_output_debug_max_ports=2,
+                    data_output_debug_history_size=2,
+                )
+            )
+            await bus.emit_data("n1", "out", "v1", ts_ms=1)
+            await bus.emit_data("n1", "out", "v2", ts_ms=2)
+            await bus.emit_data("n1", "out", "v3", ts_ms=3)
+            await bus.emit_data("n2", "out", "v4", ts_ms=4)
+            await bus.emit_data("n3", "out", "v5", ts_ms=5)
+
+            n1 = bus.data_router.debug_output_snapshots(node_id="n1", port="out", include_value=True)
+            all_outputs = bus.data_router.debug_output_snapshots(include_value=True, limit=10)
+
+            self.assertEqual(n1, [])
+            self.assertEqual([item["lastEmittedValue"] for item in all_outputs], ["v4", "v5"])
+
+        asyncio.run(_run())
 
     def test_get_state_cached_hit_and_miss(self) -> None:
         bus = ServiceBus(ServiceBusConfig(service_id="svc"))

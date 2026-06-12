@@ -872,7 +872,7 @@ Add data output ports:
 
 | Port | Meaning |
 | --- | --- |
-| `L0_distance_m` | Normal distance between receiver and driver. Usually invert this when mapping to `0..1`. |
+| `L0_distance_m` | Raw normal distance between receiver and driver, in meters. This is not reference-length normalized. Usually invert this when mapping to `0..1`. |
 | `L1_slideForward_m` | Driver offset along contact forward. |
 | `L2_slideRight_m` | Driver offset along contact tangent/right. |
 | `slideDelta_m` | Frame-to-frame plane sliding distance. Useful for vibration-like effects. |
@@ -880,6 +880,12 @@ Add data output ports:
 | `distanceDelta_m` | Frame-to-frame normal distance change. |
 | `axes` | Combined axis object. |
 | `status` | Small validity object. |
+
+Important: contact mode has no `ReferenceStart -> ReferenceEnd` shaft length.
+`L0_distance_m` is a surface-contact distance, not insertion depth. If the
+scene has a male/dildo reference and you want "near ReferenceStart is deep,
+near ReferenceEnd is shallow", use the male-referenced `VAM Pose Axes.L0_geom`
+path instead of contact distance.
 
 Add state fields:
 
@@ -1059,7 +1065,7 @@ Recommended raw bus:
 
 | Bus field | Source | Unit | Meaning |
 | --- | --- | --- | --- |
-| `L0` | `L0_distance_m` | `m` | Contact distance. The rack usually inverts this so close contact is high. |
+| `L0` | `L0_distance_m` | `m` | Raw contact distance. It is not reference-length normalized. The rack usually inverts this so close contact is high. |
 | `L1` | `L1_slideForward_m` | `m` | Forward/back slide in the contact frame. |
 | `L2` | `L2_slideRight_m` | `m` | Side slide in the contact frame. |
 | `R0` | optional | `deg` | Reserved for twist-like contact rotation. |

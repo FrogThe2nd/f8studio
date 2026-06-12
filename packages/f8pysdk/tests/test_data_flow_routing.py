@@ -35,8 +35,10 @@ from f8pysdk.specs import (  # noqa: E402
     video_frame_metadata_schema,
 )
 from f8pysdk.f8_naming import data_key  # noqa: E402
+from f8pysdk.codec import decode_obj, encode_obj  # noqa: E402
 from f8pysdk.bus import ServiceBus, ServiceBusConfig  # noqa: E402
 from f8pysdk.service_bus.data.emit import DataEmitOptions  # noqa: E402
+from f8pysdk.service_bus.internal.micro import ServiceBusControlHandlers  # noqa: E402
 from f8pysdk.testing import InMemoryCluster, InMemoryTransport, push_input  # noqa: E402
 
 
@@ -98,6 +100,15 @@ class _ComputableNode:
     async def compute_output(self, port: str, ctx_id: str | int | None = None) -> Any:
         self.compute_calls.append((str(port), ctx_id))
         return self._value
+
+
+class _ControlEndpointRequest:
+    def __init__(self, data: bytes) -> None:
+        self.data = data
+        self.response = b""
+
+    async def respond(self, payload: bytes) -> None:
+        self.response = bytes(payload)
 
 
 def _runtime_node(*, node_id: str, service_id: str, data_in: list[str] | None = None, data_out: list[str] | None = None) -> F8RuntimeNode:
@@ -579,6 +590,166 @@ class DataFlowRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(transport.published_keys, [])
         self.assertEqual(bus.data_router.input_buffers[("local_dst", "in")].last_seen_value, 99)
+
+    async def test_data_router_debug_input_buffers_reports_local_values(self) -> None:
+        cluster = InMemoryCluster()
+        transport = _RecordingTransport(cluster=cluster)
+        bus = ServiceBus(
+            ServiceBusConfig(service_id="svcA", cross_publish_policy="none", data_delivery="buffered"),
+            transport=transport,
+        )
+        graph = F8RuntimeGraph(
+            graphId="g-debug-input-buffers",
+            revision="r1",
+            nodes=[
+                _runtime_node(node_id="src", service_id="svcA", data_out=["out"]),
+                _runtime_node(node_id="local_dst", service_id="svcA", data_in=["in"]),
+            ],
+            edges=[
+                _data_edge(
+                    edge_id="local",
+                    from_service="svcA",
+                    from_node="src",
+                    from_port="out",
+                    to_service="svcA",
+                    to_node="local_dst",
+                    to_port="in",
+                ),
+            ],
+        )
+
+        await bus.set_rungraph(graph)
+        await bus.emit_data("src", "out", {"axis": 0.5}, ts_ms=12, ctx_id="ctx-a")
+        pulled = await bus.pull_data("local_dst", "in", ctx_id="ctx-b")
+
+        self.assertEqual(pulled, {"axis": 0.5})
+        snapshot = bus.data_router.debug_input_buffers(node_id="local_dst", port="in", include_value=True)
+
+        self.assertEqual(snapshot["serviceId"], "svcA")
+        self.assertEqual(snapshot["matched"], 1)
+        self.assertEqual(snapshot["truncated"], False)
+        buffers = snapshot["buffers"]
+        self.assertEqual(len(buffers), 1)
+        buffer = buffers[0]
+        self.assertEqual(buffer["nodeId"], "local_dst")
+        self.assertEqual(buffer["port"], "in")
+        self.assertEqual(buffer["queueLength"], 0)
+        self.assertEqual(buffer["edgeId"], "local")
+        self.assertEqual(buffer["lastSeenTs"], 12)
+        self.assertEqual(buffer["lastSeenCtxId"], "ctx-a")
+        self.assertEqual(buffer["lastSeenValue"], {"axis": 0.5})
+        self.assertEqual(buffer["lastPulledCtxId"], "ctx-b")
+        self.assertEqual(buffer["lastPulledValue"], {"axis": 0.5})
+
+    async def test_data_router_debug_input_buffers_reports_output_snapshots(self) -> None:
+        cluster = InMemoryCluster()
+        transport = _RecordingTransport(cluster=cluster)
+        bus = ServiceBus(
+            ServiceBusConfig(service_id="svcA", cross_publish_policy="none", data_delivery="buffered"),
+            transport=transport,
+        )
+        graph = F8RuntimeGraph(
+            graphId="g-debug-output-snapshots",
+            revision="r1",
+            nodes=[
+                _runtime_node(node_id="src", service_id="svcA", data_out=["out"]),
+                _runtime_node(node_id="local_dst", service_id="svcA", data_in=["in"]),
+            ],
+            edges=[
+                _data_edge(
+                    edge_id="local",
+                    from_service="svcA",
+                    from_node="src",
+                    from_port="out",
+                    to_service="svcA",
+                    to_node="local_dst",
+                    to_port="in",
+                ),
+            ],
+        )
+
+        await bus.set_rungraph(graph)
+        await bus.emit_data("src", "out", {"axis": 0.75}, ts_ms=33, ctx_id="ctx-out")
+
+        snapshot = bus.data_router.debug_input_buffers(node_id="src", port="out", include_value=True)
+
+        self.assertEqual(snapshot["matched"], 0)
+        self.assertEqual(snapshot["buffers"], [])
+        self.assertEqual(snapshot["outputMatched"], 1)
+        outputs = snapshot["outputs"]
+        self.assertEqual(len(outputs), 1)
+        output = outputs[0]
+        self.assertEqual(output["nodeId"], "src")
+        self.assertEqual(output["port"], "out")
+        self.assertEqual(output["tsMs"], 33)
+        self.assertEqual(output["ctxId"], "ctx-out")
+        self.assertEqual(output["deliveredLocal"], True)
+        self.assertEqual(output["crossPublishDecision"], "local_only")
+        self.assertEqual(output["lastEmittedValue"], {"axis": 0.75})
+
+    async def test_data_router_debug_input_buffers_can_omit_large_values(self) -> None:
+        cluster = InMemoryCluster()
+        transport = _RecordingTransport(cluster=cluster)
+        bus = ServiceBus(ServiceBusConfig(service_id="svcA", cross_publish_policy="none"), transport=transport)
+
+        await bus.set_active(True)
+        bus.data_router.push_input("node", "in", {"large": "x" * 32}, ts_ms=1)
+        snapshot = bus.data_router.debug_input_buffers(
+            node_id="node",
+            port="in",
+            include_value=True,
+            max_value_bytes=8,
+        )
+
+        buffer = snapshot["buffers"][0]
+        self.assertEqual(buffer["lastSeenPayloadKind"], "json_object")
+        self.assertEqual(buffer["lastSeenOmitReason"], "value_too_large")
+        self.assertNotIn("lastSeenValue", buffer)
+
+    async def test_debug_data_control_endpoint_returns_input_buffer_snapshot(self) -> None:
+        cluster = InMemoryCluster()
+        transport = _RecordingTransport(cluster=cluster)
+        bus = ServiceBus(ServiceBusConfig(service_id="svcA", cross_publish_policy="none"), transport=transport)
+        await bus.set_active(True)
+        bus.data_router.push_input("node", "in", 123, ts_ms=2)
+        await bus.emit_data("node", "out", 456, ts_ms=3)
+        request = _ControlEndpointRequest(
+            encode_obj(
+                {
+                    "reqId": "req-debug-input",
+                    "args": {"nodeId": "node", "port": "in", "limit": 5, "includeValue": True},
+                }
+            )
+        )
+        output_request = _ControlEndpointRequest(
+            encode_obj(
+                {
+                    "reqId": "req-debug-output",
+                    "args": {"nodeId": "node", "port": "out", "limit": 5, "includeValue": True},
+                }
+            )
+        )
+
+        handlers = ServiceBusControlHandlers(bus)
+        await handlers._debug_data(request)
+        await handlers._debug_data(output_request)
+
+        response = decode_obj(request.response)
+        self.assertEqual(response["reqId"], "req-debug-input")
+        self.assertEqual(response["ok"], True)
+        result = response["result"]
+        self.assertEqual(result["serviceId"], "svcA")
+        self.assertEqual(result["matched"], 1)
+        self.assertEqual(result["buffers"][0]["lastSeenValue"], 123)
+
+        output_response = decode_obj(output_request.response)
+        self.assertEqual(output_response["reqId"], "req-debug-output")
+        self.assertEqual(output_response["ok"], True)
+        output_result = output_response["result"]
+        self.assertEqual(output_result["serviceId"], "svcA")
+        self.assertEqual(output_result["matched"], 0)
+        self.assertEqual(output_result["outputMatched"], 1)
+        self.assertEqual(output_result["outputs"][-1]["lastEmittedValue"], 456)
 
 
 if __name__ == "__main__":

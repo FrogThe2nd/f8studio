@@ -9,6 +9,7 @@ from f8pystudio.automation.domain import (
     DisconnectPortsOp,
     MoveNodeOp,
     SetNodeNameOp,
+    SetNodeStateFieldsOp,
     SetNodeStateOp,
     SetUiOverrideOp,
     decode_graph_patch,
@@ -34,6 +35,11 @@ def test_decode_graph_patch_all_explicit_ops() -> None:
                 },
                 {"op": "setNodeState", "nodeId": "n1", "field": "enabled", "value": True},
                 {"op": "setNodeName", "nodeId": "n1", "name": "Readable"},
+                {
+                    "op": "setNodeStateFields",
+                    "nodeId": "n1",
+                    "stateFields": [{"name": "mode", "valueSchema": {"type": "string"}, "access": "rw"}],
+                },
                 {"op": "moveNode", "nodeId": "n1", "pos": [10.5, -2]},
                 {"op": "setUiOverride", "nodeId": "n1", "key": "stateFields", "value": {"enabled": {"showOnNode": True}}},
             ],
@@ -47,8 +53,9 @@ def test_decode_graph_patch_all_explicit_ops() -> None:
     assert isinstance(patch.ops[3], DisconnectPortsOp)
     assert isinstance(patch.ops[4], SetNodeStateOp)
     assert isinstance(patch.ops[5], SetNodeNameOp)
-    assert isinstance(patch.ops[6], MoveNodeOp)
-    assert isinstance(patch.ops[7], SetUiOverrideOp)
+    assert isinstance(patch.ops[6], SetNodeStateFieldsOp)
+    assert isinstance(patch.ops[7], MoveNodeOp)
+    assert isinstance(patch.ops[8], SetUiOverrideOp)
     assert graph_patch_to_dict(patch)["ops"][0]["op"] == "createNode"
 
 

@@ -34,6 +34,8 @@ from f8pystudio.automation.library_catalog import (
     service_library_payload,
 )
 from f8pystudio.automation.observation_store import StoredStateValue
+from f8pystudio.automation.projects import project_list_payload, project_load_payload, project_new_payload, project_save_payload
+from f8pystudio.ui.support.ui_notifications import export_recent_notifications
 
 logger = logging.getLogger(__name__)
 _GRAPH_TOOL_ERRORS = (AttributeError, KeyError, RuntimeError, TimeoutError, TypeError, ValueError)
@@ -97,6 +99,18 @@ class StudioRuntimeToolBridge(Protocol):
         *,
         limit: int = 1,
         timeout_s: float = 2.0,
+        include_value: bool = True,
+        max_value_bytes: int = 65536,
+    ) -> dict[str, Any]: ...
+
+    def debug_runtime_data_and_wait(
+        self,
+        service_id: str,
+        node_id: str = "",
+        port: str = "",
+        *,
+        limit: int = 100,
+        timeout_s: float = 1.0,
         include_value: bool = True,
         max_value_bytes: int = 65536,
     ) -> dict[str, Any]: ...
@@ -326,6 +340,32 @@ class LocalStudioGraphToolExecutor(QtCore.QObject):
             return {"snapshot": self._adapter.snapshot().to_dict()}
         if method == "graph.session":
             return {"session": self._adapter.session_payload()}
+        if method == "project.list":
+            return project_list_payload()
+        if method == "project.new":
+            if not bool(params.get("confirm")):
+                raise ValueError("project_new requires confirm=true")
+            result = project_new_payload(
+                self._studio_graph,
+                clear_current_project=bool(params.get("clearCurrentProject", True)),
+            )
+            self._notify_graph_patch_applied()
+            return result
+        if method == "project.save":
+            return project_save_payload(
+                self._studio_graph,
+                name=str(params.get("name") or ""),
+                description=str(params.get("description") or ""),
+                tags=_string_list_param(params.get("tags")),
+                project_id=str(params.get("projectId") or ""),
+                overwrite_project_id=str(params.get("overwriteProjectId") or ""),
+            )
+        if method == "project.load":
+            if not bool(params.get("confirm")):
+                raise ValueError("project_load requires confirm=true")
+            result = project_load_payload(self._studio_graph, project_id=_required_text(params, "projectId"))
+            self._notify_graph_patch_applied()
+            return result
         if method == "graph.uiContext":
             return {"uiContext": self._graph_ui_context()}
         if method == "graph.catalog":
@@ -407,6 +447,8 @@ class LocalStudioGraphToolExecutor(QtCore.QObject):
             return self._runtime_watch_state(params)
         if method == "runtime.samplePort":
             return self._runtime_sample_port(params)
+        if method == "runtime.debugData":
+            return self._runtime_debug_data(params)
         if method == "runtime.invokeCommand":
             return self._runtime_invoke_command(params)
         if method == "monitor.report":
@@ -415,6 +457,8 @@ class LocalStudioGraphToolExecutor(QtCore.QObject):
             return self._monitor_service(params)
         if method == "logs.read":
             return self._logs_read(params)
+        if method == "notifications.read":
+            return self._notifications_read(params)
         raise ValueError(f"unsupported local graph agent tool method: {method}")
 
     def _require_bridge(self) -> StudioRuntimeToolBridge:
@@ -581,17 +625,33 @@ class LocalStudioGraphToolExecutor(QtCore.QObject):
         service_id = _required_text(params, "serviceId")
         node_id = _required_text(params, "nodeId")
         port = _required_text(params, "port")
+        result = bridge.sample_data_port_and_wait(
+            service_id,
+            node_id,
+            port,
+            limit=int(params.get("limit") or 1),
+            timeout_s=float(params.get("timeoutS") or 2.0),
+            include_value=bool(params.get("includeValue", True)),
+            max_value_bytes=int(params.get("maxValueBytes") or 65536),
+        )
         return {
-            "samples": bridge.sample_data_port_and_wait(
-                service_id,
-                node_id,
-                port,
-                limit=int(params.get("limit") or 1),
-                timeout_s=float(params.get("timeoutS") or 2.0),
-                include_value=bool(params.get("includeValue", True)),
-                max_value_bytes=int(params.get("maxValueBytes") or 65536),
-            )
+            "samples": list(result.get("samples") if isinstance(result.get("samples"), list) else []),
+            "timedOut": bool(result.get("timedOut", False)),
+            "error": str(result.get("error") or ""),
+            "cached": False,
         }
+
+    def _runtime_debug_data(self, params: dict[str, Any]) -> dict[str, Any]:
+        bridge = self._require_bridge()
+        return bridge.debug_runtime_data_and_wait(
+            _required_text(params, "serviceId"),
+            str(params.get("nodeId") or "").strip(),
+            str(params.get("port") or "").strip(),
+            limit=int(params.get("limit") or 100),
+            timeout_s=float(params.get("timeoutS") or 1.0),
+            include_value=bool(params.get("includeValue", True)),
+            max_value_bytes=int(params.get("maxValueBytes") or 65536),
+        )
 
     def _runtime_invoke_command(self, params: dict[str, Any]) -> dict[str, Any]:
         if not bool(params.get("confirm")):
@@ -632,6 +692,14 @@ class LocalStudioGraphToolExecutor(QtCore.QObject):
                 service_id=str(params.get("serviceId") or ""),
                 limit=int(params.get("limit") or 200),
                 minimum_level=resolved_minimum_level,
+            )
+        }
+
+    def _notifications_read(self, params: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "notifications": export_recent_notifications(
+                limit=int(params.get("limit") or 100),
+                minimum_severity=str(params.get("minimumSeverity") or ""),
             )
         }
 
@@ -715,6 +783,12 @@ class LocalStudioGraphToolExecutor(QtCore.QObject):
         status: dict[str, Any] | None = None
         monitor: dict[str, Any] | None = None
         logs: dict[str, Any] | None = None
+        notifications = self._notifications_read(
+            {
+                "limit": int(params.get("notificationLimit") or 50),
+                "minimumSeverity": str(params.get("notificationMinimumSeverity") or "WARNING"),
+            }
+        )["notifications"]
         if service_id:
             if self._bridge is not None:
                 status = self._runtime_service_status({"serviceId": service_id})["service"]
@@ -733,6 +807,7 @@ class LocalStudioGraphToolExecutor(QtCore.QObject):
                 "service": status,
                 "monitor": monitor,
                 "logs": logs,
+                "notifications": notifications,
                 "diagnostics": diagnostics,
                 "compile": compile_payload,
             }
@@ -866,6 +941,10 @@ class LocalStudioGraphTools:
             self.operator_library,
             self.operator_detail,
             self.graph_session,
+            self.project_list,
+            self.project_new,
+            self.project_save,
+            self.project_load,
             self.graph_compile,
             self.graph_preview_patch,
             self.graph_apply_patch,
@@ -887,10 +966,12 @@ class LocalStudioGraphTools:
             self.runtime_read_state,
             self.runtime_watch_state,
             self.runtime_sample_port,
+            self.runtime_debug_data,
             self.runtime_invoke_command,
             self.monitor_report,
             self.monitor_service,
             self.logs_read,
+            self.notifications_read,
         )
 
     def available_codeact_diagnostic_tools(self) -> tuple[Callable[..., dict[str, Any]], ...]:
@@ -907,6 +988,7 @@ class LocalStudioGraphTools:
             self.operator_library,
             self.operator_detail,
             self.graph_session,
+            self.project_list,
             self.graph_compile,
             self.graph_preview_patch,
             self.graph_build_from_goal,
@@ -918,9 +1000,11 @@ class LocalStudioGraphTools:
             self.runtime_read_state,
             self.runtime_watch_state,
             self.runtime_sample_port,
+            self.runtime_debug_data,
             self.monitor_report,
             self.monitor_service,
             self.logs_read,
+            self.notifications_read,
         )
 
     def available_node_editor_tools(self) -> tuple[Callable[..., dict[str, Any]], ...]:
@@ -937,6 +1021,7 @@ class LocalStudioGraphTools:
             self.operator_library,
             self.operator_detail,
             self.graph_session,
+            self.project_list,
             self.graph_compile,
             self.graph_preview_patch,
             self.graph_build_from_goal,
@@ -948,9 +1033,11 @@ class LocalStudioGraphTools:
             self.runtime_read_state,
             self.runtime_watch_state,
             self.runtime_sample_port,
+            self.runtime_debug_data,
             self.monitor_report,
             self.monitor_service,
             self.logs_read,
+            self.notifications_read,
         )
 
     def available_tool_names(self) -> tuple[str, ...]:
@@ -967,6 +1054,10 @@ class LocalStudioGraphTools:
             "operator_library",
             "operator_detail",
             "graph_session",
+            "project_list",
+            "project_new",
+            "project_save",
+            "project_load",
             "graph_compile",
             "graph_preview_patch",
             "graph_apply_patch",
@@ -988,10 +1079,12 @@ class LocalStudioGraphTools:
             "runtime_read_state",
             "runtime_watch_state",
             "runtime_sample_port",
+            "runtime_debug_data",
             "runtime_invoke_command",
             "monitor_report",
             "monitor_service",
             "logs_read",
+            "notifications_read",
         )
 
     def available_codeact_diagnostic_tool_names(self) -> tuple[str, ...]:
@@ -1008,6 +1101,7 @@ class LocalStudioGraphTools:
             "operator_library",
             "operator_detail",
             "graph_session",
+            "project_list",
             "graph_compile",
             "graph_preview_patch",
             "graph_build_from_goal",
@@ -1019,9 +1113,11 @@ class LocalStudioGraphTools:
             "runtime_read_state",
             "runtime_watch_state",
             "runtime_sample_port",
+            "runtime_debug_data",
             "monitor_report",
             "monitor_service",
             "logs_read",
+            "notifications_read",
         )
 
     def available_node_editor_tool_names(self) -> tuple[str, ...]:
@@ -1038,6 +1134,7 @@ class LocalStudioGraphTools:
             "operator_library",
             "operator_detail",
             "graph_session",
+            "project_list",
             "graph_compile",
             "graph_preview_patch",
             "graph_build_from_goal",
@@ -1049,9 +1146,11 @@ class LocalStudioGraphTools:
             "runtime_read_state",
             "runtime_watch_state",
             "runtime_sample_port",
+            "runtime_debug_data",
             "monitor_report",
             "monitor_service",
             "logs_read",
+            "notifications_read",
         )
 
     def studio_status(self) -> dict[str, Any]:
@@ -1132,6 +1231,41 @@ class LocalStudioGraphTools:
     def graph_session(self) -> dict[str, Any]:
         """Return the current serialized PyStudio graph session payload."""
         return self.executor.call("graph.session")
+
+    def project_list(self) -> dict[str, Any]:
+        """List locally saved PyStudio projects and current project pointers."""
+        return self.executor.call("project.list")
+
+    def project_new(self, confirm: bool = False, clear_current_project: bool = True) -> dict[str, Any]:
+        """Clear the current graph to start a new project; requires confirm=true or GUI approval."""
+        return self.executor.call(
+            "project.new",
+            {"confirm": bool(confirm), "clearCurrentProject": bool(clear_current_project)},
+        )
+
+    def project_save(
+        self,
+        name: str = "",
+        description: str = "",
+        tags: list[str] | None = None,
+        project_id: str = "",
+        overwrite_project_id: str = "",
+    ) -> dict[str, Any]:
+        """Save the current graph into the local PyStudio project store."""
+        return self.executor.call(
+            "project.save",
+            {
+                "name": name,
+                "description": description,
+                "tags": [] if tags is None else list(tags),
+                "projectId": project_id,
+                "overwriteProjectId": overwrite_project_id,
+            },
+        )
+
+    def project_load(self, project_id: str, confirm: bool = False) -> dict[str, Any]:
+        """Load a locally saved PyStudio project into the current graph; requires confirm=true or GUI approval."""
+        return self.executor.call("project.load", {"projectId": project_id, "confirm": bool(confirm)})
 
     def graph_compile(self) -> dict[str, Any]:
         """Compile the current PyStudio graph and return service, node, edge, and warning metadata."""
@@ -1303,6 +1437,30 @@ class LocalStudioGraphTools:
             },
         )
 
+    def runtime_debug_data(
+        self,
+        service_id: str,
+        node_id: str = "",
+        port: str = "",
+        limit: int = 100,
+        timeout_s: float = 1.0,
+        include_value: bool = True,
+        max_value_bytes: int = 65536,
+    ) -> dict[str, Any]:
+        """Read local runtime data-router input buffer snapshots from a running service."""
+        return self.executor.call(
+            "runtime.debugData",
+            {
+                "serviceId": service_id,
+                "nodeId": node_id,
+                "port": port,
+                "limit": int(limit),
+                "timeoutS": float(timeout_s),
+                "includeValue": bool(include_value),
+                "maxValueBytes": int(max_value_bytes),
+            },
+        )
+
     def runtime_invoke_command(
         self,
         service_id: str,
@@ -1332,6 +1490,13 @@ class LocalStudioGraphTools:
             params["minimumLevel"] = int(minimum_level)
         return self.executor.call("logs.read", params)
 
+    def notifications_read(self, limit: int = 100, minimum_severity: str = "") -> dict[str, Any]:
+        """Read recent UI notification toasts, including warnings/errors that may not appear in service logs."""
+        return self.executor.call(
+            "notifications.read",
+            {"limit": int(limit), "minimumSeverity": minimum_severity},
+        )
+
 
 def _requires_confirm(params: dict[str, Any]) -> bool:
     patch = params.get("patch")
@@ -1343,7 +1508,7 @@ def _requires_confirm(params: dict[str, Any]) -> bool:
     for op in ops:
         if not isinstance(op, dict):
             return True
-        if str(op.get("op") or "") == "deleteNode":
+        if str(op.get("op") or "") in {"deleteNode", "setNodePorts", "setNodeStateFields"}:
             return True
     return False
 
@@ -1402,6 +1567,18 @@ def _approval_spec_for_method(method: str, params: dict[str, Any]) -> _ToolAppro
             description="Call a command on a running runtime service.",
             confirm_error_message="runtime_invoke_command requires confirm=true",
         )
+    if method == "project.new":
+        return _ToolApprovalSpec(
+            title="New Project",
+            description="Clear the current PyStudio graph to start a new project.",
+            confirm_error_message="project_new requires confirm=true",
+        )
+    if method == "project.load":
+        return _ToolApprovalSpec(
+            title="Load Project",
+            description="Replace the current graph with a locally saved PyStudio project.",
+            confirm_error_message="project_load requires confirm=true",
+        )
     if method == "graph.applyBuildPlan":
         return _ToolApprovalSpec(
             title="Apply Graph Build Plan",
@@ -1451,6 +1628,19 @@ def _optional_int_param(params: dict[str, Any], key: str) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _string_list_param(value: Any) -> list[str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise ValueError("tags must be a list of strings")
+    out: list[str] = []
+    for item in value:
+        text = str(item or "").strip()
+        if text:
+            out.append(text)
+    return out
 
 
 def _required_text(params: dict[str, Any], key: str) -> str:

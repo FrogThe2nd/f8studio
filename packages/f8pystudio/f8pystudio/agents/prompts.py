@@ -189,7 +189,7 @@ def _graph_tool_guidance(*, agent_surface: str, tool_names: tuple[str, ...]) -> 
             "- Use `graph_debug_service` for a bundled diagnostics/compile/monitor/log pass around one service.",
             "- Use `graph_fix_container_bindings` when diagnostics report operators outside a service container or bound to a missing/mismatched service.",
             "- Use `graph_auto_layout` to preview or apply a tidy node layout after creating or repairing graph structure.",
-            "- Use `runtime_services`, `monitor_service`, `runtime_read_state`, `runtime_watch_state`, `runtime_sample_port`, and `logs_read` when debugging a running graph.",
+            "- Use `runtime_services`, `monitor_service`, `runtime_read_state`, `runtime_watch_state`, `runtime_debug_data`, `runtime_sample_port`, `logs_read`, and `notifications_read` when debugging a running graph.",
             "- Use `graph_preview_patch` before applying a non-trivial graph edit, then use `graph_apply_patch` when the user asks you to make the graph change.",
             "- Destructive or runtime-affecting actions may show a GUI approval card; preview first, then request/apply only when the user's instruction is clear.",
             "- GraphPatch operations use camelCase fields: `expectedRevision`, `ops`, `op`, `nodeType`, `nodeId`, `fromNodeId`, `fromPort`, `toNodeId`, and `toPort`.",
