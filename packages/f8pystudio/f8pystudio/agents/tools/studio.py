@@ -216,7 +216,7 @@ class StudioAutomationTools:
             {
                 "name": name,
                 "description": description,
-                "tags": [] if tags is None else list(tags),
+                "tags": None if tags is None else list(tags),
                 "projectId": project_id,
                 "overwriteProjectId": overwrite_project_id,
             },

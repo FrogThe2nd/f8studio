@@ -148,6 +148,18 @@ class StudioRuntimeObservationSource(Protocol):
         timeout_s: float = 1.0,
     ) -> StoredStateValue | None: ...
 
+    def wait_port_samples(
+        self,
+        *,
+        service_id: str,
+        node_id: str,
+        port: str,
+        min_count: int = 1,
+        limit: int = 1,
+        after_observed_at_ms: int | None = None,
+        timeout_s: float = 1.0,
+    ) -> list[dict[str, Any]]: ...
+
 
 class StudioGraphUiContextSource(Protocol):
     def graph_ui_context(self) -> dict[str, Any]: ...
@@ -621,24 +633,50 @@ class LocalStudioGraphToolExecutor(QtCore.QObject):
         return {"state": _stored_state_to_dict(state)}
 
     def _runtime_sample_port(self, params: dict[str, Any]) -> dict[str, Any]:
-        bridge = self._require_bridge()
         service_id = _required_text(params, "serviceId")
         node_id = _required_text(params, "nodeId")
         port = _required_text(params, "port")
-        result = bridge.sample_data_port_and_wait(
-            service_id,
-            node_id,
-            port,
-            limit=int(params.get("limit") or 1),
-            timeout_s=float(params.get("timeoutS") or 2.0),
-            include_value=bool(params.get("includeValue", True)),
-            max_value_bytes=int(params.get("maxValueBytes") or 65536),
+        limit = int(params.get("limit") or 1)
+        timeout_s = float(params.get("timeoutS") or 2.0)
+        cached_only = bool(params.get("cachedOnly", False))
+        min_count = int(params.get("minCount") or 1)
+        source = self._observation_source
+        subscribe = bool(params.get("subscribe", True))
+        if subscribe and not cached_only:
+            bridge = self._require_bridge()
+            result = bridge.sample_data_port_and_wait(
+                service_id,
+                node_id,
+                port,
+                limit=limit,
+                timeout_s=timeout_s,
+                include_value=bool(params.get("includeValue", True)),
+                max_value_bytes=int(params.get("maxValueBytes") or 65536),
+            )
+            samples = list(result.get("samples") if isinstance(result.get("samples"), list) else [])
+            return {
+                "samples": [dict(item) for item in samples if isinstance(item, dict)],
+                "timedOut": bool(result.get("timedOut", False)),
+                "error": str(result.get("error") or ""),
+                "cached": False,
+            }
+        elif source is None:
+            return {"samples": [], "timedOut": True, "error": "runtime observation store is not available", "cached": True}
+
+        samples = source.wait_port_samples(
+            service_id=service_id,
+            node_id=node_id,
+            port=port,
+            min_count=min_count,
+            limit=limit,
+            after_observed_at_ms=_optional_int_param(params, "afterObservedAtMs"),
+            timeout_s=timeout_s,
         )
         return {
-            "samples": list(result.get("samples") if isinstance(result.get("samples"), list) else []),
-            "timedOut": bool(result.get("timedOut", False)),
-            "error": str(result.get("error") or ""),
-            "cached": False,
+            "samples": samples,
+            "timedOut": len(samples) < max(1, min(min_count, 100)),
+            "error": "",
+            "cached": True,
         }
 
     def _runtime_debug_data(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -1257,7 +1295,7 @@ class LocalStudioGraphTools:
             {
                 "name": name,
                 "description": description,
-                "tags": [] if tags is None else list(tags),
+                "tags": None if tags is None else list(tags),
                 "projectId": project_id,
                 "overwriteProjectId": overwrite_project_id,
             },
@@ -1422,19 +1460,28 @@ class LocalStudioGraphTools:
         timeout_s: float = 2.0,
         include_value: bool = True,
         max_value_bytes: int = 65536,
+        cached_only: bool = False,
+        min_count: int = 1,
+        after_observed_at_ms: int = 0,
     ) -> dict[str, Any]:
-        """Subscribe briefly and sample data from a runtime output port."""
+        """Subscribe briefly or read cached samples from a runtime output port."""
+        payload: dict[str, Any] = {
+            "serviceId": service_id,
+            "nodeId": node_id,
+            "port": port,
+            "limit": int(limit),
+            "timeoutS": float(timeout_s),
+            "includeValue": bool(include_value),
+            "maxValueBytes": int(max_value_bytes),
+            "cachedOnly": bool(cached_only),
+            "minCount": int(min_count),
+            "subscribe": not bool(cached_only),
+        }
+        if int(after_observed_at_ms) > 0:
+            payload["afterObservedAtMs"] = int(after_observed_at_ms)
         return self.executor.call(
             "runtime.samplePort",
-            {
-                "serviceId": service_id,
-                "nodeId": node_id,
-                "port": port,
-                "limit": int(limit),
-                "timeoutS": float(timeout_s),
-                "includeValue": bool(include_value),
-                "maxValueBytes": int(max_value_bytes),
-            },
+            payload,
         )
 
     def runtime_debug_data(

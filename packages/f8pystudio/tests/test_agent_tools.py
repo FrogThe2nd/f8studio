@@ -166,6 +166,7 @@ def test_studio_automation_tools_forward_project_calls(
     assert tools.project_list() == {"ok": True}
     assert tools.project_new(confirm=True, clear_current_project=False) == {"ok": True}
     assert tools.project_save(name="VAM", description="demo", tags=["vam"], project_id="project-a") == {"ok": True}
+    assert tools.project_save(project_id="project-b") == {"ok": True}
     assert tools.project_load(project_id="project-a", confirm=True) == {"ok": True}
     assert calls == [
         ("project.list", None),
@@ -177,6 +178,16 @@ def test_studio_automation_tools_forward_project_calls(
                 "description": "demo",
                 "tags": ["vam"],
                 "projectId": "project-a",
+                "overwriteProjectId": "",
+            },
+        ),
+        (
+            "project.save",
+            {
+                "name": "",
+                "description": "",
+                "tags": None,
+                "projectId": "project-b",
                 "overwriteProjectId": "",
             },
         ),
@@ -340,6 +351,117 @@ def test_build_studio_mcp_stdio_tool_uses_agent_framework_mcp_tool(monkeypatch: 
             "request_timeout": 15,
             "description": "F8 PyStudio graph, runtime, and debug tools.",
         }
+    ]
+
+
+def test_mcp_runtime_tools_forward_declared_parameters(monkeypatch: pytest.MonkeyPatch) -> None:
+    import f8pystudio.mcp.server as mcp_server
+
+    calls: list[tuple[str, dict[str, object]]] = []
+    registered_tools: dict[str, object] = {}
+
+    class FakeTools:
+        def runtime_sample_port(self, **kwargs: object) -> dict[str, object]:
+            calls.append(("runtime_sample_port", dict(kwargs)))
+            return {"ok": True}
+
+        def runtime_debug_data(self, **kwargs: object) -> dict[str, object]:
+            calls.append(("runtime_debug_data", dict(kwargs)))
+            return {"ok": True}
+
+    class FakeFastMCP:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def tool(self):
+            def _decorator(fn):
+                registered_tools[fn.__name__] = fn
+                return fn
+
+            return _decorator
+
+        def resource(self, uri: str):
+            _ = uri
+
+            def _decorator(fn):
+                return fn
+
+            return _decorator
+
+        def prompt(self):
+            def _decorator(fn):
+                return fn
+
+            return _decorator
+
+    monkeypatch.setattr(mcp_server, "StudioAutomationTools", lambda: FakeTools())
+    monkeypatch.setitem(sys.modules, "mcp", types.ModuleType("mcp"))
+    fake_server_module = types.ModuleType("mcp.server")
+    fake_fastmcp_module = types.ModuleType("mcp.server.fastmcp")
+    fake_fastmcp_module.FastMCP = FakeFastMCP
+    monkeypatch.setitem(sys.modules, "mcp.server", fake_server_module)
+    monkeypatch.setitem(sys.modules, "mcp.server.fastmcp", fake_fastmcp_module)
+
+    _ = mcp_server._create_server()
+
+    sample_tool = registered_tools["runtime_sample_port"]
+    debug_tool = registered_tools["runtime_debug_data"]
+    assert callable(sample_tool)
+    assert callable(debug_tool)
+    sample_tool(
+        service_id="svc",
+        node_id="node",
+        port="out",
+        limit=3,
+        timeout_s=0.25,
+        include_value=False,
+        max_value_bytes=128,
+        cached_only=True,
+        min_count=2,
+        after_observed_at_ms=1234,
+        connection_file="conn.json",
+    )
+    debug_tool(
+        service_id="svc",
+        node_id="node",
+        port="in",
+        limit=4,
+        timeout_s=0.5,
+        include_value=False,
+        max_value_bytes=256,
+        connection_file="conn.json",
+    )
+
+    assert calls == [
+        (
+            "runtime_sample_port",
+            {
+                "service_id": "svc",
+                "node_id": "node",
+                "port": "out",
+                "limit": 3,
+                "timeout_s": 0.25,
+                "include_value": False,
+                "max_value_bytes": 128,
+                "cached_only": True,
+                "min_count": 2,
+                "after_observed_at_ms": 1234,
+                "connection_file": "conn.json",
+            },
+        ),
+        (
+            "runtime_debug_data",
+            {
+                "service_id": "svc",
+                "node_id": "node",
+                "port": "in",
+                "limit": 4,
+                "timeout_s": 0.5,
+                "include_value": False,
+                "max_value_bytes": 256,
+                "connection_file": "conn.json",
+            },
+        ),
     ]
 
 
@@ -683,6 +805,90 @@ def test_local_studio_graph_tools_dispatch_runtime_monitor_and_logs(monkeypatch:
     assert "deploy_service_and_wait" in call_names
     assert "restart_service" in call_names
     assert "invoke_remote_command_and_wait" in call_names
+
+
+def test_local_studio_graph_tools_runtime_sample_port_can_read_cached_samples(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _ensure_app()
+
+    class FakePayload:
+        node_count = 0
+        edge_count = 0
+
+        def to_dict(self) -> dict[str, object]:
+            return {"nodeCount": self.node_count, "edgeCount": self.edge_count}
+
+    class FakeAdapter:
+        def __init__(self, studio_graph: object) -> None:
+            self.studio_graph = studio_graph
+
+        def snapshot(self) -> FakePayload:
+            return FakePayload()
+
+    monkeypatch.setattr("f8pystudio.agents.tools.graph.StudioGraphAutomationAdapter", FakeAdapter)
+    observations = RuntimeObservationStore()
+    observations.put_port_sample(
+        service_id="svc",
+        node_id="node",
+        port="out",
+        sample={"value": 10, "observedAtMs": 1000},
+    )
+    observations.put_port_sample(
+        service_id="svc",
+        node_id="node",
+        port="out",
+        sample={"value": 20, "observedAtMs": 2000},
+    )
+    bridge = _FakeBridge()
+    tools = LocalStudioGraphTools(
+        LocalStudioGraphToolExecutor(
+            "graph",
+            bridge=bridge,
+            observation_source=observations,
+        )
+    )
+
+    result = tools.runtime_sample_port(
+        "svc",
+        "node",
+        "out",
+        limit=2,
+        timeout_s=0.01,
+        cached_only=True,
+        min_count=1,
+        after_observed_at_ms=1500,
+    )
+
+    assert result == {
+        "samples": [{"value": 20, "observedAtMs": 2000}],
+        "timedOut": False,
+        "error": "",
+        "cached": True,
+    }
+    assert [call[0] for call in bridge.calls] == []
+
+    tools_without_bridge = LocalStudioGraphTools(
+        LocalStudioGraphToolExecutor(
+            "graph",
+            observation_source=observations,
+        )
+    )
+    assert tools_without_bridge.runtime_sample_port(
+        "svc",
+        "node",
+        "out",
+        limit=1,
+        timeout_s=0.01,
+        cached_only=True,
+        min_count=1,
+        after_observed_at_ms=1500,
+    ) == {
+        "samples": [{"value": 20, "observedAtMs": 2000}],
+        "timedOut": False,
+        "error": "",
+        "cached": True,
+    }
 
 
 def test_local_studio_graph_tools_dispatch_project_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:

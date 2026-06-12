@@ -378,6 +378,9 @@ def _create_server() -> Any:
             timeout_s=timeout_s,
             include_value=include_value,
             max_value_bytes=max_value_bytes,
+            cached_only=cached_only,
+            min_count=min_count,
+            after_observed_at_ms=after_observed_at_ms,
             connection_file=connection_file,
         )
 
@@ -400,9 +403,6 @@ def _create_server() -> Any:
             timeout_s=timeout_s,
             include_value=include_value,
             max_value_bytes=max_value_bytes,
-            cached_only=cached_only,
-            min_count=min_count,
-            after_observed_at_ms=after_observed_at_ms,
             connection_file=connection_file,
         )
 

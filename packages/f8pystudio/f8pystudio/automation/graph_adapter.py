@@ -89,6 +89,30 @@ class _ContainerGeometryChangeCommand(QtWidgets.QUndoCommand):
         _apply_container_geometry_without_child_translation(self._container, self._after)
 
 
+class _NodeSpecChangeCommand(QtWidgets.QUndoCommand):
+    def __init__(self, *, node: Any, before: F8OperatorSpec | F8ServiceSpec, after: F8OperatorSpec | F8ServiceSpec) -> None:
+        super().__init__('spec "{}"'.format(_node_name(node)))
+        self._node = node
+        self._before = _copy_node_spec(before)
+        self._after = _copy_node_spec(after)
+        self._before_custom_properties = _copy_node_custom_properties(node)
+        self._after_custom_properties: dict[str, Any] | None = None
+        self._first_redo = True
+
+    def undo(self) -> None:
+        _apply_node_spec(self._node, _copy_node_spec(self._before))
+        _restore_node_custom_properties(self._node, self._before_custom_properties)
+
+    def redo(self) -> None:
+        _apply_node_spec(self._node, _copy_node_spec(self._after))
+        if bool(self._first_redo):
+            self._after_custom_properties = _copy_node_custom_properties(self._node)
+            self._first_redo = False
+            return
+        if self._after_custom_properties is not None:
+            _restore_node_custom_properties(self._node, self._after_custom_properties)
+
+
 def _is_studio_operator_node(node: Any) -> bool:
     from f8pystudio.nodegraph.operator_basenode import F8StudioOperatorBaseNode
 
@@ -561,10 +585,10 @@ class StudioGraphAutomationAdapter:
             self._require_node(op.node_id).set_property("name", op.name, push_undo=push_undo)
             return
         if isinstance(op, SetNodePortsOp):
-            self._apply_node_ports_op(op)
+            self._apply_node_ports_op(op, push_undo=push_undo)
             return
         if isinstance(op, SetNodeStateFieldsOp):
-            self._apply_node_state_fields_op(op)
+            self._apply_node_state_fields_op(op, push_undo=push_undo)
             return
         if isinstance(op, MoveNodeOp):
             node = self._require_node(op.node_id)
@@ -638,14 +662,11 @@ class StudioGraphAutomationAdapter:
         _validate_required_data_ports_kept(before=spec, after=updated_spec, collection="dataOutPorts")
         coerce_json_value(dump_json(updated_spec, mode="json", by_alias=True))
 
-    def _apply_node_ports_op(self, op: SetNodePortsOp) -> None:
+    def _apply_node_ports_op(self, op: SetNodePortsOp, *, push_undo: bool) -> None:
         node = self._require_node(op.node_id)
+        before_spec = _require_node_spec(node, op.node_id)
         updated_spec = self._updated_ports_spec_for_op(node, op)
-        try:
-            node.set_spec(updated_spec, rebuild=True)
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            logger.exception("failed to apply node ports op nodeId=%s", op.node_id)
-            raise
+        _set_node_spec_value(node, before=before_spec, after=updated_spec, push_undo=push_undo)
 
     def _validate_node_state_fields_op(self, op: SetNodeStateFieldsOp) -> None:
         node = self._require_node(op.node_id)
@@ -658,19 +679,14 @@ class StudioGraphAutomationAdapter:
         _validate_required_state_fields_kept(before=spec, after=updated_spec)
         coerce_json_value(dump_json(updated_spec, mode="json", by_alias=True))
 
-    def _apply_node_state_fields_op(self, op: SetNodeStateFieldsOp) -> None:
+    def _apply_node_state_fields_op(self, op: SetNodeStateFieldsOp, *, push_undo: bool) -> None:
         node = self._require_node(op.node_id)
+        before_spec = _require_node_spec(node, op.node_id)
         updated_spec = self._updated_state_fields_spec_for_op(node, op)
-        try:
-            node.set_spec(updated_spec, rebuild=True)
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            logger.exception("failed to apply node state fields op nodeId=%s", op.node_id)
-            raise
+        _set_node_spec_value(node, before=before_spec, after=updated_spec, push_undo=push_undo)
 
     def _updated_ports_spec_for_op(self, node: Any, op: SetNodePortsOp) -> F8OperatorSpec | F8ServiceSpec:
-        spec = _node_spec(node)
-        if spec is None:
-            raise ValueError(f"node {op.node_id} has no editable spec")
+        spec = _spec_copy_for_edit(node, node_id=op.node_id)
         data_in_ports = (
             list(spec.dataInPorts or [])
             if op.data_in_ports is None
@@ -698,9 +714,7 @@ class StudioGraphAutomationAdapter:
         node: Any,
         op: SetNodeStateFieldsOp,
     ) -> F8OperatorSpec | F8ServiceSpec:
-        spec = _node_spec(node)
-        if spec is None:
-            raise ValueError(f"node {op.node_id} has no editable spec")
+        spec = _spec_copy_for_edit(node, node_id=op.node_id)
         return set_state_fields(spec, state_fields=_decode_state_field_specs(op.state_fields, label="stateFields"))
 
     def _require_node(self, node_id: str) -> Any:
@@ -1072,6 +1086,76 @@ def _validate_required_state_fields_kept(
         name = str(field.name or "").strip()
         if name and bool(field.required) and name not in after_names:
             raise ValueError(f"required stateFields field cannot be removed: {name}")
+
+
+def _copy_node_spec(spec: F8OperatorSpec | F8ServiceSpec) -> F8OperatorSpec | F8ServiceSpec:
+    payload = dump_json(spec, mode="json", by_alias=True)
+    if not isinstance(payload, dict):
+        raise TypeError("node spec JSON payload must be an object")
+    if isinstance(spec, F8OperatorSpec):
+        return validate_as(F8OperatorSpec, payload)
+    return validate_as(F8ServiceSpec, payload)
+
+
+def _require_node_spec(node: Any, node_id: str) -> F8OperatorSpec | F8ServiceSpec:
+    spec = _node_spec(node)
+    if spec is None:
+        raise ValueError(f"node {node_id} has no editable spec")
+    return spec
+
+
+def _spec_copy_for_edit(node: Any, *, node_id: str) -> F8OperatorSpec | F8ServiceSpec:
+    return _copy_node_spec(_require_node_spec(node, node_id))
+
+
+def _apply_node_spec(node: Any, spec: F8OperatorSpec | F8ServiceSpec) -> None:
+    try:
+        node.set_spec(spec, rebuild=True)
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        logger.exception("failed to apply node spec nodeId=%s", _node_id(node))
+        raise
+
+
+def _copy_node_custom_properties(node: Any) -> dict[str, Any]:
+    try:
+        return copy.deepcopy(dict(node.model.custom_properties or {}))
+    except _GRAPH_READ_ERRORS:
+        logger.exception("failed to copy node custom properties nodeId=%s", _node_id(node))
+        raise
+
+
+def _restore_node_custom_properties(node: Any, custom_properties: dict[str, Any]) -> None:
+    try:
+        model_custom_properties = node.model.custom_properties
+        model_custom_properties.clear()
+        model_custom_properties.update(copy.deepcopy(custom_properties))
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        logger.exception("failed to restore node custom properties nodeId=%s", _node_id(node))
+        raise
+    try:
+        node.view.draw_node()
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        logger.debug("failed to redraw node after custom property restore nodeId=%s", _node_id(node), exc_info=True)
+
+
+def _set_node_spec_value(
+    node: Any,
+    *,
+    before: F8OperatorSpec | F8ServiceSpec,
+    after: F8OperatorSpec | F8ServiceSpec,
+    push_undo: bool,
+) -> None:
+    graph = node.graph
+    if bool(push_undo) and graph is not None:
+        graph.undo_stack().push(
+            _NodeSpecChangeCommand(
+                node=node,
+                before=before,
+                after=after,
+            )
+        )
+        return
+    _apply_node_spec(node, _copy_node_spec(after))
 
 
 def _assign_existing_node_id(graph: Any, node: Any, node_id: str) -> None:

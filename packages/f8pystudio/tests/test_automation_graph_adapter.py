@@ -456,8 +456,10 @@ def test_graph_patch_can_set_editable_operator_ports() -> None:
         }
     )
 
+    before_ports_session = graph.serialize_session()
     preview = adapter.preview_patch(ports_patch)
     assert preview.valid is True
+    assert graph.serialize_session() == before_ports_session
     applied = adapter.apply_patch(ports_patch)
     detail = adapter.node_detail("vam_script")
     snapshot = adapter.snapshot()
@@ -468,6 +470,9 @@ def test_graph_patch_can_set_editable_operator_ports() -> None:
     node = next(node for node in snapshot.nodes if node.node_id == "vam_script")
     assert [port.name for port in node.inputs if port.kind == "data"] == ["[D]skeletons"]
     assert {port.name for port in node.outputs if port.kind == "data"} == {"status[D]", "axes[D]"}
+
+    graph._undo_stack.undo()
+    assert graph.serialize_session() == before_ports_session
 
 
 def test_graph_patch_can_set_editable_operator_state_fields() -> None:
@@ -539,8 +544,10 @@ def test_graph_patch_can_set_editable_operator_state_fields() -> None:
         }
     )
 
+    before_state_fields_session = graph.serialize_session()
     preview = adapter.preview_patch(state_fields_patch)
     assert preview.valid is True
+    assert graph.serialize_session() == before_state_fields_session
     applied = adapter.apply_patch(state_fields_patch)
     detail = adapter.node_detail("vam_script")
     snapshot = adapter.snapshot()
@@ -552,6 +559,9 @@ def test_graph_patch_can_set_editable_operator_state_fields() -> None:
         "trackingMode",
         "availableReferenceKeys",
     ]
+
+    graph._undo_stack.undo()
+    assert graph.serialize_session() == before_state_fields_session
     node = next(node for node in snapshot.nodes if node.node_id == "vam_script")
     assert [field.name for field in node.state_fields] == [
         "code",
