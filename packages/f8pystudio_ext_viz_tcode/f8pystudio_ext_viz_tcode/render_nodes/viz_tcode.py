@@ -45,6 +45,10 @@ class _TCodeViewerPresenter:
     def attach_viewer(self, viewer: _ViewerHandle) -> None:
         self._viewer = viewer
 
+    def detach_viewer(self) -> None:
+        self._viewer = None
+        self.viewer_open = False
+
     def on_viewer_opened(self) -> None:
         self.viewer_open = True
         viewer = self._viewer
@@ -323,6 +327,19 @@ class VizTCodeRenderNode(F8StudioOperatorBaseNode):
         except _QT_LIFECYCLE_ERRORS:
             logger.exception("failed to bind TCode viewer app quit hook")
 
+    def _unbind_app_quit_hook(self) -> None:
+        if not self._app_quit_hook_bound:
+            return
+        app = QtWidgets.QApplication.instance()
+        if app is None:
+            self._app_quit_hook_bound = False
+            return
+        try:
+            app.aboutToQuit.disconnect(self._on_app_about_to_quit)  # type: ignore[attr-defined]
+        except _QT_LIFECYCLE_ERRORS:
+            logger.debug("failed to unbind TCode viewer app quit hook", exc_info=True)
+        self._app_quit_hook_bound = False
+
     def _on_app_about_to_quit(self) -> None:
         window = self._viewer_window
         if window is None:
@@ -331,6 +348,19 @@ class VizTCodeRenderNode(F8StudioOperatorBaseNode):
             window.force_shutdown()
         except _QT_LIFECYCLE_ERRORS:
             logger.exception("failed to shutdown TCode viewer during app quit")
+
+    def on_graph_teardown(self) -> None:
+        self._unbind_app_quit_hook()
+        self._presenter.on_detach()
+        window = self._viewer_window
+        self._viewer_window = None
+        self._presenter.detach_viewer()
+        if window is None:
+            return
+        try:
+            window.force_shutdown()
+        except _QT_LIFECYCLE_ERRORS:
+            logger.exception("failed to shutdown TCode viewer during node teardown")
 
     def _get_widget(self) -> _TCodeViewerWidget | None:
         try:

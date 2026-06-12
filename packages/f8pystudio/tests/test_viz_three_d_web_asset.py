@@ -30,3 +30,17 @@ def test_zoom_fit_bounds_ignore_root_origin_helper_points() -> None:
     assert "if (!isRootOriginNode(nodeName, pos))" in viewer_js
     assert "bounds = mergeBounds(bounds, minV);" not in viewer_js
     assert "bounds = mergeBounds(bounds, maxV);" not in viewer_js
+
+
+def test_detach_is_recoverable_when_next_payload_arrives() -> None:
+    viewer_js = (ASSET_DIR / "viewer.js").read_text(encoding="utf-8")
+
+    assert "detached: false," in viewer_js
+    assert "function resumeFromDetach()" in viewer_js
+    assert "resumeFromDetach();\n    state.pendingPayload = payload;" in viewer_js
+    assert "if (!state.running) {\n      setRunning(true);" in viewer_js
+    assert "state.detached = true;" in viewer_js
+    assert "state.detached = false;" in viewer_js
+    assert "window.removeEventListener('keydown', onKeyDown);" not in viewer_js
+    assert "window.removeEventListener('keyup', onKeyUp);" not in viewer_js
+    assert "resizeObserver.disconnect()" not in viewer_js

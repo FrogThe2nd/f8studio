@@ -24,6 +24,7 @@
     roamSpeed: 2.0,
     frameHandle: 0,
     running: true,
+    detached: false,
     lastFrameMs: 0,
     lastPayloadApplyMs: 0,
     lastTickS: performance.now() / 1000.0,
@@ -1144,7 +1145,17 @@
   }
 
   function setData(payload) {
+    resumeFromDetach();
     state.pendingPayload = payload;
+    if (!state.running) {
+      setRunning(true);
+    }
+  }
+
+  function resumeFromDetach() {
+    if (!state.detached) return;
+    state.detached = false;
+    onResize();
   }
 
   function maybeApplyPendingPayload(nowMs) {
@@ -1293,14 +1304,8 @@
   }
 
   function detach() {
-    state.running = false;
-    if (state.frameHandle) {
-      cancelAnimationFrame(state.frameHandle);
-      state.frameHandle = 0;
-    }
-    window.removeEventListener('keydown', onKeyDown);
-    window.removeEventListener('keyup', onKeyUp);
-    if (resizeObserver) resizeObserver.disconnect();
+    state.detached = true;
+    setRunning(false);
 
     clearGeometryRoot();
     clearAllLabels();
@@ -1310,7 +1315,9 @@
     state.axisTreeCollapsedModels.clear();
     state.axisTreeSignature = '';
     state.pendingPayload = null;
+    state.payload = null;
     if (axisTreeEl) axisTreeEl.innerHTML = '';
+    updateStatus('detached');
   }
 
   if (fitBtn) {
@@ -1400,7 +1407,7 @@
   });
   resizeObserver.observe(root);
   onResize();
-  requestAnimationFrame(tick);
+  state.frameHandle = requestAnimationFrame(tick);
 
   window.Skeleton3DViewer = {
     setData: setData,

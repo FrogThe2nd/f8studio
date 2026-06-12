@@ -11,6 +11,10 @@ let currentModel = "SR6";
 let emulatorCtor = null;
 let emulatorCtorPromise = null;
 let createSequence = 0;
+let activeCreateModel = null;
+let requestedCreateModel = null;
+let createInFlight = false;
+let detached = false;
 const pendingWrites = [];
 
 
@@ -102,15 +106,18 @@ function flushPendingWrites() {
 async function createEmulator(model) {
   const sequence = createSequence + 1;
   createSequence = sequence;
+  activeCreateModel = model;
   let ctor = null;
   try {
     ctor = await loadEmulatorCtor();
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     setState(`CDN load error: ${msg}`);
+    activeCreateModel = null;
     return;
   }
   if (sequence !== createSequence) {
+    activeCreateModel = null;
     return;
   }
   destroyEmulator();
@@ -118,6 +125,7 @@ async function createEmulator(model) {
     emulator = new ctor("#canvas", { model });
     if (sequence !== createSequence) {
       destroyEmulator();
+      activeCreateModel = null;
       return;
     }
     currentModel = model;
@@ -127,6 +135,10 @@ async function createEmulator(model) {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     setState(`init error: ${msg}`);
+  } finally {
+    if (activeCreateModel === model) {
+      activeCreateModel = null;
+    }
   }
 }
 
@@ -138,6 +150,40 @@ function normalizeModel(model) {
   return "SR6";
 }
 
+function desiredCreateModel() {
+  return activeCreateModel || requestedCreateModel || currentModel;
+}
+
+function requestCreateEmulator(model) {
+  const nextModel = normalizeModel(model);
+  const wasDetached = detached;
+  detached = false;
+  if (createInFlight && !wasDetached && requestedCreateModel === null && activeCreateModel === nextModel) {
+    return;
+  }
+  requestedCreateModel = nextModel;
+  if (createInFlight) {
+    return;
+  }
+  createInFlight = true;
+  void runCreateQueue();
+}
+
+async function runCreateQueue() {
+  try {
+    while (requestedCreateModel !== null) {
+      const model = requestedCreateModel;
+      requestedCreateModel = null;
+      await createEmulator(model);
+    }
+  } finally {
+    createInFlight = false;
+    if (requestedCreateModel !== null) {
+      requestCreateEmulator(requestedCreateModel);
+    }
+  }
+}
+
 window.TCodeViewer = {
   setModel(model) {
     const nextModel = normalizeModel(model);
@@ -145,13 +191,13 @@ window.TCodeViewer = {
       setModelLabel(nextModel);
       return;
     }
-    void createEmulator(nextModel);
+    requestCreateEmulator(nextModel);
   },
   writeTCode(line) {
     const normalized = String(line || "");
     if (!emulator || typeof emulator.write !== "function") {
       pendingWrites.push(normalized);
-      void createEmulator(currentModel);
+      requestCreateEmulator(desiredCreateModel());
       return;
     }
     try {
@@ -162,10 +208,12 @@ window.TCodeViewer = {
     }
   },
   resetViewer() {
-    void createEmulator(currentModel);
+    requestCreateEmulator(currentModel);
   },
   detachViewer() {
     createSequence += 1;
+    detached = true;
+    requestedCreateModel = null;
     destroyEmulator();
     pendingWrites.length = 0;
     setState("detached");
@@ -174,4 +222,4 @@ window.TCodeViewer = {
 
 setModelLabel(currentModel);
 setState("loading");
-void createEmulator(currentModel);
+requestCreateEmulator(currentModel);
