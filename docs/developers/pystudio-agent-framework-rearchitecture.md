@@ -110,12 +110,12 @@ This keeps code-editor and graph-level assistance on the same runtime path while
 
 `f8pystudio.agents.tools.studio.StudioAutomationTools` is the canonical typed tool boundary for Studio graph/runtime operations.
 
-The MCP server is now a thin registration layer in `f8pystudio.mcp.server` that forwards to the same tool implementation. This avoids maintaining one graph-operation implementation for in-app agents and another for MCP.
+The MCP server is now a thin streamable HTTP gateway plus registration layer in `f8pystudio.mcp.http_server` and `f8pystudio.mcp.registration`. Both forward to the same tool implementation, which avoids maintaining one graph-operation implementation for in-app agents and another for MCP.
 
 MAF MCP consumption is exposed through `f8pystudio.agents.tools.mcp`:
 
-- `StudioMCPStdioConfig`
-- `build_studio_mcp_stdio_tool()`
+- `StudioMCPHttpConfig`
+- `build_studio_mcp_http_tool()`
 
 PyStudio owns domain semantics and mutation safety. MAF/MCP own tool transport, external tool consumption, and provider orchestration.
 
@@ -144,14 +144,14 @@ Expected result:
 
 ## Studio Automation From Codex
 
-With Studio launched in automation mode, an external agent such as Codex can operate PyStudio through the typed automation API:
+With Studio launched in automation mode, or with `Tools -> MCP HTTP Server` enabled inside the GUI, an external agent such as Codex can operate PyStudio through the typed automation API:
 
 1. Load the connection metadata from the automation connection file.
 2. Authenticate with the generated token file.
 3. Call `studio.status`, `graph.catalog`, `graph.previewPatch`, `graph.applyPatch`, `graph.compile`, runtime deploy/status/monitor methods, and related operations.
 4. Use `StudioGraphAutomationAdapter` to resolve catalog/raw port names safely.
 
-This means Codex can run Studio, apply a typed graph patch, compile it, and debug graph/runtime evidence through the API. Runtime live sampling depends on the running service backend and transport support; in-process pyengine tests validate the sine graph behavior independently of the GUI transport.
+This means Codex can run Studio, apply a typed graph patch, compile it, and debug graph/runtime evidence through the API. Codex should install the HTTP endpoint with `codex mcp add f8pystudio --url http://127.0.0.1:8765/mcp`. Runtime live sampling depends on the running service backend and transport support; in-process pyengine tests validate the sine graph behavior independently of the GUI transport.
 
 ## Conversation And Memory Direction
 

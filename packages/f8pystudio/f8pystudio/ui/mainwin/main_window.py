@@ -21,6 +21,7 @@ from ..widgets.node_property_panel import F8StudioSingleNodePropertiesWidget
 from ..widgets.service_log_widget import ServiceLogDock
 from .ai_assist_sidebar import AiAssistSidebarWidget
 from .main_window_project_mixin import MainWindowProjectMixin, _ProjectAutoLoadWorker
+from .mcp_http_server_mixin import MainWindowMcpHttpServerMixin
 from .main_window_runtime_mixin import MainWindowRuntimeMixin
 from .main_window_state_mixin import MainWindowStateMixin
 from .main_window_ui_mixin import MainWindowUiMixin
@@ -33,6 +34,7 @@ from f8pystudio.bridge.studio_bridge import (
 )
 from f8pystudio.automation.gui_host import StudioAutomationHost
 from f8pystudio.automation.observation_store import RuntimeObservationStore
+from f8pystudio.mcp.http_server import PyStudioMcpHttpServer
 from f8pystudio.studio_specs.registry import SERVICE_CLASS as STUDIO_SERVICE_CLASS
 
 logger = logging.getLogger(__name__)
@@ -42,6 +44,7 @@ _MAIN_WINDOW_QT_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
 
 class F8StudioMainWin(
     MainWindowProjectMixin,
+    MainWindowMcpHttpServerMixin,
     MainWindowRuntimeMixin,
     MainWindowStateMixin,
     MainWindowUiMixin,
@@ -100,6 +103,7 @@ class F8StudioMainWin(
     _auto_proxy_action: QtGui.QAction
     _performance_overlay_action: QtGui.QAction
     _global_hotkeys_action: QtGui.QAction
+    _mcp_http_server_action: QtGui.QAction
     _variant_catalog_action: QtGui.QAction
     _log_level_action_group: QtGui.QActionGroup
     _log_level_actions: dict[int, QtGui.QAction]
@@ -133,6 +137,7 @@ class F8StudioMainWin(
     _global_hotkey_controller: ControlPanelGlobalHotkeyController
     _monitor_alert_notifier: MonitorAlertNotifier
     _automation_host: StudioAutomationHost | None
+    _mcp_http_server: PyStudioMcpHttpServer | None
     _runtime_observations: RuntimeObservationStore
 
     def __init__(
@@ -177,6 +182,7 @@ class F8StudioMainWin(
         self._shutdown_started = False
         self._auto_load_worker = None
         self._automation_host = None
+        self._mcp_http_server = None
         self._runtime_observations = RuntimeObservationStore()
 
         self.studio_graph = F8StudioGraph(asset_cache_auto_refresh=False)
@@ -375,6 +381,11 @@ class F8StudioMainWin(
             return
         self._shutdown_started = True
         self._closing = True
+        self._run_shutdown_step(
+            "mcp-http-server-stop",
+            lambda: self._mcp_http_server.stop() if self._mcp_http_server is not None else None,
+        )
+        self._mcp_http_server = None
         self._run_shutdown_step(
             "automation-host-stop",
             lambda: self._automation_host.stop() if self._automation_host is not None else None,

@@ -67,16 +67,23 @@ Automation clients must not mutate Qt objects directly. The local control server
 
 Longer observation requests stay off the Qt thread. `runtime.watchState` waits on the automation observation store from the server thread, while `runtime.samplePort` installs a bounded short-lived subscription through the bridge runtime transport and returns capped JSON-safe samples. JSON data values may be included when they fit the caller's `maxValueBytes`; binary or oversized payloads return metadata only. High-frequency counters and port output samples remain monitor/data-channel concerns, not service `stateFields`.
 
-Codex MCP example:
+Recommended Codex MCP setup uses a loopback streamable HTTP MCP gateway. In the PyStudio GUI, use `Tools -> MCP HTTP Server` to start or stop the gateway for the active instance. From the repository root, the same HTTP-only gateway can be started with:
 
-```json
-{
-  "mcpServers": {
-    "f8pystudio": {
-      "command": "pixi",
-      "args": ["run", "python", "-m", "f8pystudio.mcp.server"],
-      "cwd": "/home/sxs/SS/Feel8/f8studio"
-    }
-  }
-}
+```bash
+pixi run f8pystudio_mcp
 ```
+
+Then install the MCP endpoint into Codex:
+
+```bash
+codex mcp add f8pystudio --url http://127.0.0.1:8765/mcp
+```
+
+The GUI toggle starts the PyStudio automation host when needed and points the MCP gateway at that instance's connection file. The command-line gateway reads the default automation connection file from `~/.f8/studio/automation/connection.json`. When targeting a specific PyStudio instance from the command line, set `F8PYSTUDIO_CONNECTION_FILE` before starting the gateway, or pass `--connection-file` to the Python module:
+
+```bash
+F8PYSTUDIO_CONNECTION_FILE=~/.f8/studio/automation/connection.json pixi run f8pystudio_mcp
+pixi run python -m f8pystudio.mcp.server --host 127.0.0.1 --port 8765 --path /mcp --connection-file ~/.f8/studio/automation/connection.json
+```
+
+Codex, Agent Framework clients, and PyStudio's GUI toggle should all use the same streamable HTTP endpoint at `http://127.0.0.1:8765/mcp`.

@@ -91,6 +91,10 @@ class StudioAutomationHost(QtCore.QObject):
             created_at=int(time.time()),
         )
 
+    @property
+    def port_file(self) -> Path:
+        return self._port_file
+
     def start(self) -> AutomationConnectionInfo:
         if self._server is not None:
             info = self.connection_info

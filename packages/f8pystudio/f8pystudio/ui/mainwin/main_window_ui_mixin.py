@@ -55,6 +55,7 @@ class MainWindowActionBundle:
     clear_all_nodes_action: QtGui.QAction
     deploy_action: QtGui.QAction
     stop_all_services_action: QtGui.QAction
+    mcp_http_server_action: QtGui.QAction
     global_hotkeys_action: QtGui.QAction
     variant_catalog_action: QtGui.QAction
 
@@ -148,6 +149,7 @@ class MainWindowUiMixin:
         _manage_components_action: QtGui.QAction
         _variant_catalog_action: QtGui.QAction
         _global_hotkeys_action: QtGui.QAction
+        _mcp_http_server_action: QtGui.QAction
         _auto_proxy_action: QtGui.QAction
         _performance_overlay_action: QtGui.QAction
         _import_graph_action: QtGui.QAction
@@ -191,6 +193,7 @@ class MainWindowUiMixin:
         def _on_deploy_action(self) -> None: ...
         def _on_stop_all_services_action(self) -> None: ...
         def _on_global_hotkeys_action(self) -> None: ...
+        def _on_mcp_http_server_toggled(self, checked: bool) -> None: ...
         def _on_variant_catalog_action(self) -> None: ...
         def _save_window_layout(self) -> None: ...
 
@@ -501,6 +504,7 @@ class MainWindowUiMixin:
         self._add_menu_section(
             tools_menu,
             [
+                self._mcp_http_server_action,
                 self._manage_components_action,
                 self._variant_catalog_action,
                 self._global_hotkeys_action,
@@ -658,6 +662,14 @@ class MainWindowUiMixin:
                 icon=StudioIcon.STOP_ALL,
                 tool_tip="Stop all services (Shift+F5)",
             ),
+            mcp_http_server_action=self._create_action(
+                "MCP HTTP Server",
+                handler=self._on_mcp_http_server_toggled,
+                icon=StudioIcon.AUTOMATION,
+                tool_tip="Expose PyStudio graph/runtime tools at http://127.0.0.1:8765/mcp",
+                checkable=True,
+                checked=False,
+            ),
             global_hotkeys_action=self._create_action(
                 "Global Hotkeys",
                 handler=self._on_global_hotkeys_action,
@@ -690,6 +702,7 @@ class MainWindowUiMixin:
         self._clear_all_nodes_action = action_bundle.clear_all_nodes_action
         self._deploy_action = action_bundle.deploy_action
         self._stop_all_services_action = action_bundle.stop_all_services_action
+        self._mcp_http_server_action = action_bundle.mcp_http_server_action
         self._global_hotkeys_action = action_bundle.global_hotkeys_action
         self._variant_catalog_action = action_bundle.variant_catalog_action
 

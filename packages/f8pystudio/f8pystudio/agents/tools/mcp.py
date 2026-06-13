@@ -1,33 +1,29 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 
 @dataclass(frozen=True)
-class StudioMCPStdioConfig:
+class StudioMCPHttpConfig:
     name: str = "f8pystudio"
-    command: str = "pixi"
-    args: tuple[str, ...] = ("run", "f8pystudio_mcp")
+    url: str = "http://127.0.0.1:8765/mcp"
     tool_name_prefix: str = "studio"
     allowed_tools: tuple[str, ...] = ()
     request_timeout_s: int | None = 30
-    env: dict[str, str] = field(default_factory=dict)
 
 
-def build_studio_mcp_stdio_tool(config: StudioMCPStdioConfig | None = None) -> Any:
-    cfg = config or StudioMCPStdioConfig()
+def build_studio_mcp_http_tool(config: StudioMCPHttpConfig | None = None) -> Any:
+    cfg = config or StudioMCPHttpConfig()
     try:
-        from agent_framework import MCPStdioTool
+        from agent_framework import MCPStreamableHTTPTool
     except ModuleNotFoundError as exc:
-        raise RuntimeError("agent-framework-core is required to build the Studio MCP tool.") from exc
+        raise RuntimeError("agent-framework-core is required to build the Studio MCP HTTP tool.") from exc
 
     allowed_tools = list(cfg.allowed_tools) if cfg.allowed_tools else None
-    return MCPStdioTool(
+    return MCPStreamableHTTPTool(
         name=cfg.name,
-        command=cfg.command,
-        args=list(cfg.args),
-        env=dict(cfg.env) or None,
+        url=cfg.url,
         tool_name_prefix=cfg.tool_name_prefix,
         allowed_tools=allowed_tools,
         request_timeout=cfg.request_timeout_s,

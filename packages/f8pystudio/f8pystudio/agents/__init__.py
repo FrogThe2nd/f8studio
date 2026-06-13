@@ -56,7 +56,7 @@ from .runtime import (
 )
 from .sessions import shared_agent_session_registry
 from .store import AiProviderStore, shared_ai_provider_store
-from .tools import StudioAutomationTools, StudioMCPStdioConfig, build_studio_mcp_stdio_tool
+from .tools import StudioAutomationTools, StudioMCPHttpConfig, build_studio_mcp_http_tool
 
 __all__ = [
     "AiProviderStore",
@@ -88,11 +88,11 @@ __all__ = [
     "StudioAgentRequest",
     "StudioAgentRuntime",
     "StudioAutomationTools",
-    "StudioMCPStdioConfig",
+    "StudioMCPHttpConfig",
     "approx_tokens",
     "build_graph_context_snapshot",
     "build_codeact_context_provider",
-    "build_studio_mcp_stdio_tool",
+    "build_studio_mcp_http_tool",
     "build_chat_messages",
     "build_system_prompt",
     "format_graph_context_report",

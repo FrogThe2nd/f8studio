@@ -23,7 +23,7 @@ from f8pystudio.assets.projects.project_storage import ProjectStorageService
 from f8pystudio.automation.observation_store import RuntimeObservationStore
 from f8pystudio.automation.projects import project_save_payload
 from f8pystudio.agents.tools.graph import LocalStudioGraphToolExecutor, LocalStudioGraphTools
-from f8pystudio.agents.tools.mcp import StudioMCPStdioConfig, build_studio_mcp_stdio_tool
+from f8pystudio.agents.tools.mcp import StudioMCPHttpConfig, build_studio_mcp_http_tool
 from f8pystudio.agents.tools.studio import StudioAutomationTools
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "f8pystudio"
@@ -48,7 +48,7 @@ def _class_method_names(path: Path, class_name: str) -> tuple[str, ...]:
 def _mcp_tool_names(path: Path) -> tuple[str, ...]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
     for node in tree.body:
-        if isinstance(node, ast.FunctionDef) and node.name == "_create_server":
+        if isinstance(node, ast.FunctionDef) and node.name == "register_studio_mcp_tools":
             tool_names: list[str] = []
             for child in node.body:
                 if not isinstance(child, ast.FunctionDef):
@@ -58,14 +58,14 @@ def _mcp_tool_names(path: Path) -> tuple[str, ...]:
                         if decorator.func.attr == "tool":
                             tool_names.append(child.name)
             return tuple(tool_names)
-    raise AssertionError("_create_server not found")
+    raise AssertionError("register_studio_mcp_tools not found")
 
 
 def test_external_mcp_tool_api_matches_local_graph_agent_tools() -> None:
     tools = LocalStudioGraphTools(StudioAutomationTools())
     expected_graph_tool_names = tools.available_tool_names()
     studio_method_names = _class_method_names(PACKAGE_ROOT / "agents" / "tools" / "studio.py", "StudioAutomationTools")
-    mcp_tool_names = _mcp_tool_names(PACKAGE_ROOT / "mcp" / "server.py")
+    mcp_tool_names = _mcp_tool_names(PACKAGE_ROOT / "mcp" / "registration.py")
 
     for name in expected_graph_tool_names:
         assert name in studio_method_names
@@ -317,35 +317,31 @@ def test_runtime_invoke_command_requires_confirm() -> None:
         tools.runtime_invoke_command(service_id="svc", call="doThing", confirm=False)
 
 
-def test_build_studio_mcp_stdio_tool_uses_agent_framework_mcp_tool(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_studio_mcp_http_tool_uses_agent_framework_mcp_tool(monkeypatch: pytest.MonkeyPatch) -> None:
     created: list[dict[str, object]] = []
 
-    class FakeMCPStdioTool:
+    class FakeMCPStreamableHTTPTool:
         def __init__(self, **kwargs: object) -> None:
             created.append(kwargs)
 
-    fake_module = types.SimpleNamespace(MCPStdioTool=FakeMCPStdioTool)
+    fake_module = types.SimpleNamespace(MCPStreamableHTTPTool=FakeMCPStreamableHTTPTool)
     monkeypatch.setitem(sys.modules, "agent_framework", fake_module)
 
-    config = StudioMCPStdioConfig(
+    config = StudioMCPHttpConfig(
         name="studio",
-        command="pixi",
-        args=("run", "f8pystudio_mcp"),
+        url="http://127.0.0.1:9876/mcp",
         tool_name_prefix="f8",
         allowed_tools=("graph_snapshot",),
         request_timeout_s=15,
-        env={"A": "B"},
     )
 
-    tool = build_studio_mcp_stdio_tool(config)
+    tool = build_studio_mcp_http_tool(config)
 
-    assert isinstance(tool, FakeMCPStdioTool)
+    assert isinstance(tool, FakeMCPStreamableHTTPTool)
     assert created == [
         {
             "name": "studio",
-            "command": "pixi",
-            "args": ["run", "f8pystudio_mcp"],
-            "env": {"A": "B"},
+            "url": "http://127.0.0.1:9876/mcp",
             "tool_name_prefix": "f8",
             "allowed_tools": ["graph_snapshot"],
             "request_timeout": 15,
@@ -354,8 +350,8 @@ def test_build_studio_mcp_stdio_tool_uses_agent_framework_mcp_tool(monkeypatch: 
     ]
 
 
-def test_mcp_runtime_tools_forward_declared_parameters(monkeypatch: pytest.MonkeyPatch) -> None:
-    import f8pystudio.mcp.server as mcp_server
+def test_mcp_runtime_tools_forward_declared_parameters() -> None:
+    from f8pystudio.mcp.registration import register_studio_mcp_tools
 
     calls: list[tuple[str, dict[str, object]]] = []
     registered_tools: dict[str, object] = {}
@@ -369,10 +365,7 @@ def test_mcp_runtime_tools_forward_declared_parameters(monkeypatch: pytest.Monke
             calls.append(("runtime_debug_data", dict(kwargs)))
             return {"ok": True}
 
-    class FakeFastMCP:
-        def __init__(self, name: str) -> None:
-            self.name = name
-
+    class FakeServer:
         def tool(self):
             def _decorator(fn):
                 registered_tools[fn.__name__] = fn
@@ -394,15 +387,7 @@ def test_mcp_runtime_tools_forward_declared_parameters(monkeypatch: pytest.Monke
 
             return _decorator
 
-    monkeypatch.setattr(mcp_server, "StudioAutomationTools", lambda: FakeTools())
-    monkeypatch.setitem(sys.modules, "mcp", types.ModuleType("mcp"))
-    fake_server_module = types.ModuleType("mcp.server")
-    fake_fastmcp_module = types.ModuleType("mcp.server.fastmcp")
-    fake_fastmcp_module.FastMCP = FakeFastMCP
-    monkeypatch.setitem(sys.modules, "mcp.server", fake_server_module)
-    monkeypatch.setitem(sys.modules, "mcp.server.fastmcp", fake_fastmcp_module)
-
-    _ = mcp_server._create_server()
+    register_studio_mcp_tools(FakeServer(), FakeTools())  # type: ignore[arg-type]
 
     sample_tool = registered_tools["runtime_sample_port"]
     debug_tool = registered_tools["runtime_debug_data"]
@@ -462,6 +447,204 @@ def test_mcp_runtime_tools_forward_declared_parameters(monkeypatch: pytest.Monke
                 "connection_file": "conn.json",
             },
         ),
+    ]
+
+
+def test_create_http_mcp_server_configures_fastmcp(monkeypatch: pytest.MonkeyPatch) -> None:
+    import f8pystudio.mcp.http_server as mcp_http_server
+
+    calls: list[tuple[str, dict[str, object]]] = []
+    registered_tools: dict[str, object] = {}
+
+    class FakeTools:
+        def __init__(self, connection_file: str = "") -> None:
+            calls.append(("tools_init", {"connection_file": connection_file}))
+
+    class FakeFastMCP:
+        def __init__(self, name: str, **kwargs: object) -> None:
+            self.name = name
+            self.kwargs = dict(kwargs)
+            calls.append(("fastmcp_init", {"name": name, **dict(kwargs)}))
+
+        def tool(self):
+            def _decorator(fn):
+                registered_tools[fn.__name__] = fn
+                return fn
+
+            return _decorator
+
+        def resource(self, uri: str):
+            _ = uri
+
+            def _decorator(fn):
+                return fn
+
+            return _decorator
+
+        def prompt(self):
+            def _decorator(fn):
+                return fn
+
+            return _decorator
+
+    monkeypatch.setattr("f8pystudio.agents.tools.studio.StudioAutomationTools", FakeTools)
+    monkeypatch.setitem(sys.modules, "mcp", types.ModuleType("mcp"))
+    fake_server_module = types.ModuleType("mcp.server")
+    fake_fastmcp_module = types.ModuleType("mcp.server.fastmcp")
+    fake_fastmcp_module.FastMCP = FakeFastMCP
+    monkeypatch.setitem(sys.modules, "mcp.server", fake_server_module)
+    monkeypatch.setitem(sys.modules, "mcp.server.fastmcp", fake_fastmcp_module)
+
+    server = mcp_http_server.create_http_mcp_server(
+        connection_file="default-conn.json",
+        host="127.0.0.1",
+        port=8765,
+        path="mcp",
+        log_level="debug",
+    )
+
+    assert isinstance(server, FakeFastMCP)
+    assert "runtime_sample_port" in registered_tools
+    assert "runtime_debug_data" in registered_tools
+
+    assert calls == [
+        ("tools_init", {"connection_file": "default-conn.json"}),
+        (
+            "fastmcp_init",
+            {
+                "name": "f8pystudio",
+                "host": "127.0.0.1",
+                "port": 8765,
+                "streamable_http_path": "/mcp",
+                "log_level": "DEBUG",
+            },
+        ),
+    ]
+
+
+def test_pystudio_mcp_http_server_start_stop_uses_uvicorn_wrapper(monkeypatch: pytest.MonkeyPatch) -> None:
+    import f8pystudio.mcp.http_server as mcp_http_server
+
+    calls: list[tuple[str, object]] = []
+
+    class FakeFastMCP:
+        def streamable_http_app(self) -> str:
+            calls.append(("streamable_http_app", "called"))
+            return "app"
+
+    class FakeUvicornConfig:
+        def __init__(self, app: object, **kwargs: object) -> None:
+            calls.append(("uvicorn_config", {"app": app, **dict(kwargs)}))
+
+    class FakeUvicornServer:
+        def __init__(self, config: FakeUvicornConfig) -> None:
+            self.config = config
+            self.started = False
+            self.should_exit = False
+            self._exit_event = threading.Event()
+            server_instances.append(self)
+            calls.append(("uvicorn_server", "created"))
+
+        def run(self) -> None:
+            self.started = True
+            calls.append(("uvicorn_run", "started"))
+            while not self.should_exit:
+                self._exit_event.wait(timeout=0.01)
+            calls.append(("uvicorn_run", "stopped"))
+
+    server_instances: list[FakeUvicornServer] = []
+
+    def fake_create_http_mcp_server(**kwargs: object) -> FakeFastMCP:
+        calls.append(("create_http_mcp_server", dict(kwargs)))
+        return FakeFastMCP()
+
+    fake_uvicorn_module = types.SimpleNamespace(Config=FakeUvicornConfig, Server=FakeUvicornServer)
+    monkeypatch.setattr(mcp_http_server, "create_http_mcp_server", fake_create_http_mcp_server)
+    monkeypatch.setitem(sys.modules, "uvicorn", fake_uvicorn_module)
+
+    server = mcp_http_server.PyStudioMcpHttpServer(
+        connection_file="conn.json",
+        host="127.0.0.1",
+        port=9876,
+        path="mcp",
+        log_level="warning",
+    )
+
+    endpoint = server.start()
+    assert endpoint.url == "http://127.0.0.1:9876/mcp"
+    assert server.is_running is True
+    assert server_instances and server_instances[0].started is True
+
+    server.stop()
+    assert server.is_running is False
+    assert server_instances[0].should_exit is True
+    assert ("uvicorn_run", "stopped") in calls
+    assert calls[:3] == [
+        (
+            "create_http_mcp_server",
+            {
+                "connection_file": "conn.json",
+                "host": "127.0.0.1",
+                "port": 9876,
+                "path": "/mcp",
+                "log_level": "WARNING",
+            },
+        ),
+        ("streamable_http_app", "called"),
+        (
+            "uvicorn_config",
+            {
+                "app": "app",
+                "host": "127.0.0.1",
+                "port": 9876,
+                "log_level": "warning",
+            },
+        ),
+    ]
+
+
+def test_mcp_server_main_can_run_streamable_http(monkeypatch: pytest.MonkeyPatch) -> None:
+    import f8pystudio.mcp.server as mcp_server
+
+    calls: list[tuple[str, object]] = []
+
+    class FakeServer:
+        def run(self, transport: str) -> None:
+            calls.append(("run", transport))
+
+    def fake_create_http_server(**kwargs: object) -> FakeServer:
+        calls.append(("create", dict(kwargs)))
+        return FakeServer()
+
+    monkeypatch.setattr(mcp_server, "create_http_mcp_server", fake_create_http_server)
+
+    mcp_server.main(
+        [
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "8765",
+            "--path",
+            "mcp",
+            "--connection-file",
+            "conn.json",
+            "--log-level",
+            "warning",
+        ]
+    )
+
+    assert calls == [
+        (
+            "create",
+            {
+                "connection_file": "conn.json",
+                "host": "127.0.0.1",
+                "port": 8765,
+                "path": "mcp",
+                "log_level": "WARNING",
+            },
+        ),
+        ("run", "streamable-http"),
     ]
 
 
