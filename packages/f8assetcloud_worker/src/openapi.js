@@ -174,6 +174,31 @@ const componentRecordRequestSchema = z.object({
   updatedAt: z.string().optional(),
 });
 
+const moddingRecipeContentSchema = z.object({
+  schemaVersion: z.literal('f8moddingrecipe/1'),
+  engine: z.string(),
+}).catchall(z.any());
+
+const moddingRecipeRecordSchema = z.object({
+  recipeId: z.string(),
+  name: z.string(),
+  description: z.string(),
+  tags: z.array(z.string()),
+  content: moddingRecipeContentSchema,
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+const moddingRecipeRecordRequestSchema = z.object({
+  recipeId: z.string(),
+  name: z.string(),
+  description: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  content: moddingRecipeContentSchema,
+  createdAt: z.string().optional(),
+  updatedAt: z.string().optional(),
+});
+
 const variantSummarySchema = typedAssetBaseSchema.extend({
   assetType: z.literal('variant'),
   variantId: z.string(),
@@ -190,6 +215,12 @@ const componentSummarySchema = typedAssetBaseSchema.extend({
   hasContent: z.boolean(),
 });
 
+const moddingRecipeSummarySchema = typedAssetBaseSchema.extend({
+  assetType: z.literal('modding_recipe'),
+  recipeId: z.string(),
+  hasContent: z.boolean(),
+});
+
 const variantDetailSchema = variantSummarySchema.extend({
   versionCreatedAt: z.string(),
   createdByUserId: z.string(),
@@ -200,11 +231,20 @@ const componentDetailSchema = componentSummarySchema.extend({
   createdByUserId: z.string(),
 });
 
+const moddingRecipeDetailSchema = moddingRecipeSummarySchema.extend({
+  versionCreatedAt: z.string(),
+  createdByUserId: z.string(),
+});
+
 const variantVersionDetailSchema = variantDetailSchema.extend({
   versionNumber: z.number().int(),
 });
 
 const componentVersionDetailSchema = componentDetailSchema.extend({
+  versionNumber: z.number().int(),
+});
+
+const moddingRecipeVersionDetailSchema = moddingRecipeDetailSchema.extend({
   versionNumber: z.number().int(),
 });
 
@@ -222,9 +262,16 @@ const componentContentResponseSchema = z.object({
   record: componentRecordSchema,
 });
 
+const moddingRecipeContentResponseSchema = z.object({
+  recipeId: z.string(),
+  assetType: z.literal('modding_recipe'),
+  versionNumber: z.number().int(),
+  record: moddingRecipeRecordSchema,
+});
+
 const assetResolveResponseSchema = z.object({
-  assetType: z.enum(['component', 'variant']),
-  asset: z.union([variantDetailSchema, componentDetailSchema]),
+  assetType: z.enum(['component', 'variant', 'modding_recipe']),
+  asset: z.union([variantDetailSchema, componentDetailSchema, moddingRecipeDetailSchema]),
 });
 
 const variantPageResponseSchema = z.object({
@@ -237,8 +284,13 @@ const componentPageResponseSchema = z.object({
   nextCursor: nullableStringSchema,
 });
 
+const moddingRecipePageResponseSchema = z.object({
+  entries: z.array(moddingRecipeSummarySchema),
+  nextCursor: nullableStringSchema,
+});
+
 const assetVersionBaseSchema = z.object({
-  assetType: z.enum(['component', 'variant']),
+  assetType: z.enum(['component', 'variant', 'modding_recipe']),
   versionNumber: z.number().int(),
   createdAt: z.string(),
   createdByUserId: z.string(),
@@ -255,6 +307,11 @@ const componentVersionSummarySchema = assetVersionBaseSchema.extend({
   componentId: z.string(),
 });
 
+const moddingRecipeVersionSummarySchema = assetVersionBaseSchema.extend({
+  assetType: z.literal('modding_recipe'),
+  recipeId: z.string(),
+});
+
 const variantVersionPageResponseSchema = z.object({
   versions: z.array(variantVersionSummarySchema),
   nextCursor: nullableStringSchema,
@@ -265,9 +322,14 @@ const componentVersionPageResponseSchema = z.object({
   nextCursor: nullableStringSchema,
 });
 
+const moddingRecipeVersionPageResponseSchema = z.object({
+  versions: z.array(moddingRecipeVersionSummarySchema),
+  nextCursor: nullableStringSchema,
+});
+
 const adminAssetBaseSchema = z.object({
   assetId: z.string(),
-  assetType: z.enum(['component', 'variant']),
+  assetType: z.enum(['component', 'variant', 'modding_recipe']),
   ownerUserId: z.string(),
   ownerDisplayName: nullableStringSchema,
   visibility: visibilitySchema,
@@ -292,6 +354,10 @@ const adminComponentSummarySchema = adminAssetBaseSchema.extend({
   assetType: z.literal('component'),
 });
 
+const adminModdingRecipeSummarySchema = adminAssetBaseSchema.extend({
+  assetType: z.literal('modding_recipe'),
+});
+
 const adminVariantDetailSchema = adminVariantSummarySchema.extend({
   record: variantRecordSchema,
 });
@@ -300,12 +366,16 @@ const adminComponentDetailSchema = adminComponentSummarySchema.extend({
   record: componentRecordSchema,
 });
 
+const adminModdingRecipeDetailSchema = adminModdingRecipeSummarySchema.extend({
+  record: moddingRecipeRecordSchema,
+});
+
 const managementAssetPageResponseSchema = z.object({
-  entries: z.array(z.union([adminComponentSummarySchema, adminVariantSummarySchema])),
+  entries: z.array(z.union([adminComponentSummarySchema, adminVariantSummarySchema, adminModdingRecipeSummarySchema])),
   nextCursor: nullableStringSchema,
 });
 
-const managementAssetDetailResponseSchema = z.union([adminComponentDetailSchema, adminVariantDetailSchema]);
+const managementAssetDetailResponseSchema = z.union([adminComponentDetailSchema, adminVariantDetailSchema, adminModdingRecipeDetailSchema]);
 
 const componentListQuerySchema = z.object({
   q: z.string().optional(),
@@ -338,6 +408,8 @@ const managementComponentListQuerySchema = z.object({
   cursor: z.string().optional(),
 });
 
+const managementModdingRecipeListQuerySchema = managementComponentListQuerySchema;
+
 const managementVariantListQuerySchema = managementComponentListQuerySchema.extend({
   kind: z.string().optional(),
   baseNodeType: z.string().optional(),
@@ -360,6 +432,16 @@ const componentCreateRequestSchema = z.object({
 });
 
 const componentUpdateRequestSchema = componentCreateRequestSchema.extend({
+  versionNumber: z.number().int().optional(),
+});
+
+const moddingRecipeCreateRequestSchema = z.object({
+  record: moddingRecipeRecordRequestSchema,
+  visibility: visibilitySchema.optional(),
+  changeSummary: z.string().optional(),
+});
+
+const moddingRecipeUpdateRequestSchema = moddingRecipeCreateRequestSchema.extend({
   versionNumber: z.number().int().optional(),
 });
 
@@ -387,6 +469,13 @@ const variantForkRequestSchema = z.object({
 
 const componentForkRequestSchema = z.object({
   componentId: z.string().optional(),
+  name: z.string().optional(),
+  visibility: visibilitySchema.optional(),
+  changeSummary: z.string().optional(),
+});
+
+const moddingRecipeForkRequestSchema = z.object({
+  recipeId: z.string().optional(),
   name: z.string().optional(),
   visibility: visibilitySchema.optional(),
   changeSummary: z.string().optional(),
@@ -500,6 +589,10 @@ export function registerOpenApiRoutes(app, handlers) {
         {
           name: 'variants',
           description: 'Variant catalog, versioning, subscriptions, and fork operations.',
+        },
+        {
+          name: 'modding-recipes',
+          description: 'Game modding recipe catalog, versioning, subscriptions, and fork operations.',
         },
         {
           name: 'management',
@@ -841,6 +934,249 @@ export function registerOpenApiRoutes(app, handlers) {
       200: jsonSuccessResponse(componentDetailSchema, 'Forked component'),
     }),
   }, handlers.routeComponentAssetRequest);
+
+  registerRoute(openapi, 'get', '/v1/modding-recipes', {
+    tags: ['modding-recipes'],
+    summary: 'List modding recipes',
+    description: 'Lists game modding recipe summaries visible to the current viewer.',
+    request: {
+      query: componentListQuerySchema,
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(moddingRecipePageResponseSchema, 'Modding recipe page'),
+    }),
+  }, handlers.listModdingRecipes);
+
+  registerRoute(openapi, 'post', '/v1/modding-recipes', {
+    tags: ['modding-recipes'],
+    summary: 'Create a modding recipe',
+    request: {
+      body: jsonRequestBody(moddingRecipeCreateRequestSchema, 'Modding recipe create payload'),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(moddingRecipeDetailSchema, 'Created modding recipe'),
+    }),
+  }, handlers.createModdingRecipe);
+
+  registerRoute(openapi, 'get', '/v1/modding-recipes/:recipeId', {
+    tags: ['modding-recipes'],
+    summary: 'Get a modding recipe',
+    request: {
+      params: z.object({
+        recipeId: z.string(),
+      }),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(moddingRecipeDetailSchema, 'Modding recipe detail'),
+    }),
+  }, handlers.routeModdingRecipeAssetRequest);
+
+  registerRoute(openapi, 'put', '/v1/modding-recipes/:recipeId', {
+    tags: ['modding-recipes'],
+    summary: 'Update a modding recipe',
+    request: {
+      params: z.object({
+        recipeId: z.string(),
+      }),
+      body: jsonRequestBody(moddingRecipeUpdateRequestSchema, 'Modding recipe update payload'),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(moddingRecipeDetailSchema, 'Updated modding recipe'),
+    }),
+  }, handlers.routeModdingRecipeAssetRequest);
+
+  registerRoute(openapi, 'delete', '/v1/modding-recipes/:recipeId', {
+    tags: ['modding-recipes'],
+    summary: 'Delete a modding recipe',
+    request: {
+      params: z.object({
+        recipeId: z.string(),
+      }),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(emptyObjectSchema, 'Modding recipe deleted'),
+    }),
+  }, handlers.routeModdingRecipeAssetRequest);
+
+  registerRoute(openapi, 'get', '/v1/modding-recipes/:recipeId/content', {
+    tags: ['modding-recipes'],
+    summary: 'Get modding recipe content',
+    description: 'Returns the latest published modding recipe payload.',
+    request: {
+      params: z.object({
+        recipeId: z.string(),
+      }),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(moddingRecipeContentResponseSchema, 'Modding recipe content payload'),
+    }),
+  }, handlers.routeModdingRecipeAssetRequest);
+
+  registerRoute(openapi, 'get', '/v1/modding-recipes/:recipeId/download', {
+    tags: ['modding-recipes'],
+    summary: 'Download modding recipe content as an attachment',
+    request: {
+      params: z.object({
+        recipeId: z.string(),
+      }),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(moddingRecipeContentResponseSchema, 'Modding recipe download payload'),
+    }),
+  }, handlers.routeModdingRecipeAssetRequest);
+
+  registerRoute(openapi, 'put', '/v1/modding-recipes/:recipeId/visibility', {
+    tags: ['modding-recipes'],
+    summary: 'Update modding recipe visibility',
+    request: {
+      params: z.object({
+        recipeId: z.string(),
+      }),
+      body: jsonRequestBody(visibilityUpdateRequestSchema, 'Visibility update payload'),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(moddingRecipeDetailSchema, 'Modding recipe with updated visibility'),
+    }),
+  }, handlers.routeModdingRecipeAssetRequest);
+
+  registerRoute(openapi, 'patch', '/v1/modding-recipes/:recipeId/meta', {
+    tags: ['modding-recipes'],
+    summary: 'Update modding recipe metadata',
+    request: {
+      params: z.object({
+        recipeId: z.string(),
+      }),
+      body: jsonRequestBody(assetMetaUpdateRequestSchema, 'Modding recipe metadata update payload'),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(moddingRecipeDetailSchema, 'Modding recipe with updated metadata'),
+    }),
+  }, handlers.routeModdingRecipeAssetRequest);
+
+  registerRoute(openapi, 'get', '/v1/modding-recipes/:recipeId/versions', {
+    tags: ['modding-recipes'],
+    summary: 'List modding recipe versions',
+    request: {
+      params: z.object({
+        recipeId: z.string(),
+      }),
+      query: versionListQuerySchema,
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(moddingRecipeVersionPageResponseSchema, 'Modding recipe version page'),
+    }),
+  }, handlers.routeModdingRecipeAssetRequest);
+
+  registerRoute(openapi, 'get', '/v1/modding-recipes/:recipeId/versions/:versionNumber', {
+    tags: ['modding-recipes'],
+    summary: 'Get a modding recipe version',
+    request: {
+      params: z.object({
+        recipeId: z.string(),
+        versionNumber: z.string(),
+      }),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(moddingRecipeVersionDetailSchema, 'Modding recipe version detail'),
+    }),
+  }, handlers.routeModdingRecipeAssetRequest);
+
+  registerRoute(openapi, 'patch', '/v1/modding-recipes/:recipeId/versions/:versionNumber', {
+    tags: ['modding-recipes'],
+    summary: 'Update a modding recipe version note',
+    request: {
+      params: z.object({
+        recipeId: z.string(),
+        versionNumber: z.string(),
+      }),
+      body: jsonRequestBody(assetVersionNoteUpdateRequestSchema, 'Modding recipe version note payload'),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(moddingRecipeVersionDetailSchema, 'Updated modding recipe version detail'),
+    }),
+  }, handlers.routeModdingRecipeAssetRequest);
+
+  registerRoute(openapi, 'get', '/v1/modding-recipes/:recipeId/versions/:versionNumber/content', {
+    tags: ['modding-recipes'],
+    summary: 'Get modding recipe version content',
+    request: {
+      params: z.object({
+        recipeId: z.string(),
+        versionNumber: z.string(),
+      }),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(moddingRecipeContentResponseSchema, 'Modding recipe version content'),
+    }),
+  }, handlers.routeModdingRecipeAssetRequest);
+
+  registerRoute(openapi, 'get', '/v1/modding-recipes/:recipeId/versions/:versionNumber/download', {
+    tags: ['modding-recipes'],
+    summary: 'Download modding recipe version content as an attachment',
+    request: {
+      params: z.object({
+        recipeId: z.string(),
+        versionNumber: z.string(),
+      }),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(moddingRecipeContentResponseSchema, 'Modding recipe version download payload'),
+    }),
+  }, handlers.routeModdingRecipeAssetRequest);
+
+  registerRoute(openapi, 'get', '/v1/modding-recipes/:recipeId/subscribers', {
+    tags: ['modding-recipes'],
+    summary: 'List modding recipe subscribers',
+    request: {
+      params: z.object({
+        recipeId: z.string(),
+      }),
+      query: subscriberListQuerySchema,
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(assetSubscriberPageResponseSchema, 'Modding recipe subscriber page'),
+    }),
+  }, handlers.routeModdingRecipeAssetRequest);
+
+  registerRoute(openapi, 'post', '/v1/modding-recipes/:recipeId/subscribe', {
+    tags: ['modding-recipes'],
+    summary: 'Subscribe to a modding recipe',
+    request: {
+      params: z.object({
+        recipeId: z.string(),
+      }),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(moddingRecipeDetailSchema, 'Subscribed modding recipe detail'),
+    }),
+  }, handlers.routeModdingRecipeAssetRequest);
+
+  registerRoute(openapi, 'delete', '/v1/modding-recipes/:recipeId/subscribe', {
+    tags: ['modding-recipes'],
+    summary: 'Unsubscribe from a modding recipe',
+    request: {
+      params: z.object({
+        recipeId: z.string(),
+      }),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(moddingRecipeDetailSchema, 'Unsubscribed modding recipe detail'),
+    }),
+  }, handlers.routeModdingRecipeAssetRequest);
+
+  registerRoute(openapi, 'post', '/v1/modding-recipes/:recipeId/fork', {
+    tags: ['modding-recipes'],
+    summary: 'Fork a modding recipe',
+    request: {
+      params: z.object({
+        recipeId: z.string(),
+      }),
+      body: jsonRequestBody(moddingRecipeForkRequestSchema, 'Modding recipe fork payload'),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(moddingRecipeDetailSchema, 'Forked modding recipe'),
+    }),
+  }, handlers.routeModdingRecipeAssetRequest);
 
   registerRoute(openapi, 'get', '/v1/variants', {
     tags: ['variants'],
@@ -1226,6 +1562,57 @@ export function registerOpenApiRoutes(app, handlers) {
     },
     responses: withCommonErrorResponses({
       200: jsonSuccessResponse(emptyObjectSchema, 'Managed component deleted'),
+    }),
+  }, handlers.routeManagementRequest);
+
+  registerRoute(openapi, 'get', '/v1/management/modding-recipes', {
+    tags: ['management'],
+    summary: 'List managed modding recipes',
+    request: {
+      query: managementModdingRecipeListQuerySchema,
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(managementAssetPageResponseSchema, 'Managed modding recipe page'),
+    }),
+  }, handlers.routeManagementRequest);
+
+  registerRoute(openapi, 'get', '/v1/management/modding-recipes/:recipeId', {
+    tags: ['management'],
+    summary: 'Get a managed modding recipe',
+    request: {
+      params: z.object({
+        recipeId: z.string(),
+      }),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(managementAssetDetailResponseSchema, 'Managed modding recipe detail'),
+    }),
+  }, handlers.routeManagementRequest);
+
+  registerRoute(openapi, 'put', '/v1/management/modding-recipes/:recipeId', {
+    tags: ['management'],
+    summary: 'Update a managed modding recipe',
+    request: {
+      params: z.object({
+        recipeId: z.string(),
+      }),
+      body: jsonRequestBody(managementAssetUpdateRequestSchema, 'Managed asset update payload'),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(managementAssetDetailResponseSchema, 'Updated managed modding recipe'),
+    }),
+  }, handlers.routeManagementRequest);
+
+  registerRoute(openapi, 'delete', '/v1/management/modding-recipes/:recipeId', {
+    tags: ['management'],
+    summary: 'Delete a managed modding recipe',
+    request: {
+      params: z.object({
+        recipeId: z.string(),
+      }),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(emptyObjectSchema, 'Managed modding recipe deleted'),
     }),
   }, handlers.routeManagementRequest);
 

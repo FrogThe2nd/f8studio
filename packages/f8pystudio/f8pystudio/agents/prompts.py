@@ -192,6 +192,11 @@ def _graph_tool_guidance(*, agent_surface: str, tool_names: tuple[str, ...]) -> 
             "- Use `runtime_services`, `monitor_service`, `runtime_read_state`, `runtime_watch_state`, `runtime_debug_data`, `runtime_sample_port`, `logs_read`, and `notifications_read` when debugging a running graph.",
             "- Use `graph_preview_patch` before applying a non-trivial graph edit, then use `graph_apply_patch` when the user asks you to make the graph change.",
             "- Destructive or runtime-affecting actions may show a GUI approval card; preview first, then request/apply only when the user's instruction is clear.",
+            "- For game modding requests, call `modding_detect_target` first. If Unity is detected, call `modding_preview_install`, present blocking issues and exact game-directory writes, then call `modding_apply_install` only after approval or a clear user instruction.",
+            "- After modding install, build or patch the PyStudio graph only after the stream target and UDP port are known. Verify with `modding_verify_stream` and a `UDP In -> Skeleton Decoder -> Viz 3D` graph before proposing TCode output.",
+            "- Store failed attempts, verification notes, plugin versions, profile/config payloads, and graph/component references in `modding_create_recipe` drafts when the user wants to save or share the process.",
+            "- Never guess-install a loader, overwrite custom profiles/configs, or write into a game directory without a typed preview and approval.",
+            "- Do not model high-frequency skeleton stream counters as service state. Use monitor/data sampling for latency, sample counts, dropped frames, and decoder output counts.",
             "- GraphPatch operations use camelCase fields: `expectedRevision`, `ops`, `op`, `nodeType`, `nodeId`, `fromNodeId`, `fromPort`, `toNodeId`, and `toPort`.",
         ]
     )

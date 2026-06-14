@@ -299,6 +299,69 @@ function componentPayload({ componentId, name, visibility = 'private', versionNu
   };
 }
 
+function moddingRecipePayload({ recipeId, name, visibility = 'private', versionNumber, contentOverrides = {} } = {}) {
+  return {
+    record: {
+      recipeId: recipeId || 'recipe-1',
+      name: name || 'Unity Recipe',
+      description: 'Shareable Unity skeleton stream setup',
+      tags: ['modding', 'unity'],
+      content: {
+        schemaVersion: 'f8moddingrecipe/1',
+        engine: 'unity',
+        backend: 'mono',
+        gameProfile: {
+          profileId: 'CUSTOM',
+          name: 'Example Unity Game',
+          processAliases: ['ExampleGame'],
+        },
+        installer: {
+          requiredToolVersion: 'f8unitymods/0.1',
+          selectedExporter: 'F8SkeletonStreamer',
+          optionalUtilities: {
+            installRuntimeUnityEditor: false,
+            installCinematicUnityExplorer: true,
+            installConfigurationManager: false,
+            installUniversalUnityDemosaics: false,
+          },
+          releases: {
+            bepinex: {
+              version: '6.0.0-be.735',
+              assetName: 'BepInEx-Unity.Mono-win-x64.zip',
+            },
+          },
+        },
+        payloads: {
+          exporterConfig: {
+            udpHost: '127.0.0.1',
+            udpPort: 39540,
+          },
+          profileJson: {
+            exporterKey: 'F8SkeletonStreamer',
+          },
+        },
+        pyStudio: {
+          graphFragment: {
+            nodes: ['udp-in', 'skeleton-decoder', 'viz-3d'],
+          },
+        },
+        verification: {
+          udpPort: 39540,
+          sampleKeys: ['hips', 'head'],
+          timestamp: '2026-01-01T00:00:00.000Z',
+        },
+        notes: 'Install BepInEx, launch the game, then verify UDP 39540.',
+        ...contentOverrides,
+      },
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    },
+    visibility,
+    versionNumber,
+    changeSummary: 'save',
+  };
+}
+
 test('auth flows use Better Auth cookie sessions and email actions', async (t) => {
   const env = createEnv();
   t.after(() => {
@@ -1028,6 +1091,14 @@ test('openapi endpoints expose the audited worker contract', async (t) => {
   assert.ok(openapi.json.paths['/v1/components/{componentId}/versions/{versionNumber}'].patch);
   assert.ok(openapi.json.paths['/v1/components/{componentId}/subscribers']);
   assert.ok(openapi.json.paths['/v1/components/{componentId}/subscribe']);
+  assert.ok(openapi.json.paths['/v1/modding-recipes']);
+  assert.ok(openapi.json.paths['/v1/modding-recipes/{recipeId}']);
+  assert.ok(openapi.json.paths['/v1/modding-recipes/{recipeId}/content']);
+  assert.ok(openapi.json.paths['/v1/modding-recipes/{recipeId}/meta']);
+  assert.ok(openapi.json.paths['/v1/modding-recipes/{recipeId}/versions']);
+  assert.ok(openapi.json.paths['/v1/modding-recipes/{recipeId}/versions/{versionNumber}'].patch);
+  assert.ok(openapi.json.paths['/v1/modding-recipes/{recipeId}/subscribers']);
+  assert.ok(openapi.json.paths['/v1/modding-recipes/{recipeId}/subscribe']);
   assert.ok(openapi.json.paths['/v1/variants']);
   assert.ok(openapi.json.paths['/v1/variants/{variantId}']);
   assert.ok(openapi.json.paths['/v1/variants/{variantId}/content']);
@@ -1042,6 +1113,8 @@ test('openapi endpoints expose the audited worker contract', async (t) => {
   assert.ok(openapi.json.paths['/v1/management/assets/purge-all']);
   assert.ok(openapi.json.paths['/v1/management/components']);
   assert.ok(openapi.json.paths['/v1/management/components/{componentId}']);
+  assert.ok(openapi.json.paths['/v1/management/modding-recipes']);
+  assert.ok(openapi.json.paths['/v1/management/modding-recipes/{recipeId}']);
   assert.ok(openapi.json.paths['/v1/management/variants']);
   assert.ok(openapi.json.paths['/v1/management/variants/{variantId}']);
   assert.equal(openapi.json.paths['/v1/management/users/{userId}/assets'], undefined);
@@ -1738,6 +1811,202 @@ test('component asset lifecycle validates session envelope and visibility rules'
   assert.equal(forked.status, 200);
   assert.equal(forked.json.componentId, 'component-b');
   assert.equal(forked.json.visibility, 'private');
+});
+
+test('modding recipe asset lifecycle validates shareable recipe payloads', async (t) => {
+  const env = createEnv();
+  t.after(() => env.DB.close());
+  const app = createApp();
+
+  const alice = await createVerifiedSession(app, env, {
+    name: 'Alice',
+    email: 'alice@example.com',
+  });
+  const bob = await createVerifiedSession(app, env, {
+    name: 'Bob',
+    email: 'bob@example.com',
+  });
+
+  const invalidSchema = await jsonRequest(app, env, '/v1/modding-recipes', {
+    method: 'POST',
+    cookie: alice.cookie,
+    payload: moddingRecipePayload({
+      recipeId: 'bad-recipe-schema',
+      contentOverrides: {
+        schemaVersion: 'bad',
+      },
+    }),
+  });
+  assert.equal(invalidSchema.status, 400);
+  assert.equal(invalidSchema.json.message, 'modding recipe schemaVersion must be f8moddingrecipe/1');
+
+  const localPathField = await jsonRequest(app, env, '/v1/modding-recipes', {
+    method: 'POST',
+    cookie: alice.cookie,
+    payload: moddingRecipePayload({
+      recipeId: 'bad-recipe-path-field',
+      contentOverrides: {
+        gameProfile: {
+          targetPath: 'H:\\Feel8\\Games\\ExampleGame',
+        },
+      },
+    }),
+  });
+  assert.equal(localPathField.status, 400);
+  assert.equal(localPathField.json.message, 'modding recipe published content must not contain local path field $.gameProfile.targetPath');
+
+  const absolutePathValue = await jsonRequest(app, env, '/v1/modding-recipes', {
+    method: 'POST',
+    cookie: alice.cookie,
+    payload: moddingRecipePayload({
+      recipeId: 'bad-recipe-path-value',
+      contentOverrides: {
+        notes: 'C:\\Games\\ExampleGame',
+      },
+    }),
+  });
+  assert.equal(absolutePathValue.status, 400);
+  assert.equal(absolutePathValue.json.message, 'modding recipe published content must not contain absolute local paths at $.notes');
+
+  const created = await jsonRequest(app, env, '/v1/modding-recipes', {
+    method: 'POST',
+    cookie: alice.cookie,
+    payload: moddingRecipePayload({ recipeId: 'unity-recipe', name: 'Unity Skeleton Stream', visibility: 'public' }),
+  });
+  assert.equal(created.status, 200);
+  assert.equal(created.json.recipeId, 'unity-recipe');
+  assert.equal(created.json.assetType, 'modding_recipe');
+  assert.equal(created.json.hasContent, true);
+  assert.equal(created.json.versionNumber, 1);
+
+  const storedVersion = await env.DB.prepare(
+    `SELECT content
+     FROM asset_versions
+     WHERE asset_id = ? AND version_number = 1`,
+  )
+    .bind('unity-recipe')
+    .first();
+  const storedContent = JSON.parse(gunzipSync(Buffer.from(storedVersion.content)).toString('utf-8'));
+  assert.equal(storedContent.schemaVersion, 'f8moddingrecipe/1');
+  assert.equal(storedContent.engine, 'unity');
+  assert.equal(storedContent.record, undefined);
+  assert.equal(storedContent.recipeId, undefined);
+  assert.equal(storedContent.gameProfile.targetPath, undefined);
+
+  const publicList = await jsonRequest(app, env, '/v1/modding-recipes?owner=public&q=skeleton');
+  assert.equal(publicList.status, 200);
+  assert.equal(publicList.json.entries.length, 1);
+  assert.equal(publicList.json.entries[0].recipeId, 'unity-recipe');
+  assert.equal(publicList.json.entries[0].assetType, 'modding_recipe');
+
+  const content = await jsonRequest(app, env, '/v1/modding-recipes/unity-recipe/content');
+  assert.equal(content.status, 200);
+  assert.equal(content.json.recipeId, 'unity-recipe');
+  assert.equal(content.json.assetType, 'modding_recipe');
+  assert.equal(content.json.record.recipeId, 'unity-recipe');
+  assert.equal(content.json.record.content.verification.udpPort, 39540);
+
+  const resolved = await jsonRequest(app, env, '/v1/assets/unity-recipe');
+  assert.equal(resolved.status, 200);
+  assert.equal(resolved.json.assetType, 'modding_recipe');
+  assert.equal(resolved.json.asset.recipeId, 'unity-recipe');
+
+  const subscribed = await jsonRequest(app, env, '/v1/modding-recipes/unity-recipe/subscribe', {
+    method: 'POST',
+    cookie: bob.cookie,
+  });
+  assert.equal(subscribed.status, 200);
+  assert.equal(subscribed.json.subscribed, true);
+  assert.equal(subscribed.json.editable, false);
+
+  const updated = await jsonRequest(app, env, '/v1/modding-recipes/unity-recipe', {
+    method: 'PUT',
+    cookie: alice.cookie,
+    payload: moddingRecipePayload({
+      recipeId: 'unity-recipe',
+      name: 'Unity Skeleton Stream v2',
+      visibility: 'public',
+      versionNumber: created.json.versionNumber,
+      contentOverrides: {
+        notes: 'Updated notes',
+      },
+    }),
+  });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.json.versionNumber, 2);
+
+  const history = await jsonRequest(app, env, '/v1/modding-recipes/unity-recipe/versions', { cookie: alice.cookie });
+  assert.equal(history.status, 200);
+  assert.equal(history.json.versions.length, 2);
+  assert.equal(history.json.versions[0].recipeId, 'unity-recipe');
+  assert.equal(history.json.versions[0].assetType, 'modding_recipe');
+
+  const versionNoteUpdated = await jsonRequest(app, env, '/v1/modding-recipes/unity-recipe/versions/1', {
+    method: 'PATCH',
+    cookie: alice.cookie,
+    payload: {
+      changeSummary: 'Initial modding recipe note',
+    },
+  });
+  assert.equal(versionNoteUpdated.status, 200);
+  assert.equal(versionNoteUpdated.json.recipeId, 'unity-recipe');
+  assert.equal(versionNoteUpdated.json.changeSummary, 'Initial modding recipe note');
+
+  const conflict = await jsonRequest(app, env, '/v1/modding-recipes/unity-recipe', {
+    method: 'PUT',
+    cookie: alice.cookie,
+    payload: moddingRecipePayload({
+      recipeId: 'unity-recipe',
+      name: 'Stale Recipe Update',
+      visibility: 'public',
+      versionNumber: 1,
+    }),
+  });
+  assert.equal(conflict.status, 409);
+  assert.equal(conflict.json.recipeId, 'unity-recipe');
+  assert.equal(conflict.json.versionNumber, 2);
+
+  const metadataPatched = await jsonRequest(app, env, '/v1/modding-recipes/unity-recipe/meta', {
+    method: 'PATCH',
+    cookie: alice.cookie,
+    payload: {
+      name: 'Unity Recipe Metadata',
+      description: 'Metadata only recipe update',
+      tags: ['meta', 'recipe'],
+    },
+  });
+  assert.equal(metadataPatched.status, 200);
+  assert.equal(metadataPatched.json.name, 'Unity Recipe Metadata');
+  assert.equal(metadataPatched.json.versionNumber, 2);
+
+  const forked = await jsonRequest(app, env, '/v1/modding-recipes/unity-recipe/fork', {
+    method: 'POST',
+    cookie: bob.cookie,
+    payload: { recipeId: 'bob-recipe-fork', name: 'Bob Recipe Fork' },
+  });
+  assert.equal(forked.status, 200);
+  assert.equal(forked.json.recipeId, 'bob-recipe-fork');
+  assert.equal(forked.json.assetType, 'modding_recipe');
+  assert.equal(forked.json.visibility, 'private');
+
+  const admin = await signInUser(app, env, {
+    email: 'admin@example.com',
+  });
+  assert.equal(admin.status, 200);
+  assert.ok(admin.cookie);
+
+  const managedList = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/modding-recipes`, {
+    cookie: admin.cookie,
+  });
+  assert.equal(managedList.status, 200);
+  assert.equal(managedList.json.entries.some((entry) => entry.assetId === 'unity-recipe' && entry.assetType === 'modding_recipe'), true);
+
+  const managedDetail = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/modding-recipes/unity-recipe`, {
+    cookie: admin.cookie,
+  });
+  assert.equal(managedDetail.status, 200);
+  assert.equal(managedDetail.json.assetId, 'unity-recipe');
+  assert.equal(managedDetail.json.record.content.schemaVersion, 'f8moddingrecipe/1');
 });
 
 test('component list and search do not depend on variant details table', async (t) => {

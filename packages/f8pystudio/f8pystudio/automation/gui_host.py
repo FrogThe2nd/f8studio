@@ -37,6 +37,7 @@ from f8pystudio.automation.library_catalog import (
     operator_library_payload,
     service_library_payload,
 )
+from f8pystudio.modding import ModdingAutomationService
 
 logger = logging.getLogger(__name__)
 _HOST_METHOD_ERRORS = (Exception,)
@@ -47,6 +48,7 @@ _SERVER_THREAD_METHODS = frozenset(
         "runtime.watchState",
         "runtime.samplePort",
         "runtime.debugData",
+        "modding.verifyStream",
     }
 )
 
@@ -71,6 +73,7 @@ class StudioAutomationHost(QtCore.QObject):
         self._bridge = bridge
         self._graph_adapter = StudioGraphAutomationAdapter(studio_graph)
         self._observations = observation_store or RuntimeObservationStore()
+        self._modding: ModdingAutomationService | None = None
         self._token_file = Path(token_file).expanduser() if token_file is not None else default_token_file()
         self._port_file = Path(port_file).expanduser() if port_file is not None else default_port_file()
         self._token = ""
@@ -205,6 +208,46 @@ class StudioAutomationHost(QtCore.QObject):
             result = project_load_payload(self._graph, project_id=_required_text(params, "projectId"))
             self._schedule_studio_runtime_sync()
             return result
+        if method == "modding.detectTarget":
+            return self._modding_service().detect_target(target_path=_required_text(params, "targetPath"))
+        if method == "modding.previewInstall":
+            return self._modding_service().preview_install(
+                target_path=_required_text(params, "targetPath"),
+                options_payload=_optional_dict_param(params.get("options")),
+            )
+        if method == "modding.applyInstall":
+            if not bool(params.get("confirm")):
+                raise ValueError("modding.applyInstall requires confirm=true")
+            return self._modding_service().apply_install(
+                plan_payload=_required_dict_param(params.get("plan"), "plan"),
+                confirm=True,
+            )
+        if method == "modding.createRecipe":
+            if not bool(params.get("confirm")):
+                raise ValueError("modding.createRecipe requires confirm=true")
+            return self._modding_service().create_recipe(
+                name=str(params.get("name") or ""),
+                description=str(params.get("description") or ""),
+                tags=_string_list_param(params.get("tags")),
+                detection_payload=_optional_dict_param(params.get("detection")),
+                install_payload=_optional_dict_param(params.get("install")),
+                verification_payload=_optional_dict_param(params.get("verification")),
+                graph_payload=_optional_dict_param(params.get("graph")),
+                notes=str(params.get("notes") or ""),
+                confirm=True,
+            )
+        if method == "modding.recipeList":
+            return self._modding_service().recipe_list()
+        if method == "modding.recipeLoad":
+            return self._modding_service().recipe_load(recipe_id=_required_text(params, "recipeId"))
+        if method == "modding.recipeExport":
+            if not bool(params.get("confirm")):
+                raise ValueError("modding.recipeExport requires confirm=true")
+            return self._modding_service().recipe_export(
+                recipe_id=_required_text(params, "recipeId"),
+                path=_required_text(params, "path"),
+                confirm=True,
+            )
         if method == "graph.uiContext":
             return {"uiContext": self._graph_ui_context()}
         if method == "graph.catalog":
@@ -303,6 +346,13 @@ class StudioAutomationHost(QtCore.QObject):
             return self._runtime_sample_port(params)
         if method == "runtime.debugData":
             return self._runtime_debug_data(params)
+        if method == "modding.verifyStream":
+            return self._modding_service().verify_stream(
+                port=int(params.get("port") or 39540),
+                host=str(params.get("host") or "127.0.0.1"),
+                timeout_s=float(params.get("timeoutS") or 3.0),
+                max_samples=int(params.get("maxSamples") or 8),
+            )
         raise ValueError(f"unsupported server-thread automation method: {method}")
 
     def _status(self) -> dict[str, Any]:
@@ -313,6 +363,13 @@ class StudioAutomationHost(QtCore.QObject):
             "graphRevision": self._graph_adapter.revision(),
             "studioServiceId": str(self._bridge.studio_service_id),
         }
+
+    def _modding_service(self) -> ModdingAutomationService:
+        service = self._modding
+        if service is None:
+            service = ModdingAutomationService()
+            self._modding = service
+        return service
 
     def _runtime_deploy(self, params: dict[str, Any]) -> dict[str, Any]:
         compiled = compile_runtime_graphs_from_studio(self._graph)
@@ -798,6 +855,20 @@ def _required_text(params: dict[str, Any], key: str) -> str:
     if not value:
         raise ValueError(f"{key} is required")
     return value
+
+
+def _required_dict_param(value: Any, key: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{key} must be a JSON object")
+    return dict(value)
+
+
+def _optional_dict_param(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("expected JSON object")
+    return dict(value)
 
 
 def _stored_state_to_dict(value: Any) -> dict[str, Any] | None:

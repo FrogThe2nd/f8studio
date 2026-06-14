@@ -311,3 +311,13 @@ class MainWindowProjectMixin:
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
+
+    @QtCore.Slot()
+    def _on_game_modding_action(self) -> None:
+        from ...ui.dialogs.game_modding_dialog import GameModdingDialog
+
+        dialog = GameModdingDialog(parent=self)
+        dialog.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()

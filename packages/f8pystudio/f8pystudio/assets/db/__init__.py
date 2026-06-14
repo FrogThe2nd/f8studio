@@ -3,6 +3,7 @@ from .asset_db import (
     assets_db_path,
     component_drafts_local_table,
     component_remote_cache_table,
+    modding_recipe_drafts_local_table,
     project_heads_table,
     project_versions_table,
     variant_drafts_local_table,
@@ -16,6 +17,7 @@ __all__ = [
     "project_versions_table",
     "component_drafts_local_table",
     "component_remote_cache_table",
+    "modding_recipe_drafts_local_table",
     "variant_drafts_local_table",
     "variant_remote_cache_table",
 ]

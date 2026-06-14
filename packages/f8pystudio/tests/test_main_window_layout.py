@@ -206,8 +206,10 @@ class _LayoutHarness(QtWidgets.QMainWindow):
             checkable=True,
             checked=self._kill_managed_services_on_exit_enabled,
         )
+        self._mcp_http_server_action = self._create_action("MCP HTTP Server", handler=lambda: None)
         self._manage_components_action = self._create_action("Manage Components", handler=lambda: None)
         self._variant_catalog_action = self._create_action("Variant Catalog", handler=lambda: None)
+        self._game_modding_action = self._create_action("Game Modding", handler=lambda: None)
         self._global_hotkeys_action = self._create_action("Global Hotkeys", handler=lambda: None)
         self._auto_proxy_action = self._create_action(
             "Auto Proxy",

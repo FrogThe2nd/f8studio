@@ -11,6 +11,7 @@ const MAX_TAG_LENGTH = 48;
 const MAX_ASSET_FIELD_LENGTH = 128;
 const SAFE_ASSET_ID_PATTERN = /^[A-Za-z0-9._~-]+$/;
 const COMPONENT_SCHEMA_VERSION = 'f8studio-session/1';
+const MODDING_RECIPE_SCHEMA_VERSION = 'f8moddingrecipe/1';
 const textEncoder = new TextEncoder();
 
 export class AssetConflictError extends Error {
@@ -514,6 +515,87 @@ export class AssetRepository {
     });
   }
 
+  async createModdingRecipe({ payload, user }) {
+    const normalized = normalizeModdingRecipeCreatePayload(payload, user);
+    return this._createAsset({ normalized, userId: user.userId });
+  }
+
+  async updateModdingRecipe({ recipeId, payload, user }) {
+    const existing = await this._requireOwnedAsset({ assetId: recipeId, assetType: 'modding_recipe', userId: user.userId });
+    const normalized = normalizeModdingRecipeUpdatePayload(payload, existing, user);
+    return this._updateAsset({ existing, normalized, userId: user.userId });
+  }
+
+  async deleteModdingRecipe({ recipeId, userId }) {
+    await this._deleteOwnedAsset({ assetId: recipeId, assetType: 'modding_recipe', userId });
+  }
+
+  async getModdingRecipe({ recipeId, userId, head = null }) {
+    return this._getAssetDetailPayload({ assetId: recipeId, assetType: 'modding_recipe', userId, versionNumber: null, head });
+  }
+
+  async listModdingRecipes({ userId, query, visibility, owner, cursor }) {
+    return this._listTypedAssetSummaries({
+      assetType: 'modding_recipe',
+      userId,
+      query,
+      cursor,
+      visibility,
+      owner,
+      extraFilters: {},
+    });
+  }
+
+  async listModdingRecipeVersions({ recipeId, userId, cursor }) {
+    return this._listAssetVersions({ assetId: recipeId, assetType: 'modding_recipe', userId, cursor });
+  }
+
+  async listModdingRecipeSubscribers({ recipeId, userId, cursor }) {
+    return this._listAssetSubscribers({ assetId: recipeId, assetType: 'modding_recipe', userId, cursor });
+  }
+
+  async getModdingRecipeVersion({ recipeId, versionNumber, userId, head = null }) {
+    return this._getAssetDetailPayload({ assetId: recipeId, assetType: 'modding_recipe', userId, versionNumber, head });
+  }
+
+  async getModdingRecipeContent({ recipeId, userId, head = null }) {
+    return this._getAssetContentPayload({ assetId: recipeId, assetType: 'modding_recipe', userId, versionNumber: null, head });
+  }
+
+  async getModdingRecipeVersionContent({ recipeId, versionNumber, userId, head = null }) {
+    return this._getAssetContentPayload({ assetId: recipeId, assetType: 'modding_recipe', userId, versionNumber, head });
+  }
+
+  async subscribeModdingRecipe({ recipeId, userId }) {
+    return this._subscribeAsset({ assetId: recipeId, assetType: 'modding_recipe', userId });
+  }
+
+  async unsubscribeModdingRecipe({ recipeId, userId }) {
+    return this._unsubscribeAsset({ assetId: recipeId, assetType: 'modding_recipe', userId });
+  }
+
+  async forkModdingRecipe({ recipeId, payload, user }) {
+    return this._forkAsset({ assetId: recipeId, assetType: 'modding_recipe', payload, user });
+  }
+
+  async updateModdingRecipeVisibility({ recipeId, visibility, versionNumber, userId }) {
+    return this._updateAssetVisibility({ assetId: recipeId, assetType: 'modding_recipe', visibility, versionNumber, userId });
+  }
+
+  async updateModdingRecipeVersionNote({ recipeId, versionNumber, changeSummary, userId }) {
+    return this._updateAssetVersionNote({
+      assetId: recipeId,
+      assetType: 'modding_recipe',
+      versionNumber,
+      changeSummary,
+      userId,
+    });
+  }
+
+  async updateModdingRecipeMeta({ recipeId, payload, user }) {
+    return this._updateAssetMeta({ assetId: recipeId, assetType: 'modding_recipe', payload, userId: user.userId });
+  }
+
   async _createAsset({ normalized, userId }) {
     const existing = await this._findAssetHeadRow(normalized.assetId);
     if (existing !== null) {
@@ -855,12 +937,28 @@ export class AssetRepository {
         user,
       });
     }
+    if (assetType === 'component') {
+      const sourceRecord = source.record;
+      return this.createComponent({
+        payload: {
+          record: {
+            ...sourceRecord,
+            componentId: stringOrDefault(forkPayload.componentId, crypto.randomUUID()),
+            name: stringOrDefault(forkPayload.name, `${sourceRecord.name} Copy`),
+            content: deepCloneJson(sourceRecord.content),
+          },
+          visibility: stringOrDefault(forkPayload.visibility, 'private'),
+          changeSummary: stringOrDefault(forkPayload.changeSummary, `Forked from ${assetId}`),
+        },
+        user,
+      });
+    }
     const sourceRecord = source.record;
-    return this.createComponent({
+    return this.createModdingRecipe({
       payload: {
         record: {
           ...sourceRecord,
-          componentId: stringOrDefault(forkPayload.componentId, crypto.randomUUID()),
+          recipeId: stringOrDefault(forkPayload.recipeId, crypto.randomUUID()),
           name: stringOrDefault(forkPayload.name, `${sourceRecord.name} Copy`),
           content: deepCloneJson(sourceRecord.content),
         },
@@ -1283,6 +1381,46 @@ function normalizeComponentUpdatePayload(payload, existing, user) {
   };
 }
 
+function normalizeModdingRecipeCreatePayload(payload, user) {
+  const record = normalizeModdingRecipeRecord(payload.record, { expectedRecipeId: '' });
+  const timestamp = nowIso();
+  const createdAt = normalizeIsoString(record.createdAt, timestamp);
+  const updatedAt = timestamp;
+  return {
+    assetId: record.recipeId,
+    assetType: 'modding_recipe',
+    ownerUserId: String(user.userId),
+    visibility: normalizeVisibility(payload.visibility),
+    versionNumber: null,
+    name: record.name,
+    description: record.description,
+    tags: record.tags,
+    createdAt,
+    updatedAt,
+    changeSummary: normalizeChangeSummary(payload.changeSummary),
+    contentJson: stableJson(record.content),
+  };
+}
+
+function normalizeModdingRecipeUpdatePayload(payload, existing, user) {
+  const record = normalizeModdingRecipeRecord(payload.record, { expectedRecipeId: String(existing.asset_id) });
+  const timestamp = nowIso();
+  return {
+    assetId: String(existing.asset_id),
+    assetType: 'modding_recipe',
+    ownerUserId: String(user.userId),
+    visibility: normalizeVisibility(payload.visibility ?? existing.visibility),
+    versionNumber: normalizeOptionalVersionNumber(payload.versionNumber),
+    name: record.name,
+    description: record.description,
+    tags: record.tags,
+    createdAt: String(existing.created_at),
+    updatedAt: timestamp,
+    changeSummary: normalizeChangeSummary(payload.changeSummary),
+    contentJson: stableJson(record.content),
+  };
+}
+
 function normalizeVariantRecord(record, { expectedVariantId }) {
   if (!isPlainObject(record)) {
     throw new AssetValidationError('record is required');
@@ -1345,9 +1483,42 @@ function normalizeComponentRecord(record, { expectedComponentId }) {
   };
 }
 
+function normalizeModdingRecipeRecord(record, { expectedRecipeId }) {
+  if (!isPlainObject(record)) {
+    throw new AssetValidationError('record is required');
+  }
+  if (Object.hasOwn(record, 'schemaVersion')) {
+    throw new AssetValidationError('record.schemaVersion is not allowed; use record.content.schemaVersion');
+  }
+  if (Object.hasOwn(record, 'lastTargetPath')) {
+    throw new AssetValidationError('record.lastTargetPath is local-only and cannot be published');
+  }
+  const recipeId = requireAssetIdentifier(record.recipeId, 'record.recipeId is required');
+  if (expectedRecipeId && recipeId !== expectedRecipeId) {
+    throw new AssetValidationError('record.recipeId must match the request path');
+  }
+  if (!isPlainObject(record.content)) {
+    throw new AssetValidationError('record.content must be a JSON object');
+  }
+  const content = normalizeModdingRecipeContentPayload(record.content);
+  rejectLocalPathFields(content);
+  return {
+    recipeId,
+    name: requireAssetName(record.name, 'record.name is required'),
+    description: optionalDescription(record.description),
+    tags: normalizeTags(record.tags),
+    content,
+    createdAt: normalizeIsoString(record.createdAt, ''),
+    updatedAt: normalizeIsoString(record.updatedAt, ''),
+  };
+}
+
 function typedAssetSummaryPayloadFromRow(row, viewerUserId) {
   if (String(row.asset_type) === 'variant') {
     return variantSummaryPayloadFromRow(row, viewerUserId);
+  }
+  if (String(row.asset_type) === 'modding_recipe') {
+    return moddingRecipeSummaryPayloadFromRow(row, viewerUserId);
   }
   return componentSummaryPayloadFromRow(row, viewerUserId);
 }
@@ -1356,12 +1527,18 @@ function typedAssetDetailPayloadFromRows({ head, version, subscription, viewerUs
   if (String(head.asset_type) === 'variant') {
     return variantDetailPayloadFromRows({ head, version, subscription, viewerUserId, includeVersionNumber });
   }
+  if (String(head.asset_type) === 'modding_recipe') {
+    return moddingRecipeDetailPayloadFromRows({ head, version, subscription, viewerUserId, includeVersionNumber });
+  }
   return componentDetailPayloadFromRows({ head, version, subscription, viewerUserId, includeVersionNumber });
 }
 
 function typedAssetContentPayloadFromRows({ head, version }) {
   if (String(head.asset_type) === 'variant') {
     return variantContentPayloadFromRows({ head, version });
+  }
+  if (String(head.asset_type) === 'modding_recipe') {
+    return moddingRecipeContentPayloadFromRows({ head, version });
   }
   return componentContentPayloadFromRows({ head, version });
 }
@@ -1446,6 +1623,44 @@ function componentContentPayloadFromRows({ head, version }) {
   };
 }
 
+function moddingRecipeSummaryPayloadFromRow(row, viewerUserId) {
+  return {
+    ...genericTypedAssetPayload(row, viewerUserId),
+    recipeId: String(row.asset_id),
+    hasContent: true,
+  };
+}
+
+function moddingRecipeDetailPayloadFromRows({ head, version, subscription, viewerUserId, includeVersionNumber }) {
+  const payload = {
+    ...moddingRecipeSummaryPayloadFromRow(
+      {
+        ...head,
+        ...(subscription || {}),
+        created_by_user_id: version.created_by_user_id,
+        change_summary: version.change_summary,
+        version_number: version.version_number,
+      },
+      viewerUserId,
+    ),
+    versionCreatedAt: normalizeDbTimestamp(version.created_at),
+    createdByUserId: String(version.created_by_user_id),
+  };
+  if (includeVersionNumber) {
+    payload.versionNumber = Number(version.version_number);
+  }
+  return payload;
+}
+
+function moddingRecipeContentPayloadFromRows({ head, version }) {
+  return {
+    recipeId: String(head.asset_id),
+    assetType: 'modding_recipe',
+    versionNumber: Number(version.version_number),
+    record: parseModdingRecipeRecord(version.content, { head, version }),
+  };
+}
+
 function genericTypedAssetPayload(row, viewerUserId) {
   const isOwner = String(row.owner_user_id) === String(viewerUserId || '');
   const isSubscribed = hasSubscription(row);
@@ -1493,6 +1708,12 @@ function adminAssetDetailFromRows({ head, version }) {
     return {
       ...summary,
       record: parseVariantRecord(version.content, { head, version }),
+    };
+  }
+  if (String(head.asset_type) === 'modding_recipe') {
+    return {
+      ...summary,
+      record: parseModdingRecipeRecord(version.content, { head, version }),
     };
   }
   return {
@@ -1559,6 +1780,9 @@ function assetVersionSummaryFromRow(assetType, row) {
   if (assetType === 'variant') {
     return { variantId: String(row.asset_id), ...summary };
   }
+  if (assetType === 'modding_recipe') {
+    return { recipeId: String(row.asset_id), ...summary };
+  }
   return { componentId: String(row.asset_id), ...summary };
 }
 
@@ -1613,6 +1837,23 @@ function parseComponentRecord(content, { head = null, version = null } = {}) {
   return {
     componentId,
     name: stringOrDefault(head?.name, componentId),
+    description: stringOrDefault(head?.description, ''),
+    tags: normalizeTags(parseJsonArray(head?.tags_json)),
+    content: contentPayload,
+    createdAt,
+    updatedAt,
+  };
+}
+
+function parseModdingRecipeRecord(content, { head = null, version = null } = {}) {
+  const contentPayload = normalizeModdingRecipeContentPayload(parseJsonObject(content));
+  rejectLocalPathFields(contentPayload);
+  const recipeId = stringOrDefault(head?.asset_id, '');
+  const createdAt = normalizeDbTimestamp(head?.created_at) || normalizeDbTimestamp(version?.created_at);
+  const updatedAt = normalizeDbTimestamp(version?.created_at) || normalizeDbTimestamp(head?.updated_at) || createdAt;
+  return {
+    recipeId,
+    name: stringOrDefault(head?.name, recipeId),
     description: stringOrDefault(head?.description, ''),
     tags: normalizeTags(parseJsonArray(head?.tags_json)),
     content: contentPayload,
@@ -1689,8 +1930,8 @@ function normalizeVisibility(value) {
 
 function normalizeAssetType(value) {
   const text = String(value || '').trim();
-  if (text !== 'variant' && text !== 'component') {
-    throw new AssetValidationError('assetType must be variant or component');
+  if (text !== 'variant' && text !== 'component' && text !== 'modding_recipe') {
+    throw new AssetValidationError('assetType must be variant, component, or modding_recipe');
   }
   return text;
 }
@@ -1829,6 +2070,24 @@ function normalizeComponentContentPayload(content) {
   return deepCloneJson(content);
 }
 
+function normalizeModdingRecipeContentPayload(content) {
+  if (!isPlainObject(content)) {
+    throw new AssetValidationError(`modding recipe payload must be the canonical recipe payload { schemaVersion, engine }`);
+  }
+  if (looksLikeStoredRecordEnvelope(content) || looksLikeStoredModdingRecipeRecord(content)) {
+    throw new AssetValidationError(`modding recipe payload must be the canonical recipe payload without record or envelope metadata`);
+  }
+  const schemaVersion = requireNonEmptyString(content.schemaVersion, 'modding recipe schemaVersion is required');
+  if (schemaVersion !== MODDING_RECIPE_SCHEMA_VERSION) {
+    throw new AssetValidationError(`modding recipe schemaVersion must be ${MODDING_RECIPE_SCHEMA_VERSION}`);
+  }
+  requireNonEmptyString(content.engine, 'modding recipe engine is required');
+  if (Object.hasOwn(content, 'lastTargetPath')) {
+    throw new AssetValidationError('modding recipe lastTargetPath is local-only and cannot be published');
+  }
+  return deepCloneJson(content);
+}
+
 async function decodeVersionContent(value) {
   if (value === null || value === undefined) {
     throw new AssetValidationError('stored version content is missing');
@@ -1878,6 +2137,71 @@ function looksLikeStoredComponentRecord(payload) {
   return isPlainObject(payload)
     && Object.hasOwn(payload, 'componentId')
     && isPlainObject(payload.content);
+}
+
+function looksLikeStoredModdingRecipeRecord(payload) {
+  return isPlainObject(payload)
+    && Object.hasOwn(payload, 'recipeId')
+    && isPlainObject(payload.content);
+}
+
+function rejectLocalPathFields(value, path = []) {
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      rejectLocalPathFields(value[index], [...path, String(index)]);
+    }
+    return;
+  }
+  if (!isPlainObject(value)) {
+    if (typeof value === 'string' && looksLikeAbsoluteLocalPath(value)) {
+      throw new AssetValidationError(`modding recipe published content must not contain absolute local paths at ${formatJsonPath(path)}`);
+    }
+    return;
+  }
+  for (const [key, child] of Object.entries(value)) {
+    const childPath = [...path, key];
+    if (isLocalOnlyPathFieldName(key) && child !== null && child !== undefined && String(child).trim() !== '') {
+      throw new AssetValidationError(`modding recipe published content must not contain local path field ${formatJsonPath(childPath)}`);
+    }
+    rejectLocalPathFields(child, childPath);
+  }
+}
+
+function isLocalOnlyPathFieldName(key) {
+  const name = String(key || '').trim().toLowerCase();
+  return name === 'lasttargetpath'
+    || name === 'targetpath'
+    || name === 'resolvedgameroot'
+    || name === 'gameroot'
+    || name === 'executablepath'
+    || name === 'exepath'
+    || name === 'localpath'
+    || name === 'installpath'
+    || name === 'sourcepath';
+}
+
+function looksLikeAbsoluteLocalPath(value) {
+  const text = String(value || '').trim();
+  if (!text) {
+    return false;
+  }
+  if (/^file:\/\//i.test(text)) {
+    return true;
+  }
+  if (/^[A-Za-z]:[\\/]/.test(text)) {
+    return true;
+  }
+  if (/^\\\\/.test(text) || /^\/\/[^/]/.test(text)) {
+    return true;
+  }
+  return /^\/(Users|home|tmp|var|mnt|Volumes|opt|root|srv|media|run)\//.test(text);
+}
+
+function formatJsonPath(parts) {
+  if (parts.length === 0) {
+    return '$';
+  }
+  return `$${parts.map((part) => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(part) ? `.${part}` : `[${JSON.stringify(part)}]`)).join('')}`;
 }
 
 function toBinaryContent(value) {

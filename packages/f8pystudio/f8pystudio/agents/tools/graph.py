@@ -35,10 +35,11 @@ from f8pystudio.automation.library_catalog import (
 )
 from f8pystudio.automation.observation_store import StoredStateValue
 from f8pystudio.automation.projects import project_list_payload, project_load_payload, project_new_payload, project_save_payload
+from f8pystudio.modding import ModdingAutomationService
 from f8pystudio.ui.support.ui_notifications import export_recent_notifications
 
 logger = logging.getLogger(__name__)
-_GRAPH_TOOL_ERRORS = (AttributeError, KeyError, RuntimeError, TimeoutError, TypeError, ValueError)
+_GRAPH_TOOL_ERRORS = (AttributeError, ImportError, KeyError, OSError, RuntimeError, TimeoutError, TypeError, ValueError)
 _DEFAULT_APPROVAL_TIMEOUT_S = 120.0
 
 
@@ -203,6 +204,7 @@ class LocalStudioGraphToolExecutor(QtCore.QObject):
         self._bridge = bridge
         self._log_source = log_source
         self._observation_source = observation_source
+        self._modding: ModdingAutomationService | None = None
         self._ui_context_source = ui_context_source
         self._on_graph_patch_applied = on_graph_patch_applied
         self._on_tool_trace = on_tool_trace
@@ -378,6 +380,53 @@ class LocalStudioGraphToolExecutor(QtCore.QObject):
             result = project_load_payload(self._studio_graph, project_id=_required_text(params, "projectId"))
             self._notify_graph_patch_applied()
             return result
+        if method == "modding.detectTarget":
+            return self._modding_service().detect_target(target_path=_required_text(params, "targetPath"))
+        if method == "modding.previewInstall":
+            return self._modding_service().preview_install(
+                target_path=_required_text(params, "targetPath"),
+                options_payload=_optional_dict_param(params.get("options")),
+            )
+        if method == "modding.applyInstall":
+            if not bool(params.get("confirm")):
+                raise ValueError("modding_apply_install requires confirm=true")
+            return self._modding_service().apply_install(
+                plan_payload=_required_dict_param(params.get("plan"), "plan"),
+                confirm=True,
+            )
+        if method == "modding.verifyStream":
+            return self._modding_service().verify_stream(
+                port=int(params.get("port") or 39540),
+                host=str(params.get("host") or "127.0.0.1"),
+                timeout_s=float(params.get("timeoutS") or 3.0),
+                max_samples=int(params.get("maxSamples") or 8),
+            )
+        if method == "modding.createRecipe":
+            if not bool(params.get("confirm")):
+                raise ValueError("modding_create_recipe requires confirm=true")
+            return self._modding_service().create_recipe(
+                name=str(params.get("name") or ""),
+                description=str(params.get("description") or ""),
+                tags=_string_list_param(params.get("tags")),
+                detection_payload=_optional_dict_param(params.get("detection")),
+                install_payload=_optional_dict_param(params.get("install")),
+                verification_payload=_optional_dict_param(params.get("verification")),
+                graph_payload=_optional_dict_param(params.get("graph")),
+                notes=str(params.get("notes") or ""),
+                confirm=True,
+            )
+        if method == "modding.recipeList":
+            return self._modding_service().recipe_list()
+        if method == "modding.recipeLoad":
+            return self._modding_service().recipe_load(recipe_id=_required_text(params, "recipeId"))
+        if method == "modding.recipeExport":
+            if not bool(params.get("confirm")):
+                raise ValueError("modding_recipe_export requires confirm=true")
+            return self._modding_service().recipe_export(
+                recipe_id=_required_text(params, "recipeId"),
+                path=_required_text(params, "path"),
+                confirm=True,
+            )
         if method == "graph.uiContext":
             return {"uiContext": self._graph_ui_context()}
         if method == "graph.catalog":
@@ -478,6 +527,13 @@ class LocalStudioGraphToolExecutor(QtCore.QObject):
         if bridge is None:
             raise RuntimeError("runtime bridge is not available for this Studio agent tool")
         return bridge
+
+    def _modding_service(self) -> ModdingAutomationService:
+        service = self._modding
+        if service is None:
+            service = ModdingAutomationService()
+            self._modding = service
+        return service
 
     def _require_observation_source(self) -> StudioRuntimeObservationSource:
         source = self._observation_source
@@ -983,6 +1039,14 @@ class LocalStudioGraphTools:
             self.project_new,
             self.project_save,
             self.project_load,
+            self.modding_detect_target,
+            self.modding_preview_install,
+            self.modding_apply_install,
+            self.modding_verify_stream,
+            self.modding_create_recipe,
+            self.modding_recipe_list,
+            self.modding_recipe_load,
+            self.modding_recipe_export,
             self.graph_compile,
             self.graph_preview_patch,
             self.graph_apply_patch,
@@ -1027,6 +1091,11 @@ class LocalStudioGraphTools:
             self.operator_detail,
             self.graph_session,
             self.project_list,
+            self.modding_detect_target,
+            self.modding_preview_install,
+            self.modding_verify_stream,
+            self.modding_recipe_list,
+            self.modding_recipe_load,
             self.graph_compile,
             self.graph_preview_patch,
             self.graph_build_from_goal,
@@ -1060,6 +1129,11 @@ class LocalStudioGraphTools:
             self.operator_detail,
             self.graph_session,
             self.project_list,
+            self.modding_detect_target,
+            self.modding_preview_install,
+            self.modding_verify_stream,
+            self.modding_recipe_list,
+            self.modding_recipe_load,
             self.graph_compile,
             self.graph_preview_patch,
             self.graph_build_from_goal,
@@ -1096,6 +1170,14 @@ class LocalStudioGraphTools:
             "project_new",
             "project_save",
             "project_load",
+            "modding_detect_target",
+            "modding_preview_install",
+            "modding_apply_install",
+            "modding_verify_stream",
+            "modding_create_recipe",
+            "modding_recipe_list",
+            "modding_recipe_load",
+            "modding_recipe_export",
             "graph_compile",
             "graph_preview_patch",
             "graph_apply_patch",
@@ -1140,6 +1222,11 @@ class LocalStudioGraphTools:
             "operator_detail",
             "graph_session",
             "project_list",
+            "modding_detect_target",
+            "modding_preview_install",
+            "modding_verify_stream",
+            "modding_recipe_list",
+            "modding_recipe_load",
             "graph_compile",
             "graph_preview_patch",
             "graph_build_from_goal",
@@ -1173,6 +1260,11 @@ class LocalStudioGraphTools:
             "operator_detail",
             "graph_session",
             "project_list",
+            "modding_detect_target",
+            "modding_preview_install",
+            "modding_verify_stream",
+            "modding_recipe_list",
+            "modding_recipe_load",
             "graph_compile",
             "graph_preview_patch",
             "graph_build_from_goal",
@@ -1304,6 +1396,77 @@ class LocalStudioGraphTools:
     def project_load(self, project_id: str, confirm: bool = False) -> dict[str, Any]:
         """Load a locally saved PyStudio project into the current graph; requires confirm=true or GUI approval."""
         return self.executor.call("project.load", {"projectId": project_id, "confirm": bool(confirm)})
+
+    def modding_detect_target(self, target_path: str) -> dict[str, Any]:
+        """Read-only detection of a local game target path for engine/backend/profile/loader state."""
+        return self.executor.call("modding.detectTarget", {"targetPath": target_path})
+
+    def modding_preview_install(self, target_path: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Read-only preview of a game modding install plan; does not write game files."""
+        return self.executor.call(
+            "modding.previewInstall",
+            {"targetPath": target_path, "options": {} if options is None else dict(options)},
+        )
+
+    def modding_apply_install(self, plan: dict[str, Any], confirm: bool = False) -> dict[str, Any]:
+        """Apply a previewed modding install plan; requires confirm=true or GUI approval."""
+        return self.executor.call("modding.applyInstall", {"plan": plan, "confirm": bool(confirm)})
+
+    def modding_verify_stream(
+        self,
+        port: int = 39540,
+        host: str = "127.0.0.1",
+        timeout_s: float = 3.0,
+        max_samples: int = 8,
+    ) -> dict[str, Any]:
+        """Temporarily listen for UDP skeleton packets without writing game files."""
+        return self.executor.call(
+            "modding.verifyStream",
+            {"port": int(port), "host": host, "timeoutS": float(timeout_s), "maxSamples": int(max_samples)},
+        )
+
+    def modding_create_recipe(
+        self,
+        name: str,
+        description: str = "",
+        tags: list[str] | None = None,
+        detection: dict[str, Any] | None = None,
+        install: dict[str, Any] | None = None,
+        verification: dict[str, Any] | None = None,
+        graph: dict[str, Any] | None = None,
+        notes: str = "",
+        confirm: bool = False,
+    ) -> dict[str, Any]:
+        """Create a local modding recipe draft; requires confirm=true or GUI approval."""
+        return self.executor.call(
+            "modding.createRecipe",
+            {
+                "name": name,
+                "description": description,
+                "tags": None if tags is None else list(tags),
+                "detection": None if detection is None else dict(detection),
+                "install": None if install is None else dict(install),
+                "verification": None if verification is None else dict(verification),
+                "graph": None if graph is None else dict(graph),
+                "notes": notes,
+                "confirm": bool(confirm),
+            },
+        )
+
+    def modding_recipe_list(self) -> dict[str, Any]:
+        """List locally saved modding recipe drafts."""
+        return self.executor.call("modding.recipeList")
+
+    def modding_recipe_load(self, recipe_id: str) -> dict[str, Any]:
+        """Load a local modding recipe draft by id."""
+        return self.executor.call("modding.recipeLoad", {"recipeId": recipe_id})
+
+    def modding_recipe_export(self, recipe_id: str, path: str, confirm: bool = False) -> dict[str, Any]:
+        """Export a publish-safe modding recipe JSON file; requires confirm=true or GUI approval."""
+        return self.executor.call(
+            "modding.recipeExport",
+            {"recipeId": recipe_id, "path": path, "confirm": bool(confirm)},
+        )
 
     def graph_compile(self) -> dict[str, Any]:
         """Compile the current PyStudio graph and return service, node, edge, and warning metadata."""
@@ -1544,6 +1707,17 @@ class LocalStudioGraphTools:
             {"limit": int(limit), "minimumSeverity": minimum_severity},
         )
 
+    def mod_game_for_skeleton_stream_prompt(self, target_path: str) -> str:
+        return (
+            "Use the PyStudio modding workflow for a local game target. First call modding_detect_target. "
+            "If Unity is detected, call modding_preview_install and present blocking errors before install. "
+            "Call modding_apply_install only after explicit approval with confirm=true. After the user starts the game, "
+            "call modding_verify_stream on UDP port 39540, then preview/build a graph from the returned graphBuildPlan "
+            "using graph_preview_build_plan and graph_apply_build_plan after approval. Save reusable evidence with "
+            "modding_create_recipe when requested. Target path: "
+            f"{target_path}"
+        )
+
 
 def _requires_confirm(params: dict[str, Any]) -> bool:
     patch = params.get("patch")
@@ -1626,6 +1800,24 @@ def _approval_spec_for_method(method: str, params: dict[str, Any]) -> _ToolAppro
             description="Replace the current graph with a locally saved PyStudio project.",
             confirm_error_message="project_load requires confirm=true",
         )
+    if method == "modding.applyInstall":
+        return _ToolApprovalSpec(
+            title="Apply Game Modding Install",
+            description="Write the previewed loader/exporter/profile changes into the selected game directory.",
+            confirm_error_message="modding_apply_install requires confirm=true",
+        )
+    if method == "modding.createRecipe":
+        return _ToolApprovalSpec(
+            title="Create Modding Recipe",
+            description="Save a local modding recipe draft from the detection, install, graph, and verification evidence.",
+            confirm_error_message="modding_create_recipe requires confirm=true",
+        )
+    if method == "modding.recipeExport":
+        return _ToolApprovalSpec(
+            title="Export Modding Recipe",
+            description="Write a publish-safe modding recipe JSON file.",
+            confirm_error_message="modding_recipe_export requires confirm=true",
+        )
     if method == "graph.applyBuildPlan":
         return _ToolApprovalSpec(
             title="Apply Graph Build Plan",
@@ -1695,6 +1887,20 @@ def _required_text(params: dict[str, Any], key: str) -> str:
     if not value:
         raise ValueError(f"{key} is required")
     return value
+
+
+def _required_dict_param(value: Any, key: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{key} must be a JSON object")
+    return dict(value)
+
+
+def _optional_dict_param(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("expected JSON object")
+    return dict(value)
 
 
 def _monitor_row_to_dict(row: Any) -> dict[str, Any]:

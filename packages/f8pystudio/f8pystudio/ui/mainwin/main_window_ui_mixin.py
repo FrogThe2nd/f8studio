@@ -58,6 +58,7 @@ class MainWindowActionBundle:
     mcp_http_server_action: QtGui.QAction
     global_hotkeys_action: QtGui.QAction
     variant_catalog_action: QtGui.QAction
+    game_modding_action: QtGui.QAction
 
 
 @dataclass(frozen=True)
@@ -195,6 +196,7 @@ class MainWindowUiMixin:
         def _on_global_hotkeys_action(self) -> None: ...
         def _on_mcp_http_server_toggled(self, checked: bool) -> None: ...
         def _on_variant_catalog_action(self) -> None: ...
+        def _on_game_modding_action(self) -> None: ...
         def _save_window_layout(self) -> None: ...
 
     def _setup_docks(self) -> None:
@@ -507,6 +509,7 @@ class MainWindowUiMixin:
                 self._mcp_http_server_action,
                 self._manage_components_action,
                 self._variant_catalog_action,
+                self._game_modding_action,
                 self._global_hotkeys_action,
             ],
         )
@@ -682,6 +685,12 @@ class MainWindowUiMixin:
                 icon=StudioIcon.CUBE,
                 tool_tip="Variant Catalog",
             ),
+            game_modding_action=self._create_action(
+                "Game Modding",
+                handler=self._on_game_modding_action,
+                icon=StudioIcon.AUTOMATION,
+                tool_tip="Detect a game, preview exporter install, verify skeleton stream, and save a recipe",
+            ),
         )
         self._quickload_project_action = action_bundle.quickload_project_action
         self._quicksave_project_action = action_bundle.quicksave_project_action
@@ -705,6 +714,7 @@ class MainWindowUiMixin:
         self._mcp_http_server_action = action_bundle.mcp_http_server_action
         self._global_hotkeys_action = action_bundle.global_hotkeys_action
         self._variant_catalog_action = action_bundle.variant_catalog_action
+        self._game_modding_action = action_bundle.game_modding_action
 
     @QtCore.Slot()
     def _on_reset_layout_action(self) -> None:

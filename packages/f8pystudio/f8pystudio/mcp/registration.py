@@ -149,6 +149,90 @@ def register_studio_mcp_tools(server: Any, tools: StudioAutomationTools) -> None
         return tools.project_load(project_id=project_id, confirm=confirm, connection_file=connection_file)
 
     @server.tool()
+    def modding_detect_target(target_path: str, connection_file: str = "") -> dict[str, Any]:
+        return tools.modding_detect_target(target_path=target_path, connection_file=connection_file)
+
+    @server.tool()
+    def modding_preview_install(
+        target_path: str,
+        options: dict[str, Any] | None = None,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return tools.modding_preview_install(target_path=target_path, options=options, connection_file=connection_file)
+
+    @server.tool()
+    def modding_apply_install(
+        plan: dict[str, Any],
+        confirm: bool = False,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return tools.modding_apply_install(plan=plan, confirm=confirm, connection_file=connection_file)
+
+    @server.tool()
+    def modding_verify_stream(
+        port: int = 39540,
+        host: str = "127.0.0.1",
+        timeout_s: float = 3.0,
+        max_samples: int = 8,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return tools.modding_verify_stream(
+            port=port,
+            host=host,
+            timeout_s=timeout_s,
+            max_samples=max_samples,
+            connection_file=connection_file,
+        )
+
+    @server.tool()
+    def modding_create_recipe(
+        name: str,
+        description: str = "",
+        tags: list[str] | None = None,
+        detection: dict[str, Any] | None = None,
+        install: dict[str, Any] | None = None,
+        verification: dict[str, Any] | None = None,
+        graph: dict[str, Any] | None = None,
+        notes: str = "",
+        confirm: bool = False,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return tools.modding_create_recipe(
+            name=name,
+            description=description,
+            tags=tags,
+            detection=detection,
+            install=install,
+            verification=verification,
+            graph=graph,
+            notes=notes,
+            confirm=confirm,
+            connection_file=connection_file,
+        )
+
+    @server.tool()
+    def modding_recipe_list(connection_file: str = "") -> dict[str, Any]:
+        return tools.modding_recipe_list(connection_file=connection_file)
+
+    @server.tool()
+    def modding_recipe_load(recipe_id: str, connection_file: str = "") -> dict[str, Any]:
+        return tools.modding_recipe_load(recipe_id=recipe_id, connection_file=connection_file)
+
+    @server.tool()
+    def modding_recipe_export(
+        recipe_id: str,
+        path: str,
+        confirm: bool = False,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return tools.modding_recipe_export(
+            recipe_id=recipe_id,
+            path=path,
+            confirm=confirm,
+            connection_file=connection_file,
+        )
+
+    @server.tool()
     def graph_compile(connection_file: str = "") -> dict[str, Any]:
         return tools.graph_compile(connection_file=connection_file)
 
@@ -486,6 +570,10 @@ def register_studio_mcp_tools(server: Any, tools: StudioAutomationTools) -> None
     def local_projects() -> dict[str, Any]:
         return tools.project_list()
 
+    @server.resource("f8studio://modding/recipes")
+    def local_modding_recipes() -> dict[str, Any]:
+        return tools.modding_recipe_list()
+
     @server.resource("f8studio://ui/notifications")
     def ui_notifications() -> dict[str, Any]:
         return tools.notifications_read()
@@ -501,3 +589,7 @@ def register_studio_mcp_tools(server: Any, tools: StudioAutomationTools) -> None
     @server.prompt()
     def explain_current_graph() -> str:
         return tools.explain_current_graph_prompt()
+
+    @server.prompt()
+    def mod_game_for_skeleton_stream(target_path: str) -> str:
+        return tools.mod_game_for_skeleton_stream_prompt(target_path)

@@ -124,9 +124,7 @@ export function createApp() {
         throw new HttpError(404, 'not found');
       }
       const assetType = String(head.asset_type);
-      const asset = assetType === 'variant'
-        ? await repo.getVariant({ variantId: assetId, userId: viewerId, head })
-        : await repo.getComponent({ componentId: assetId, userId: viewerId, head });
+      const asset = await getTypedAsset({ repo, assetType, assetId, userId: viewerId, head });
       applyAnonymousPublicCacheHeaders(c, c.req.raw, String(head.visibility) === 'public' && viewer === null);
       return { assetType, asset };
     },
@@ -224,6 +222,29 @@ export function createApp() {
       const payload = await readJsonBody(c.req.raw);
       return repo.createComponent({ payload, user });
     },
+    listModdingRecipes: async (c) => {
+      const viewer = await optionalAuthenticatedUser({ auth: c.get('auth'), db: c.env.DB, request: c.req.raw });
+      applyAnonymousPublicCacheHeaders(c, c.req.raw, viewer === null);
+      return c.get('repo').listModdingRecipes({
+        userId: viewer === null ? null : viewer.userId,
+        query: c.req.query('q') || '',
+        visibility: c.req.query('visibility') || '',
+        owner: c.req.query('owner') || '',
+        cursor: c.req.query('cursor') || '',
+      });
+    },
+    createModdingRecipe: async (c) => {
+      const repo = c.get('repo');
+      const user = await requireAssetWriteUser({
+        auth: c.get('auth'),
+        db: c.env.DB,
+        repo,
+        request: c.req.raw,
+        allowedOrigins: c.get('allowedOrigins'),
+      });
+      const payload = await readJsonBody(c.req.raw);
+      return repo.createModdingRecipe({ payload, user });
+    },
     routeVariantAssetRequest: async (c) => routeAssetRequest({
       auth: c.get('auth'),
       db: c.env.DB,
@@ -240,6 +261,15 @@ export function createApp() {
       request: c.req.raw,
       url: new URL(c.req.raw.url),
       assetType: 'component',
+      allowedOrigins: c.get('allowedOrigins'),
+    }),
+    routeModdingRecipeAssetRequest: async (c) => routeAssetRequest({
+      auth: c.get('auth'),
+      db: c.env.DB,
+      repo: c.get('repo'),
+      request: c.req.raw,
+      url: new URL(c.req.raw.url),
+      assetType: 'modding_recipe',
       allowedOrigins: c.get('allowedOrigins'),
     }),
     routeManagementRequest: async (c) => {
@@ -391,6 +421,33 @@ export function createApp() {
     return c.json(await repo.createComponent({ payload, user }));
   });
 
+  app.get('/v1/modding-recipes', async (c) => {
+    const repo = c.get('repo');
+    const viewer = await optionalAuthenticatedUser({ auth: c.get('auth'), db: c.env.DB, request: c.req.raw });
+    applyAnonymousPublicCacheHeaders(c, c.req.raw, viewer === null);
+    const result = await repo.listModdingRecipes({
+      userId: viewer === null ? null : viewer.userId,
+      query: c.req.query('q') || '',
+      visibility: c.req.query('visibility') || '',
+      owner: c.req.query('owner') || '',
+      cursor: c.req.query('cursor') || '',
+    });
+    return c.json(result);
+  });
+
+  app.post('/v1/modding-recipes', async (c) => {
+    const repo = c.get('repo');
+    const user = await requireAssetWriteUser({
+      auth: c.get('auth'),
+      db: c.env.DB,
+      repo,
+      request: c.req.raw,
+      allowedOrigins: c.get('allowedOrigins'),
+    });
+    const payload = await readJsonBody(c.req.raw);
+    return c.json(await repo.createModdingRecipe({ payload, user }));
+  });
+
   app.all('/v1/variants/*', async (c) => routeAssetRequest({
     auth: c.get('auth'),
     db: c.env.DB,
@@ -408,6 +465,16 @@ export function createApp() {
     request: c.req.raw,
     url: new URL(c.req.raw.url),
     assetType: 'component',
+    allowedOrigins: c.get('allowedOrigins'),
+  }));
+
+  app.all('/v1/modding-recipes/*', async (c) => routeAssetRequest({
+    auth: c.get('auth'),
+    db: c.env.DB,
+    repo: c.get('repo'),
+    request: c.req.raw,
+    url: new URL(c.req.raw.url),
+    assetType: 'modding_recipe',
     allowedOrigins: c.get('allowedOrigins'),
   }));
 
@@ -445,8 +512,74 @@ export function resetWorkerCachesForTesting() {
   lastDesktopSessionPurgeByDb = new WeakMap();
 }
 
+function assetRouteConfig(assetType) {
+  if (assetType === 'variant') {
+    return {
+      prefix: '/v1/variants/',
+      get: ({ repo, assetId, userId, head = null }) => repo.getVariant({ variantId: assetId, userId, head }),
+      update: ({ repo, assetId, payload, user }) => repo.updateVariant({ variantId: assetId, payload, user }),
+      delete: ({ repo, assetId, userId }) => repo.deleteVariant({ variantId: assetId, userId }),
+      getContent: ({ repo, assetId, userId, head = null }) => repo.getVariantContent({ variantId: assetId, userId, head }),
+      updateVisibility: ({ repo, assetId, visibility, versionNumber, userId }) => repo.updateVariantVisibility({ variantId: assetId, visibility, versionNumber, userId }),
+      updateMeta: ({ repo, assetId, payload, user }) => repo.updateVariantMeta({ variantId: assetId, payload, user }),
+      listVersions: ({ repo, assetId, userId }) => repo.listVariantVersions({ variantId: assetId, userId }),
+      getVersion: ({ repo, assetId, versionNumber, userId, head = null }) => repo.getVariantVersion({ variantId: assetId, versionNumber, userId, head }),
+      updateVersionNote: ({ repo, assetId, versionNumber, changeSummary, userId }) => repo.updateVariantVersionNote({ variantId: assetId, versionNumber, changeSummary, userId }),
+      getVersionContent: ({ repo, assetId, versionNumber, userId, head = null }) => repo.getVariantVersionContent({ variantId: assetId, versionNumber, userId, head }),
+      listSubscribers: ({ repo, assetId, userId }) => repo.listVariantSubscribers({ variantId: assetId, userId }),
+      subscribe: ({ repo, assetId, userId }) => repo.subscribeVariant({ variantId: assetId, userId }),
+      unsubscribe: ({ repo, assetId, userId }) => repo.unsubscribeVariant({ variantId: assetId, userId }),
+      fork: ({ repo, assetId, payload, user }) => repo.forkVariant({ variantId: assetId, payload, user }),
+    };
+  }
+  if (assetType === 'component') {
+    return {
+      prefix: '/v1/components/',
+      get: ({ repo, assetId, userId, head = null }) => repo.getComponent({ componentId: assetId, userId, head }),
+      update: ({ repo, assetId, payload, user }) => repo.updateComponent({ componentId: assetId, payload, user }),
+      delete: ({ repo, assetId, userId }) => repo.deleteComponent({ componentId: assetId, userId }),
+      getContent: ({ repo, assetId, userId, head = null }) => repo.getComponentContent({ componentId: assetId, userId, head }),
+      updateVisibility: ({ repo, assetId, visibility, versionNumber, userId }) => repo.updateComponentVisibility({ componentId: assetId, visibility, versionNumber, userId }),
+      updateMeta: ({ repo, assetId, payload, user }) => repo.updateComponentMeta({ componentId: assetId, payload, user }),
+      listVersions: ({ repo, assetId, userId }) => repo.listComponentVersions({ componentId: assetId, userId }),
+      getVersion: ({ repo, assetId, versionNumber, userId, head = null }) => repo.getComponentVersion({ componentId: assetId, versionNumber, userId, head }),
+      updateVersionNote: ({ repo, assetId, versionNumber, changeSummary, userId }) => repo.updateComponentVersionNote({ componentId: assetId, versionNumber, changeSummary, userId }),
+      getVersionContent: ({ repo, assetId, versionNumber, userId, head = null }) => repo.getComponentVersionContent({ componentId: assetId, versionNumber, userId, head }),
+      listSubscribers: ({ repo, assetId, userId }) => repo.listComponentSubscribers({ componentId: assetId, userId }),
+      subscribe: ({ repo, assetId, userId }) => repo.subscribeComponent({ componentId: assetId, userId }),
+      unsubscribe: ({ repo, assetId, userId }) => repo.unsubscribeComponent({ componentId: assetId, userId }),
+      fork: ({ repo, assetId, payload, user }) => repo.forkComponent({ componentId: assetId, payload, user }),
+    };
+  }
+  if (assetType === 'modding_recipe') {
+    return {
+      prefix: '/v1/modding-recipes/',
+      get: ({ repo, assetId, userId, head = null }) => repo.getModdingRecipe({ recipeId: assetId, userId, head }),
+      update: ({ repo, assetId, payload, user }) => repo.updateModdingRecipe({ recipeId: assetId, payload, user }),
+      delete: ({ repo, assetId, userId }) => repo.deleteModdingRecipe({ recipeId: assetId, userId }),
+      getContent: ({ repo, assetId, userId, head = null }) => repo.getModdingRecipeContent({ recipeId: assetId, userId, head }),
+      updateVisibility: ({ repo, assetId, visibility, versionNumber, userId }) => repo.updateModdingRecipeVisibility({ recipeId: assetId, visibility, versionNumber, userId }),
+      updateMeta: ({ repo, assetId, payload, user }) => repo.updateModdingRecipeMeta({ recipeId: assetId, payload, user }),
+      listVersions: ({ repo, assetId, userId }) => repo.listModdingRecipeVersions({ recipeId: assetId, userId }),
+      getVersion: ({ repo, assetId, versionNumber, userId, head = null }) => repo.getModdingRecipeVersion({ recipeId: assetId, versionNumber, userId, head }),
+      updateVersionNote: ({ repo, assetId, versionNumber, changeSummary, userId }) => repo.updateModdingRecipeVersionNote({ recipeId: assetId, versionNumber, changeSummary, userId }),
+      getVersionContent: ({ repo, assetId, versionNumber, userId, head = null }) => repo.getModdingRecipeVersionContent({ recipeId: assetId, versionNumber, userId, head }),
+      listSubscribers: ({ repo, assetId, userId }) => repo.listModdingRecipeSubscribers({ recipeId: assetId, userId }),
+      subscribe: ({ repo, assetId, userId }) => repo.subscribeModdingRecipe({ recipeId: assetId, userId }),
+      unsubscribe: ({ repo, assetId, userId }) => repo.unsubscribeModdingRecipe({ recipeId: assetId, userId }),
+      fork: ({ repo, assetId, payload, user }) => repo.forkModdingRecipe({ recipeId: assetId, payload, user }),
+    };
+  }
+  throw new HttpError(404, 'not found');
+}
+
+function getTypedAsset({ repo, assetType, assetId, userId, head = null }) {
+  return assetRouteConfig(assetType).get({ repo, assetId, userId, head });
+}
+
 async function routeAssetRequest({ auth, db, repo, request, url, assetType, allowedOrigins }) {
-  const prefix = assetType === 'variant' ? '/v1/variants/' : '/v1/components/';
+  const assetConfig = assetRouteConfig(assetType);
+  const prefix = assetConfig.prefix;
   const tail = decodeURIComponent(url.pathname.slice(prefix.length));
   const parts = tail.split('/').filter((part) => part.length > 0);
   const assetId = parts[0] || '';
@@ -468,26 +601,18 @@ async function routeAssetRequest({ auth, db, repo, request, url, assetType, allo
   if (parts.length === 1) {
     if (request.method === 'GET') {
       const viewer = await optionalAuthenticatedUser({ auth, db, request });
-      const result = assetType === 'variant'
-        ? await repo.getVariant({ variantId: assetId, userId: viewer === null ? null : viewer.userId })
-        : await repo.getComponent({ componentId: assetId, userId: viewer === null ? null : viewer.userId });
+      const result = await assetConfig.get({ repo, assetId, userId: viewer === null ? null : viewer.userId });
       return jsonResponse(200, result, anonymousPublicResponseHeaders(request, viewer === null && String(result.visibility) === 'public'));
     }
     if (request.method === 'PUT') {
       const user = await requireAssetWriteUser({ auth, db, repo, request, allowedOrigins });
       const payload = await readJsonBody(request);
-      const result = assetType === 'variant'
-        ? await repo.updateVariant({ variantId: assetId, payload, user })
-        : await repo.updateComponent({ componentId: assetId, payload, user });
+      const result = await assetConfig.update({ repo, assetId, payload, user });
       return jsonResponse(200, result);
     }
     if (request.method === 'DELETE') {
       const user = await requireAssetWriteUser({ auth, db, repo, request, allowedOrigins });
-      if (assetType === 'variant') {
-        await repo.deleteVariant({ variantId: assetId, userId: user.userId });
-      } else {
-        await repo.deleteComponent({ componentId: assetId, userId: user.userId });
-      }
+      await assetConfig.delete({ repo, assetId, userId: user.userId });
       return jsonResponse(200, {});
     }
   }
@@ -499,9 +624,7 @@ async function routeAssetRequest({ auth, db, repo, request, url, assetType, allo
     if (head === null || String(head.asset_type) !== assetType) {
       return jsonResponse(404, { message: 'not found' });
     }
-    const result = assetType === 'variant'
-      ? await repo.getVariantContent({ variantId: assetId, userId: viewerId, head })
-      : await repo.getComponentContent({ componentId: assetId, userId: viewerId, head });
+    const result = await assetConfig.getContent({ repo, assetId, userId: viewerId, head });
     return jsonResponse(200, result, anonymousPublicResponseHeaders(request, viewer === null && String(head.visibility) === 'public'));
   }
 
@@ -515,9 +638,7 @@ async function routeAssetRequest({ auth, db, repo, request, url, assetType, allo
     if (String(head.visibility) !== 'public' && String(head.owner_user_id) !== String(viewerId || '')) {
       return jsonResponse(404, { message: 'not found' });
     }
-    const payload = assetType === 'variant'
-      ? await repo.getVariantContent({ variantId: assetId, userId: viewerId, head })
-      : await repo.getComponentContent({ componentId: assetId, userId: viewerId, head });
+    const payload = await assetConfig.getContent({ repo, assetId, userId: viewerId, head });
     return assetDownloadResponse(payload, {
       head,
       versionNumber: payload.versionNumber,
@@ -529,35 +650,27 @@ async function routeAssetRequest({ auth, db, repo, request, url, assetType, allo
     const user = await requireAssetWriteUser({ auth, db, repo, request, allowedOrigins });
     const payload = await readJsonBody(request);
     const visibility = requireBodyString(payload.visibility, 'visibility is required');
-    const result = assetType === 'variant'
-      ? await repo.updateVariantVisibility({ variantId: assetId, visibility, versionNumber: payload.versionNumber, userId: user.userId })
-      : await repo.updateComponentVisibility({ componentId: assetId, visibility, versionNumber: payload.versionNumber, userId: user.userId });
+    const result = await assetConfig.updateVisibility({ repo, assetId, visibility, versionNumber: payload.versionNumber, userId: user.userId });
     return jsonResponse(200, result);
   }
 
   if (parts.length === 2 && parts[1] === 'meta' && request.method === 'PATCH') {
     const user = await requireAssetWriteUser({ auth, db, repo, request, allowedOrigins });
     const payload = await readJsonBody(request);
-    const result = assetType === 'variant'
-      ? await repo.updateVariantMeta({ variantId: assetId, payload, user })
-      : await repo.updateComponentMeta({ componentId: assetId, payload, user });
+    const result = await assetConfig.updateMeta({ repo, assetId, payload, user });
     return jsonResponse(200, result);
   }
 
   if (parts.length === 2 && parts[1] === 'versions' && request.method === 'GET') {
     const viewer = await optionalAuthenticatedUser({ auth, db, request });
-    const result = assetType === 'variant'
-      ? await repo.listVariantVersions({ variantId: assetId, userId: viewer === null ? null : viewer.userId })
-      : await repo.listComponentVersions({ componentId: assetId, userId: viewer === null ? null : viewer.userId });
+    const result = await assetConfig.listVersions({ repo, assetId, userId: viewer === null ? null : viewer.userId });
     return jsonResponse(200, result, anonymousPublicResponseHeaders(request, viewer === null));
   }
 
   if (parts.length === 3 && parts[1] === 'versions' && request.method === 'GET') {
     const viewer = await optionalAuthenticatedUser({ auth, db, request });
     const versionNumber = parts[2];
-    const result = assetType === 'variant'
-      ? await repo.getVariantVersion({ variantId: assetId, versionNumber, userId: viewer === null ? null : viewer.userId })
-      : await repo.getComponentVersion({ componentId: assetId, versionNumber, userId: viewer === null ? null : viewer.userId });
+    const result = await assetConfig.getVersion({ repo, assetId, versionNumber, userId: viewer === null ? null : viewer.userId });
     return jsonResponse(200, result, anonymousPublicResponseHeaders(request, viewer === null && String(result.visibility) === 'public'));
   }
 
@@ -565,19 +678,13 @@ async function routeAssetRequest({ auth, db, repo, request, url, assetType, allo
     const user = await requireAssetWriteUser({ auth, db, repo, request, allowedOrigins });
     const payload = await readJsonBody(request);
     const versionNumber = parts[2];
-    const result = assetType === 'variant'
-      ? await repo.updateVariantVersionNote({
-        variantId: assetId,
-        versionNumber,
-        changeSummary: payload.changeSummary,
-        userId: user.userId,
-      })
-      : await repo.updateComponentVersionNote({
-        componentId: assetId,
-        versionNumber,
-        changeSummary: payload.changeSummary,
-        userId: user.userId,
-      });
+    const result = await assetConfig.updateVersionNote({
+      repo,
+      assetId,
+      versionNumber,
+      changeSummary: payload.changeSummary,
+      userId: user.userId,
+    });
     return jsonResponse(200, result);
   }
 
@@ -589,9 +696,7 @@ async function routeAssetRequest({ auth, db, repo, request, url, assetType, allo
     if (head === null || String(head.asset_type) !== assetType) {
       return jsonResponse(404, { message: 'not found' });
     }
-    const result = assetType === 'variant'
-      ? await repo.getVariantVersionContent({ variantId: assetId, versionNumber, userId: viewerId, head })
-      : await repo.getComponentVersionContent({ componentId: assetId, versionNumber, userId: viewerId, head });
+    const result = await assetConfig.getVersionContent({ repo, assetId, versionNumber, userId: viewerId, head });
     return jsonResponse(200, result, anonymousPublicResponseHeaders(request, viewer === null && String(head.visibility) === 'public'));
   }
 
@@ -606,9 +711,7 @@ async function routeAssetRequest({ auth, db, repo, request, url, assetType, allo
     if (String(head.visibility) !== 'public' && String(head.owner_user_id) !== String(viewerId || '')) {
       return jsonResponse(404, { message: 'not found' });
     }
-    const payload = assetType === 'variant'
-      ? await repo.getVariantVersionContent({ variantId: assetId, versionNumber, userId: viewerId, head })
-      : await repo.getComponentVersionContent({ componentId: assetId, versionNumber, userId: viewerId, head });
+    const payload = await assetConfig.getVersionContent({ repo, assetId, versionNumber, userId: viewerId, head });
     return assetDownloadResponse(payload, {
       head,
       versionNumber: payload.versionNumber,
@@ -618,24 +721,18 @@ async function routeAssetRequest({ auth, db, repo, request, url, assetType, allo
 
   if (parts.length === 2 && parts[1] === 'subscribers' && request.method === 'GET') {
     const user = await requireAuthenticatedUser({ auth, db, request, allowedOrigins });
-    const result = assetType === 'variant'
-      ? await repo.listVariantSubscribers({ variantId: assetId, userId: user.userId })
-      : await repo.listComponentSubscribers({ componentId: assetId, userId: user.userId });
+    const result = await assetConfig.listSubscribers({ repo, assetId, userId: user.userId });
     return jsonResponse(200, result);
   }
 
   if (parts.length === 2 && parts[1] === 'subscribe') {
     const user = await requireAuthenticatedUser({ auth, db, request, allowedOrigins });
     if (request.method === 'POST') {
-      const result = assetType === 'variant'
-        ? await repo.subscribeVariant({ variantId: assetId, userId: user.userId })
-        : await repo.subscribeComponent({ componentId: assetId, userId: user.userId });
+      const result = await assetConfig.subscribe({ repo, assetId, userId: user.userId });
       return jsonResponse(200, result);
     }
     if (request.method === 'DELETE') {
-      const result = assetType === 'variant'
-        ? await repo.unsubscribeVariant({ variantId: assetId, userId: user.userId })
-        : await repo.unsubscribeComponent({ componentId: assetId, userId: user.userId });
+      const result = await assetConfig.unsubscribe({ repo, assetId, userId: user.userId });
       return jsonResponse(200, result);
     }
   }
@@ -643,9 +740,7 @@ async function routeAssetRequest({ auth, db, repo, request, url, assetType, allo
   if (parts.length === 2 && parts[1] === 'fork' && request.method === 'POST') {
     const user = await requireAssetWriteUser({ auth, db, repo, request, allowedOrigins });
     const payload = await readJsonBody(request);
-    const result = assetType === 'variant'
-      ? await repo.forkVariant({ variantId: assetId, payload, user })
-      : await repo.forkComponent({ componentId: assetId, payload, user });
+    const result = await assetConfig.fork({ repo, assetId, payload, user });
     return jsonResponse(200, result);
   }
 
@@ -824,6 +919,16 @@ async function routeManagementRequest({ db, env, managementUser, auth, repo, req
     return jsonResponse(200, result);
   }
 
+  if (request.method === 'GET' && url.pathname === `${MANAGEMENT_API_BASE_PATH}/modding-recipes`) {
+    const result = await repo.listManagedAssets({
+      assetType: 'modding_recipe',
+      ownerUserId: url.searchParams.get('ownerUserId') || '',
+      query: url.searchParams.get('q') || '',
+      cursor: url.searchParams.get('cursor') || '',
+    });
+    return jsonResponse(200, result);
+  }
+
   if (request.method === 'GET' && url.pathname.startsWith(`${MANAGEMENT_API_BASE_PATH}/components/`)) {
     const componentId = decodeSinglePathValue(url.pathname, `${MANAGEMENT_API_BASE_PATH}/components/`);
     if (!componentId) {
@@ -847,6 +952,21 @@ async function routeManagementRequest({ db, env, managementUser, auth, repo, req
     const asset = await repo.getManagedAsset({
       assetId: variantId,
       assetTypeHint: 'variant',
+    });
+    if (asset === null) {
+      return jsonResponse(404, { message: 'asset not found' });
+    }
+    return jsonResponse(200, asset);
+  }
+
+  if (request.method === 'GET' && url.pathname.startsWith(`${MANAGEMENT_API_BASE_PATH}/modding-recipes/`)) {
+    const recipeId = decodeSinglePathValue(url.pathname, `${MANAGEMENT_API_BASE_PATH}/modding-recipes/`);
+    if (!recipeId) {
+      return jsonResponse(404, { message: 'not found' });
+    }
+    const asset = await repo.getManagedAsset({
+      assetId: recipeId,
+      assetTypeHint: 'modding_recipe',
     });
     if (asset === null) {
       return jsonResponse(404, { message: 'asset not found' });
@@ -902,6 +1022,30 @@ async function routeManagementRequest({ db, env, managementUser, auth, repo, req
     return jsonResponse(200, current);
   }
 
+  if (request.method === 'PUT' && url.pathname.startsWith(`${MANAGEMENT_API_BASE_PATH}/modding-recipes/`)) {
+    const recipeId = decodeSinglePathValue(url.pathname, `${MANAGEMENT_API_BASE_PATH}/modding-recipes/`);
+    if (!recipeId) {
+      return jsonResponse(404, { message: 'not found' });
+    }
+    const payload = await readJsonBody(request);
+    if (payload.visibility !== undefined) {
+      const updated = await repo.adminUpdateAssetVisibility({
+        assetId: recipeId,
+        visibility: payload.visibility,
+        assetTypeHint: 'modding_recipe',
+      });
+      if (updated === null) {
+        return jsonResponse(404, { message: 'asset not found' });
+      }
+      return jsonResponse(200, updated);
+    }
+    const current = await repo.getManagedAsset({ assetId: recipeId, assetTypeHint: 'modding_recipe' });
+    if (current === null) {
+      return jsonResponse(404, { message: 'asset not found' });
+    }
+    return jsonResponse(200, current);
+  }
+
   if (request.method === 'DELETE' && url.pathname.startsWith(`${MANAGEMENT_API_BASE_PATH}/components/`)) {
     const componentId = decodeSinglePathValue(url.pathname, `${MANAGEMENT_API_BASE_PATH}/components/`);
     if (!componentId) {
@@ -920,6 +1064,18 @@ async function routeManagementRequest({ db, env, managementUser, auth, repo, req
       return jsonResponse(404, { message: 'not found' });
     }
     const deleted = await repo.adminDeleteAsset({ assetId: variantId, assetTypeHint: 'variant' });
+    if (!deleted) {
+      return jsonResponse(404, { message: 'asset not found' });
+    }
+    return jsonResponse(200, {});
+  }
+
+  if (request.method === 'DELETE' && url.pathname.startsWith(`${MANAGEMENT_API_BASE_PATH}/modding-recipes/`)) {
+    const recipeId = decodeSinglePathValue(url.pathname, `${MANAGEMENT_API_BASE_PATH}/modding-recipes/`);
+    if (!recipeId) {
+      return jsonResponse(404, { message: 'not found' });
+    }
+    const deleted = await repo.adminDeleteAsset({ assetId: recipeId, assetTypeHint: 'modding_recipe' });
     if (!deleted) {
       return jsonResponse(404, { message: 'asset not found' });
     }
@@ -2896,6 +3052,8 @@ function handleError(error) {
     };
     if (error.assetType === 'variant') {
       payload.variantId = error.assetId;
+    } else if (error.assetType === 'modding_recipe') {
+      payload.recipeId = error.assetId;
     } else {
       payload.componentId = error.assetId;
     }

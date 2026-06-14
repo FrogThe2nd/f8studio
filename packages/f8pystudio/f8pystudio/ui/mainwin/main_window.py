@@ -105,6 +105,7 @@ class F8StudioMainWin(
     _global_hotkeys_action: QtGui.QAction
     _mcp_http_server_action: QtGui.QAction
     _variant_catalog_action: QtGui.QAction
+    _game_modding_action: QtGui.QAction
     _log_level_action_group: QtGui.QActionGroup
     _log_level_actions: dict[int, QtGui.QAction]
     _dock_widgets: list[QtWidgets.QDockWidget]

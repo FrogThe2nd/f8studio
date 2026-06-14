@@ -233,6 +233,93 @@ class StudioAutomationTools:
             {"projectId": project_id, "confirm": bool(confirm)},
         )
 
+    def modding_detect_target(self, target_path: str, connection_file: str = "") -> dict[str, Any]:
+        return self._client(connection_file).call("modding.detectTarget", {"targetPath": target_path})
+
+    def modding_preview_install(
+        self,
+        target_path: str,
+        options: dict[str, Any] | None = None,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return self._client(connection_file).call(
+            "modding.previewInstall",
+            {"targetPath": target_path, "options": {} if options is None else dict(options)},
+        )
+
+    def modding_apply_install(
+        self,
+        plan: dict[str, Any],
+        confirm: bool = False,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        if not bool(confirm):
+            raise ValueError("modding_apply_install requires confirm=true")
+        return self._client(connection_file).call("modding.applyInstall", {"plan": plan, "confirm": bool(confirm)})
+
+    def modding_verify_stream(
+        self,
+        port: int = 39540,
+        host: str = "127.0.0.1",
+        timeout_s: float = 3.0,
+        max_samples: int = 8,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        return self._client(connection_file).call(
+            "modding.verifyStream",
+            {"port": int(port), "host": host, "timeoutS": float(timeout_s), "maxSamples": int(max_samples)},
+        )
+
+    def modding_create_recipe(
+        self,
+        name: str,
+        description: str = "",
+        tags: list[str] | None = None,
+        detection: dict[str, Any] | None = None,
+        install: dict[str, Any] | None = None,
+        verification: dict[str, Any] | None = None,
+        graph: dict[str, Any] | None = None,
+        notes: str = "",
+        confirm: bool = False,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        if not bool(confirm):
+            raise ValueError("modding_create_recipe requires confirm=true")
+        return self._client(connection_file).call(
+            "modding.createRecipe",
+            {
+                "name": name,
+                "description": description,
+                "tags": None if tags is None else list(tags),
+                "detection": None if detection is None else dict(detection),
+                "install": None if install is None else dict(install),
+                "verification": None if verification is None else dict(verification),
+                "graph": None if graph is None else dict(graph),
+                "notes": notes,
+                "confirm": bool(confirm),
+            },
+        )
+
+    def modding_recipe_list(self, connection_file: str = "") -> dict[str, Any]:
+        return self._client(connection_file).call("modding.recipeList")
+
+    def modding_recipe_load(self, recipe_id: str, connection_file: str = "") -> dict[str, Any]:
+        return self._client(connection_file).call("modding.recipeLoad", {"recipeId": recipe_id})
+
+    def modding_recipe_export(
+        self,
+        recipe_id: str,
+        path: str,
+        confirm: bool = False,
+        connection_file: str = "",
+    ) -> dict[str, Any]:
+        if not bool(confirm):
+            raise ValueError("modding_recipe_export requires confirm=true")
+        return self._client(connection_file).call(
+            "modding.recipeExport",
+            {"recipeId": recipe_id, "path": path, "confirm": bool(confirm)},
+        )
+
     def runtime_deploy(
         self,
         confirm: bool = False,
@@ -486,3 +573,14 @@ class StudioAutomationTools:
 
     def explain_current_graph_prompt(self) -> str:
         return "Use graph_snapshot and node_catalog to explain the current PyStudio graph succinctly."
+
+    def mod_game_for_skeleton_stream_prompt(self, target_path: str) -> str:
+        return (
+            "Use the PyStudio modding workflow for a local game target. First call modding_detect_target. "
+            "If Unity is detected, call modding_preview_install and present blocking errors before install. "
+            "Call modding_apply_install only after explicit approval with confirm=true. After the user starts the game, "
+            "call modding_verify_stream on UDP port 39540, then preview/build a graph from the returned graphBuildPlan "
+            "using graph_preview_build_plan and graph_apply_build_plan after approval. Save reusable evidence with "
+            "modding_create_recipe when requested. Target path: "
+            f"{target_path}"
+        )

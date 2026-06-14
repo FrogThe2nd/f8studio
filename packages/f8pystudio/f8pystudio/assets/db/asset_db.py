@@ -117,10 +117,27 @@ variant_drafts_local_table = Table(
     Column("updated_at", Text, nullable=False),
 )
 
+modding_recipe_drafts_local_table = Table(
+    "modding_recipe_drafts_local",
+    _METADATA,
+    Column("draft_id", Text, primary_key=True),
+    Column("name", Text, nullable=False),
+    Column("description", Text, nullable=False),
+    Column("tags_json", Text, nullable=False),
+    Column("content", LargeBinary, nullable=False),
+    Column("last_target_path", Text, nullable=False),
+    Column("origin_kind", Text, nullable=True),
+    Column("publish_target_asset_id", Text, nullable=True),
+    Column("publish_base_remote_version_number", Integer, nullable=True),
+    Column("created_at", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+)
+
 Index("idx_project_heads_updated_at", project_heads_table.c.updated_at)
 Index("idx_component_drafts_local_updated_at", component_drafts_local_table.c.updated_at)
 Index("idx_variant_drafts_local_updated_at", variant_drafts_local_table.c.updated_at)
 Index("idx_variant_remote_cache_updated_at", variant_remote_cache_table.c.updated_at)
+Index("idx_modding_recipe_drafts_local_updated_at", modding_recipe_drafts_local_table.c.updated_at)
 
 
 def assets_db_path() -> Path:
@@ -228,6 +245,9 @@ class AssetsDatabase:
         ) or self._table_column_names_mismatch(
             inspector=inspector,
             table=variant_remote_cache_table,
+        ) or self._table_column_names_mismatch(
+            inspector=inspector,
+            table=modding_recipe_drafts_local_table,
         )
 
     def _table_column_names_mismatch(self, *, inspector: Inspector, table: Table) -> bool:
@@ -283,6 +303,7 @@ __all__ = [
     "project_versions_table",
     "component_drafts_local_table",
     "component_remote_cache_table",
+    "modding_recipe_drafts_local_table",
     "variant_drafts_local_table",
     "variant_remote_cache_table",
 ]
