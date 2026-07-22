@@ -11,12 +11,19 @@ from .pipeline import (
     delivery_report_for_plan,
     graph_patch_from_build_plan,
 )
-from .library_matcher import GraphLibraryMatchResult, match_graph_library_candidates
+from .library_matcher import (
+    ComponentCompatibilityEvidence,
+    ComponentLibraryCandidate,
+    GraphLibraryMatchResult,
+    match_graph_library_candidates,
+)
 from .plan_codec import decode_graph_build_plan
 from .schema import graph_build_plan_schema_hint
 
 __all__ = [
     "GraphBuildCandidate",
+    "ComponentCompatibilityEvidence",
+    "ComponentLibraryCandidate",
     "GraphBuildDeliveryReport",
     "GraphConnectionPlan",
     "GraphLibraryMatchResult",

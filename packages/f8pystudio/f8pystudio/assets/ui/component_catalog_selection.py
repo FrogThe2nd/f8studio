@@ -20,6 +20,7 @@ from ..components.component_catalog import (
     component_entry_is_installed,
 )
 from ..components.component_models import F8ComponentEntry, F8ComponentSourceKind, F8ComponentVisibility
+from ..components.official_components import component_entry_is_bundled_official
 from .catalog_hosts import _ComponentCatalogDialogHost
 
 logger = logging.getLogger(__name__)
@@ -132,12 +133,18 @@ class ComponentCatalogSelectionMixin(_ComponentCatalogSelectionMixinBase):
             local_entry = active_entry
         if local_entry is None and selected_entry_override is None:
             fallback_local_entry = self._selected_local_entry()
-            if fallback_local_entry is not None and str(fallback_local_entry.record.componentId or "").strip() == component_id:
+            if (
+                fallback_local_entry is not None
+                and str(fallback_local_entry.record.componentId or "").strip() == component_id
+            ):
                 local_entry = fallback_local_entry
         remote_entry = self._remote_entry_for_component_id(component_id)
         if remote_entry is None and selected_entry_override is None:
             fallback_remote_entry = self._selected_remote_entry()
-            if fallback_remote_entry is not None and str(fallback_remote_entry.record.componentId or "").strip() == component_id:
+            if (
+                fallback_remote_entry is not None
+                and str(fallback_remote_entry.record.componentId or "").strip() == component_id
+            ):
                 remote_entry = fallback_remote_entry
         return _ResolvedComponentSelection(
             selected_entry=active_entry,
@@ -145,7 +152,9 @@ class ComponentCatalogSelectionMixin(_ComponentCatalogSelectionMixinBase):
             remote_entry=remote_entry,
         )
 
-    def _selected_action_entries(self) -> tuple[F8ComponentEntry | None, F8ComponentEntry | None, F8ComponentEntry | None]:
+    def _selected_action_entries(
+        self,
+    ) -> tuple[F8ComponentEntry | None, F8ComponentEntry | None, F8ComponentEntry | None]:
         resolved_entries = self._resolve_action_entries()
         return (
             resolved_entries.selected_entry,
@@ -220,6 +229,7 @@ class ComponentCatalogSelectionMixin(_ComponentCatalogSelectionMixinBase):
         remote_entry = resolved_selection.remote_entry
         current_tab = self._scope_tabs.currentIndex()
         has_selection = selected is not None
+        is_bundled_official = component_entry_is_bundled_official(selected)
         can_load, can_offload = self._load_action_availability(local_entry=local_entry, remote_entry=remote_entry)
         load_tooltip = self._load_action_tooltip(
             can_offload=can_offload,
@@ -233,7 +243,9 @@ class ComponentCatalogSelectionMixin(_ComponentCatalogSelectionMixinBase):
         )
 
         upload_state = _ComponentActionButtonState(
-            visible=has_selection and current_tab in {self._TAB_DRAFTS, self._TAB_INSTALLED},
+            visible=(
+                has_selection and current_tab in {self._TAB_DRAFTS, self._TAB_INSTALLED} and not is_bundled_official
+            ),
             enabled=(
                 (current_tab == self._TAB_DRAFTS and local_entry is not None)
                 or (current_tab == self._TAB_INSTALLED and remote_entry is not None)
@@ -264,7 +276,7 @@ class ComponentCatalogSelectionMixin(_ComponentCatalogSelectionMixinBase):
         )
 
         delete_state = _ComponentActionButtonState(
-            visible=has_selection and current_tab != self._TAB_COMMUNITY,
+            visible=has_selection and current_tab != self._TAB_COMMUNITY and not is_bundled_official,
             enabled=(
                 (current_tab == self._TAB_DRAFTS and local_entry is not None)
                 or local_entry is not None
@@ -293,8 +305,12 @@ class ComponentCatalogSelectionMixin(_ComponentCatalogSelectionMixinBase):
         )
 
         history_state = _ComponentActionButtonState(
-            visible=has_selection and current_tab != self._TAB_COMMUNITY,
-            enabled=(current_tab == self._TAB_DRAFTS and bool(local_entry is not None and local_entry.draftOriginAssetId)) or local_entry is not None or remote_entry is not None,
+            visible=has_selection and current_tab != self._TAB_COMMUNITY and not is_bundled_official,
+            enabled=(
+                current_tab == self._TAB_DRAFTS and bool(local_entry is not None and local_entry.draftOriginAssetId)
+            )
+            or local_entry is not None
+            or remote_entry is not None,
             tooltip="History",
             icon_token=StudioIcon.ARTICLE,
         )
@@ -568,14 +584,10 @@ class ComponentCatalogSelectionMixin(_ComponentCatalogSelectionMixinBase):
     def _run_pending_reload(self, *, pending_reload_component_id: str) -> None:
         if not self._pending_asset_cache_rebuild:
             return
-        reload_component_id = str(
-            self._pending_asset_cache_rebuild_component_id or pending_reload_component_id
-        ).strip()
+        reload_component_id = str(self._pending_asset_cache_rebuild_component_id or pending_reload_component_id).strip()
         self._pending_asset_cache_rebuild = False
         self._pending_asset_cache_rebuild_component_id = ""
-        self._rebuild_browser_after_installed_state_changed(
-            preserve_component_id=reload_component_id
-        )
+        self._rebuild_browser_after_installed_state_changed(preserve_component_id=reload_component_id)
 
     def _set_raw_preview_text(self, text: str) -> None:
         normalized_text = str(text)
@@ -625,8 +637,12 @@ class ComponentCatalogSelectionMixin(_ComponentCatalogSelectionMixinBase):
     ) -> tuple[bool, bool]:
         if cls._is_local_draft_entry(local_entry):
             return False, False
+        if component_entry_is_bundled_official(remote_entry):
+            return False, False
         can_load = remote_entry is not None and not component_entry_is_installed(remote_entry)
-        can_offload = local_entry is not None or (remote_entry is not None and component_entry_is_installed(remote_entry))
+        can_offload = local_entry is not None or (
+            remote_entry is not None and component_entry_is_installed(remote_entry)
+        )
         return can_load, can_offload
 
     @classmethod
@@ -636,6 +652,7 @@ class ComponentCatalogSelectionMixin(_ComponentCatalogSelectionMixinBase):
         if can_offload:
             return "Offload"
         return "Load"
+
 
 def component_preview_node_count(payload: Any) -> int:
     if not isinstance(payload, dict):

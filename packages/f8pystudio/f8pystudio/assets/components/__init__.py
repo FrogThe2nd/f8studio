@@ -27,12 +27,48 @@ from .component_repository import (
     list_component_entries,
     upsert_component,
 )
+from .component_compatibility import ComponentCompatibility, SemanticSignal, evaluate_component_compatibility
 from .component_sync import ComponentSyncClient
+from .component_taxonomy import (
+    COMPONENT_ROLE_LABELS,
+    ComponentRole,
+    ComponentTagDimension,
+    ComponentTagPartition,
+    ComponentTaxonomy,
+    build_component_tags,
+    component_matches_role,
+    component_taxonomy_from_tags,
+    partition_component_tags,
+    replace_component_tag_dimension,
+    validate_component_tags,
+)
+from .official_components import (
+    BUNDLED_OFFICIAL_COMPONENT_TAG,
+    bundled_official_component_entries,
+    component_entry_is_bundled_official,
+)
 
 __all__ = [
     "ComponentCatalogService",
     "ComponentDraftService",
     "ComponentSyncClient",
+    "ComponentCompatibility",
+    "SemanticSignal",
+    "evaluate_component_compatibility",
+    "COMPONENT_ROLE_LABELS",
+    "ComponentRole",
+    "ComponentTagDimension",
+    "ComponentTagPartition",
+    "ComponentTaxonomy",
+    "build_component_tags",
+    "component_matches_role",
+    "component_taxonomy_from_tags",
+    "partition_component_tags",
+    "replace_component_tag_dimension",
+    "validate_component_tags",
+    "BUNDLED_OFFICIAL_COMPONENT_TAG",
+    "bundled_official_component_entries",
+    "component_entry_is_bundled_official",
     "emit_components_changed",
     "subscribe_components_changed",
     "F8ComponentDraftEntry",

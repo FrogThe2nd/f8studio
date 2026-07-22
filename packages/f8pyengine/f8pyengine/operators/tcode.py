@@ -93,7 +93,7 @@ class TCodeRuntimeNode(OperatorNode):
 TCodeRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
-    paletteCategory=f"{SERVICE_CLASS}.output",
+    paletteCategory=f"{SERVICE_CLASS}.signal",
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="TCode",
@@ -104,7 +104,7 @@ TCodeRuntimeNode.SPEC = F8OperatorSpec(
             F8DataPortSpec(
                 name=axis,
                 description=f"Axis {axis} (0..1).",
-                valueSchema=number_schema(),
+                valueSchema=number_schema(minimum=0.0, maximum=1.0),
                 showOnNode=True if i == 0 else False,
             )
             for i, axis in enumerate(AXES)

@@ -22,11 +22,11 @@ from ..components.component_models import (
 )
 from ..components.component_repository import upsert_component
 from ...ui.support.ui_notifications import show_info, show_warning
+from .component_metadata_dialogs import ComponentMetadataDialog
 from .project_asset_dialogs import (
     AssetVersionBrowserAction,
     AssetVersionBrowserDialog,
     AssetVersionBrowserItem,
-    ProjectAssetMetaDialog,
 )
 from .catalog_hosts import ComponentCatalogVersionHost
 
@@ -124,7 +124,7 @@ class ComponentCatalogVersionFlowsMixin(_ComponentCatalogVersionFlowsMixinBase):
         except _COMPONENT_VERSION_REMOTE_ERRORS as exc:
             show_warning(self, "Load version failed", str(exc))
             return
-        metadata_dialog = ProjectAssetMetaDialog(
+        metadata_dialog = ComponentMetadataDialog(
             parent=self,
             title="Save Remote Version As Local Component",
             name=f"{historical_entry.record.name} v{int(version_number)}",
@@ -150,9 +150,7 @@ class ComponentCatalogVersionFlowsMixin(_ComponentCatalogVersionFlowsMixinBase):
             show_warning(self, "Save failed", str(exc))
             return
         show_info(self, "Saved", f"Saved local component from v{int(version_number)}:\n{local_record.name}")
-        self._rebuild_browser_after_draft_changed(
-            preserve_component_id=str(local_record.componentId)
-        )
+        self._rebuild_browser_after_draft_changed(preserve_component_id=str(local_record.componentId))
 
     def _fork_remote_version_to_cloud(self, *, entry: F8ComponentEntry, version_number: int) -> None:
         if not self._ensure_logged_in():
@@ -164,7 +162,7 @@ class ComponentCatalogVersionFlowsMixin(_ComponentCatalogVersionFlowsMixinBase):
         except _COMPONENT_VERSION_REMOTE_ERRORS as exc:
             show_warning(self, "Load version failed", str(exc))
             return
-        metadata_dialog = ProjectAssetMetaDialog(
+        metadata_dialog = ComponentMetadataDialog(
             parent=self,
             title="Fork Remote Component Version",
             name=f"{historical_entry.record.name} Copy",
@@ -203,9 +201,7 @@ class ComponentCatalogVersionFlowsMixin(_ComponentCatalogVersionFlowsMixinBase):
             show_warning(self, "Fork failed", str(exc))
             return
         show_info(self, "Forked", f"Created remote fork from v{int(version_number)}:\n{created.record.name}")
-        self._rebuild_browser_after_remote_asset_changed(
-            preserve_component_id=str(created.record.componentId)
-        )
+        self._rebuild_browser_after_remote_asset_changed(preserve_component_id=str(created.record.componentId))
 
     def _choose_visibility(self) -> F8ComponentVisibility | None:
         answer = QtWidgets.QMessageBox.question(

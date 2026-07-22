@@ -14,6 +14,7 @@ from .component_models import (
     F8ComponentEntry,
     F8ComponentRecord,
 )
+from .component_taxonomy import validate_component_tags
 from ..common import json_string_list_loads, new_asset_id
 from ..common.asset_file_exchange import read_component_asset_file, write_component_asset_file
 
@@ -50,6 +51,7 @@ def component_entry(component_id: str, *, include_uninstalled: bool = True) -> F
 
 
 def upsert_component(record: F8ComponentRecord) -> F8ComponentRecord:
+    validate_component_tags(list(record.tags or []))
     draft_service = _draft_service()
     existing_draft = draft_service.draft(str(record.componentId))
     if existing_draft is not None:

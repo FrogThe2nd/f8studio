@@ -73,6 +73,8 @@ lint = "ruff check packages/f8proclauncher/f8proclauncher packages/f8pystudio/f8
 typecheck = "basedpyright -p pyrightconfig.json"
 quality_exceptions = "python packages/f8pystudio/tools/quality/except_metrics.py packages --exclude-glob '**/tests/**' --max-broad 844 --max-silent 40"
 lint_imports = "lint-imports"
+official_components = "python scripts/generate_official_components.py"
+official_components_check = "python scripts/generate_official_components.py --check"
 
 [feature.audio.pypi-dependencies]
 librosa = ">=0.11.0, <0.12"

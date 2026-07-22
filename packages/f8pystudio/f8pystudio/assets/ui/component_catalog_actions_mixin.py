@@ -28,15 +28,16 @@ from ..components.component_repository import (
     import_component_from_json,
     upsert_component,
 )
+from ..components.official_components import component_entry_is_bundled_official
 from ...nodegraph.component_publish_payload import (
     collect_component_selected_node_ids,
     trim_component_publish_payload_to_selected_nodes,
 )
 from ...nodegraph.session_payload_sanitizer import sanitize_session_content_for_persistence
 from ...ui.support.ui_notifications import show_info, show_warning
+from .component_metadata_dialogs import ComponentOverwriteMetadataDialog
 from .project_asset_dialogs import (
     AssetOverwriteChoice,
-    AssetOverwriteMetaDialog,
     prompt_version_notes,
 )
 from .component_overwrite_choices import component_draft_overwrite_choice
@@ -192,9 +193,7 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
             publish_base_remote_version_number=published.remoteVersionNumber,
             draft_id=str(draft_entry.record.componentId),
         )
-        self._rebuild_browser_after_draft_changed(
-            preserve_component_id=str(draft_entry.record.componentId)
-        )
+        self._rebuild_browser_after_draft_changed(preserve_component_id=str(draft_entry.record.componentId))
         return published
 
     def _on_list_context_menu_requested(self, pos: QtCore.QPoint) -> None:
@@ -247,9 +246,7 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
                 load_action = menu.addAction("Load")
                 load_action.triggered.connect(self._on_install_clicked)  # type: ignore[attr-defined]
             delete_action = menu.addAction("Delete")
-            delete_action.setEnabled(
-                remote_entry is not None and self._is_owned_remote_entry(remote_entry)
-            )
+            delete_action.setEnabled(remote_entry is not None and self._is_owned_remote_entry(remote_entry))
             delete_action.triggered.connect(self._on_delete_clicked)  # type: ignore[attr-defined]
             visibility_label = "Make Public"
             if remote_entry is not None and remote_entry.visibility == F8ComponentVisibility.public:
@@ -273,6 +270,10 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
             history_action.setEnabled(local_entry is not None or remote_entry is not None)
             history_action.triggered.connect(self._on_history_clicked)  # type: ignore[attr-defined]
         else:
+            if component_entry_is_bundled_official(selected_entry):
+                fork_action = menu.addAction("Copy to Draft")
+                fork_action.triggered.connect(self._on_copy_local_clicked)  # type: ignore[attr-defined]
+                return menu
             if local_entry is not None or (remote_entry is not None and component_entry_is_installed(remote_entry)):
                 offload_action = menu.addAction("Remove from Installed")
                 offload_action.triggered.connect(self._on_install_clicked)  # type: ignore[attr-defined]
@@ -317,7 +318,9 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
 
     def _validate_save_component_name(self, candidate: str, overwrite_component_id: str | None) -> str | None:
         normalized_name = self._normalize_component_name(candidate)
-        overwrite_entry = None if not overwrite_component_id else self._local_entry_for_component_id(str(overwrite_component_id))
+        overwrite_entry = (
+            None if not overwrite_component_id else self._local_entry_for_component_id(str(overwrite_component_id))
+        )
         exclude_id = None if overwrite_entry is None else str(overwrite_entry.record.componentId)
         if self._draft_entry_by_name(name=normalized_name, exclude_component_id=exclude_id) is not None:
             return (
@@ -330,7 +333,7 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
         graph = self._graph
         if graph is None:
             return
-        metadata_dialog = AssetOverwriteMetaDialog(
+        metadata_dialog = ComponentOverwriteMetadataDialog(
             parent=self,
             title="Save As Component",
             name="Untitled Component",
@@ -355,7 +358,9 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
                     selected_node_ids=selected_node_ids,
                 )
             name, description, tags, overwrite_component_id = metadata_dialog.values()
-            overwrite_entry = None if not overwrite_component_id else self._local_entry_for_component_id(str(overwrite_component_id))
+            overwrite_entry = (
+                None if not overwrite_component_id else self._local_entry_for_component_id(str(overwrite_component_id))
+            )
             if overwrite_entry is None:
                 overwrite_entry = self._draft_entry_by_name(name)
             timestamp = component_now_iso()
@@ -390,9 +395,7 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
             if draft_entry is None:
                 return
             self._scope_tabs.setCurrentIndex(self._TAB_DRAFTS)
-            self._rebuild_browser_after_draft_changed(
-                preserve_component_id=str(draft_entry.record.componentId)
-            )
+            self._rebuild_browser_after_draft_changed(preserve_component_id=str(draft_entry.record.componentId))
             show_info(self, "Draft Ready", f"Opened draft for:\n{draft_entry.record.name}")
             return
         component_id = str(selected_entry.record.componentId or "").strip()
@@ -400,7 +403,7 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
         if local_entry is None:
             return
         record = local_entry.record
-        metadata_dialog = AssetOverwriteMetaDialog(
+        metadata_dialog = ComponentOverwriteMetadataDialog(
             parent=self,
             title="Edit Draft Metadata",
             name=record.name,
@@ -408,9 +411,7 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
             tags=list(record.tags or []),
             overwrite_choices=[],
             overwrite_label="Load Metadata From",
-            name_validator=lambda candidate, _selected_id: self._validate_edit_component_name(
-                candidate, component_id
-            ),
+            name_validator=lambda candidate, _selected_id: self._validate_edit_component_name(candidate, component_id),
         )
         if metadata_dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
@@ -446,7 +447,9 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
         if current_tab == self._TAB_DRAFTS:
             if local_entry is None:
                 return
-            answer = QtWidgets.QMessageBox.question(self, "Delete draft", f"Delete draft '{selected_entry.record.name}'?")
+            answer = QtWidgets.QMessageBox.question(
+                self, "Delete draft", f"Delete draft '{selected_entry.record.name}'?"
+            )
             if answer != QtWidgets.QMessageBox.StandardButton.Yes:
                 return
             if not self._draft_service_for_catalog().delete_draft(str(local_entry.record.componentId)):
@@ -455,7 +458,9 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
             self._rebuild_browser_after_draft_changed()
             return
         if current_tab == self._TAB_INSTALLED:
-            can_remove_installed = local_entry is not None or (remote_entry is not None and component_entry_is_installed(remote_entry))
+            can_remove_installed = local_entry is not None or (
+                remote_entry is not None and component_entry_is_installed(remote_entry)
+            )
             if not can_remove_installed:
                 return
             answer = QtWidgets.QMessageBox.question(
@@ -466,7 +471,9 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
             if answer != QtWidgets.QMessageBox.StandardButton.Yes:
                 return
             if self._offload_selected_component(local_entry=local_entry, remote_entry=remote_entry):
-                show_info(self, "Removed from Installed", f"Removed from installed cache:\n{selected_entry.record.name}")
+                show_info(
+                    self, "Removed from Installed", f"Removed from installed cache:\n{selected_entry.record.name}"
+                )
             return
         has_owned_remote = remote_entry is not None and self._is_owned_remote_entry(remote_entry)
         if not has_owned_remote:
@@ -500,9 +507,7 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
         if copied is None:
             return
         self._scope_tabs.setCurrentIndex(self._TAB_DRAFTS)
-        self._rebuild_browser_after_draft_changed(
-            preserve_component_id=str(copied.record.componentId)
-        )
+        self._rebuild_browser_after_draft_changed(preserve_component_id=str(copied.record.componentId))
         if current_tab == self._TAB_MINE:
             show_info(self, "Draft Ready", f"Opened draft for:\n{copied.record.name}")
         else:
@@ -548,9 +553,7 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
             )
             return
         show_info(self, "Loaded", f"Loaded component:\n{installed.record.name}")
-        self._rebuild_browser_after_installed_state_changed(
-            preserve_component_id=str(installed.record.componentId)
-        )
+        self._rebuild_browser_after_installed_state_changed(preserve_component_id=str(installed.record.componentId))
 
     def _on_subscribe_clicked(self) -> None:
         selected_entry = self._selected_entry()
@@ -572,9 +575,7 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
                 exc=exc,
             )
             return
-        self._rebuild_browser_after_remote_scope_state_changed(
-            preserve_component_id=str(updated.record.componentId)
-        )
+        self._rebuild_browser_after_remote_scope_state_changed(preserve_component_id=str(updated.record.componentId))
 
     def _on_history_clicked(self) -> None:
         selected_entry = self._selected_entry()
@@ -636,7 +637,9 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
         return self._local_entry_for_component_id(saved.draftId)
 
     def _publish_component_draft(self, draft_entry: F8ComponentEntry) -> F8ComponentEntry | None:
-        target_asset_id = None if draft_entry.draftOriginAssetId is None else str(draft_entry.draftOriginAssetId).strip() or None
+        target_asset_id = (
+            None if draft_entry.draftOriginAssetId is None else str(draft_entry.draftOriginAssetId).strip() or None
+        )
         if target_asset_id:
             remote_entry = self._remote_entry_for_component_id(target_asset_id)
             if remote_entry is None:
@@ -752,9 +755,7 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
                 publish_base_remote_version_number=published.remoteVersionNumber,
                 draft_id=str(draft_entry.record.componentId),
             )
-            self._rebuild_browser_after_draft_changed(
-                preserve_component_id=str(draft_entry.record.componentId)
-            )
+            self._rebuild_browser_after_draft_changed(preserve_component_id=str(draft_entry.record.componentId))
             return published
         return self._create_remote_component_for_draft(draft_entry)
 
@@ -791,9 +792,7 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
                 exc=exc,
             )
             return
-        self._rebuild_browser_after_remote_asset_changed(
-            preserve_component_id=str(selected_entry.record.componentId)
-        )
+        self._rebuild_browser_after_remote_asset_changed(preserve_component_id=str(selected_entry.record.componentId))
 
     def _on_insert_clicked(self) -> None:
         selected_entry = self._selected_entry()
@@ -844,9 +843,7 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
                 exc=exc,
             )
             return
-        self._rebuild_browser_after_draft_changed(
-            preserve_component_id=str(imported.componentId)
-        )
+        self._rebuild_browser_after_draft_changed(preserve_component_id=str(imported.componentId))
         show_info(self, "Imported", f"Imported component:\n{imported.name}")
 
     def _on_export_clicked(self) -> None:

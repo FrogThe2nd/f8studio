@@ -434,7 +434,9 @@ def test_preview_viewer_allows_selection_but_blocks_edit_shortcuts_and_live_conn
     node_a = nodes[0]
     node_b = nodes[1]
 
-    QtTest.QTest.mouseClick(viewer.viewport(), QtCore.Qt.MouseButton.LeftButton, pos=_viewport_pos_for_scene_item(viewer, node_a.view))
+    QtTest.QTest.mouseClick(
+        viewer.viewport(), QtCore.Qt.MouseButton.LeftButton, pos=_viewport_pos_for_scene_item(viewer, node_a.view)
+    )
     QtWidgets.QApplication.processEvents()
 
     assert [node.id for node in list(pane.preview_graph.selected_nodes() or [])] == ["node_a"]
@@ -583,11 +585,15 @@ def test_multi_node_preview_selection_updates_inspector_and_dragging_is_ephemera
 
     assert _inspector_editor(pane) is None
 
-    QtTest.QTest.mouseClick(viewer.viewport(), QtCore.Qt.MouseButton.LeftButton, pos=_viewport_pos_for_scene_item(viewer, node_a.view))
+    QtTest.QTest.mouseClick(
+        viewer.viewport(), QtCore.Qt.MouseButton.LeftButton, pos=_viewport_pos_for_scene_item(viewer, node_a.view)
+    )
     QtWidgets.QApplication.processEvents()
     assert getattr(pane._inspector, "_node_id", None) == "node_a"  # type: ignore[attr-defined]
 
-    QtTest.QTest.mouseClick(viewer.viewport(), QtCore.Qt.MouseButton.LeftButton, pos=_viewport_pos_for_scene_item(viewer, node_b.view))
+    QtTest.QTest.mouseClick(
+        viewer.viewport(), QtCore.Qt.MouseButton.LeftButton, pos=_viewport_pos_for_scene_item(viewer, node_b.view)
+    )
     QtWidgets.QApplication.processEvents()
     assert getattr(pane._inspector, "_node_id", None) == "node_b"  # type: ignore[attr-defined]
 
@@ -902,7 +908,9 @@ def test_component_catalog_selection_updates_preview_and_raw(monkeypatch) -> Non
         source=F8ComponentSourceKind.local,
         installed=True,
     )
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
     dialog = ComponentCatalogDialog(parent=None, node_graph=host_graph)
     dialog._entries = [entry]
@@ -933,7 +941,9 @@ def test_component_catalog_large_selection_defers_preview_until_requested(monkey
         source=F8ComponentSourceKind.local,
         installed=True,
     )
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
     dialog = ComponentCatalogDialog(parent=None, node_graph=host_graph)
     dialog._entries = [entry]
@@ -986,7 +996,9 @@ def test_component_catalog_remote_preview_bypasses_second_gate_after_confirmatio
             "hasCachedContent": True,
         },
     )
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
     dialog = ComponentCatalogDialog(parent=None, node_graph=host_graph)
     dialog._entries = [entry]
@@ -996,7 +1008,9 @@ def test_component_catalog_remote_preview_bypasses_second_gate_after_confirmatio
     monkeypatch.setattr(
         dialog._sync_client,
         "load_component_preview_entry",
-        lambda preview_entry: cached_entry if preview_entry.record.componentId == "component-remote-large-preview" else preview_entry,
+        lambda preview_entry: cached_entry
+        if preview_entry.record.componentId == "component-remote-large-preview"
+        else preview_entry,
     )
     monkeypatch.setattr(dialog._sync_client, "clone_for_background", lambda: dialog._sync_client)
 
@@ -1016,7 +1030,9 @@ def test_component_catalog_remote_preview_bypasses_second_gate_after_confirmatio
 
 def test_component_catalog_context_menu_matches_variant_style_for_community(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
     dialog = ComponentCatalogDialog(parent=None, node_graph=None)
     entry = F8ComponentEntry(
@@ -1135,7 +1151,9 @@ def test_component_dialog_browser_rebuild_distinguishes_pure_vs_preserve(monkeyp
 def test_component_selection_preview_loads_on_demand_without_installing(monkeypatch, tmp_path: Path) -> None:
     _ensure_app()
     _run_background_workers_immediately(monkeypatch)
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None)
+    )
     original_render_browser_from_state = ComponentCatalogDialog._render_browser_from_state
     monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
     dialog = ComponentCatalogDialog(parent=None, node_graph=None)
@@ -1210,7 +1228,9 @@ def test_component_selection_preview_loads_on_demand_without_installing(monkeypa
 
 def test_variant_catalog_context_menu_shows_draft_actions(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
     dialog = VariantCatalogDialog(
         parent=None,
@@ -1286,7 +1306,9 @@ def test_variant_catalog_context_menu_shows_draft_actions(monkeypatch) -> None:
 
 def test_component_dialog_shows_linked_draft_reference(monkeypatch, tmp_path: Path) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None)
+    )
     original_render_browser_from_state = ComponentCatalogDialog._render_browser_from_state
     monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
     dialog = ComponentCatalogDialog(parent=None, node_graph=None)
@@ -1346,7 +1368,9 @@ def test_component_dialog_shows_linked_draft_reference(monkeypatch, tmp_path: Pa
 
 def test_component_dialog_remote_row_shows_draft_badge(monkeypatch, tmp_path: Path) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
     dialog = ComponentCatalogDialog(parent=None, node_graph=None)
     settings = QtCore.QSettings(str(tmp_path / "component-draft-badge.ini"), QtCore.QSettings.IniFormat)
@@ -1394,7 +1418,9 @@ def test_component_dialog_remote_row_shows_draft_badge(monkeypatch, tmp_path: Pa
 
 def test_variant_dialog_shows_linked_draft_label(monkeypatch, tmp_path: Path) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None)
+    )
     original_render_browser_from_state = VariantCatalogDialog._render_browser_from_state
     monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
     dialog = VariantCatalogDialog(
@@ -1472,7 +1498,9 @@ def test_variant_dialog_shows_linked_draft_label(monkeypatch, tmp_path: Path) ->
 
 def test_variant_dialog_remote_row_shows_draft_badge(monkeypatch, tmp_path: Path) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
     dialog = VariantCatalogDialog(
         parent=None,
@@ -1538,7 +1566,9 @@ def test_variant_dialog_remote_row_shows_draft_badge(monkeypatch, tmp_path: Path
 
 def test_variant_dialog_node_type_combo_tracks_current_tab_entries(monkeypatch, tmp_path: Path) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None)
+    )
     original_render_browser_from_state = VariantCatalogDialog._render_browser_from_state
     monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
     dialog = VariantCatalogDialog(parent=None, node_graph=None)
@@ -1752,7 +1782,9 @@ def test_variant_dialog_browser_rebuild_distinguishes_pure_vs_preserve(monkeypat
 
 def test_component_catalog_context_menu_shows_current_mine_actions(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
     dialog = ComponentCatalogDialog(parent=None, node_graph=None)
     entry = F8ComponentEntry(
@@ -1802,7 +1834,9 @@ def test_component_catalog_context_menu_shows_current_mine_actions(monkeypatch) 
 
 def test_component_dialog_mine_toolbar_uses_open_draft_and_load(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
     dialog = ComponentCatalogDialog(parent=None, node_graph=None)
     entry = F8ComponentEntry(
@@ -1843,7 +1877,9 @@ def test_component_dialog_mine_toolbar_uses_open_draft_and_load(monkeypatch) -> 
 
 def test_component_dialog_installed_uses_remove_from_installed(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
     dialog = ComponentCatalogDialog(parent=None, node_graph=None)
     entry = F8ComponentEntry(
@@ -1889,7 +1925,9 @@ def test_component_dialog_installed_uses_remove_from_installed(monkeypatch) -> N
 
 def test_component_dialog_installed_delete_offloads_without_remote_delete(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
     dialog = ComponentCatalogDialog(parent=None, node_graph=None)
     entry = F8ComponentEntry(
@@ -1938,7 +1976,9 @@ def test_component_dialog_installed_delete_offloads_without_remote_delete(monkey
 
 def test_component_dialog_toolbar_matches_variant_style_for_community(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
     dialog = ComponentCatalogDialog(parent=None, node_graph=None)
     entry = F8ComponentEntry(
@@ -1992,7 +2032,9 @@ def test_component_catalog_create_on_canvas_keeps_dialog_open(monkeypatch) -> No
         def begin_graph_placement(self, request: object, *, label: str = "") -> None:
             self.placement_calls.append((request, str(label)))
 
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
     dialog = ComponentCatalogDialog(parent=None, node_graph=_FakeGraph())
     entry = F8ComponentEntry(
@@ -2034,7 +2076,9 @@ def test_component_catalog_create_on_canvas_failure_reports_context(monkeypatch,
         def begin_graph_placement(self, request: object, *, label: str = "") -> None:
             raise AssertionError("placement should not start after prepare failure")
 
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
     dialog = ComponentCatalogDialog(parent=None, node_graph=_FakeGraph())
     entry = F8ComponentEntry(
@@ -2072,7 +2116,9 @@ def test_component_catalog_import_failure_reports_context(monkeypatch, caplog, t
     missing_path = tmp_path / "missing-component.json"
     warning_messages: list[tuple[str, str]] = []
 
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
     monkeypatch.setattr(
         QtWidgets.QFileDialog,
@@ -2114,7 +2160,9 @@ def test_component_catalog_remote_load_failure_reports_context(monkeypatch, capl
     )
     warning_messages: list[tuple[str, str]] = []
 
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
     dialog = ComponentCatalogDialog(parent=None, node_graph=None)
     dialog._sync_client = ComponentSyncClient(settings=settings, catalog_service=service)
@@ -2122,9 +2170,7 @@ def test_component_catalog_remote_load_failure_reports_context(monkeypatch, capl
     monkeypatch.setattr(
         dialog._sync_client,
         "hydrate_component",
-        lambda _component_id: (_ for _ in ()).throw(
-            F8ComponentRemoteRequestError("download failed", status_code=503)
-        ),
+        lambda _component_id: (_ for _ in ()).throw(F8ComponentRemoteRequestError("download failed", status_code=503)),
     )
     monkeypatch.setattr(
         "f8pystudio.assets.ui.component_catalog_actions_mixin.show_warning",
@@ -2171,7 +2217,9 @@ def test_variant_catalog_remote_load_failure_reports_context(monkeypatch, caplog
     )
     warning_messages: list[tuple[str, str]] = []
 
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
     dialog = VariantCatalogDialog(
         parent=None,
@@ -2184,9 +2232,7 @@ def test_variant_catalog_remote_load_failure_reports_context(monkeypatch, caplog
     monkeypatch.setattr(
         dialog._sync_client,
         "cache_variant_content",
-        lambda _variant_id: (_ for _ in ()).throw(
-            F8VariantRemoteRequestError("download failed", status_code=503)
-        ),
+        lambda _variant_id: (_ for _ in ()).throw(F8VariantRemoteRequestError("download failed", status_code=503)),
     )
     monkeypatch.setattr(
         "f8pystudio.assets.ui.variant_catalog_actions_mixin.show_warning",
@@ -2249,10 +2295,18 @@ def test_component_catalog_save_as_component_uses_selected_subgraph(monkeypatch)
         def values(self) -> tuple[str, str, list[str], str | None]:
             return (self._name, self._description, list(self._tags), None)
 
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_actions_mixin.AssetOverwriteMetaDialog", _FakeMetaDialog)
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_actions_mixin.upsert_component", lambda record: saved_records.append(record))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_actions_mixin.ComponentOverwriteMetadataDialog",
+        _FakeMetaDialog,
+    )
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_actions_mixin.upsert_component",
+        lambda record: saved_records.append(record),
+    )
     monkeypatch.setattr(
         "f8pystudio.assets.ui.component_catalog_actions_mixin.show_info",
         lambda _parent, title, message: info_messages.append((str(title), str(message))),
@@ -2310,10 +2364,18 @@ def test_component_catalog_save_as_component_overwrite_choices_only_include_draf
         def values(self) -> tuple[str, str, list[str], str | None]:
             return (self._name, self._description, list(self._tags), None)
 
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_actions_mixin.AssetOverwriteMetaDialog", _FakeMetaDialog)
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_actions_mixin.upsert_component", lambda record: saved_records.append(record))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_actions_mixin.ComponentOverwriteMetadataDialog",
+        _FakeMetaDialog,
+    )
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_actions_mixin.upsert_component",
+        lambda record: saved_records.append(record),
+    )
     monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_actions_mixin.show_info", lambda *_args: None)
     dialog = ComponentCatalogDialog(parent=None, node_graph=graph)
     dialog._sync_client = ComponentSyncClient(
@@ -2402,10 +2464,18 @@ def test_component_catalog_save_as_component_uses_full_graph_without_selection(m
         def values(self) -> tuple[str, str, list[str], str | None]:
             return (self._name, self._description, list(self._tags), None)
 
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_actions_mixin.AssetOverwriteMetaDialog", _FakeMetaDialog)
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_actions_mixin.upsert_component", lambda record: saved_records.append(record))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_actions_mixin.ComponentOverwriteMetadataDialog",
+        _FakeMetaDialog,
+    )
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_actions_mixin.upsert_component",
+        lambda record: saved_records.append(record),
+    )
     monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_actions_mixin.show_info", lambda *_args: None)
     dialog = ComponentCatalogDialog(parent=None, node_graph=graph)
 
@@ -2423,7 +2493,9 @@ def test_component_catalog_dialog_defers_initial_remote_refresh(monkeypatch, tmp
     scheduled_callbacks: list[object] = []
 
     monkeypatch.setattr("f8pystudio.assets.db.asset_db.assets_db_path", lambda: tmp_path / "assets.db")
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(
         ComponentCatalogDialog,
         "_refresh_remote_catalog_if_needed",
@@ -2438,7 +2510,11 @@ def test_component_catalog_dialog_defers_initial_remote_refresh(monkeypatch, tmp
     dialog = ComponentCatalogDialog(parent=None, node_graph=None)
 
     assert refresh_calls == []
-    refresh_callbacks = [callback for callback in scheduled_callbacks if getattr(callback, "__name__", "") == "_run_initial_remote_refresh"]
+    refresh_callbacks = [
+        callback
+        for callback in scheduled_callbacks
+        if getattr(callback, "__name__", "") == "_run_initial_remote_refresh"
+    ]
     assert len(refresh_callbacks) == 1
 
     dialog.close()
@@ -2504,7 +2580,9 @@ def test_component_catalog_browser_ignores_deleted_rebuild_timer(monkeypatch) ->
 
 def test_component_catalog_render_reuses_single_source_snapshot(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None)
+    )
     original_render_browser_from_state = ComponentCatalogDialog._render_browser_from_state
     monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
     dialog = ComponentCatalogDialog(parent=None, node_graph=None)
@@ -2535,7 +2613,9 @@ def test_component_catalog_render_reuses_single_source_snapshot(monkeypatch) -> 
 
 def test_component_catalog_render_skips_list_rebuild_when_signature_is_unchanged(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(ComponentCatalogDialog, "_schedule_initial_remote_refresh_if_needed", lambda self: None)
     dialog = ComponentCatalogDialog(parent=None, node_graph=None)
     entry = F8ComponentEntry(
@@ -2567,7 +2647,8 @@ def test_component_catalog_render_skips_list_rebuild_when_signature_is_unchanged
     monkeypatch.setattr(
         dialog,
         "_build_list_row",
-        lambda current_entry: build_calls.append(str(current_entry.record.componentId)) or original_build_list_row(current_entry),
+        lambda current_entry: build_calls.append(str(current_entry.record.componentId))
+        or original_build_list_row(current_entry),
     )
 
     dialog._render_browser_from_state()
@@ -2584,7 +2665,9 @@ def test_variant_catalog_dialog_defers_initial_remote_refresh(monkeypatch, tmp_p
     scheduled_callbacks: list[object] = []
 
     monkeypatch.setattr("f8pystudio.assets.db.asset_db.assets_db_path", lambda: tmp_path / "assets.db")
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(
         VariantCatalogDialog,
         "_refresh_remote_catalog_if_needed",
@@ -2604,7 +2687,11 @@ def test_variant_catalog_dialog_defers_initial_remote_refresh(monkeypatch, tmp_p
     )
 
     assert refresh_calls == []
-    refresh_callbacks = [callback for callback in scheduled_callbacks if getattr(callback, "__name__", "") == "_run_initial_remote_refresh"]
+    refresh_callbacks = [
+        callback
+        for callback in scheduled_callbacks
+        if getattr(callback, "__name__", "") == "_run_initial_remote_refresh"
+    ]
     assert len(refresh_callbacks) == 1
 
     dialog.close()
@@ -2612,7 +2699,9 @@ def test_variant_catalog_dialog_defers_initial_remote_refresh(monkeypatch, tmp_p
 
 def test_variant_catalog_render_skips_list_rebuild_when_signature_is_unchanged(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(VariantCatalogDialog, "_schedule_initial_remote_refresh_if_needed", lambda self: None)
     dialog = VariantCatalogDialog(
         parent=None,
@@ -2654,7 +2743,8 @@ def test_variant_catalog_render_skips_list_rebuild_when_signature_is_unchanged(m
     monkeypatch.setattr(
         dialog,
         "_build_list_row",
-        lambda current_entry: build_calls.append(str(current_entry.record.variantId)) or original_build_list_row(current_entry),
+        lambda current_entry: build_calls.append(str(current_entry.record.variantId))
+        or original_build_list_row(current_entry),
     )
 
     dialog._render_browser_from_state()
@@ -2667,7 +2757,9 @@ def test_variant_catalog_render_skips_list_rebuild_when_signature_is_unchanged(m
 
 def test_variant_catalog_render_reuses_single_source_snapshot(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None)
+    )
     original_render_browser_from_state = VariantCatalogDialog._render_browser_from_state
     monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
     dialog = VariantCatalogDialog(
@@ -2703,7 +2795,9 @@ def test_variant_catalog_render_reuses_single_source_snapshot(monkeypatch) -> No
 
 def test_variant_dialog_skips_redundant_preview_refresh_for_same_selection(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
     dialog = VariantCatalogDialog(
         parent=None,
@@ -2843,7 +2937,9 @@ def test_component_catalog_ignores_deleted_selection_wrapper() -> None:
 def test_variant_dialog_hydration_failure_updates_raw_and_preview(monkeypatch) -> None:
     _ensure_app()
     _run_background_workers_immediately(monkeypatch)
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
     dialog = VariantCatalogDialog(
         parent=None,
@@ -2891,7 +2987,9 @@ def test_variant_dialog_hydration_failure_updates_raw_and_preview(monkeypatch) -
 
 def test_variant_dialog_install_allows_anonymous_public_variant(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
     monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_actions_mixin.show_info", lambda *_args, **_kwargs: None)
     dialog = VariantCatalogDialog(
@@ -2922,7 +3020,9 @@ def test_variant_dialog_install_allows_anonymous_public_variant(monkeypatch) -> 
     dialog._selected_entry = lambda: entry  # type: ignore[method-assign]
     dialog._selected_remote_entry = lambda: entry  # type: ignore[method-assign]
     dialog._ensure_logged_in = lambda: (_ for _ in ()).throw(AssertionError("install should not require login"))  # type: ignore[method-assign]
-    dialog._sync_client.install_variant = lambda variant_id: install_calls.append(str(variant_id)) or copy_model(entry, update={"installed": True, "hasCachedContent": True})  # type: ignore[method-assign]
+    dialog._sync_client.install_variant = lambda variant_id: install_calls.append(str(variant_id)) or copy_model(
+        entry, update={"installed": True, "hasCachedContent": True}
+    )  # type: ignore[method-assign]
 
     dialog._on_install_clicked()
 
@@ -2934,7 +3034,9 @@ def test_variant_dialog_install_allows_anonymous_public_variant(monkeypatch) -> 
 def test_variant_dialog_remote_preview_loads_on_demand(monkeypatch) -> None:
     _ensure_app()
     _run_background_workers_immediately(monkeypatch)
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None)
+    )
     dialog = VariantCatalogDialog(
         parent=None,
         base_node_type="svc.preview.variant",
@@ -3027,7 +3129,9 @@ def test_variant_dialog_ignores_variants_changed_after_list_deleted(monkeypatch)
 
 def test_variant_dialog_subscribe_also_loads_public_variant(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
     monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_actions_mixin.show_info", lambda *_args, **_kwargs: None)
     dialog = VariantCatalogDialog(
@@ -3060,7 +3164,9 @@ def test_variant_dialog_subscribe_also_loads_public_variant(monkeypatch) -> None
 
     dialog._selected_entry = lambda: entry  # type: ignore[method-assign]
     dialog._ensure_logged_in = lambda: True  # type: ignore[method-assign]
-    dialog._sync_client.subscribe_variant = lambda variant_id: calls.append(f"subscribe:{variant_id}") or subscribed_entry  # type: ignore[method-assign]
+    dialog._sync_client.subscribe_variant = (
+        lambda variant_id: calls.append(f"subscribe:{variant_id}") or subscribed_entry
+    )  # type: ignore[method-assign]
     dialog._sync_client.install_variant = lambda variant_id: calls.append(f"install:{variant_id}") or loaded_entry  # type: ignore[method-assign]
 
     dialog._on_subscribe_clicked()
@@ -3072,7 +3178,9 @@ def test_variant_dialog_subscribe_also_loads_public_variant(monkeypatch) -> None
 
 def test_variant_dialog_community_actions_hide_load_and_show_fork(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
     dialog = VariantCatalogDialog(
         parent=None,
@@ -3120,7 +3228,9 @@ def test_variant_dialog_community_actions_hide_load_and_show_fork(monkeypatch) -
 
 def test_variant_dialog_mine_toolbar_uses_open_draft_and_load(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
     dialog = VariantCatalogDialog(
         parent=None,
@@ -3174,7 +3284,9 @@ def test_variant_dialog_mine_toolbar_uses_open_draft_and_load(monkeypatch) -> No
 
 def test_variant_dialog_installed_uses_remove_from_installed(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
     dialog = VariantCatalogDialog(
         parent=None,
@@ -3253,7 +3365,9 @@ def test_variant_dialog_installed_uses_remove_from_installed(monkeypatch) -> Non
 
 def test_variant_catalog_row_without_description_stays_compact_and_shows_remote_version_number(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
 
     dialog = VariantCatalogDialog(
@@ -3297,7 +3411,9 @@ def test_variant_catalog_row_without_description_stays_compact_and_shows_remote_
 
 def test_variant_dialog_installed_delete_offloads_without_remote_delete(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
     dialog = VariantCatalogDialog(
         parent=None,
@@ -3359,7 +3475,9 @@ def test_variant_dialog_installed_delete_offloads_without_remote_delete(monkeypa
 
 def test_variant_dialog_cached_remote_preview_does_not_refetch_content(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
     dialog = VariantCatalogDialog(
         parent=None,
@@ -3404,7 +3522,9 @@ def test_variant_dialog_cached_remote_preview_does_not_refetch_content(monkeypat
 
 def test_variant_dialog_enables_history_for_local_entry(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None)
+    )
     monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
     dialog = VariantCatalogDialog(
         parent=None,

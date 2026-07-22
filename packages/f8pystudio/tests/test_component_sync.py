@@ -238,7 +238,9 @@ class _ComponentApiHandler(BaseHTTPRequestHandler):
         if self.path == "/v1/components/public-1/subscribe":
             if not self._check_auth():
                 return
-            self._write_json(200, self.server.asset_payload(self.server.public_record, visibility="public", subscribed=True))
+            self._write_json(
+                200, self.server.asset_payload(self.server.public_record, visibility="public", subscribed=True)
+            )
             return
         if self.path == "/v1/components":
             if not self._check_auth():
@@ -335,7 +337,9 @@ class _ComponentApiHandler(BaseHTTPRequestHandler):
         if self.path == "/v1/components/public-1/subscribe":
             if not self._check_auth():
                 return
-            self._write_json(200, self.server.asset_payload(self.server.public_record, visibility="public", subscribed=False))
+            self._write_json(
+                200, self.server.asset_payload(self.server.public_record, visibility="public", subscribed=False)
+            )
             return
         self._write_json(404, {"message": "missing"})
 
@@ -458,7 +462,9 @@ def test_component_sync_client_supports_anonymous_public_install_and_cookie_sess
         public_version = client.get_component_version("public-1", 1)
         assert public_version.record.componentId == "public-1"
 
-        auth = client.login(base_url=f"http://127.0.0.1:{server.server_port}", email="u@example.com", password="p", remember=True)
+        auth = client.login(
+            base_url=f"http://127.0.0.1:{server.server_port}", email="u@example.com", password="p", remember=True
+        )
         assert auth.user.name == "User One"
         assert auth.accessToken == "access-u1"
         assert auth.refreshToken == "refresh-u1"
@@ -857,10 +863,9 @@ def test_component_refresh_scope_page_deduplicates_duplicate_remote_component_id
     page = client.refresh_scope_page(scope="community", append=False)
 
     assert len(page.entries) == 2
-    remote_entries = service.load_remote_entries()
-    assert len(remote_entries) == 1
-    refreshed_entry = remote_entries[0]
-    assert refreshed_entry.record.componentId == "public-1"
+    cached_entries = [entry for entry in service.load_remote_entries() if entry.record.componentId == "public-1"]
+    assert len(cached_entries) == 1
+    refreshed_entry = cached_entries[0]
     assert refreshed_entry.record.name == "Remote Second"
     assert refreshed_entry.installed is True
     assert refreshed_entry.hasCachedContent is True
@@ -871,7 +876,9 @@ def test_component_refresh_scope_page_deduplicates_duplicate_remote_component_id
 def test_component_sync_client_uses_env_base_url_when_settings_are_empty(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("F8_ASSET_CLOUD_BASE_URL", "http://127.0.0.1:8787/")
     settings = QtCore.QSettings(str(tmp_path / "component-sync-env.ini"), QtCore.QSettings.IniFormat)
-    client = ComponentSyncClient(settings=settings, catalog_service=ComponentCatalogService(db_path=tmp_path / "assets.db"))
+    client = ComponentSyncClient(
+        settings=settings, catalog_service=ComponentCatalogService(db_path=tmp_path / "assets.db")
+    )
 
     assert client.base_url() == "http://127.0.0.1:8787"
 
@@ -906,7 +913,9 @@ def test_component_sync_client_drops_saved_sessions_missing_keyring_refresh_toke
     settings.endGroup()
     settings.sync()
 
-    client = ComponentSyncClient(settings=settings, catalog_service=ComponentCatalogService(db_path=tmp_path / "assets.db"))
+    client = ComponentSyncClient(
+        settings=settings, catalog_service=ComponentCatalogService(db_path=tmp_path / "assets.db")
+    )
 
     with caplog.at_level(logging.WARNING):
         assert client.saved_sessions() == []
@@ -923,7 +932,9 @@ def test_component_sync_client_drops_saved_sessions_when_keyring_item_disappears
 ) -> None:
     secretstorage_exceptions = pytest.importorskip("secretstorage.exceptions")
     item_not_found_exception = secretstorage_exceptions.ItemNotFoundException
-    settings = QtCore.QSettings(str(tmp_path / "component-sync-missing-secretstorage-item.ini"), QtCore.QSettings.IniFormat)
+    settings = QtCore.QSettings(
+        str(tmp_path / "component-sync-missing-secretstorage-item.ini"), QtCore.QSettings.IniFormat
+    )
     settings.beginGroup("assetcloud/v1")
     settings.setValue(
         "saved_sessions",
@@ -945,7 +956,9 @@ def test_component_sync_client_drops_saved_sessions_when_keyring_item_disappears
         raise item_not_found_exception("Item does not exist!")
 
     monkeypatch.setattr("f8pystudio.assets.common.asset_cloud_keyring.keyring.get_password", _raise_missing_item)
-    client = ComponentSyncClient(settings=settings, catalog_service=ComponentCatalogService(db_path=tmp_path / "assets.db"))
+    client = ComponentSyncClient(
+        settings=settings, catalog_service=ComponentCatalogService(db_path=tmp_path / "assets.db")
+    )
 
     with caplog.at_level(logging.WARNING):
         assert client.current_user() is None
@@ -1004,7 +1017,9 @@ def test_component_sync_client_clears_invalid_saved_session_after_refresh_auth_f
 def test_component_sync_client_env_base_url_overrides_saved_base_url(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("F8_ASSET_CLOUD_BASE_URL", "http://127.0.0.1:8787")
     settings = QtCore.QSettings(str(tmp_path / "component-sync-env-override.ini"), QtCore.QSettings.IniFormat)
-    client = ComponentSyncClient(settings=settings, catalog_service=ComponentCatalogService(db_path=tmp_path / "assets.db"))
+    client = ComponentSyncClient(
+        settings=settings, catalog_service=ComponentCatalogService(db_path=tmp_path / "assets.db")
+    )
     client.set_base_url("https://preview-assetcloud.feel8.fun/")
 
     assert client.base_url() == "http://127.0.0.1:8787"
@@ -1097,7 +1112,9 @@ def test_component_sync_client_does_not_fallback_from_content_endpoint(tmp_path:
     client = ComponentSyncClient(settings=settings, catalog_service=service)
     calls: list[str] = []
 
-    def _request_json(method: str, path: str, payload: dict[str, object] | None, *, authorized: bool) -> dict[str, object]:
+    def _request_json(
+        method: str, path: str, payload: dict[str, object] | None, *, authorized: bool
+    ) -> dict[str, object]:
         del method, payload, authorized
         calls.append(path)
         raise F8ComponentRemoteRequestError("missing", status_code=404)
@@ -1115,7 +1132,9 @@ def test_component_sync_client_accepts_flat_content_payloads(tmp_path: Path, mon
     service = ComponentCatalogService(db_path=tmp_path / "assets.db")
     client = ComponentSyncClient(settings=settings, catalog_service=service)
 
-    def _request_json(method: str, path: str, payload: dict[str, object] | None, *, authorized: bool) -> dict[str, object]:
+    def _request_json(
+        method: str, path: str, payload: dict[str, object] | None, *, authorized: bool
+    ) -> dict[str, object]:
         del method, payload, authorized
         assert path == "/v1/components/public-1/content"
         now = component_now_iso()
@@ -1273,7 +1292,7 @@ def test_component_remote_cache_load_cleans_empty_component_ids(tmp_path: Path) 
                 name="Broken Row",
                 description="",
                 tags_json="[]",
-                                created_at="2026-04-04T00:00:00+00:00",
+                created_at="2026-04-04T00:00:00+00:00",
                 updated_at="2026-04-04T00:00:00+00:00",
                 source="remote_public",
                 visibility="public",
@@ -1306,7 +1325,7 @@ def test_component_remote_cache_row_with_content_loads_as_installed(tmp_path: Pa
                 name=str(canonical_record["name"]),
                 description=str(canonical_record["description"]),
                 tags_json=json.dumps(canonical_record["tags"]),
-                                created_at=str(canonical_record["createdAt"]),
+                created_at=str(canonical_record["createdAt"]),
                 updated_at=str(canonical_record["updatedAt"]),
                 source="remote_public",
                 visibility="public",
@@ -1643,7 +1662,9 @@ def test_component_publish_metadata_only_uses_patch_meta(monkeypatch, tmp_path: 
         uploaded_entry = copy_model(
             remote_entry,
             update={
-                "record": copy_model(remote_entry.record, update={"name": name, "description": description, "tags": tags}),
+                "record": copy_model(
+                    remote_entry.record, update={"name": name, "description": description, "tags": tags}
+                ),
                 "remoteVersionNumber": 5,
                 "installed": True,
                 "hasCachedContent": True,
@@ -1732,7 +1753,8 @@ def test_component_publish_no_diff_ignores_timestamp_only_changes(monkeypatch, t
         "patch_component_meta",
         lambda component_id, *, name, description, tags: patch_calls.append(
             (str(component_id), str(name), str(description), list(tags))
-        ) or remote_entry,
+        )
+        or remote_entry,
     )
     monkeypatch.setattr(
         dialog._sync_client,
@@ -1789,7 +1811,7 @@ def test_component_publish_no_diff_ignores_legacy_launch_and_runtime_only_state(
                     },
                     "custom": {
                         "path": "C:\\Users\\sshome\\dirty.mp4",
-                        "lastError": "Traceback (most recent call last):\n  File \"H:\\Feel8\\f8studio\\player.py\"",
+                        "lastError": 'Traceback (most recent call last):\n  File "H:\\Feel8\\f8studio\\player.py"',
                     },
                 }
             },
@@ -1888,7 +1910,8 @@ def test_component_publish_no_diff_ignores_legacy_launch_and_runtime_only_state(
         "patch_component_meta",
         lambda component_id, *, name, description, tags: patch_calls.append(
             (str(component_id), str(name), str(description), list(tags))
-        ) or remote_entry,
+        )
+        or remote_entry,
     )
     monkeypatch.setattr(
         dialog._sync_client,
@@ -1953,7 +1976,7 @@ def test_asset_write_payload_sanitizes_component_content_for_upload() -> None:
                             "custom": {
                                 "path": "C:\\Users\\sshome\\upload.mp4",
                                 "preview": {"frame": 1},
-                                "lastError": "Traceback (most recent call last):\n  File \"H:\\Feel8\\f8studio\\player.py\"",
+                                "lastError": 'Traceback (most recent call last):\n  File "H:\\Feel8\\f8studio\\player.py"',
                             },
                         }
                     },
@@ -2080,7 +2103,9 @@ def test_component_catalog_copy_to_draft_creates_disconnected_local_draft(monkey
     dialog._sync_client = ComponentSyncClient(settings=settings, catalog_service=service)
     monkeypatch.setattr(dialog, "_selected_entry", lambda: remote_entry)
     monkeypatch.setattr(dialog, "_ensure_component_hydrated", lambda entry, operation_name: entry)
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_actions_mixin.show_info", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_actions_mixin.show_info", lambda *_args, **_kwargs: None
+    )
 
     dialog._on_copy_local_clicked()
 
@@ -2142,7 +2167,13 @@ def test_component_catalog_delete_removes_local_and_owned_remote(monkeypatch, tm
     dialog = ComponentCatalogDialog(parent=None, node_graph=None)
     dialog._sync_client = ComponentSyncClient(settings=settings, catalog_service=service)
     _ = dialog._draft_service_for_catalog().create_draft_from_record(
-        copy_model(remote_entry.record, update={"componentId": "draft-owned-delete", "content": {"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}}}),
+        copy_model(
+            remote_entry.record,
+            update={
+                "componentId": "draft-owned-delete",
+                "content": {"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
+            },
+        ),
         origin_kind=F8ComponentDraftOriginKind.copy_remote,
         publish_target_asset_id="owned-delete",
         publish_base_remote_version_number=7,
@@ -2211,7 +2242,9 @@ def test_component_catalog_disables_load_offload_for_local_draft(monkeypatch, tm
     assert dialog._btn_install.toolTip() == "Not available for Local Draft"
 
     delete_calls: list[str] = []
-    monkeypatch.setattr(service, "delete_local_entry", lambda component_id: delete_calls.append(str(component_id)) or True)
+    monkeypatch.setattr(
+        service, "delete_local_entry", lambda component_id: delete_calls.append(str(component_id)) or True
+    )
     monkeypatch.setattr(dialog, "_selected_action_entries", lambda: (draft_entry, draft_entry, None))
 
     dialog._on_install_clicked()
@@ -2561,7 +2594,10 @@ def test_graph_component_actions_overwrite_choices_only_include_drafts(monkeypat
         "_draft_component_entries",
         classmethod(lambda cls: [draft_entry]),
     )
-    monkeypatch.setattr("f8pystudio.nodegraph.graph_component_actions.AssetOverwriteMetaDialog", _FakeOverwriteDialog)
+    monkeypatch.setattr(
+        "f8pystudio.nodegraph.graph_component_actions.ComponentOverwriteMetadataDialog",
+        _FakeOverwriteDialog,
+    )
 
     host._save_selected_nodes_as_component()
 

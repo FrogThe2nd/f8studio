@@ -10,6 +10,7 @@ from NodeGraphQt.custom_widgets.nodes_tree import TYPE_NODE
 from f8pysdk.codec import coerce_bool
 from ...assets.common.asset_cache_events import subscribe_asset_cache_changed
 from ...assets.common.common import json_string_list_loads, stable_json_dumps
+from ...nodegraph.node_roles import NODE_ROLE_LABELS, NodeRole
 from ...nodegraph.spec_visibility import is_hidden_spec_node_class, typed_spec_template_or_none
 from ...assets.variants.variant_ids import is_variant_node_type, parse_variant_node_type
 from ...assets.variants.variant_repository import (
@@ -40,6 +41,7 @@ class _F8StudioNodesTreeWidget(
 
     def __init__(self, parent: QtWidgets.QWidget | None = None, node_graph: Any | None = None) -> None:
         self._search_text = ""
+        self._node_role_filter: NodeRole | None = None
         self._search_variants_enabled = False
         self._on_open_variant_catalog: Any | None = None
         self._node_graph = node_graph
@@ -89,6 +91,12 @@ class _F8StudioNodesTreeWidget(
         if value == self._search_text:
             return
         self._search_text = value
+        self.update()
+
+    def set_node_role_filter(self, role: NodeRole | None) -> None:
+        if role == self._node_role_filter:
+            return
+        self._node_role_filter = role
         self.update()
 
     def set_search_variants_enabled(self, enabled: bool) -> None:
@@ -153,6 +161,11 @@ class F8StudioNodeLibraryWidget(QtWidgets.QWidget):
 
         self._search = QtWidgets.QLineEdit(self)
         self._search.setPlaceholderText("Search nodes (name, tags, description)")
+        self._role_filter = QtWidgets.QComboBox(self)
+        self._role_filter.setToolTip("Filter nodes by graph role")
+        self._role_filter.addItem("All", "")
+        for role, label in NODE_ROLE_LABELS.items():
+            self._role_filter.addItem(label, role.value)
         self._search_variants = QtWidgets.QCheckBox("Search Variants", self)
         self._search_variants.setChecked(self._read_saved_search_variants_enabled())
         self._tree = _F8StudioNodesTreeWidget(self, node_graph=node_graph)
@@ -167,6 +180,7 @@ class F8StudioNodeLibraryWidget(QtWidgets.QWidget):
         search_row = QtWidgets.QHBoxLayout()
         search_row.setContentsMargins(0, 0, 0, 0)
         search_row.setSpacing(6)
+        search_row.addWidget(self._role_filter, 0)
         search_row.addWidget(self._search, 1)
         search_row.addWidget(self._search_variants, 0)
 
@@ -177,6 +191,7 @@ class F8StudioNodeLibraryWidget(QtWidgets.QWidget):
         layout.addWidget(self._tree)
 
         self._search.textChanged.connect(self._on_search_text_changed)  # type: ignore[attr-defined]
+        self._role_filter.currentIndexChanged.connect(self._on_role_filter_changed)  # type: ignore[attr-defined]
         self._search_variants.toggled.connect(self._on_search_variants_toggled)  # type: ignore[attr-defined]
         self.destroyed.connect(self._on_destroyed)  # type: ignore[attr-defined]
         if node_graph is not None:
@@ -185,6 +200,11 @@ class F8StudioNodeLibraryWidget(QtWidgets.QWidget):
 
     def _on_search_text_changed(self, text: str) -> None:
         self._tree.set_search_text(str(text or ""))
+
+    def _on_role_filter_changed(self, _index: int) -> None:
+        value = str(self._role_filter.currentData() or "").strip()
+        role = None if not value else NodeRole(value)
+        self._tree.set_node_role_filter(role)
 
     def _on_search_variants_toggled(self, enabled: bool) -> None:
         enabled_flag = bool(enabled)

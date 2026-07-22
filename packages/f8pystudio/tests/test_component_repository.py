@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-from f8pysdk.codec import validate_as
+from f8pysdk.codec import copy_model, validate_as
 from f8pysdk.specs import F8ComponentRecord as ProtocolF8ComponentRecord
 
 from f8pystudio.assets.components.component_catalog import ComponentCatalogService
@@ -133,6 +133,20 @@ def test_component_import_rejects_wrong_asset_type(monkeypatch: pytest.MonkeyPat
 
     with pytest.raises(ValueError, match="Expected component asset payload"):
         import_component_from_json(str(import_path))
+
+
+def test_component_upsert_rejects_conflicting_reserved_role_tags(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _patch_component_service(monkeypatch, tmp_path)
+    record = copy_model(
+        _make_component_record(component_id="component-invalid-role", name="Invalid Role"),
+        update={"tags": ["role:shape", "role:output"]},
+    )
+
+    with pytest.raises(ValueError, match="at most one role tag"):
+        upsert_component(record)
 
 
 def test_component_export_sanitizes_launch_runtime_errors_and_publish_redactions(

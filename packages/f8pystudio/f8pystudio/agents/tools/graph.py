@@ -9,6 +9,8 @@ from typing import Any, Protocol
 
 from qtpy import QtCore
 
+from f8pystudio.assets.components.component_compatibility import SemanticSignal
+from f8pystudio.assets.components.component_repository import list_component_entries
 from f8pystudio.agents.graph_builder import (
     decode_graph_build_plan,
     delivery_report_for_plan,
@@ -34,7 +36,12 @@ from f8pystudio.automation.library_catalog import (
     service_library_payload,
 )
 from f8pystudio.automation.observation_store import StoredStateValue
-from f8pystudio.automation.projects import project_list_payload, project_load_payload, project_new_payload, project_save_payload
+from f8pystudio.automation.projects import (
+    project_list_payload,
+    project_load_payload,
+    project_new_payload,
+    project_save_payload,
+)
 from f8pystudio.modding import ModdingAutomationService
 from f8pystudio.ui.support.ui_notifications import export_recent_notifications
 
@@ -70,7 +77,9 @@ class StudioRuntimeToolBridge(Protocol):
 
     def deploy_and_wait(self, compiled: Any, *, timeout_s: float = 20.0) -> dict[str, Any]: ...
 
-    def deploy_service_and_wait(self, service_id: str, *, compiled: Any | None = None, timeout_s: float = 10.0) -> dict[str, Any]: ...
+    def deploy_service_and_wait(
+        self, service_id: str, *, compiled: Any | None = None, timeout_s: float = 10.0
+    ) -> dict[str, Any]: ...
 
     def start_service(self, service_id: str, *, service_class: str | None = None) -> None: ...
 
@@ -717,7 +726,12 @@ class LocalStudioGraphToolExecutor(QtCore.QObject):
                 "cached": False,
             }
         elif source is None:
-            return {"samples": [], "timedOut": True, "error": "runtime observation store is not available", "cached": True}
+            return {
+                "samples": [],
+                "timedOut": True,
+                "error": "runtime observation store is not available",
+                "cached": True,
+            }
 
         samples = source.wait_port_samples(
             service_id=service_id,
@@ -820,9 +834,30 @@ class LocalStudioGraphToolExecutor(QtCore.QObject):
 
     def _graph_match_library(self, params: dict[str, Any]) -> dict[str, Any]:
         goal = _required_text(params, "goal")
+        source_node_id = str(params.get("sourceNodeId") or "").strip()
+        source_port_name = str(params.get("sourcePort") or "").strip()
+        signal_text = str(params.get("signal") or "").strip()
+        context_values = (source_node_id, source_port_name, signal_text)
+        if any(context_values) and not all(context_values):
+            raise ValueError("sourceNodeId, sourcePort, and signal must be provided together")
+        source_port = None
+        signal = None
+        if all(context_values):
+            try:
+                signal = SemanticSignal(signal_text)
+            except ValueError as exc:
+                supported = ", ".join(item.value for item in SemanticSignal)
+                raise ValueError(f"unsupported semantic signal '{signal_text}'; expected one of: {supported}") from exc
+            source_port = self._adapter.output_data_port_spec(
+                node_id=source_node_id,
+                port_name=source_port_name,
+            )
         matches = match_graph_library_candidates(
             goal=goal,
             node_catalog=self._adapter.node_catalog(),
+            component_entries=list_component_entries(),
+            source_port=source_port,
+            signal=signal,
             limit=int(params.get("limit") or 24),
         )
         return {"matches": matches.to_dict()}
@@ -918,7 +953,9 @@ class LocalStudioGraphToolExecutor(QtCore.QObject):
                     "name": "graph_auto_layout",
                     "status": "no_nodes",
                     "summary": "No nodes matched the layout scope.",
-                    "patch": graph_patch_to_dict(GraphPatch(expected_revision=snapshot.revision, ops=(), label="auto layout")),
+                    "patch": graph_patch_to_dict(
+                        GraphPatch(expected_revision=snapshot.revision, ops=(), label="auto layout")
+                    ),
                 }
             }
         columns = max(1, int(math.ceil(math.sqrt(float(len(nodes))))))
@@ -1491,9 +1528,25 @@ class LocalStudioGraphTools:
             {"goal": goal, "limit": int(limit)},
         )
 
-    def graph_match_library(self, goal: str, limit: int = 24) -> dict[str, Any]:
-        """Search the node catalog for service/operator candidates relevant to a graph build goal."""
-        return self.executor.call("graph.matchLibrary", {"goal": goal, "limit": int(limit)})
+    def graph_match_library(
+        self,
+        goal: str,
+        limit: int = 24,
+        source_node_id: str = "",
+        source_port: str = "",
+        signal: str = "",
+    ) -> dict[str, Any]:
+        """Search node and component libraries, optionally checking a source port's signal compatibility."""
+        params: dict[str, Any] = {"goal": goal, "limit": int(limit)}
+        if source_node_id or source_port or signal:
+            params.update(
+                {
+                    "sourceNodeId": source_node_id,
+                    "sourcePort": source_port,
+                    "signal": signal,
+                }
+            )
+        return self.executor.call("graph.matchLibrary", params)
 
     def graph_preview_build_plan(self, plan: dict[str, Any]) -> dict[str, Any]:
         """Convert a typed GraphBuildPlan into a GraphPatch and validate it without changing the graph."""
@@ -1682,7 +1735,13 @@ class LocalStudioGraphTools:
         """Invoke a runtime command on a remote service; requires confirm=true."""
         return self.executor.call(
             "runtime.invokeCommand",
-            {"serviceId": service_id, "call": call, "args": args, "confirm": bool(confirm), "timeoutS": float(timeout_s)},
+            {
+                "serviceId": service_id,
+                "call": call,
+                "args": args,
+                "confirm": bool(confirm),
+                "timeoutS": float(timeout_s),
+            },
         )
 
     def monitor_report(self) -> dict[str, Any]:

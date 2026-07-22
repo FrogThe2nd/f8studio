@@ -14,8 +14,8 @@ from ..assets.components.component_models import (
     component_now_iso,
 )
 from ..assets.components.component_repository import upsert_component
+from ..assets.ui.component_metadata_dialogs import ComponentOverwriteMetadataDialog
 from ..assets.ui.component_overwrite_choices import component_draft_overwrite_choice
-from ..assets.ui.project_asset_dialogs import AssetOverwriteMetaDialog
 from ..ui.support.ui_notifications import show_info, show_warning
 from .component_publish_payload import (
     collect_component_selected_node_ids,
@@ -74,7 +74,9 @@ class GraphComponentActionsMixin:
         return str(name or "").strip()
 
     @classmethod
-    def _draft_component_entry_by_name(cls, name: str, *, exclude_component_id: str | None = None) -> F8ComponentEntry | None:
+    def _draft_component_entry_by_name(
+        cls, name: str, *, exclude_component_id: str | None = None
+    ) -> F8ComponentEntry | None:
         normalized_name = cls._normalize_component_name(name)
         excluded_id = str(exclude_component_id or "").strip()
         if not normalized_name:
@@ -99,12 +101,11 @@ class GraphComponentActionsMixin:
             show_warning(host._notification_parent(), "Save component failed", "Selected nodes are missing stable ids.")
             return
 
-        default_name = self._selected_node_name(selected_nodes[0]) if len(selected_nodes) == 1 else "Selection Component"
+        default_name = (
+            self._selected_node_name(selected_nodes[0]) if len(selected_nodes) == 1 else "Selection Component"
+        )
 
-        overwrite_choices = [
-            component_draft_overwrite_choice(entry)
-            for entry in self._draft_component_entries()
-        ]
+        overwrite_choices = [component_draft_overwrite_choice(entry) for entry in self._draft_component_entries()]
         overwrite_choices.sort(key=lambda choice: (choice.label.lower(), choice.asset_id))
 
         def _validate_save_component_name(candidate: str, overwrite_component_id: str | None) -> str | None:
@@ -123,7 +124,7 @@ class GraphComponentActionsMixin:
                 )
             return None
 
-        dialog = AssetOverwriteMetaDialog(
+        dialog = ComponentOverwriteMetadataDialog(
             parent=host._notification_parent(),
             title="Save As Component",
             name=default_name or "Selection Component",
@@ -133,7 +134,7 @@ class GraphComponentActionsMixin:
             overwrite_label="Overwrite Local Draft",
             name_validator=_validate_save_component_name,
         )
-        if dialog.exec() != QtWidgets.QDialog.Accepted:
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
 
         try:

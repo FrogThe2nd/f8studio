@@ -10,6 +10,7 @@ from NodeGraphQt.custom_widgets.nodes_tree import _BaseNodeTreeItem, TYPE_CATEGO
 from ...assets.common.asset_display_labels import variant_tree_display_name
 from ...assets.variants.variant_ids import build_variant_node_type
 from ...assets.variants.variant_repository import list_variant_entries_grouped_by_base
+from ...nodegraph.node_roles import node_role_for_palette_category
 from ...nodegraph.spec_visibility import is_hidden_spec_node_class, typed_spec_template_or_none
 from ...ui.support.node_category_labels import display_node_category_label
 from ...ui.support.qt_lifecycle import qt_runtime_error_is_object_deleted
@@ -73,6 +74,9 @@ class NodeLibraryTreeBuildMixin:
                 if spec is not None:
                     category = palette_category_from_spec(spec)
                     spec_description = host._spec_description(spec)
+                role_filter = host._node_role_filter
+                if role_filter is not None and node_role_for_palette_category(category) != role_filter:
+                    continue
                 node_types_by_category[category].append((node_id, str(node_name), spec_description, matched_variants))
 
         host._category_items = {}

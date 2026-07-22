@@ -1,7 +1,17 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
+
+from f8pysdk.specs import F8DataPortSpec
+
+from f8pystudio.assets.components.component_compatibility import (
+    SemanticSignal,
+    evaluate_component_compatibility,
+)
+from f8pystudio.assets.components.component_models import F8ComponentEntry
+from f8pystudio.assets.components.component_taxonomy import component_taxonomy_from_tags
 
 from .pipeline import GraphBuildCandidate
 
@@ -31,11 +41,66 @@ _STOP_WORDS = frozenset(
 class GraphLibraryMatchResult:
     candidates: tuple[GraphBuildCandidate, ...]
     query_terms: tuple[str, ...]
+    components: tuple[ComponentLibraryCandidate, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "queryTerms": list(self.query_terms),
             "candidates": [candidate.to_dict() for candidate in self.candidates],
+            "components": [component.to_dict() for component in self.components],
+        }
+
+
+@dataclass(frozen=True)
+class ComponentCompatibilityEvidence:
+    evaluated: bool
+    compatible: bool | None
+    signal: str | None
+    source_port: str | None
+    reasons: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "evaluated": self.evaluated,
+            "compatible": self.compatible,
+            "signal": self.signal,
+            "sourcePort": self.source_port,
+            "reasons": list(self.reasons),
+            "warnings": list(self.warnings),
+        }
+
+
+@dataclass(frozen=True)
+class ComponentLibraryCandidate:
+    component_id: str
+    name: str
+    description: str
+    source: str
+    installed: bool
+    score: float
+    matched_terms: tuple[str, ...]
+    role: str | None
+    workflows: tuple[str, ...]
+    signals: tuple[str, ...]
+    protocols: tuple[str, ...]
+    compatibility: ComponentCompatibilityEvidence
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": "component",
+            "componentId": self.component_id,
+            "name": self.name,
+            "description": self.description,
+            "source": self.source,
+            "installed": self.installed,
+            "score": self.score,
+            "matchedTerms": list(self.matched_terms),
+            "role": self.role,
+            "workflows": list(self.workflows),
+            "signals": list(self.signals),
+            "protocols": list(self.protocols),
+            "compatibility": self.compatibility.to_dict(),
         }
 
 
@@ -43,6 +108,9 @@ def match_graph_library_candidates(
     *,
     goal: str,
     node_catalog: dict[str, Any],
+    component_entries: Iterable[F8ComponentEntry] = (),
+    source_port: F8DataPortSpec | None = None,
+    signal: SemanticSignal | None = None,
     limit: int = 24,
 ) -> GraphLibraryMatchResult:
     terms = _goal_terms(goal)
@@ -58,7 +126,123 @@ def match_graph_library_candidates(
         candidates.append(candidate)
     candidates.sort(key=lambda candidate: (-candidate.score, candidate.node_type))
     capped = max(1, min(int(limit), 200))
-    return GraphLibraryMatchResult(candidates=tuple(candidates[:capped]), query_terms=terms)
+    component_candidates = _match_component_candidates(
+        entries=component_entries,
+        terms=terms,
+        source_port=source_port,
+        signal=signal,
+    )
+    return GraphLibraryMatchResult(
+        candidates=tuple(candidates[:capped]),
+        query_terms=terms,
+        components=tuple(component_candidates[:capped]),
+    )
+
+
+def _match_component_candidates(
+    *,
+    entries: Iterable[F8ComponentEntry],
+    terms: tuple[str, ...],
+    source_port: F8DataPortSpec | None,
+    signal: SemanticSignal | None,
+) -> list[ComponentLibraryCandidate]:
+    entries_by_id: dict[str, F8ComponentEntry] = {}
+    for entry in entries:
+        component_id = str(entry.record.componentId or "").strip()
+        if component_id:
+            entries_by_id.setdefault(component_id, entry)
+
+    candidates: list[ComponentLibraryCandidate] = []
+    for entry in entries_by_id.values():
+        candidate = _component_candidate_from_entry(
+            entry,
+            terms=terms,
+            source_port=source_port,
+            signal=signal,
+        )
+        if candidate.score > 0.0:
+            candidates.append(candidate)
+    candidates.sort(key=lambda candidate: (-candidate.score, candidate.name.lower(), candidate.component_id))
+    return candidates
+
+
+def _component_candidate_from_entry(
+    entry: F8ComponentEntry,
+    *,
+    terms: tuple[str, ...],
+    source_port: F8DataPortSpec | None,
+    signal: SemanticSignal | None,
+) -> ComponentLibraryCandidate:
+    record = entry.record
+    tags = list(record.tags or [])
+    taxonomy = component_taxonomy_from_tags(tags)
+    search_text = " ".join(
+        [
+            str(record.componentId or ""),
+            str(record.name or ""),
+            str(record.description or ""),
+            *tags,
+        ]
+    ).lower()
+    matched_terms = tuple(term for term in terms if term and term in search_text)
+    score = sum(_component_term_score(term=term, entry=entry) for term in matched_terms)
+    return ComponentLibraryCandidate(
+        component_id=str(record.componentId or "").strip(),
+        name=str(record.name or "").strip(),
+        description=str(record.description or "").strip(),
+        source=entry.source.value,
+        installed=bool(entry.installed),
+        score=round(score, 3),
+        matched_terms=matched_terms,
+        role=None if taxonomy.role is None else taxonomy.role.value,
+        workflows=tuple(sorted(taxonomy.workflows)),
+        signals=tuple(sorted(taxonomy.signals)),
+        protocols=tuple(sorted(taxonomy.protocols)),
+        compatibility=_component_compatibility_evidence(
+            source_port=source_port,
+            signal=signal,
+            component_tags=tags,
+        ),
+    )
+
+
+def _component_term_score(*, term: str, entry: F8ComponentEntry) -> float:
+    record = entry.record
+    identity_text = f"{record.componentId} {record.name}".lower()
+    taxonomy_text = " ".join(str(tag) for tag in list(record.tags or [])).lower()
+    if term in identity_text:
+        return 2.0
+    if term in taxonomy_text:
+        return 1.5
+    return 1.0
+
+
+def _component_compatibility_evidence(
+    *,
+    source_port: F8DataPortSpec | None,
+    signal: SemanticSignal | None,
+    component_tags: Iterable[str],
+) -> ComponentCompatibilityEvidence:
+    if source_port is None or signal is None:
+        return ComponentCompatibilityEvidence(
+            evaluated=False,
+            compatible=None,
+            signal=None if signal is None else signal.value,
+            source_port=None if source_port is None else source_port.name,
+        )
+    decision = evaluate_component_compatibility(
+        source_port=source_port,
+        signal=signal,
+        component_tags=component_tags,
+    )
+    return ComponentCompatibilityEvidence(
+        evaluated=True,
+        compatible=decision.compatible,
+        signal=signal.value,
+        source_port=source_port.name,
+        reasons=decision.reasons,
+        warnings=decision.warnings,
+    )
 
 
 def _candidate_from_catalog_item(item: dict[str, Any], *, terms: tuple[str, ...]) -> GraphBuildCandidate:
@@ -133,10 +317,7 @@ def _goal_terms(goal: str) -> tuple[str, ...]:
     text = raw
     for needle, replacement in replacements.items():
         text = text.replace(needle, replacement)
-    terms = [
-        token.strip(" ,.;:()[]{}<>\"'")
-        for token in text.replace("/", " ").replace("_", " ").split()
-    ]
+    terms = [token.strip(" ,.;:()[]{}<>\"'") for token in text.replace("/", " ").replace("_", " ").split()]
     aliases: list[str] = []
     for term in terms:
         if not term:

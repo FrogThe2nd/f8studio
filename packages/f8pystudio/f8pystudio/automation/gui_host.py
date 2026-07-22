@@ -14,6 +14,8 @@ from typing import Any
 
 from qtpy import QtCore
 
+from f8pystudio.assets.components.component_compatibility import SemanticSignal
+from f8pystudio.assets.components.component_repository import list_component_entries
 from f8pystudio.nodegraph.runtime_compiler import compile_runtime_graphs_from_studio
 from f8pystudio.ui.support.ui_notifications import export_recent_notifications
 
@@ -460,9 +462,30 @@ class StudioAutomationHost(QtCore.QObject):
 
     def _graph_match_library(self, params: dict[str, Any]) -> dict[str, Any]:
         goal = _required_text(params, "goal")
+        source_node_id = str(params.get("sourceNodeId") or "").strip()
+        source_port_name = str(params.get("sourcePort") or "").strip()
+        signal_text = str(params.get("signal") or "").strip()
+        context_values = (source_node_id, source_port_name, signal_text)
+        if any(context_values) and not all(context_values):
+            raise ValueError("sourceNodeId, sourcePort, and signal must be provided together")
+        source_port = None
+        signal = None
+        if all(context_values):
+            try:
+                signal = SemanticSignal(signal_text)
+            except ValueError as exc:
+                supported = ", ".join(item.value for item in SemanticSignal)
+                raise ValueError(f"unsupported semantic signal '{signal_text}'; expected one of: {supported}") from exc
+            source_port = self._graph_adapter.output_data_port_spec(
+                node_id=source_node_id,
+                port_name=source_port_name,
+            )
         matches = match_graph_library_candidates(
             goal=goal,
             node_catalog=self._graph_adapter.node_catalog(),
+            component_entries=list_component_entries(),
+            source_port=source_port,
+            signal=signal,
             limit=int(params.get("limit") or 24),
         )
         return {"matches": matches.to_dict()}
@@ -725,7 +748,9 @@ class StudioAutomationHost(QtCore.QObject):
                     "name": "graph_auto_layout",
                     "status": "no_nodes",
                     "summary": "No nodes matched the layout scope.",
-                    "patch": graph_patch_to_dict(GraphPatch(expected_revision=snapshot.revision, ops=(), label="auto layout")),
+                    "patch": graph_patch_to_dict(
+                        GraphPatch(expected_revision=snapshot.revision, ops=(), label="auto layout")
+                    ),
                 }
             }
         columns = max(1, int(math.ceil(math.sqrt(float(len(nodes))))))

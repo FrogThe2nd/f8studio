@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import pytest
 
+from f8pysdk.specs import F8DataPortSpec, number_schema
 from f8pystudio.agents.graph_builder import (
     decode_graph_build_plan,
     graph_build_plan_schema_hint,
     graph_patch_from_build_plan,
     match_graph_library_candidates,
 )
+from f8pystudio.assets.components.component_compatibility import SemanticSignal
+from f8pystudio.assets.components.component_models import F8ComponentEntry, F8ComponentSourceKind
 from f8pystudio.automation.domain import graph_patch_to_dict
+from f8pysdk.specs import F8ComponentRecord
 
 
 def test_match_graph_library_candidates_ranks_goal_terms() -> None:
@@ -51,6 +55,73 @@ def test_match_graph_library_candidates_ranks_goal_terms() -> None:
     assert result.query_terms == ("map", "signal", "100", "range")
     assert [candidate.node_type for candidate in result.candidates] == ["f8.test.range_map"]
     assert result.candidates[0].matched_terms == ("map", "100", "range")
+
+
+def test_match_graph_library_candidates_returns_component_taxonomy_and_compatibility() -> None:
+    component = F8ComponentEntry(
+        record=F8ComponentRecord(
+            componentId="lovense-output",
+            name="Lovense Output",
+            description="Drive Lovense from a normalized signal.",
+            tags=[
+                "role:output",
+                "workflow:video",
+                "signal:vibrate",
+                "protocol:lovense",
+            ],
+            content={},
+        ),
+        source=F8ComponentSourceKind.local,
+        installed=True,
+    )
+
+    result = match_graph_library_candidates(
+        goal="video vibrate lovense output",
+        node_catalog={"nodes": []},
+        component_entries=[component],
+        source_port=F8DataPortSpec(
+            name="intensity",
+            valueSchema=number_schema(minimum=0.0, maximum=1.0),
+        ),
+        signal=SemanticSignal.VIBRATE,
+    )
+    payload = result.to_dict()["components"][0]
+
+    assert payload["componentId"] == "lovense-output"
+    assert payload["role"] == "output"
+    assert payload["workflows"] == ["video"]
+    assert payload["signals"] == ["vibrate"]
+    assert payload["protocols"] == ["lovense"]
+    assert payload["compatibility"] == {
+        "evaluated": True,
+        "compatible": True,
+        "signal": "vibrate",
+        "sourcePort": "intensity",
+        "reasons": [],
+        "warnings": [],
+    }
+
+
+def test_component_library_match_marks_compatibility_as_not_evaluated_without_port_context() -> None:
+    component = F8ComponentEntry(
+        record=F8ComponentRecord(
+            componentId="tcode-output",
+            name="TCode Output",
+            tags=["role:output", "signal:tcode", "protocol:serial"],
+            content={},
+        ),
+        source=F8ComponentSourceKind.local,
+        installed=True,
+    )
+
+    result = match_graph_library_candidates(
+        goal="tcode serial output",
+        node_catalog={"nodes": []},
+        component_entries=[component],
+    )
+
+    assert result.components[0].compatibility.evaluated is False
+    assert result.components[0].compatibility.compatible is None
 
 
 def test_decode_graph_build_plan_and_patch_are_typed_camel_case_payloads() -> None:

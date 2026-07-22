@@ -954,7 +954,9 @@ def test_local_studio_graph_tools_dispatch_runtime_monitor_and_logs(monkeypatch:
             return {"warnings": []}
 
     monkeypatch.setattr("f8pystudio.agents.tools.graph.StudioGraphAutomationAdapter", FakeAdapter)
-    monkeypatch.setattr("f8pystudio.nodegraph.runtime_compiler.compile_runtime_graphs_from_studio", lambda graph: {"compiled": graph})
+    monkeypatch.setattr(
+        "f8pystudio.nodegraph.runtime_compiler.compile_runtime_graphs_from_studio", lambda graph: {"compiled": graph}
+    )
 
     bridge = _FakeBridge()
     tools = LocalStudioGraphTools(LocalStudioGraphToolExecutor("graph", bridge=bridge, log_source=_FakeLogSource()))
@@ -964,7 +966,10 @@ def test_local_studio_graph_tools_dispatch_runtime_monitor_and_logs(monkeypatch:
     assert tools.runtime_service_status("svc")["service"]["latestMonitor"] == {"serviceId": "svc", "ready": True}
     assert tools.monitor_report()["monitor"] == {"services": [{"serviceId": "svc"}]}
     assert tools.monitor_service("svc", limit=7)["stream"] == [{"serviceId": "svc", "index": 1}]
-    assert tools.logs_read(service_id="studio", limit=5, minimum_level=30)["logs"]["services"][0]["lines"][0]["line"] == "hello"
+    assert (
+        tools.logs_read(service_id="studio", limit=5, minimum_level=30)["logs"]["services"][0]["lines"][0]["line"]
+        == "hello"
+    )
     assert tools.runtime_write_state("svc", "node", "gain", 2.0)["state"] == {"accepted": True}
     assert tools.runtime_sample_port("svc", "node", "out", limit=2) == {
         "samples": [{"value": 42}],
@@ -1178,7 +1183,9 @@ def test_local_studio_graph_tools_dispatch_project_lifecycle(monkeypatch: pytest
     assert graph.cleared is True
 
 
-def test_project_save_payload_overwrites_unique_same_name_project(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_project_save_payload_overwrites_unique_same_name_project(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     _ensure_app()
     project_settings = QtCore.QSettings(str(tmp_path / "agent-project-save.ini"), QtCore.QSettings.IniFormat)
     service = ProjectStorageService(db_path=tmp_path / "assets.db", settings=project_settings)
@@ -1415,7 +1422,9 @@ def test_runtime_action_tool_can_use_gui_approval(monkeypatch: pytest.MonkeyPatc
             return {"warnings": []}
 
     monkeypatch.setattr("f8pystudio.agents.tools.graph.StudioGraphAutomationAdapter", FakeAdapter)
-    monkeypatch.setattr("f8pystudio.nodegraph.runtime_compiler.compile_runtime_graphs_from_studio", lambda graph: {"compiled": graph})
+    monkeypatch.setattr(
+        "f8pystudio.nodegraph.runtime_compiler.compile_runtime_graphs_from_studio", lambda graph: {"compiled": graph}
+    )
 
     bridge = _FakeBridge()
     executor = LocalStudioGraphToolExecutor(
@@ -1615,6 +1624,11 @@ def test_workflow_tools_preview_goal_and_auto_layout(monkeypatch: pytest.MonkeyP
                 ]
             }
 
+        def output_data_port_spec(self, *, node_id: str, port_name: str) -> F8DataPortSpec:
+            assert node_id == "wave_source"
+            assert port_name == "value"
+            return F8DataPortSpec(name="value", valueSchema=string_schema())
+
         def preview_patch(self, patch: object) -> FakePreview:
             self.patch = patch
             return FakePreview()
@@ -1645,6 +1659,15 @@ def test_workflow_tools_preview_goal_and_auto_layout(monkeypatch: pytest.MonkeyP
     matches = tools.graph_match_library(goal, limit=2)["matches"]
     assert matches["queryTerms"]
     assert len(matches["candidates"]) == 2
+    contextual_matches = tools.graph_match_library(
+        "tcode output",
+        source_node_id="wave_source",
+        source_port="value",
+        signal="tcode",
+    )["matches"]
+    assert "components" in contextual_matches
+    with pytest.raises(ValueError, match="must be provided together"):
+        tools.graph_match_library("output", source_node_id="wave_source")
 
     plan = {
         "summary": "Create a wave processing graph with visualization.",

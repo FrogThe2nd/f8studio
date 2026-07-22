@@ -12,6 +12,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from f8pystudio.assets.variants.variant_ids import build_variant_node_type  # noqa: E402
+from f8pystudio.nodegraph.node_roles import NodeRole  # noqa: E402
 from f8pystudio.ui.mainwin.main_window import F8StudioMainWin  # noqa: E402
 from f8pystudio.ui.mainwin.node_library_widget import F8StudioNodeLibraryWidget  # noqa: E402
 from f8pystudio.ui.support.node_category_labels import display_node_category_label  # noqa: E402
@@ -209,6 +210,40 @@ def test_library_search_refresh_keeps_hidden_category_expansion_state(monkeypatc
     assert restored_beta_item is not None
     assert restored_alpha_item.isExpanded() is False
     assert restored_beta_item.isExpanded() is True
+
+
+def test_library_role_filter_keeps_only_matching_categories() -> None:
+    _ensure_app()
+    widget = F8StudioNodeLibraryWidget(node_graph=None)
+    _build_library_tree(
+        widget,
+        categories_by_node_id={
+            "svc.test.source": "f8.pyengine.input",
+            "svc.test.shape": "f8.pyengine.signal",
+            "svc.test.output": "f8.pyengine.output",
+        },
+    )
+
+    widget._tree.set_node_role_filter(NodeRole.OUTPUT)
+    widget._tree._start_tree_build()
+
+    assert widget._tree.topLevelItemCount() == 1
+    category_item = widget._tree.topLevelItem(0)
+    assert category_item is not None
+    assert category_item.data(0, widget._tree._ROLE_CATEGORY_ID) == "f8.pyengine.output"
+
+
+def test_library_role_combo_applies_and_clears_filter() -> None:
+    _ensure_app()
+    widget = F8StudioNodeLibraryWidget(node_graph=None)
+
+    output_index = widget._role_filter.findData(NodeRole.OUTPUT.value)
+    assert output_index >= 0
+    widget._role_filter.setCurrentIndex(output_index)
+    assert widget._tree._node_role_filter == NodeRole.OUTPUT
+
+    widget._role_filter.setCurrentIndex(0)
+    assert widget._tree._node_role_filter is None
 
 
 def test_display_node_category_label_uses_readable_pyengine_alias() -> None:

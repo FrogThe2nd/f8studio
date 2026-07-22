@@ -7,6 +7,7 @@ from qtpy import QtCore, QtWidgets
 from ...ui.support.ui_icons import StudioIcon, icon_for
 from ...ui.support.json_text_editor import attach_json_enhancements
 from ..components.component_models import F8ComponentEntry
+from ..components.component_taxonomy import COMPONENT_ROLE_LABELS, component_taxonomy_from_tags
 from .asset_graph_preview import AssetGraphPreviewPane
 from .catalog_status import AssetCatalogRowState
 from .catalog_hosts import _ComponentCatalogDialogHost
@@ -26,6 +27,7 @@ class ComponentCatalogUiMixin(_ComponentCatalogUiMixinBase):
     _on_search_text_changed: Any
     _on_search_submitted: Any
     _on_filter_changed: Any
+    _on_component_role_filter_changed: Any
     _on_add_clicked: Any
     _on_refresh_clicked: Any
     _on_import_clicked: Any
@@ -82,6 +84,15 @@ class ComponentCatalogUiMixin(_ComponentCatalogUiMixinBase):
         self._filter_combo = QtWidgets.QComboBox(self)
         self._filter_combo.currentIndexChanged.connect(self._on_filter_changed)  # type: ignore[attr-defined]
 
+        self._role_filter_combo = QtWidgets.QComboBox(self)
+        self._role_filter_combo.setToolTip("Filter components by graph role")
+        self._role_filter_combo.addItem("All Roles", "")
+        for role, label in COMPONENT_ROLE_LABELS.items():
+            self._role_filter_combo.addItem(label, role.value)
+        self._role_filter_combo.currentIndexChanged.connect(  # type: ignore[attr-defined]
+            self._on_component_role_filter_changed
+        )
+
         self._toolbar = QtWidgets.QToolBar("Components", self)
         self._toolbar.setMovable(False)
         self._toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly)
@@ -91,6 +102,7 @@ class ComponentCatalogUiMixin(_ComponentCatalogUiMixinBase):
         self._toolbar.addWidget(self._search_input)
         self._toolbar.addWidget(self._search_btn)
         self._toolbar.addWidget(self._filter_combo)
+        self._toolbar.addWidget(self._role_filter_combo)
         self._toolbar.addSeparator()
 
         btn_add = QtWidgets.QPushButton(self._toolbar)
@@ -207,11 +219,7 @@ class ComponentCatalogUiMixin(_ComponentCatalogUiMixinBase):
         container = QtWidgets.QWidget(self._list)
         container.setObjectName("catalogRowCard")
         container.setStyleSheet(
-            "QWidget#catalogRowCard {"
-            " border: 1px solid #4b5563;"
-            " border-radius: 10px;"
-            " background: #20252c;"
-            "}"
+            "QWidget#catalogRowCard { border: 1px solid #4b5563; border-radius: 10px; background: #20252c;}"
         )
         root = QtWidgets.QVBoxLayout(container)
         root.setContentsMargins(10, 6, 10, 6)
@@ -258,6 +266,8 @@ class ComponentCatalogUiMixin(_ComponentCatalogUiMixinBase):
         meta_row = QtWidgets.QHBoxLayout()
         meta_row.setContentsMargins(0, 0, 0, 0)
         meta_row.setSpacing(6)
+        for taxonomy_badge in self._build_taxonomy_badges(container, entry):
+            meta_row.addWidget(taxonomy_badge, 0)
         if linked_draft_badge_text is not None:
             linked_draft_badge = self._build_text_badge(container, linked_draft_badge_text)
             linked_draft_badge.setStyleSheet(
@@ -282,6 +292,56 @@ class ComponentCatalogUiMixin(_ComponentCatalogUiMixinBase):
         meta_row.addStretch(1)
         root.addLayout(meta_row)
         return container
+
+    def _build_taxonomy_badges(
+        self,
+        parent: QtWidgets.QWidget,
+        entry: F8ComponentEntry,
+    ) -> tuple[QtWidgets.QLabel, ...]:
+        taxonomy = component_taxonomy_from_tags(list(entry.record.tags or []))
+        badges: list[QtWidgets.QLabel] = []
+        if taxonomy.role is not None:
+            role_badge = self._build_text_badge(parent, COMPONENT_ROLE_LABELS[taxonomy.role])
+            role_badge.setObjectName("component-role-badge")
+            role_badge.setToolTip(f"Component role: {COMPONENT_ROLE_LABELS[taxonomy.role]}")
+            badges.append(role_badge)
+        signal_badge = self._build_taxonomy_values_badge(
+            parent=parent,
+            object_name="component-signal-badge",
+            dimension_label="Signals",
+            values=taxonomy.signals,
+        )
+        if signal_badge is not None:
+            badges.append(signal_badge)
+        protocol_badge = self._build_taxonomy_values_badge(
+            parent=parent,
+            object_name="component-protocol-badge",
+            dimension_label="Protocols",
+            values=taxonomy.protocols,
+        )
+        if protocol_badge is not None:
+            badges.append(protocol_badge)
+        return tuple(badges)
+
+    def _build_taxonomy_values_badge(
+        self,
+        *,
+        parent: QtWidgets.QWidget,
+        object_name: str,
+        dimension_label: str,
+        values: frozenset[str],
+    ) -> QtWidgets.QLabel | None:
+        ordered_values = sorted(values)
+        if not ordered_values:
+            return None
+        first_value = ordered_values[0].replace("_", " ").replace("-", " ").title()
+        badge_text = first_value
+        if len(ordered_values) > 1:
+            badge_text = f"{first_value} +{len(ordered_values) - 1}"
+        badge = self._build_text_badge(parent, badge_text)
+        badge.setObjectName(object_name)
+        badge.setToolTip(f"{dimension_label}: {', '.join(ordered_values)}")
+        return badge
 
     @staticmethod
     def _build_text_badge(parent: QtWidgets.QWidget, text: str) -> QtWidgets.QLabel:
@@ -316,7 +376,9 @@ class ComponentCatalogUiMixin(_ComponentCatalogUiMixinBase):
         badge.setToolTip(tooltip)
         return badge
 
-    def _build_version_badge(self, parent: QtWidgets.QWidget, remote_version_number: int | None) -> QtWidgets.QLabel | None:
+    def _build_version_badge(
+        self, parent: QtWidgets.QWidget, remote_version_number: int | None
+    ) -> QtWidgets.QLabel | None:
         if remote_version_number is None:
             return None
         badge = self._build_text_badge(parent, f"v{int(remote_version_number)}")

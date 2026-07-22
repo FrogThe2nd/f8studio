@@ -11,6 +11,11 @@ This path is for advanced users who want to build F8Studio from source or extend
 ### Develop a new service
 
 - [Service Development](service-development.md)
+- [Output Node Development](output-node-development.md)
+
+### Build reusable graph components
+
+- [Component Authoring](component-authoring.md)
 
 ### Extend PyStudio with a plugin
 

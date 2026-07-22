@@ -16,6 +16,7 @@ from f8pysdk.specs import F8DataPortSpec, F8StateSpec, can_add, can_delete, can_
 from f8pystudio.bridge.json_codec import coerce_json_value
 from f8pystudio.nodegraph.spec_mutations import set_ports, set_state_fields
 from f8pystudio.nodegraph.runtime_compiler import compile_runtime_graphs_from_studio
+from f8pystudio.nodegraph.edge_rules import raw_data_port_name
 from f8pystudio.nodegraph.session_schema import extract_layout
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS as STUDIO_SERVICE_CLASS
 from f8pystudio.studio_specs.identifiers import STUDIO_SERVICE_ID
@@ -90,7 +91,9 @@ class _ContainerGeometryChangeCommand(QtWidgets.QUndoCommand):
 
 
 class _NodeSpecChangeCommand(QtWidgets.QUndoCommand):
-    def __init__(self, *, node: Any, before: F8OperatorSpec | F8ServiceSpec, after: F8OperatorSpec | F8ServiceSpec) -> None:
+    def __init__(
+        self, *, node: Any, before: F8OperatorSpec | F8ServiceSpec, after: F8OperatorSpec | F8ServiceSpec
+    ) -> None:
         super().__init__('spec "{}"'.format(_node_name(node)))
         self._node = node
         self._before = _copy_node_spec(before)
@@ -138,9 +141,7 @@ class StudioGraphAutomationAdapter:
         edge_snapshots = tuple(_collect_edge_snapshots(nodes))
         selected_ids = tuple(
             sorted(
-                node_id
-                for node_id in (_node_id(node) for node in list(self._graph.selected_nodes() or []))
-                if node_id
+                node_id for node_id in (_node_id(node) for node in list(self._graph.selected_nodes() or [])) if node_id
             )
         )
         return GraphSnapshot(
@@ -173,6 +174,17 @@ class StudioGraphAutomationAdapter:
                 }
             )
         return {"nodes": items}
+
+    def output_data_port_spec(self, *, node_id: str, port_name: str) -> F8DataPortSpec:
+        node = self._require_node(node_id)
+        spec = _node_spec(node)
+        if spec is None:
+            raise ValueError(f"node has no typed spec: {node_id}")
+        normalized_port_name = raw_data_port_name(port_name, is_input=False) or str(port_name or "").strip()
+        for port in list(spec.dataOutPorts or []):
+            if isinstance(port, F8DataPortSpec) and str(port.name or "").strip() == normalized_port_name:
+                return port
+        raise ValueError(f"output data port not found: {node_id}.{port_name}")
 
     def find_nodes(
         self,
@@ -641,7 +653,12 @@ class StudioGraphAutomationAdapter:
         spec = _node_spec(node)
         if spec is None:
             raise ValueError(f"node {op.node_id} has no editable spec")
-        if op.data_in_ports is None and op.data_out_ports is None and op.exec_in_ports is None and op.exec_out_ports is None:
+        if (
+            op.data_in_ports is None
+            and op.data_out_ports is None
+            and op.exec_in_ports is None
+            and op.exec_out_ports is None
+        ):
             raise ValueError("setNodePorts requires at least one port collection")
         if op.data_in_ports is not None:
             _validate_port_edit_policy(spec, collection="dataInPorts")
@@ -1038,13 +1055,25 @@ def _validate_port_edit_policy(
     collection: str,
 ) -> None:
     if collection == "dataInPorts":
-        can_change = bool(can_add(spec, "dataInPorts") and can_delete(spec, "dataInPorts") and can_edit_existing(spec, "dataInPorts"))
+        can_change = bool(
+            can_add(spec, "dataInPorts") and can_delete(spec, "dataInPorts") and can_edit_existing(spec, "dataInPorts")
+        )
     elif collection == "dataOutPorts":
-        can_change = bool(can_add(spec, "dataOutPorts") and can_delete(spec, "dataOutPorts") and can_edit_existing(spec, "dataOutPorts"))
+        can_change = bool(
+            can_add(spec, "dataOutPorts")
+            and can_delete(spec, "dataOutPorts")
+            and can_edit_existing(spec, "dataOutPorts")
+        )
     elif collection == "execInPorts":
-        can_change = bool(can_add(spec, "execInPorts") and can_delete(spec, "execInPorts") and can_edit_existing(spec, "execInPorts"))
+        can_change = bool(
+            can_add(spec, "execInPorts") and can_delete(spec, "execInPorts") and can_edit_existing(spec, "execInPorts")
+        )
     elif collection == "execOutPorts":
-        can_change = bool(can_add(spec, "execOutPorts") and can_delete(spec, "execOutPorts") and can_edit_existing(spec, "execOutPorts"))
+        can_change = bool(
+            can_add(spec, "execOutPorts")
+            and can_delete(spec, "execOutPorts")
+            and can_edit_existing(spec, "execOutPorts")
+        )
     else:
         raise ValueError(f"unsupported port collection: {collection}")
     if not can_change:
@@ -1053,9 +1082,7 @@ def _validate_port_edit_policy(
 
 def _validate_state_field_edit_policy(spec: F8OperatorSpec | F8ServiceSpec) -> None:
     can_change = bool(
-        can_add(spec, "stateFields")
-        and can_delete(spec, "stateFields")
-        and can_edit_existing(spec, "stateFields")
+        can_add(spec, "stateFields") and can_delete(spec, "stateFields") and can_edit_existing(spec, "stateFields")
     )
     if not can_change:
         raise ValueError("node spec does not allow editing stateFields")

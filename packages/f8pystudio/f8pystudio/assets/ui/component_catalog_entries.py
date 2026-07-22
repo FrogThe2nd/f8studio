@@ -7,6 +7,7 @@ from f8pysdk.codec import copy_model
 from ..components.component_catalog import component_entry_has_cached_content, component_entry_is_installed
 from ..components.component_models import F8ComponentEntry, F8ComponentSourceKind, F8ComponentVisibility
 from ..components.component_repository import list_component_entries
+from ..components.component_taxonomy import component_matches_role
 from .catalog_status import AssetCatalogRowState, build_asset_catalog_row_state
 from .catalog_hosts import _ComponentCatalogDialogHost
 
@@ -59,6 +60,8 @@ class ComponentCatalogEntriesMixin(_ComponentCatalogEntriesMixinBase):
         ]
 
     def _matches_filter(self, entry: F8ComponentEntry) -> bool:
+        if not self._matches_role_filter(entry):
+            return False
         row_state = self._row_state_for_entry(entry)
         current_tab = self._scope_tabs.currentIndex()
         current_filter = self._current_filter_value()
@@ -93,6 +96,12 @@ class ComponentCatalogEntriesMixin(_ComponentCatalogEntriesMixinBase):
         if current_filter == "subscribed":
             return row_state.subscribed and not self._is_owned_remote_entry(entry)
         return True
+
+    def _matches_role_filter(self, entry: F8ComponentEntry) -> bool:
+        return component_matches_role(
+            list(entry.record.tags or []),
+            self._current_component_role_filter(),
+        )
 
     def _build_row_states(self) -> dict[str, AssetCatalogRowState]:
         local_entries = self._local_entries_snapshot()

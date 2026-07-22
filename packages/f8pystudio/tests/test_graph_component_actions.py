@@ -105,7 +105,9 @@ class _FakeVariantHost(GraphVariantActionsMixin):
     def selected_nodes(self) -> list[object]:
         return list(self._selected_nodes)
 
-    def create_node(self, node_type: str, *, pos: tuple[float, float] | None = None, selected: bool = True, push_undo: bool = True) -> None:
+    def create_node(
+        self, node_type: str, *, pos: tuple[float, float] | None = None, selected: bool = True, push_undo: bool = True
+    ) -> None:
         _ = (node_type, pos, selected, push_undo)
         return None
 
@@ -195,8 +197,13 @@ def test_save_selected_nodes_as_component_trims_external_connections(monkeypatch
         selected_nodes=[_FakeSelectedNode("node_a", "Node A"), _FakeSelectedNode("node_b", "Node B")],
     )
 
-    monkeypatch.setattr("f8pystudio.nodegraph.graph_component_actions.AssetOverwriteMetaDialog", _FakeMetaDialog)
-    monkeypatch.setattr("f8pystudio.nodegraph.graph_component_actions.upsert_component", lambda record: saved_records.append(record))
+    monkeypatch.setattr(
+        "f8pystudio.nodegraph.graph_component_actions.ComponentOverwriteMetadataDialog",
+        _FakeMetaDialog,
+    )
+    monkeypatch.setattr(
+        "f8pystudio.nodegraph.graph_component_actions.upsert_component", lambda record: saved_records.append(record)
+    )
     monkeypatch.setattr(
         "f8pystudio.nodegraph.graph_component_actions.show_info",
         lambda _parent, title, message: info_messages.append((str(title), str(message))),

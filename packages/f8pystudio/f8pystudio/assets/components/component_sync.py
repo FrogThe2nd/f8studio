@@ -60,6 +60,7 @@ from .component_models import (
     F8ComponentSourceKind,
     F8ComponentVisibility,
 )
+from .component_taxonomy import validate_component_tags
 
 logger = logging.getLogger(__name__)
 _COMPONENT_HTTP_DECODE_ERRORS = (zlib.error,)
@@ -102,7 +103,9 @@ class ComponentSyncClient:
         self._catalog_service: ComponentCatalogService
         self._catalog_service = ComponentCatalogService() if catalog_service is None else catalog_service
         self._credential_store: AssetCloudCredentialStore
-        self._credential_store = default_asset_cloud_credential_store() if credential_store is None else credential_store
+        self._credential_store = (
+            default_asset_cloud_credential_store() if credential_store is None else credential_store
+        )
         self._access_token: str = ""
         self._access_token_account_id: str = ""
 
@@ -282,9 +285,7 @@ class ComponentSyncClient:
             )
         except F8ComponentRemoteAuthError as exc:
             self._handle_invalid_saved_session(session=session, reason=str(exc))
-            raise F8ComponentRemoteAuthError(
-                self._expired_session_message(session)
-            ) from exc
+            raise F8ComponentRemoteAuthError(self._expired_session_message(session)) from exc
         auth = _remote_auth_from_payload(payload)
         self._set_auth(auth, base_url=base_url, remember=True)
         return auth
@@ -344,7 +345,9 @@ class ComponentSyncClient:
         page = self.refresh_scope_page(scope=scope, query=query, cursor="", append=False)
         return page.entries
 
-    def refresh_scope_page(self, *, scope: str, query: str = "", cursor: str = "", append: bool = False) -> F8ComponentRemoteListPage:
+    def refresh_scope_page(
+        self, *, scope: str, query: str = "", cursor: str = "", append: bool = False
+    ) -> F8ComponentRemoteListPage:
         result = self.collect_remote_scope_refreshes(
             [ComponentRemoteScopeRefreshRequest(scope=scope, query=query, cursor=cursor, append=append)],
             retry_on_auth_failure=True,
@@ -358,7 +361,7 @@ class ComponentSyncClient:
         *,
         retry_on_auth_failure: bool,
     ) -> ComponentRemoteScopeRefreshResult:
-        current_entries = self._catalog_service.load_remote_entries()
+        current_entries = self._catalog_service.load_persisted_remote_entries()
         current_user = self.current_user()
         pages_by_scope: dict[str, F8ComponentRemoteListPage] = {}
         for request_spec in requests:
@@ -509,7 +512,9 @@ class ComponentSyncClient:
                 return self.update_component(entry)
             return self.create_component(entry)
         except F8ComponentRemoteConflictError as exc:
-            _ = self._catalog_service.mark_conflict(str(entry.record.componentId), remote_version_number=exc.remote_version_number)
+            _ = self._catalog_service.mark_conflict(
+                str(entry.record.componentId), remote_version_number=exc.remote_version_number
+            )
             raise
         except _COMPONENT_UPLOAD_RECOVERY_ERRORS as exc:
             recovered_entry = self._recover_uploaded_entry(entry)
@@ -582,11 +587,15 @@ class ComponentSyncClient:
         return self.create_component(entry_to_create, change_summary=change_summary)
 
     def subscribe_component(self, component_id: str) -> F8ComponentEntry:
-        payload = self._request_json("POST", f"/v1/components/{parse.quote(str(component_id))}/subscribe", {}, authorized=True)
+        payload = self._request_json(
+            "POST", f"/v1/components/{parse.quote(str(component_id))}/subscribe", {}, authorized=True
+        )
         return self._update_cached_remote_entry(_entry_from_asset_payload(payload))
 
     def unsubscribe_component(self, component_id: str) -> F8ComponentEntry:
-        payload = self._request_json("DELETE", f"/v1/components/{parse.quote(str(component_id))}/subscribe", None, authorized=True)
+        payload = self._request_json(
+            "DELETE", f"/v1/components/{parse.quote(str(component_id))}/subscribe", None, authorized=True
+        )
         return self._update_cached_remote_entry(_entry_from_asset_payload(payload))
 
     def switch_account(self, account_id: str) -> F8ComponentRemoteAuth:
@@ -815,7 +824,7 @@ class ComponentSyncClient:
         self._set_value(self._SAVED_SESSIONS_KEY, [_remote_session_payload(item) for item in out])
 
     def _update_cached_remote_entry(self, entry: F8ComponentEntry) -> F8ComponentEntry:
-        current = self._catalog_service.load_remote_entries()
+        current = self._catalog_service.load_persisted_remote_entries()
         out: list[F8ComponentEntry] = []
         replaced = False
         updated_entry = entry
@@ -868,6 +877,7 @@ class ComponentSyncClient:
         self._set_value(self._CURRENT_ACCOUNT_ID_KEY, "")
         self._set_value("user", {})
         self._set_value("email", "")
+
 
 def _try_parse_json_object(raw: str) -> JsonObject:
     try:
@@ -1025,10 +1035,13 @@ def _component_record_has_full_content(record: F8ComponentRecord) -> bool:
     content = record.content
     layout_value = content.get("layout")
     schema_version_value = content.get("schemaVersion")
-    return isinstance(layout_value, dict) and isinstance(schema_version_value, str) and bool(schema_version_value.strip())
+    return (
+        isinstance(layout_value, dict) and isinstance(schema_version_value, str) and bool(schema_version_value.strip())
+    )
 
 
 def _require_component_record_for_upload(record: F8ComponentRecord) -> None:
+    validate_component_tags(list(record.tags or []))
     if _component_record_has_full_content(record):
         return
     raise ValueError(
@@ -1096,7 +1109,9 @@ def _merge_refreshed_component_scope_entries(
     preserved = [entry for entry in current_entries if not _entry_matches_scope(entry, scope=scope, user=user)]
     existing_scope_entries = [entry for entry in current_entries if _entry_matches_scope(entry, scope=scope, user=user)]
     existing_scope_by_id: dict[str, F8ComponentEntry] = {
-        str(entry.record.componentId): entry for entry in existing_scope_entries if str(entry.record.componentId).strip()
+        str(entry.record.componentId): entry
+        for entry in existing_scope_entries
+        if str(entry.record.componentId).strip()
     }
     refreshed_by_id: dict[str, F8ComponentEntry] = {}
     refreshed_ids: list[str] = []
@@ -1141,7 +1156,8 @@ def _hydrate_component_entry(entry: F8ComponentEntry, record: F8ComponentRecord)
             "record": hydrated_record,
             "installed": True,
             "hasCachedContent": True,
-            "downloadedAt": entry.downloadedAt or QtCore.QDateTime.currentDateTimeUtc().toString(QtCore.Qt.DateFormat.ISODate),
+            "downloadedAt": entry.downloadedAt
+            or QtCore.QDateTime.currentDateTimeUtc().toString(QtCore.Qt.DateFormat.ISODate),
         },
     )
 
@@ -1156,6 +1172,8 @@ def _entry_matches_scope(entry: F8ComponentEntry, *, scope: str, user: F8Compone
     if scope == "subscribed":
         return bool(entry.subscribed)
     return False
+
+
 def _remote_user_from_payload(payload: JsonObject) -> F8ComponentRemoteUser:
     user_id = _payload_str(payload, "userId")
     name = _payload_str(payload, "name")

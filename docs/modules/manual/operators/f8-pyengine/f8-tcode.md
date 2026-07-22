@@ -6,7 +6,7 @@
 
 ## Common Wiring Patterns
 
-- **Device Command Chain**: Feed it mapped numeric signals from `Range Map`. Branch the resulting `tcode` string output to `f8-serial-out`, `f8-handy-out`, or a `TCodeViz` for inspection.
+- **Device Command Chain**: Feed it mapped numeric signals from `Range Map`. Branch the resulting `tcode` string output to `f8-serial-out` or a `TCodeViz` for inspection.
 - **Synchronized Updates**: Align the `intervalMs` property with the tick rate of your graph (e.g., 20ms for 50Hz) to ensure smooth, jitter-free device movement.
 - **Multi-Channel Authoring**: Use a single `TCode` operator to manage all axes of a complex device (like an OSR2) by wiring each axis to a dedicated input port.
 

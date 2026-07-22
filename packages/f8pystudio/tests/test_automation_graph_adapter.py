@@ -74,6 +74,33 @@ def test_graph_patch_preview_restores_session() -> None:
     assert graph.serialize_session() == before
 
 
+def test_graph_adapter_resolves_typed_output_data_port() -> None:
+    graph = _graph_with_pystudio_nodes()
+    adapter = StudioGraphAutomationAdapter(graph)
+    catalog = adapter.node_catalog()
+    operator_item = next(item for item in catalog["nodes"] if item["kind"] == "operator" and item["outputs"])
+    output_name = str(operator_item["outputs"][0]["name"])
+    preview = adapter.apply_patch(
+        decode_graph_patch(
+            {
+                "expectedRevision": adapter.revision(),
+                "ops": [
+                    {
+                        "op": "createNode",
+                        "nodeType": operator_item["nodeType"],
+                        "nodeId": "source_node",
+                    }
+                ],
+            }
+        )
+    )
+    assert preview.valid is True
+
+    port = adapter.output_data_port_spec(node_id="source_node", port_name=output_name)
+
+    assert port.name == output_name
+
+
 def test_graph_patch_preview_preserves_revision_for_unbound_operator_inside_container() -> None:
     graph = _graph_with_pyengine_nodes()
     adapter = StudioGraphAutomationAdapter(graph)
@@ -415,7 +442,7 @@ def test_graph_patch_can_set_editable_operator_ports() -> None:
                     "nodeId": "vam_script",
                     "name": "VAM Script",
                     "pos": [80, 80],
-                }
+                },
             ],
         }
     )

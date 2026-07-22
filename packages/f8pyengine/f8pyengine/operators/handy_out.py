@@ -611,7 +611,11 @@ HandyOutRuntimeNode.SPEC = F8OperatorSpec(
     tags=["io", "handy", "hdsp", "device", "output"],
     execInPorts=["exec"],
     dataInPorts=[
-        F8DataPortSpec(name="value", description="Normalized position input (0..1).", valueSchema=number_schema()),
+        F8DataPortSpec(
+            name="value",
+            description="Normalized position input (0..1).",
+            valueSchema=number_schema(minimum=0.0, maximum=1.0),
+        ),
         F8DataPortSpec(
             name="durationMs",
             description="Optional duration override for /hdsp/xpt.",
@@ -655,6 +659,7 @@ HandyOutRuntimeNode.SPEC = F8OperatorSpec(
             access=F8StateAccess.rw,
             required=True,
             showOnNode=True,
+            redactOnPublish=True,
         ),
         F8StateSpec(
             name="baseUrl",

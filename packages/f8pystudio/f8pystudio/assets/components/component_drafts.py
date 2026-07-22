@@ -29,6 +29,7 @@ from .component_models import (
     F8ComponentSourceKind,
     component_now_iso,
 )
+from .component_taxonomy import validate_component_tags
 
 class ComponentDraftService:
     def __init__(self, db_path: Path | None = None) -> None:
@@ -112,6 +113,7 @@ class ComponentDraftService:
 
     def save_draft(self, draft: F8ComponentDraftEntry) -> F8ComponentDraftEntry:
         normalized = _normalized_component_draft(draft)
+        validate_component_tags(list(normalized.record.tags or []))
         values = _draft_db_values(normalized)
         statement = select(component_drafts_local_table.c.draft_id).where(
             component_drafts_local_table.c.draft_id == normalized.draftId

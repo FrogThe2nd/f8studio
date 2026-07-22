@@ -13,6 +13,7 @@ from ...ui.support.qt_lifecycle import qt_runtime_error_is_object_deleted
 from ..components.component_events import subscribe_components_changed
 from ..components.component_models import F8ComponentEntry, F8ComponentRemoteAuthError, F8ComponentSourceKind
 from ..components.component_sync import ComponentRemoteScopeRefreshRequest, ComponentRemoteScopeRefreshResult
+from ..components.component_taxonomy import ComponentRole
 from ...ui.support.ui_notifications import show_warning
 from .catalog_browser_state import (
     DEFAULT_CATALOG_FILTER,
@@ -40,7 +41,9 @@ logger = logging.getLogger(__name__)
 
 
 if TYPE_CHECKING:
-    _ComponentCatalogBrowserMixinBase = CatalogRefreshQueueMixin[ComponentRemoteScopeRefreshRequest] | _ComponentCatalogDialogHost
+    _ComponentCatalogBrowserMixinBase = (
+        CatalogRefreshQueueMixin[ComponentRemoteScopeRefreshRequest] | _ComponentCatalogDialogHost
+    )
 else:
     _ComponentCatalogBrowserMixinBase = CatalogRefreshQueueMixin
 
@@ -60,6 +63,7 @@ class ComponentCatalogBrowserMixin(_ComponentCatalogBrowserMixinBase):
         self._initial_cached_render_started_at = state.initial_cached_render_started_at
         self._tab_queries = state.tab_queries
         self._tab_filters = state.tab_filters
+        self._component_role_filter: ComponentRole | None = None
         self._remote_next_cursor_by_scope = state.remote_next_cursor_by_scope
         self._remote_loaded_query_by_scope = state.remote_loaded_query_by_scope
         self._is_loading_remote_scope = state.is_loading_remote_scope
@@ -92,6 +96,9 @@ class ComponentCatalogBrowserMixin(_ComponentCatalogBrowserMixinBase):
             tab_filters=self._tab_filters,
             current_tab=self._scope_tabs.currentIndex(),
         )
+
+    def _current_component_role_filter(self) -> ComponentRole | None:
+        return self._component_role_filter
 
     def _sync_filter_combo_ui(self) -> None:
         current_tab = self._scope_tabs.currentIndex()
@@ -161,9 +168,7 @@ class ComponentCatalogBrowserMixin(_ComponentCatalogBrowserMixinBase):
         self._refresh_current_remote_scope(reset=False)
 
     def _on_scope_tab_changed(self, _index: int) -> None:
-        self._rebuild_browser_after_tab_ui_state_changed(
-            preserve_component_id=self._selected_component_id()
-        )
+        self._rebuild_browser_after_tab_ui_state_changed(preserve_component_id=self._selected_component_id())
 
     def _on_search_submitted(self) -> None:
         selected_component_id = self._selected_component_id()
@@ -174,9 +179,7 @@ class ComponentCatalogBrowserMixin(_ComponentCatalogBrowserMixinBase):
         self._tab_queries[current_tab] = query
         remote_scope = self._remote_scope_for_current_tab()
         if remote_scope is None:
-            self._rebuild_browser_after_query_ui_state_changed(
-                preserve_component_id=selected_component_id
-            )
+            self._rebuild_browser_after_query_ui_state_changed(preserve_component_id=selected_component_id)
             return
         self._refresh_current_remote_scope(reset=True)
 
@@ -194,9 +197,16 @@ class ComponentCatalogBrowserMixin(_ComponentCatalogBrowserMixinBase):
         if self._tab_filters.get(current_tab, DEFAULT_CATALOG_FILTER) == filter_value:
             return
         self._tab_filters[current_tab] = filter_value
-        self._rebuild_browser_after_filter_ui_state_changed(
-            preserve_component_id=selected_component_id
-        )
+        self._rebuild_browser_after_filter_ui_state_changed(preserve_component_id=selected_component_id)
+
+    def _on_component_role_filter_changed(self) -> None:
+        selected_component_id = self._selected_component_id()
+        value = str(self._role_filter_combo.currentData() or "").strip()
+        role = None if not value else ComponentRole(value)
+        if role == self._component_role_filter:
+            return
+        self._component_role_filter = role
+        self._rebuild_browser_after_filter_ui_state_changed(preserve_component_id=selected_component_id)
 
     def _record_remote_scope_refresh(
         self,
@@ -230,6 +240,7 @@ class ComponentCatalogBrowserMixin(_ComponentCatalogBrowserMixinBase):
                 (
                     str(entry.record.componentId or "").strip(),
                     str(entry.record.name or ""),
+                    tuple(str(tag) for tag in list(entry.record.tags or [])),
                     str(entry.record.updatedAt or ""),
                     str(entry.source.value),
                     None if entry.visibility is None else str(entry.visibility.value),
@@ -261,72 +272,56 @@ class ComponentCatalogBrowserMixin(_ComponentCatalogBrowserMixinBase):
         *,
         preserve_component_id: str | None = None,
     ) -> None:
-        self._rebuild_browser_from_asset_cache_for_change(
-            preserve_component_id=preserve_component_id
-        )
+        self._rebuild_browser_from_asset_cache_for_change(preserve_component_id=preserve_component_id)
 
     def _rebuild_browser_after_auth_state_changed(
         self,
         *,
         preserve_component_id: str | None = None,
     ) -> None:
-        self._rebuild_browser_from_asset_cache_for_change(
-            preserve_component_id=preserve_component_id
-        )
+        self._rebuild_browser_from_asset_cache_for_change(preserve_component_id=preserve_component_id)
 
     def _rebuild_browser_after_remote_scope_state_changed(
         self,
         *,
         preserve_component_id: str | None = None,
     ) -> None:
-        self._rebuild_browser_from_asset_cache_for_change(
-            preserve_component_id=preserve_component_id
-        )
+        self._rebuild_browser_from_asset_cache_for_change(preserve_component_id=preserve_component_id)
 
     def _rebuild_browser_after_installed_state_changed(
         self,
         *,
         preserve_component_id: str | None = None,
     ) -> None:
-        self._rebuild_browser_from_asset_cache_for_change(
-            preserve_component_id=preserve_component_id
-        )
+        self._rebuild_browser_from_asset_cache_for_change(preserve_component_id=preserve_component_id)
 
     def _rebuild_browser_after_remote_asset_changed(
         self,
         *,
         preserve_component_id: str | None = None,
     ) -> None:
-        self._rebuild_browser_from_asset_cache_for_change(
-            preserve_component_id=preserve_component_id
-        )
+        self._rebuild_browser_from_asset_cache_for_change(preserve_component_id=preserve_component_id)
 
     def _rebuild_browser_after_tab_ui_state_changed(
         self,
         *,
         preserve_component_id: str | None = None,
     ) -> None:
-        self._rebuild_browser_from_asset_cache_for_change(
-            preserve_component_id=preserve_component_id
-        )
+        self._rebuild_browser_from_asset_cache_for_change(preserve_component_id=preserve_component_id)
 
     def _rebuild_browser_after_query_ui_state_changed(
         self,
         *,
         preserve_component_id: str | None = None,
     ) -> None:
-        self._rebuild_browser_from_asset_cache_for_change(
-            preserve_component_id=preserve_component_id
-        )
+        self._rebuild_browser_from_asset_cache_for_change(preserve_component_id=preserve_component_id)
 
     def _rebuild_browser_after_filter_ui_state_changed(
         self,
         *,
         preserve_component_id: str | None = None,
     ) -> None:
-        self._rebuild_browser_from_asset_cache_for_change(
-            preserve_component_id=preserve_component_id
-        )
+        self._rebuild_browser_from_asset_cache_for_change(preserve_component_id=preserve_component_id)
 
     def _refresh_remote_catalog_if_needed(self) -> None:
         if self._initial_remote_refresh_done:
@@ -383,9 +378,7 @@ class ComponentCatalogBrowserMixin(_ComponentCatalogBrowserMixinBase):
         selected_component_id = self._selected_component_id()
         remote_scope = self._remote_scope_for_current_tab()
         if remote_scope is None:
-            self._rebuild_browser_after_remote_scope_state_changed(
-                preserve_component_id=selected_component_id
-            )
+            self._rebuild_browser_after_remote_scope_state_changed(preserve_component_id=selected_component_id)
             return
         if remote_scope == REMOTE_SCOPE_MINE and not self._ensure_logged_in():
             return
@@ -531,9 +524,7 @@ class ComponentCatalogBrowserMixin(_ComponentCatalogBrowserMixinBase):
             if current_account_id:
                 self._sync_client.clear_saved_session(current_account_id)
             self._apply_signed_out_auth_state()
-            self._rebuild_browser_after_auth_state_changed(
-                preserve_component_id=self._selected_component_id()
-            )
+            self._rebuild_browser_after_auth_state_changed(preserve_component_id=self._selected_component_id())
         logger.warning(
             "Component manager refresh failed label=%s request_id=%s elapsed=%.3fs error=%s",
             log_label,
@@ -589,9 +580,7 @@ class ComponentCatalogBrowserMixin(_ComponentCatalogBrowserMixinBase):
         if not normalized_component_id:
             self._rebuild_browser_from_asset_cache()
             return
-        self._rebuild_browser_from_asset_cache_preserving_selection(
-            preserve_component_id=normalized_component_id
-        )
+        self._rebuild_browser_from_asset_cache_preserving_selection(preserve_component_id=normalized_component_id)
 
     def _on_asset_cache_changed(self) -> None:
         try:
@@ -630,9 +619,7 @@ class ComponentCatalogBrowserMixin(_ComponentCatalogBrowserMixinBase):
         preserve_component_id = str(self._scheduled_asset_cache_rebuild_component_id or "").strip()
         self._scheduled_asset_cache_rebuild_component_id = ""
         try:
-            self._rebuild_browser_from_asset_cache_preserving_selection(
-                preserve_component_id=preserve_component_id
-            )
+            self._rebuild_browser_from_asset_cache_preserving_selection(preserve_component_id=preserve_component_id)
         except RuntimeError as exc:
             if qt_runtime_error_is_object_deleted(exc):
                 self._clear_asset_cache_changed_subscription()

@@ -31,6 +31,7 @@ from .component_models import (
     F8ComponentVisibility,
     component_now_iso,
 )
+from .official_components import bundled_official_component_entries, component_entry_is_bundled_official
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,8 @@ class LocalComponentProvider:
                     record=entry.record,
                     originKind=origin_kind,
                     publishTargetAssetId=entry.draftOriginAssetId or existing_draft.publishTargetAssetId,
-                    publishBaseRemoteVersionNumber=entry.draftOriginVersionNumber or existing_draft.publishBaseRemoteVersionNumber,
+                    publishBaseRemoteVersionNumber=entry.draftOriginVersionNumber
+                    or existing_draft.publishBaseRemoteVersionNumber,
                     createdAt=existing_draft.createdAt,
                     updatedAt=existing_draft.updatedAt,
                 )
@@ -85,27 +87,24 @@ class RemoteComponentCacheProvider:
         return self._db.path
 
     def load_entries(self) -> list[F8ComponentEntry]:
-        statement = (
-            select(
-                component_remote_cache_table.c.component_id,
-                component_remote_cache_table.c.name,
-                component_remote_cache_table.c.description,
-                component_remote_cache_table.c.tags_json,
-                component_remote_cache_table.c.created_at,
-                component_remote_cache_table.c.updated_at,
-                component_remote_cache_table.c.source,
-                component_remote_cache_table.c.visibility,
-                component_remote_cache_table.c.owner_user_id,
-                component_remote_cache_table.c.owner_display_name,
-                component_remote_cache_table.c.remote_version_number,
-                component_remote_cache_table.c.downloaded_at,
-                component_remote_cache_table.c.installed,
-                component_remote_cache_table.c.has_cached_content,
-                component_remote_cache_table.c.subscribed,
-                component_remote_cache_table.c.content,
-            )
-            .order_by(component_remote_cache_table.c.component_id)
-        )
+        statement = select(
+            component_remote_cache_table.c.component_id,
+            component_remote_cache_table.c.name,
+            component_remote_cache_table.c.description,
+            component_remote_cache_table.c.tags_json,
+            component_remote_cache_table.c.created_at,
+            component_remote_cache_table.c.updated_at,
+            component_remote_cache_table.c.source,
+            component_remote_cache_table.c.visibility,
+            component_remote_cache_table.c.owner_user_id,
+            component_remote_cache_table.c.owner_display_name,
+            component_remote_cache_table.c.remote_version_number,
+            component_remote_cache_table.c.downloaded_at,
+            component_remote_cache_table.c.installed,
+            component_remote_cache_table.c.has_cached_content,
+            component_remote_cache_table.c.subscribed,
+            component_remote_cache_table.c.content,
+        ).order_by(component_remote_cache_table.c.component_id)
         with self._db.connect_sqla() as conn:
             rows = conn.execute(statement).mappings().all()
         out: list[F8ComponentEntry] = []
@@ -178,7 +177,9 @@ class ComponentCatalogService:
         remote_provider: RemoteComponentCacheProvider | None = None,
     ) -> None:
         self._db_path = Path(db_path) if db_path is not None else AssetsDatabase().path
-        self._remote_provider = RemoteComponentCacheProvider(self._db_path) if remote_provider is None else remote_provider
+        self._remote_provider = (
+            RemoteComponentCacheProvider(self._db_path) if remote_provider is None else remote_provider
+        )
 
     @property
     def db_path(self) -> Path:
@@ -186,7 +187,11 @@ class ComponentCatalogService:
 
     def load_all_entries(self) -> list[F8ComponentEntry]:
         merged: dict[str, F8ComponentEntry] = {}
-        for source_entries in [self._remote_provider.load_entries(), ComponentDraftService(db_path=self._db_path).list_catalog_entries()]:
+        for source_entries in [
+            bundled_official_component_entries(),
+            self._remote_provider.load_entries(),
+            ComponentDraftService(db_path=self._db_path).list_catalog_entries(),
+        ]:
             for entry in source_entries:
                 component_id = str(entry.record.componentId or "").strip()
                 if component_id:
@@ -216,7 +221,9 @@ class ComponentCatalogService:
     def upsert_local_entry(self, entry: F8ComponentEntry) -> F8ComponentEntry:
         draft_service = ComponentDraftService(db_path=self._db_path)
         existing_draft = draft_service.draft(str(entry.record.componentId))
-        origin_kind = entry.draftOriginKind or (existing_draft.originKind if existing_draft is not None else F8ComponentDraftOriginKind.new)
+        origin_kind = entry.draftOriginKind or (
+            existing_draft.originKind if existing_draft is not None else F8ComponentDraftOriginKind.new
+        )
         if existing_draft is None:
             saved = draft_service.create_draft_from_record(
                 entry.record,
@@ -232,7 +239,8 @@ class ComponentCatalogService:
                     record=entry.record,
                     originKind=origin_kind,
                     publishTargetAssetId=entry.draftOriginAssetId or existing_draft.publishTargetAssetId,
-                    publishBaseRemoteVersionNumber=entry.draftOriginVersionNumber or existing_draft.publishBaseRemoteVersionNumber,
+                    publishBaseRemoteVersionNumber=entry.draftOriginVersionNumber
+                    or existing_draft.publishBaseRemoteVersionNumber,
                     createdAt=existing_draft.createdAt,
                     updatedAt=existing_draft.updatedAt,
                 )
@@ -257,7 +265,11 @@ class ComponentCatalogService:
 
     def replace_remote_entries(self, entries: list[F8ComponentEntry], *, emit_changed: bool = True) -> None:
         normalized_entries = _unique_remote_component_entries_by_id(
-            [_normalize_remote_component_entry_for_storage(entry) for entry in entries]
+            [
+                _normalize_remote_component_entry_for_storage(entry)
+                for entry in entries
+                if not component_entry_is_bundled_official(entry)
+            ]
         )
         current_entries = self._remote_provider.load_entries()
         if current_entries == normalized_entries:
@@ -267,13 +279,27 @@ class ComponentCatalogService:
             emit_components_changed()
 
     def load_remote_entries(self) -> list[F8ComponentEntry]:
+        merged = {
+            str(entry.record.componentId): entry
+            for entry in bundled_official_component_entries()
+            if str(entry.record.componentId).strip()
+        }
+        for entry in self._remote_provider.load_entries():
+            component_id = str(entry.record.componentId or "").strip()
+            if component_id:
+                merged[component_id] = entry
+        return sorted(merged.values(), key=_entry_sort_key)
+
+    def load_persisted_remote_entries(self) -> list[F8ComponentEntry]:
+        """Return only mutable remote-cache rows, excluding package resources."""
+
         return self._remote_provider.load_entries()
 
     def remote_entry(self, component_id: str) -> F8ComponentEntry | None:
         normalized_component_id = str(component_id or "").strip()
         if not normalized_component_id:
             return None
-        for entry in self._remote_provider.load_entries():
+        for entry in self.load_remote_entries():
             if str(entry.record.componentId or "").strip() == normalized_component_id:
                 return entry
         return None
@@ -402,7 +428,9 @@ def _component_record_from_row(row: Mapping[object, object]) -> F8ComponentRecor
     )
 
 
-def _component_entry_from_remote_cache_row(row: Mapping[object, object], metadata: RemoteCacheMetadata) -> F8ComponentEntry:
+def _component_entry_from_remote_cache_row(
+    row: Mapping[object, object], metadata: RemoteCacheMetadata
+) -> F8ComponentEntry:
     visibility = None if metadata.visibility is None else F8ComponentVisibility(metadata.visibility)
     return F8ComponentEntry(
         record=_component_record_from_row(row),
@@ -447,7 +475,9 @@ def component_entry_has_cached_content(entry: F8ComponentEntry) -> bool:
 def _component_content_is_hydrated(content: Mapping[str, object]) -> bool:
     layout_value = content.get("layout")
     schema_version_value = content.get("schemaVersion")
-    return isinstance(layout_value, dict) and isinstance(schema_version_value, str) and bool(schema_version_value.strip())
+    return (
+        isinstance(layout_value, dict) and isinstance(schema_version_value, str) and bool(schema_version_value.strip())
+    )
 
 
 def component_entry_is_installed(entry: F8ComponentEntry) -> bool:

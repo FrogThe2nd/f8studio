@@ -13,6 +13,7 @@ from ..components.component_models import (
     F8ComponentVisibility,
 )
 from ..components.component_sync import ComponentSyncClient
+from ..components.component_taxonomy import ComponentRole
 from ..variants.variant_drafts import VariantDraftService
 from ..variants.variant_models import (
     F8VariantDraftOriginKind,
@@ -41,6 +42,8 @@ class _ComponentCatalogDialogHost(Protocol):
     _scope_tabs: QtWidgets.QTabBar
     _search_input: QtWidgets.QLineEdit
     _filter_combo: QtWidgets.QComboBox
+    _role_filter_combo: QtWidgets.QComboBox
+    _component_role_filter: ComponentRole | None
     _account_button: QtWidgets.QToolButton
     _btn_refresh: QtWidgets.QAbstractButton
     _btn_install: QtWidgets.QPushButton
@@ -98,6 +101,8 @@ class _ComponentCatalogDialogHost(Protocol):
     def _current_query(self) -> str: ...
 
     def _current_filter_value(self) -> str: ...
+
+    def _current_component_role_filter(self) -> ComponentRole | None: ...
 
     def _load_action_availability(
         self,
