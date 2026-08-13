@@ -248,12 +248,24 @@ def test_library_role_combo_applies_and_clears_filter() -> None:
 
 def test_display_node_category_label_uses_readable_pyengine_alias() -> None:
     assert display_node_category_label("f8.pyengine.execution") == "PyEngine / Execution"
+    assert display_node_category_label("f8.pyengine.analysis") == "PyEngine / Analysis"
+    assert display_node_category_label("f8.pyengine.flow") == "PyEngine / Flow"
     assert display_node_category_label("custom.category") == "custom.category"
+
+
+def test_display_node_category_label_uses_readable_cppengine_alias() -> None:
+    assert display_node_category_label("f8.cppengine.analysis") == "CppEngine / Analysis"
+    assert display_node_category_label("f8.cppengine.io") == "CppEngine / I/O"
+    assert display_node_category_label("f8.cppengine.wave") == "CppEngine / Wave"
 
 
 def test_display_node_category_label_uses_readable_pystudio_alias() -> None:
     assert display_node_category_label("f8.pystudio.viz") == "PyStudio / Viz"
     assert display_node_category_label("f8.pystudio.control") == "PyStudio / Control"
+
+
+def test_display_node_category_label_uses_readable_service_alias() -> None:
+    assert display_node_category_label("svc") == "Services"
 
 
 class _FakeViewer:
