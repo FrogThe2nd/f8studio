@@ -1,13 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
-from contextlib import contextmanager
-import importlib.util
-import os
-from pathlib import Path
-import sys
-from types import ModuleType
-from typing import Any, Protocol, cast
+from typing import Any
+
+from f8unitymods_setup import game_setup
+from f8unitymods_setup.common import load_setup_config
 
 from .graph_templates import skeleton_stream_graph_build_plan
 from .models import (
@@ -26,76 +22,16 @@ from .models import (
     typed_dict,
 )
 
-F8UNITYMODS_ROOT_ENV = "F8UNITYMODS_ROOT"
-DEFAULT_F8UNITYMODS_ROOT = Path("H:/Feel8/f8unitymods")
-
-
-class _UnityGameSetupModule(Protocol):
-    def run_detect(self, target: str, config: Any) -> dict[str, Any]: ...
-
-    def run_diagnose(
-        self,
-        target: str,
-        config: Any,
-        *,
-        exporter: str,
-        prefer_local_configs: bool | None,
-        allow_remote_configs: bool | None,
-        refresh_remote_cache: bool,
-        release_tag: str,
-        force_reinstall: bool,
-        skip_exporter: bool,
-        rue: bool,
-        cue: bool,
-        config_manager: bool,
-        uud: bool,
-        offline: bool,
-    ) -> dict[str, Any]: ...
-
-    def run_install(
-        self,
-        target: str,
-        config: Any,
-        *,
-        exporter: str,
-        prefer_local_configs: bool | None,
-        allow_remote_configs: bool | None,
-        refresh_remote_cache: bool,
-        release_tag: str,
-        force_reinstall: bool,
-        rue: bool,
-        cue: bool,
-        config_manager: bool,
-        uud: bool,
-        skip_exporter: bool,
-        offline: bool,
-        interaction_meta: dict[str, Any] | None,
-    ) -> dict[str, Any]: ...
-
-
-class _UnityCommonModule(Protocol):
-    def load_setup_config(self, path: Path | None = None) -> Any: ...
-
-
 class UnityModdingAdapter:
-    def __init__(self, *, unitymods_root: Path | None = None) -> None:
-        self._unitymods_root = _resolve_unitymods_root(unitymods_root)
-
-    @property
-    def unitymods_root(self) -> Path:
-        return self._unitymods_root
-
     def detect(self, target: ModdingTarget) -> ModdingDetectionReport:
-        setup, common = _load_unitymods_modules(self._unitymods_root)
-        config = common.load_setup_config()
-        raw = setup.run_detect(target.selectedPath, config)
+        config = load_setup_config()
+        raw = game_setup.run_detect(target.selectedPath, config)
         return _detection_report_from_raw(target=target, raw=raw)
 
     def plan(self, report: ModdingDetectionReport, options: ModdingInstallOption) -> ModdingPlan:
-        setup, common = _load_unitymods_modules(self._unitymods_root)
-        config = common.load_setup_config()
+        config = load_setup_config()
         target_path = report.target.executablePath or report.target.resolvedGameRoot or report.target.selectedPath
-        raw = setup.run_diagnose(
+        raw = game_setup.run_diagnose(
             target=target_path,
             config=config,
             exporter=_unity_exporter_flag(options.exporter),
@@ -143,10 +79,9 @@ class UnityModdingAdapter:
             raise ValueError("modding.applyInstall requires confirm=true")
         if plan.blockingErrors:
             raise ValueError("modding.applyInstall cannot run while blockingErrors are present")
-        setup, common = _load_unitymods_modules(self._unitymods_root)
-        config = common.load_setup_config()
+        config = load_setup_config()
         target_path = plan.report.target.executablePath or plan.report.target.resolvedGameRoot or plan.report.target.selectedPath
-        raw = setup.run_install(
+        raw = game_setup.run_install(
             target=target_path,
             config=config,
             exporter=_unity_exporter_flag(plan.options.exporter),
@@ -192,11 +127,26 @@ def _detection_report_from_raw(*, target: ModdingTarget, raw: dict[str, Any]) ->
         processName=process_name,
     )
     has_bepinex = bool(raw.get("has_bepinex", False))
+    bepinex_status = typed_dict(raw.get("bepinex_status"))
+    if bool(bepinex_status.get("partial", False)):
+        missing = bepinex_status.get("missingComponents")
+        missing_text = ", ".join(str(item) for item in missing) if isinstance(missing, list) else ""
+        warning = "Incomplete BepInEx loader files were detected and must be repaired."
+        if missing_text:
+            warning += f" Missing: {missing_text}."
+        warnings.append(warning)
     loader_state = {
         "hasBepInEx": has_bepinex,
         "bepInExVariant": str(raw.get("bepinex_variant") or ""),
         "bepInExVersion": str(raw.get("bepinex_version") or ""),
         "bepInExMajor": raw.get("bepinex_major"),
+        "complete": bool(bepinex_status.get("installed", has_bepinex)),
+        "partial": bool(bepinex_status.get("partial", False)),
+        "corePresent": bool(bepinex_status.get("corePresent", False)),
+        "bootstrapPresent": bool(bepinex_status.get("bootstrapPresent", False)),
+        "coreFiles": list(bepinex_status.get("coreFiles") or []),
+        "bootstrapFiles": list(bepinex_status.get("bootstrapFiles") or []),
+        "missingComponents": list(bepinex_status.get("missingComponents") or []),
     }
     return ModdingDetectionReport(
         target=resolved_target,
@@ -287,6 +237,7 @@ def _installed_versions_from_install(raw: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {
         "backend": str(raw.get("backend") or ""),
         "bepInEx": str(raw.get("bepinex_version") or ""),
+        "bepInExStatus": typed_dict(raw.get("bepinex_status")),
         "selectedExporter": selected_exporter,
     }
     actions = raw.get("actions")
@@ -327,6 +278,8 @@ def _profile_paths_from_install(raw: dict[str, Any]) -> list[str]:
 def _action_description(action_name: str) -> str:
     if action_name == "install_bepinex":
         return "Install the BepInEx loader matching the Unity backend and architecture."
+    if action_name == "repair_incomplete_bepinex":
+        return "Repair an incomplete BepInEx loader by restoring its missing core or bootstrap files."
     if action_name == "backup_and_reinstall_bepinex":
         return "Back up the existing BepInEx install and replace it with a matching loader."
     if action_name == "keep_existing_bepinex":
@@ -349,7 +302,7 @@ def _action_description(action_name: str) -> str:
 
 
 def _action_write_hints(action_name: str) -> list[str]:
-    if action_name in {"install_bepinex", "backup_and_reinstall_bepinex"}:
+    if action_name in {"install_bepinex", "repair_incomplete_bepinex", "backup_and_reinstall_bepinex"}:
         return ["<game>/BepInEx/**", "<game>/doorstop_config.ini", "<game>/winhttp.dll"]
     if action_name in {"install_exporter", "install_profile"}:
         return ["<game>/BepInEx/plugins/F8SkeletonStreamer/**", "<game>/BepInEx/plugins/F8Live2DStreamer/**"]
@@ -399,58 +352,4 @@ def _unity_exporter_flag(value: object) -> str:
     return "auto"
 
 
-def _resolve_unitymods_root(explicit_root: Path | None) -> Path:
-    if explicit_root is not None:
-        return Path(explicit_root)
-    env_value = str(os.environ.get(F8UNITYMODS_ROOT_ENV) or "").strip()
-    if env_value:
-        return Path(env_value)
-    return DEFAULT_F8UNITYMODS_ROOT
-
-
-def _load_unitymods_modules(root: Path) -> tuple[_UnityGameSetupModule, _UnityCommonModule]:
-    tools_dir = Path(root) / "tools"
-    game_setup_path = tools_dir / "game_setup.py"
-    common_path = tools_dir / "common.py"
-    if not game_setup_path.is_file():
-        raise FileNotFoundError(f"f8unitymods game_setup.py not found: {game_setup_path}")
-    if not common_path.is_file():
-        raise FileNotFoundError(f"f8unitymods common.py not found: {common_path}")
-    previous_common = sys.modules.get("common")
-    with _temporary_sys_path(tools_dir):
-        common_module = _load_module_from_path("f8unitymods_tools_common", common_path)
-        sys.modules["common"] = common_module
-        try:
-            setup_module = _load_module_from_path("f8unitymods_tools_game_setup", game_setup_path)
-        finally:
-            if previous_common is None:
-                sys.modules.pop("common", None)
-            else:
-                sys.modules["common"] = previous_common
-    return cast(_UnityGameSetupModule, setup_module), cast(_UnityCommonModule, common_module)
-
-
-def _load_module_from_path(module_name: str, path: Path) -> ModuleType:
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    if spec is None:
-        raise ImportError(f"Cannot create import spec for {path}")
-    loader = spec.loader
-    if loader is None:
-        raise ImportError(f"Import spec has no loader for {path}")
-    module = importlib.util.module_from_spec(spec)
-    loader.exec_module(module)
-    return module
-
-
-@contextmanager
-def _temporary_sys_path(path: Path) -> Iterator[None]:
-    text = str(path)
-    sys.path.insert(0, text)
-    try:
-        yield
-    finally:
-        if text in sys.path:
-            sys.path.remove(text)
-
-
-__all__ = ["F8UNITYMODS_ROOT_ENV", "UnityModdingAdapter"]
+__all__ = ["UnityModdingAdapter"]

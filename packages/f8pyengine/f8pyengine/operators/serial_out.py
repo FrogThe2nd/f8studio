@@ -96,7 +96,7 @@ class SerialOutRuntimeNode(OperatorNode):
             baudrate = self._initial_state.get("baudrate", 115200)
         enabled = await self.get_state_value("enabled")
         if enabled is None:
-            enabled = self._initial_state.get("enabled", True)
+            enabled = self._initial_state.get("enabled", False)
 
         port_s = str(port).strip()
         if not port_s:
@@ -251,7 +251,7 @@ SerialOutRuntimeNode.SPEC = F8OperatorSpec(
             name="enabled",
             label="Enabled",
             description="Enable/disable serial output.",
-            valueSchema=boolean_schema(default=True),
+            valueSchema=boolean_schema(default=False),
             access=F8StateAccess.rw,
             required=True,
             showOnNode=True,

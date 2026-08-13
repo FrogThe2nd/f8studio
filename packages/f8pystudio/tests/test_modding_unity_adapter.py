@@ -56,11 +56,13 @@ def test_unity_adapter_maps_detect_diagnose_install(monkeypatch: pytest.MonkeyPa
                 "profile": {"path": str(tmp_path / "Game" / "profile.json"), "source": "local"},
             }
 
-    monkeypatch.setattr(
-        "f8pystudio.modding.unity_adapter._load_unitymods_modules",
-        lambda root: (FakeSetup(), FakeCommon()),
-    )
-    adapter = UnityModdingAdapter(unitymods_root=tmp_path)
+    fake_setup = FakeSetup()
+    fake_common = FakeCommon()
+    monkeypatch.setattr("f8pystudio.modding.unity_adapter.game_setup.run_detect", fake_setup.run_detect)
+    monkeypatch.setattr("f8pystudio.modding.unity_adapter.game_setup.run_diagnose", fake_setup.run_diagnose)
+    monkeypatch.setattr("f8pystudio.modding.unity_adapter.game_setup.run_install", fake_setup.run_install)
+    monkeypatch.setattr("f8pystudio.modding.unity_adapter.load_setup_config", fake_common.load_setup_config)
+    adapter = UnityModdingAdapter()
 
     report = adapter.detect(ModdingTarget(selectedPath=str(tmp_path / "Game" / "Game.exe")))
     plan = adapter.plan(
@@ -103,16 +105,49 @@ def test_unity_adapter_install_requires_confirm(monkeypatch: pytest.MonkeyPatch,
                 "plan": {"actions": ["install_bepinex"], "blocking_errors": []},
             }
 
-    monkeypatch.setattr(
-        "f8pystudio.modding.unity_adapter._load_unitymods_modules",
-        lambda root: (FakeSetup(), FakeCommon()),
-    )
-    adapter = UnityModdingAdapter(unitymods_root=tmp_path)
+    fake_setup = FakeSetup()
+    fake_common = FakeCommon()
+    monkeypatch.setattr("f8pystudio.modding.unity_adapter.game_setup.run_detect", fake_setup.run_detect)
+    monkeypatch.setattr("f8pystudio.modding.unity_adapter.game_setup.run_diagnose", fake_setup.run_diagnose)
+    monkeypatch.setattr("f8pystudio.modding.unity_adapter.load_setup_config", fake_common.load_setup_config)
+    adapter = UnityModdingAdapter()
     report = adapter.detect(ModdingTarget(selectedPath=str(tmp_path / "Game" / "Game.exe")))
     plan = adapter.plan(report, ModdingInstallOption())
 
     with pytest.raises(ValueError, match="confirm=true"):
         adapter.install(plan, confirm=False)
+
+
+def test_unity_adapter_reports_incomplete_bepinex_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    raw = _detect_payload(tmp_path)
+    raw["bepinex_status"] = {
+        "installed": False,
+        "partial": True,
+        "variant": "unknown",
+        "version": "unknown",
+        "major": None,
+        "corePresent": False,
+        "bootstrapPresent": False,
+        "coreFiles": [],
+        "bootstrapFiles": [str(tmp_path / "Game" / "winhttp.dll")],
+        "missingComponents": ["BepInEx/core/BepInEx*.dll", "doorstop_config.ini"],
+    }
+    monkeypatch.setattr("f8pystudio.modding.unity_adapter.game_setup.run_detect", lambda target, config: raw)
+    monkeypatch.setattr("f8pystudio.modding.unity_adapter.load_setup_config", lambda: {"config": "ok"})
+
+    report = UnityModdingAdapter().detect(ModdingTarget(selectedPath=str(tmp_path / "Game" / "Game.exe")))
+
+    assert report.existingLoaderState["hasBepInEx"] is False
+    assert report.existingLoaderState["partial"] is True
+    assert report.existingLoaderState["corePresent"] is False
+    assert report.existingLoaderState["missingComponents"] == [
+        "BepInEx/core/BepInEx*.dll",
+        "doorstop_config.ini",
+    ]
+    assert "Incomplete BepInEx loader files" in report.warnings[0]
 
 
 def _detect_payload(tmp_path: Path) -> dict[str, Any]:

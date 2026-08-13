@@ -7,6 +7,7 @@ This path is for advanced users who want to build F8Studio from source or extend
 ### Build the product from source
 
 - [Build from Source](build-from-source.md)
+- [Unity Modding Architecture](unity-modding-architecture.md)
 
 ### Develop a new service
 

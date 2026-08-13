@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from f8pysdk.codec import dump_json
+from f8unitymods_setup import __version__ as UNITYMODS_SETUP_VERSION
 
 from f8pystudio.assets.common import JsonObject, new_asset_id, now_iso
 
@@ -31,9 +32,9 @@ from .verification import verify_udp_skeleton_stream
 
 
 class ModdingAutomationService:
-    def __init__(self, *, recipe_db_path: Path | None = None, unitymods_root: Path | None = None) -> None:
+    def __init__(self, *, recipe_db_path: Path | None = None) -> None:
         self._recipes = ModdingRecipeDraftService(recipe_db_path)
-        self._unity = UnityModdingAdapter(unitymods_root=unitymods_root)
+        self._unity = UnityModdingAdapter()
 
     def detect_target(self, *, target_path: str) -> dict[str, Any]:
         target = ModdingTarget(selectedPath=_required_text(target_path, "targetPath"))
@@ -186,6 +187,7 @@ def _game_profile_payload(detection: ModdingDetectionReport | None) -> JsonObjec
         aliases.append(detection.target.processName)
     return {
         "profileId": detection.matchedProfileId,
+        "profileHash": str(detection.raw.get("profile_sha256") or detection.raw.get("profile_hash") or ""),
         "name": detection.matchedProfileName,
         "processAliases": aliases,
         "engineVersion": detection.engineVersion,
@@ -207,7 +209,9 @@ def _installer_payload(
     options = {} if install is None else dump_json(install.plan.options, mode="json")
     return {
         "tool": "f8unitymods",
-        "requiredToolVersion": "",
+        "toolVersion": UNITYMODS_SETUP_VERSION,
+        "toolCommit": str(plugin_versions.get("toolCommit") or ""),
+        "requiredToolVersion": f">={UNITYMODS_SETUP_VERSION}",
         "selectedExporter": selected_exporter or "auto",
         "optionalUtilities": options,
         "releaseTags": plugin_versions,
@@ -228,28 +232,47 @@ def _py_studio_payload(graph_payload: JsonObject, verification: ModdingVerificat
     graph_plan = skeleton_stream_graph_build_plan(
         port=DEFAULT_SKELETON_UDP_PORT if verification is None else int(verification.udpPort)
     )
+    raw_nodes = graph_payload.get("nodes")
+    linked_component_ids: list[str] = []
+    if isinstance(raw_nodes, list):
+        for item in raw_nodes:
+            if not isinstance(item, dict):
+                continue
+            node_id = str(item.get("nodeId") or "").strip()
+            if node_id:
+                linked_component_ids.append(node_id)
+    selected_plan = dict(graph_payload) if graph_payload else graph_plan
     return {
-        "linkedComponentIds": [],
+        "linkedComponentIds": linked_component_ids,
         "linkedProjectIds": [],
         "graphFragment": dict(graph_payload),
-        "defaultGraphBuildPlan": graph_plan,
+        "defaultGraphBuildPlan": selected_plan,
+        "stableSelectors": typed_dict(selected_plan.get("stableSelectors")),
+        "axis": typed_dict(selected_plan.get("axis")),
+        "calibration": typed_dict(selected_plan.get("calibration")),
+        "safety": typed_dict(selected_plan.get("safety")),
     }
 
 
 def _verification_payload(verification: ModdingVerificationReport | None) -> JsonObject:
     if verification is None:
         return {
-            "streamSchema": "f8.skeleton.v1",
+            "streamSchema": "f8.skeleton.binary.v2",
             "udpPort": DEFAULT_SKELETON_UDP_PORT,
             "sampleKeys": [],
             "timestamp": "",
         }
     return {
-        "streamSchema": "f8.skeleton.v1",
+        "streamSchema": "f8.skeleton.binary.v2",
         "udpPort": int(verification.udpPort),
         "sampleKeys": list(verification.decodedSkeletonKeys),
+        "skeletons": list(verification.decodedSkeletons),
+        "packetCount": int(verification.packetCount),
+        "decodedFrameCount": int(verification.decodedFrameCount),
         "sampleCount": int(verification.sampleCount),
         "listenerStatus": verification.listenerStatus,
+        "decoderErrors": list(verification.recentDecoderErrors),
+        "evidence": dict(verification.pyStudioEvidence),
         "timestamp": verification.verifiedAt,
     }
 

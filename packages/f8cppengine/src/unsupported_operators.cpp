@@ -3,6 +3,7 @@
 namespace f8::cppengine {
 
 void register_unsupported_operator_specs(f8::cppsdk::RuntimeNodeRegistry& registry) {
+  register_flow_motion_pending_operators(registry);
   register_bandpass_filter_operator(registry);
   register_highpass_filter_operator(registry);
   register_lowpass_filter_operator(registry);

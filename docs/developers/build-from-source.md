@@ -5,8 +5,15 @@ This page is for advanced users and contributors. Ordinary Windows users should 
 ## Clone and Bootstrap
 
 ```bash
-git clone <your-repo-url>
+git clone --recurse-submodules <your-repo-url>
 cd f8studio
+```
+
+For an existing checkout, initialize the pinned Unity toolchain before Pixi
+resolves the Studio environment:
+
+```bash
+git submodule update --init --recursive
 ```
 
 Use Pixi tasks for common runtime commands:
@@ -55,6 +62,20 @@ pixi run -e ci dist_ci
 
 - Output directory: `build/dist/f8studio-<platform-tag>`
 - Optional archive mode: `pixi run -e ci dist_ci --archive`
+- Windows bundles include the Unity setup wheel, exporter archives, and a
+  SHA-256 asset manifest under `unitymods/`
+
+Validate and package the Unity submodule independently:
+
+```bash
+pixi run -e default unitymods_validate
+pixi run -e default unitymods_contract
+pixi run -e default unitymods_build
+pixi run -e default unitymods_package
+```
+
+`unitymods_contract` regenerates the golden packet through the production C#
+encoder on Windows and compares it byte-for-byte with the Python SDK fixture.
 
 Build a Studio launcher executable:
 
@@ -70,6 +91,7 @@ pixi run -e ci build_studio_launcher
 ## Related Pages
 
 - [Service Development](service-development.md)
+- [Unity Modding Architecture](unity-modding-architecture.md)
 - [PyStudio Plugin Development](pystudio-plugin-development.md)
 - [Docs Tooling](docs-tooling.md)
 

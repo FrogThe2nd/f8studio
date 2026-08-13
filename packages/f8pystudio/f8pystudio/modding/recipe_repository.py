@@ -24,6 +24,7 @@ from .models import (
     F8ModdingRecipeDraftEntry,
     F8ModdingRecipeRecord,
     MODDING_RECIPE_SCHEMA_VERSION,
+    SUPPORTED_MODDING_RECIPE_SCHEMA_VERSIONS,
     ModdingRecipeDraftOriginKind,
 )
 from .redaction import sanitized_recipe_content, validate_no_absolute_local_paths
@@ -172,8 +173,11 @@ class ModdingRecipeDraftService:
 
 def validate_recipe_content_for_publish(content: dict[str, object]) -> None:
     schema_version = str(content.get("schemaVersion") or "").strip()
-    if schema_version != MODDING_RECIPE_SCHEMA_VERSION:
-        raise ValueError(f"modding recipe schemaVersion must be {MODDING_RECIPE_SCHEMA_VERSION}")
+    if schema_version not in SUPPORTED_MODDING_RECIPE_SCHEMA_VERSIONS:
+        raise ValueError(
+            "unsupported modding recipe schemaVersion; expected one of "
+            + ", ".join(sorted(SUPPORTED_MODDING_RECIPE_SCHEMA_VERSIONS))
+        )
     validate_no_absolute_local_paths(content)
 
 
@@ -182,8 +186,11 @@ def _normalized_draft(draft: F8ModdingRecipeDraftEntry) -> F8ModdingRecipeDraftE
     timestamp = now_iso()
     created_at = canonicalize_iso_utc(draft.createdAt or draft.record.createdAt or timestamp)
     content = dict(draft.record.content)
-    if str(content.get("schemaVersion") or "") != MODDING_RECIPE_SCHEMA_VERSION:
-        raise ValueError(f"modding recipe schemaVersion must be {MODDING_RECIPE_SCHEMA_VERSION}")
+    if str(content.get("schemaVersion") or "") not in SUPPORTED_MODDING_RECIPE_SCHEMA_VERSIONS:
+        raise ValueError(
+            "unsupported modding recipe schemaVersion; expected one of "
+            + ", ".join(sorted(SUPPORTED_MODDING_RECIPE_SCHEMA_VERSIONS))
+        )
     record_payload = {
         **dump_json(draft.record, mode="json"),
         "recipeId": draft_id,

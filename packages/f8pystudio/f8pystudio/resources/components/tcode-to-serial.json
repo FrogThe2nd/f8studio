@@ -109,7 +109,7 @@
                   "required": true,
                   "showOnNode": true,
                   "valueSchema": {
-                    "default": true,
+                    "default": false,
                     "type": "boolean"
                   }
                 },

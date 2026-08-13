@@ -1,0 +1,3 @@
+[submodule "external/f8unitymods"]
+	path = external/f8unitymods
+	url = https://github.com/feel8-fun/f8unity_mods.git

@@ -5,6 +5,7 @@ import msgspec
 from f8pyengine.operators.buttplug_out import ButtplugOutRuntimeNode
 from f8pyengine.operators.handy_out import HandyOutRuntimeNode
 from f8pyengine.operators.lovense_out import LovenseOutRuntimeNode
+from f8pyengine.operators.serial_out import SerialOutRuntimeNode
 from f8pyengine.operators.tcode import AXES, TCodeRuntimeNode
 from f8pysdk.generated import F8NumberTypeSchema
 
@@ -52,7 +53,12 @@ def test_sensitive_output_configuration_is_redacted_on_publish() -> None:
 
 
 def test_every_physical_output_has_explicit_enabled_state() -> None:
-    for runtime_node in (LovenseOutRuntimeNode, ButtplugOutRuntimeNode, HandyOutRuntimeNode):
+    for runtime_node in (LovenseOutRuntimeNode, ButtplugOutRuntimeNode, HandyOutRuntimeNode, SerialOutRuntimeNode):
         enabled = _state_spec(runtime_node, "enabled")
         assert enabled.required is True
         assert not isinstance(enabled.valueSchema, msgspec.UnsetType)
+
+
+def test_serial_output_is_disarmed_by_default() -> None:
+    enabled = _state_spec(SerialOutRuntimeNode, "enabled")
+    assert enabled.valueSchema.default is False

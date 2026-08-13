@@ -8,7 +8,8 @@ from msgspec import Struct, field
 from f8pystudio.assets.common import JsonObject, now_iso
 
 DEFAULT_SKELETON_UDP_PORT = 39540
-MODDING_RECIPE_SCHEMA_VERSION = "f8moddingrecipe/1"
+MODDING_RECIPE_SCHEMA_VERSION = "f8moddingrecipe/2"
+SUPPORTED_MODDING_RECIPE_SCHEMA_VERSIONS = frozenset({"f8moddingrecipe/1", MODDING_RECIPE_SCHEMA_VERSION})
 
 
 class ModdingEngineKind(Enum):
@@ -104,6 +105,9 @@ class ModdingVerificationReport(Struct, kw_only=True):
     udpPort: int = DEFAULT_SKELETON_UDP_PORT
     listenerStatus: str = "not_started"
     decodedSkeletonKeys: list[str] = field(default_factory=list)
+    decodedSkeletons: list[JsonObject] = field(default_factory=list)
+    packetCount: int = 0
+    decodedFrameCount: int = 0
     sampleCount: int = 0
     pyStudioEvidence: JsonObject = field(default_factory=dict)
     recentDecoderErrors: list[str] = field(default_factory=list)
@@ -210,6 +214,7 @@ def json_safe_value(value: Any) -> Any:
 __all__ = [
     "DEFAULT_SKELETON_UDP_PORT",
     "MODDING_RECIPE_SCHEMA_VERSION",
+    "SUPPORTED_MODDING_RECIPE_SCHEMA_VERSIONS",
     "F8ModdingRecipeDraftEntry",
     "F8ModdingRecipeRecord",
     "ModdingBackendKind",

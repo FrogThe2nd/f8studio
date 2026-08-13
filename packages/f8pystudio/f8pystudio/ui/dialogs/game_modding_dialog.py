@@ -2,26 +2,39 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, Callable
 
 from qtpy import QtCore, QtWidgets
 
 from f8pystudio.modding import ModdingAutomationService
+from f8pystudio.modding.graph_templates import skeleton_osr_graph_build_plan
+from f8pystudio.agents.graph_builder import decode_graph_build_plan, graph_patch_from_build_plan
+from f8pystudio.automation.graph_adapter import StudioGraphAutomationAdapter
 
 logger = logging.getLogger(__name__)
-_DIALOG_ERRORS = (FileNotFoundError, OSError, RuntimeError, TypeError, ValueError)
+_DIALOG_ERRORS = (FileNotFoundError, KeyError, OSError, RuntimeError, TypeError, ValueError)
 
 
 class GameModdingDialog(QtWidgets.QDialog):
-    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QtWidgets.QWidget | None = None,
+        *,
+        studio_graph: object | None = None,
+        on_graph_applied: Callable[[], None] | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Game Modding")
         self.resize(900, 720)
         self._service = ModdingAutomationService()
+        self._graph_adapter = None if studio_graph is None else StudioGraphAutomationAdapter(studio_graph)
+        self._on_graph_applied = on_graph_applied
         self._detection: dict[str, Any] | None = None
         self._plan: dict[str, Any] | None = None
         self._install: dict[str, Any] | None = None
         self._verification: dict[str, Any] | None = None
+        self._graph_plan: dict[str, Any] | None = None
+        self._graph_preview: dict[str, Any] | None = None
         self._build_ui()
         self._refresh_action_state()
 
@@ -66,7 +79,7 @@ class GameModdingDialog(QtWidgets.QDialog):
         self._detect_button = QtWidgets.QPushButton("Detect", self)
         self._preview_button = QtWidgets.QPushButton("Preview Install", self)
         self._apply_button = QtWidgets.QPushButton("Apply Install", self)
-        self._verify_button = QtWidgets.QPushButton("Verify Stream", self)
+        self._verify_button = QtWidgets.QPushButton("Check UDP Skeleton Data", self)
         self._save_button = QtWidgets.QPushButton("Save Recipe", self)
         self._detect_button.clicked.connect(self._detect_target)  # type: ignore[attr-defined]
         self._preview_button.clicked.connect(self._preview_install)  # type: ignore[attr-defined]
@@ -93,9 +106,54 @@ class GameModdingDialog(QtWidgets.QDialog):
         self._preview_text = _readonly_text(self._tabs)
         self._verification_text = _readonly_text(self._tabs)
         self._recipe_text = _readonly_text(self._tabs)
+        self._graph_page = QtWidgets.QWidget(self._tabs)
+        graph_layout = QtWidgets.QVBoxLayout(self._graph_page)
+        selector_layout = QtWidgets.QGridLayout()
+        self._profile_combo = QtWidgets.QComboBox(self._graph_page)
+        self._profile_combo.setEditable(True)
+        self._reference_role_combo = QtWidgets.QComboBox(self._graph_page)
+        self._reference_role_combo.addItems(["male", "female", "other"])
+        self._target_role_combo = QtWidgets.QComboBox(self._graph_page)
+        self._target_role_combo.addItems(["female", "male", "other"])
+        self._reference_index_spin = QtWidgets.QSpinBox(self._graph_page)
+        self._reference_index_spin.setRange(0, 1024)
+        self._target_index_spin = QtWidgets.QSpinBox(self._graph_page)
+        self._target_index_spin.setRange(0, 1024)
+        self._reference_bone_edit = QtWidgets.QLineEdit("MalePenisBase", self._graph_page)
+        self._target_bone_edit = QtWidgets.QLineEdit("Vagina", self._graph_page)
+        self._axis_combo = QtWidgets.QComboBox(self._graph_page)
+        self._axis_combo.addItems(["local_y", "local_z", "local_x", "distance"])
+        self._serial_port_edit = QtWidgets.QLineEdit("COM4", self._graph_page)
+        selector_layout.addWidget(QtWidgets.QLabel("Profile", self._graph_page), 0, 0)
+        selector_layout.addWidget(self._profile_combo, 0, 1)
+        selector_layout.addWidget(QtWidgets.QLabel("Axis", self._graph_page), 0, 2)
+        selector_layout.addWidget(self._axis_combo, 0, 3)
+        selector_layout.addWidget(QtWidgets.QLabel("Reference", self._graph_page), 1, 0)
+        selector_layout.addWidget(self._reference_role_combo, 1, 1)
+        selector_layout.addWidget(self._reference_index_spin, 1, 2)
+        selector_layout.addWidget(self._reference_bone_edit, 1, 3)
+        selector_layout.addWidget(QtWidgets.QLabel("Target", self._graph_page), 2, 0)
+        selector_layout.addWidget(self._target_role_combo, 2, 1)
+        selector_layout.addWidget(self._target_index_spin, 2, 2)
+        selector_layout.addWidget(self._target_bone_edit, 2, 3)
+        selector_layout.addWidget(QtWidgets.QLabel("Serial", self._graph_page), 3, 0)
+        selector_layout.addWidget(self._serial_port_edit, 3, 1)
+        graph_layout.addLayout(selector_layout)
+        graph_button_row = QtWidgets.QHBoxLayout()
+        self._preview_graph_button = QtWidgets.QPushButton("Preview Graph", self._graph_page)
+        self._apply_graph_button = QtWidgets.QPushButton("Apply Graph", self._graph_page)
+        self._preview_graph_button.clicked.connect(self._preview_graph)  # type: ignore[attr-defined]
+        self._apply_graph_button.clicked.connect(self._apply_graph)  # type: ignore[attr-defined]
+        graph_button_row.addWidget(self._preview_graph_button)
+        graph_button_row.addWidget(self._apply_graph_button)
+        graph_button_row.addStretch(1)
+        graph_layout.addLayout(graph_button_row)
+        self._graph_text = _readonly_text(self._graph_page)
+        graph_layout.addWidget(self._graph_text, 1)
         self._tabs.addTab(self._detection_text, "Detection")
         self._tabs.addTab(self._preview_text, "Install Preview")
-        self._tabs.addTab(self._verification_text, "Verification")
+        self._tabs.addTab(self._verification_text, "UDP Data")
+        self._tabs.addTab(self._graph_page, "Graph")
         self._tabs.addTab(self._recipe_text, "Recipe")
         root.addWidget(self._tabs, 1)
 
@@ -160,7 +218,7 @@ class GameModdingDialog(QtWidgets.QDialog):
             return
         self._install = dict(result)
         self._preview_text.setPlainText(_pretty_json(result))
-        self._status_label.setText("Install complete. Start the game, then verify the stream.")
+        self._status_label.setText("Install complete. BepInEx loader verified. Start the game, then check UDP skeleton data.")
         self._tabs.setCurrentWidget(self._preview_text)
         self._refresh_action_state()
 
@@ -169,11 +227,15 @@ class GameModdingDialog(QtWidgets.QDialog):
         try:
             result = self._service.verify_stream(port=int(self._port_spin.value()), timeout_s=3.0)
         except _DIALOG_ERRORS as exc:
-            self._report_error("Verification failed", exc)
+            self._report_error("UDP skeleton check failed", exc)
             return
         self._verification = dict(result)
         self._verification_text.setPlainText(_pretty_json(result))
-        self._status_label.setText("Verification finished.")
+        self._populate_profile_choices()
+        if self._stream_verified():
+            self._status_label.setText("UDP binary skeleton data verified. Graph preview is available.")
+        else:
+            self._status_label.setText("No complete binary skeleton frame arrived on the UDP port.")
         self._tabs.setCurrentWidget(self._verification_text)
         self._refresh_action_state()
 
@@ -190,7 +252,7 @@ class GameModdingDialog(QtWidgets.QDialog):
                 detection_payload=self._detection,
                 install_payload=self._install,
                 verification_payload=self._verification,
-                graph_payload={},
+                graph_payload={} if self._graph_plan is None else self._graph_plan,
                 notes="",
                 confirm=True,
             )
@@ -202,12 +264,112 @@ class GameModdingDialog(QtWidgets.QDialog):
         self._tabs.setCurrentWidget(self._recipe_text)
         self._refresh_action_state()
 
+    @QtCore.Slot()
+    def _preview_graph(self) -> None:
+        adapter = self._graph_adapter
+        if adapter is None:
+            self._report_error("Graph preview failed", RuntimeError("No active Studio graph is available"))
+            return
+        try:
+            plan_payload = self._build_osr_graph_plan()
+            plan = decode_graph_build_plan(plan_payload)
+            patch = graph_patch_from_build_plan(plan, expected_revision=adapter.revision())
+            preview = adapter.preview_patch(patch).to_dict()
+        except _DIALOG_ERRORS as exc:
+            self._report_error("Graph preview failed", exc)
+            return
+        self._graph_plan = plan_payload
+        self._graph_preview = preview
+        self._graph_text.setPlainText(_pretty_json({"plan": plan_payload, "preview": preview}))
+        self._status_label.setText("Graph preview ready. Serial output is disabled in the plan.")
+        self._tabs.setCurrentWidget(self._graph_page)
+        self._refresh_action_state()
+
+    @QtCore.Slot()
+    def _apply_graph(self) -> None:
+        adapter = self._graph_adapter
+        plan_payload = self._graph_plan
+        if adapter is None or plan_payload is None or not self._stream_verified():
+            return
+        message = (
+            "Apply the previewed skeleton-to-OSR graph to the current project?\n\n"
+            "Serial Out will be created with Enabled off. Arm it only after checking TCode Preview."
+        )
+        if QtWidgets.QMessageBox.question(self, "Apply Graph", message) != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        try:
+            plan = decode_graph_build_plan(plan_payload)
+            patch = graph_patch_from_build_plan(plan, expected_revision=adapter.revision())
+            preview = adapter.apply_patch(patch).to_dict()
+            if self._on_graph_applied is not None:
+                self._on_graph_applied()
+        except _DIALOG_ERRORS as exc:
+            self._report_error("Graph apply failed", exc)
+            return
+        self._graph_preview = preview
+        self._graph_text.setPlainText(_pretty_json({"plan": plan_payload, "applied": preview}))
+        self._status_label.setText("Graph applied with Serial Out disabled.")
+        self._refresh_action_state()
+
+    def _build_osr_graph_plan(self) -> dict[str, Any]:
+        if not self._stream_verified():
+            raise ValueError("A complete binary skeleton frame must be verified before creating an OSR graph")
+        return skeleton_osr_graph_build_plan(
+            profile_id=str(self._profile_combo.currentText() or "").strip(),
+            port=int(self._port_spin.value()),
+            reference_role=str(self._reference_role_combo.currentText()),
+            reference_role_index=int(self._reference_index_spin.value()),
+            target_role=str(self._target_role_combo.currentText()),
+            target_role_index=int(self._target_index_spin.value()),
+            reference_bone=str(self._reference_bone_edit.text() or "").strip(),
+            target_bone=str(self._target_bone_edit.text() or "").strip(),
+            primary_axis=str(self._axis_combo.currentText()),
+            serial_port=str(self._serial_port_edit.text() or "").strip() or "COM4",
+        )
+
+    def _stream_verified(self) -> bool:
+        if self._verification is None:
+            return False
+        raw_report = self._verification.get("verification")
+        if not isinstance(raw_report, dict):
+            return False
+        return str(raw_report.get("listenerStatus") or "") == "verified" and int(
+            raw_report.get("decodedFrameCount") or 0
+        ) > 0
+
+    def _populate_profile_choices(self) -> None:
+        if self._verification is None:
+            return
+        raw_report = self._verification.get("verification")
+        if not isinstance(raw_report, dict):
+            return
+        raw_skeletons = raw_report.get("decodedSkeletons")
+        if not isinstance(raw_skeletons, list):
+            return
+        profiles: list[str] = []
+        for item in raw_skeletons:
+            if not isinstance(item, dict):
+                continue
+            profile_id = str(item.get("profileId") or "").strip()
+            if profile_id and profile_id not in profiles:
+                profiles.append(profile_id)
+        current = str(self._profile_combo.currentText() or "").strip()
+        self._profile_combo.clear()
+        self._profile_combo.addItems(profiles)
+        if current and current not in profiles:
+            self._profile_combo.addItem(current)
+            self._profile_combo.setCurrentText(current)
+
     def _refresh_action_state(self) -> None:
         target_ready = bool(str(self._target_edit.text() or "").strip())
         self._detect_button.setEnabled(target_ready)
         self._preview_button.setEnabled(target_ready)
         self._apply_button.setEnabled(self._plan is not None)
         self._verify_button.setEnabled(True)
+        self._preview_graph_button.setEnabled(self._stream_verified() and self._graph_adapter is not None)
+        self._apply_graph_button.setEnabled(
+            self._stream_verified() and self._graph_adapter is not None and self._graph_preview is not None
+        )
         self._save_button.setEnabled(self._detection is not None or self._install is not None or self._verification is not None)
 
     def _target_path(self) -> str:

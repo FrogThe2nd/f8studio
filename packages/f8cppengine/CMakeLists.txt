@@ -12,6 +12,7 @@ add_library(f8cppengine_core STATIC
   src/detrend_operator.cpp
   src/envelope_operator.cpp
   src/exec_sequence_operator.cpp
+  src/flow_motion_pending_operators.cpp
   src/handy_out_operator.cpp
   src/highpass_filter_operator.cpp
   src/lovense_mock_server_operator.cpp

@@ -8,6 +8,9 @@ from .serial_out import SerialOutRuntimeNode
 from .udp_in import UdpInRuntimeNode
 from .udp_out import UdpOutRuntimeNode
 from .skeleton_decoder import SkeletonDecoderRuntimeNode
+from .skeleton_selector import SkeletonSelectorRuntimeNode
+from .relative_pose_axes import RelativePoseAxesRuntimeNode
+from .stream_watchdog import StreamWatchdogRuntimeNode
 from .tick import TickRuntimeNode
 from .envelope import EnvelopeRuntimeNode
 from .smooth_filter import SmoothFilterRuntimeNode
@@ -51,6 +54,9 @@ __all__ = [
     "UdpInRuntimeNode",
     "UdpOutRuntimeNode",
     "SkeletonDecoderRuntimeNode",
+    "SkeletonSelectorRuntimeNode",
+    "RelativePoseAxesRuntimeNode",
+    "StreamWatchdogRuntimeNode",
     "CosineRuntimeNode",
     "TCodeRuntimeNode",
     "TempestRuntimeNode",

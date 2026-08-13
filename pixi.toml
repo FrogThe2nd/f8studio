@@ -99,6 +99,7 @@ f8proclauncher = "python -m f8proclauncher.main"
 
 [feature.studio.pypi-dependencies]
 f8pystudio = { path = "packages/f8pystudio", editable = true }
+f8unitymods-setup = { path = "external/f8unitymods", editable = true }
 f8pystudio-ext-template-match = { path = "packages/f8pystudio_ext_template_match", editable = true }
 f8pystudio-ext-viz-tcode = { path = "packages/f8pystudio_ext_viz_tcode", editable = true }
 pyside6 = ">=6.10.2, <7"
@@ -117,14 +118,19 @@ agent-framework-foundry = ">=1.7.0,<2"
 agent-framework-anthropic = ">=1.0.0b260521,<2"
 agent-framework-bedrock = ">=1.0.0b260521,<2"
 agent-framework-ollama = ">=1.0.0b260521,<2"
-agent-framework-github-copilot = ">=1.0.0b260521,<2"
+agent-framework-github-copilot = ">=1.0.0,<2"
 agent-framework-hyperlight = ">=1.0.0b260521,<2"
-github-copilot-sdk = "==1.0.0b2"
+github-copilot-sdk = "==1.0.2"
 
 [feature.studio.tasks]
 f8pystudio = "python -m f8pystudio.main"
 f8pystudio_cli = "python -m f8pystudio.automation.cli"
 f8pystudio_mcp = "python -m f8pystudio.mcp.server"
+unitymods_validate = "python scripts/unitymods_ci.py validate"
+unitymods_build = "python scripts/unitymods_ci.py build"
+unitymods_test = "python scripts/unitymods_ci.py test"
+unitymods_package = "python scripts/unitymods_ci.py package"
+unitymods_contract = "python scripts/verify_skeleton_contract.py"
 
 [feature.mediapipe.pypi-dependencies]
 f8pymppose = { path = "packages/f8pymppose", editable = true }

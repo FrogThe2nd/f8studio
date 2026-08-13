@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import struct
 from dataclasses import dataclass
 from typing import Any
 
+from f8pysdk.motion import SkeletonPacketDecodeError, decode_skeleton_datagram
 from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
@@ -128,6 +127,7 @@ class SkeletonDecoderRuntimeNode(OperatorNode):
         self._output_version = 0
         self._last_synced_keys: list[str] = []
         self._ctx_output_cache: dict[tuple[str, str | int | None], tuple[int, Any]] = {}
+        self._reported_decode_errors: set[str] = set()
 
     async def on_exec(self, exec_id: str | int, _in_port: str | None = None) -> list[str]:
         packet_value = await self.pull("packet", ctx_id=exec_id)
@@ -139,6 +139,7 @@ class SkeletonDecoderRuntimeNode(OperatorNode):
         payload = self._decode_payload(input_packet.raw)
         if not self._is_skeleton_payload(payload):
             return []
+        payload["receivedAtMs"] = int(input_packet.rx_ts_ms)
 
         model_name = self._extract_model_name(payload)
         key = str(model_name or "").strip()
@@ -388,100 +389,16 @@ class SkeletonDecoderRuntimeNode(OperatorNode):
         self._last_completed_frame_id_by_key[key] = frame_id
         return merged_payload
 
-    @staticmethod
-    def _decode_payload(raw: bytes) -> Any:
-        decoded_skeleton = SkeletonDecoderRuntimeNode._decode_skeleton_packet(raw)
-        if decoded_skeleton is not None:
-            return decoded_skeleton
+    def _decode_payload(self, raw: bytes) -> Any:
         try:
-            text = raw.decode("utf-8")
-        except UnicodeDecodeError:
-            return None
-        if not text:
-            return None
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            return None
-
-    @staticmethod
-    def _read_aligned_string(buf: bytes, offset: int) -> tuple[str, int]:
-        end = buf.find(b"\x00", offset)
-        if end == -1:
-            raise ValueError("Missing string terminator")
-        value = buf[offset:end].decode("utf-8")
-        end += 1
-        pad = (4 - (end & 0x03)) & 0x03
-        return value, end + pad
-
-    @staticmethod
-    def _decode_skeleton_packet(raw: bytes) -> dict[str, Any] | None:
-        data = bytes(raw)
-        offset = 0
-        try:
-            model_name, offset = SkeletonDecoderRuntimeNode._read_aligned_string(data, offset)
-            if offset + 8 > len(data):
-                return None
-            (timestamp_ms,) = struct.unpack_from("<Q", data, offset)
-            offset += 8
-
-            schema, offset = SkeletonDecoderRuntimeNode._read_aligned_string(data, offset)
-            if offset + 4 > len(data):
-                return None
-            (bone_count,) = struct.unpack_from("<i", data, offset)
-            offset += 4
-            if bone_count < 0 or bone_count > 100000:
-                return None
-
-            bones: list[dict[str, Any]] = []
-            for _ in range(int(bone_count)):
-                name, offset = SkeletonDecoderRuntimeNode._read_aligned_string(data, offset)
-                if offset + 7 * 4 > len(data):
-                    return None
-                x, y, z, qw, qx, qy, qz = struct.unpack_from("<fffffff", data, offset)
-                offset += 7 * 4
-                bones.append({"name": name, "pos": [x, y, z], "rot": [qw, qx, qy, qz]})
-
-            trailer: dict[str, Any] | None = None
-            trailer_size = 30
-            if offset + trailer_size <= len(data) and data[offset : offset + 4] == b"LMEX":
-                ext_ver, frame_id, chunk_i, chunk_n, total_bones, character_id = struct.unpack_from(
-                    "<HQiiii", data, offset + 4
-                )
-                trailer = {
-                    "magic": "LMEX",
-                    "extVersion": int(ext_ver),
-                    "frameId": int(frame_id),
-                    "chunkIndex": int(chunk_i),
-                    "chunkCount": int(chunk_n),
-                    "totalBoneCount": int(total_bones),
-                    "characterId": int(character_id),
-                }
-
-                ext_offset = offset + trailer_size
-                anim_header_size = 12
-                if ext_offset + anim_header_size <= len(data) and data[ext_offset : ext_offset + 4] == b"ANIM":
-                    normalized_time = struct.unpack_from("<f", data, ext_offset + 4)[0]
-                    layer_index = struct.unpack_from("<i", data, ext_offset + 8)[0]
-                    clip_name, next_offset = SkeletonDecoderRuntimeNode._read_aligned_string(data, ext_offset + 12)
-                    pose_key, _ = SkeletonDecoderRuntimeNode._read_aligned_string(data, next_offset)
-                    trailer["anim"] = {
-                        "normalizedTime": normalized_time,
-                        "layerIndex": int(layer_index),
-                        "clipName": clip_name,
-                        "poseKey": pose_key,
-                    }
-
-            return {
-                "type": "skeleton_binary",
-                "modelName": model_name,
-                "timestampMs": int(timestamp_ms),
-                "schema": schema,
-                "boneCount": int(bone_count),
-                "bones": bones,
-                "trailer": trailer,
-            }
-        except (struct.error, UnicodeDecodeError, ValueError):
+            return decode_skeleton_datagram(raw)
+        except SkeletonPacketDecodeError as exc:
+            message = f"{type(exc).__name__}: {exc}"
+            if message not in self._reported_decode_errors:
+                if len(self._reported_decode_errors) >= 16:
+                    self._reported_decode_errors.clear()
+                self._reported_decode_errors.add(message)
+                logger.warning("[%s:skeleton_decoder] rejected datagram: %s", self.node_id, message, exc_info=True)
             return None
 
     async def _cleanup_stale(self, *, now_ts_ms: int | None = None) -> None:

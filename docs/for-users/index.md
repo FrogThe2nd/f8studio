@@ -7,6 +7,7 @@ This path is for people who want to install F8Studio quickly, open it, and try a
 1. [Install on Windows](../getting-started/install-deploy.md)
 2. [First Launch and Sample Graphs](first-launch-and-sample-graphs.md)
 3. [Studio Quickstart](../getting-started/studio.md)
+4. [Unity Game Modding](unity-game-modding.md)
 
 ## Fastest Path
 
@@ -19,5 +20,6 @@ If you are evaluating the software, do **not** start with source build. The preb
 - Download and run the prebuilt Windows package
 - Open Studio without a full development environment
 - Follow a graph guide from the scenario library
+- Install and verify a managed Unity skeleton exporter before building an OSR graph
 - Try a graph before learning the full node catalog
 

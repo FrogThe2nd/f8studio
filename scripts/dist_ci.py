@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tomllib
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -22,13 +23,19 @@ CPP_PRESET_CANDIDATES = (
     DEFAULT_CPP_PRESET_PATH,
 )
 CPP_BUILD_PRESET_NAME = "conan-release"
-PACKAGE_PATH_PREFIX = "packages/"
+LOCAL_EDITABLE_PATH_PREFIXES = ("packages/", "external/f8unitymods")
 # C++ runtime deploy targets are owned by CMake's f8_deploy_all_runtime aggregator.
 CPP_DEPLOY_ALL_TARGET = "f8_deploy_all_runtime"
 LAUNCHER_ENVIRONMENT_NAME = "launcher"
 LAUNCHER_RUNTIME_FEATURE = "launcher-runtime"
 DEV_RUNTIME_ENVIRONMENT_NAME = "default"
 DIST_RUNTIME_ENVIRONMENT_NAME = "studio-runtime"
+
+
+@dataclass(frozen=True)
+class LocalEditablePackage:
+    package_dir: str
+    feature_name: str
 
 
 def _run(command: list[str]) -> None:
@@ -104,12 +111,12 @@ def _find_wheel_for_distribution(wheels_dir: Path, distribution: str) -> Path:
     raise FileNotFoundError(f"Wheel for distribution '{distribution}' was not found in {wheels_dir}")
 
 
-def _discover_local_editable_package_dirs(
+def _discover_local_editable_packages(
     *,
     pixi_toml_path: Path = PIXI_TOML_PATH,
     repo_root: Path = REPO_ROOT,
     allowed_feature_names: set[str] | None = None,
-) -> dict[str, str]:
+) -> dict[str, LocalEditablePackage]:
     with pixi_toml_path.open("rb") as pixi_file:
         manifest = tomllib.load(pixi_file)
 
@@ -117,8 +124,7 @@ def _discover_local_editable_package_dirs(
     if not isinstance(feature_table, dict):
         raise ValueError(f"Expected [feature] table in {pixi_toml_path}")
 
-    dependency_to_package_dir: dict[str, str] = {}
-    dependency_to_feature: dict[str, str] = {}
+    packages: dict[str, LocalEditablePackage] = {}
     for feature_name, feature_spec in feature_table.items():
         if not isinstance(feature_name, str):
             raise ValueError(f"Feature name must be a string in {pixi_toml_path}")
@@ -141,10 +147,10 @@ def _discover_local_editable_package_dirs(
             editable_value = dependency_spec.get("editable")
             if not isinstance(dependency_path, str) or editable_value is not True:
                 continue
-            if not dependency_path.startswith(PACKAGE_PATH_PREFIX):
+            if not dependency_path.startswith(LOCAL_EDITABLE_PATH_PREFIXES):
                 continue
-            if dependency_name in dependency_to_package_dir:
-                first_feature = dependency_to_feature[dependency_name]
+            if dependency_name in packages:
+                first_feature = packages[dependency_name].feature_name
                 raise ValueError(
                     "Duplicate local editable package dependency "
                     f"'{dependency_name}' in features '{first_feature}' and '{feature_name}'"
@@ -162,10 +168,29 @@ def _discover_local_editable_package_dirs(
                     f"pyproject.toml for '{dependency_name}' was not found: {pyproject_path}"
                 )
 
-            dependency_to_package_dir[dependency_name] = dependency_path
-            dependency_to_feature[dependency_name] = feature_name
+            packages[dependency_name] = LocalEditablePackage(
+                package_dir=dependency_path,
+                feature_name=feature_name,
+            )
 
-    return dependency_to_package_dir
+    return packages
+
+
+def _discover_local_editable_package_dirs(
+    *,
+    pixi_toml_path: Path = PIXI_TOML_PATH,
+    repo_root: Path = REPO_ROOT,
+    allowed_feature_names: set[str] | None = None,
+) -> dict[str, str]:
+    packages = _discover_local_editable_packages(
+        pixi_toml_path=pixi_toml_path,
+        repo_root=repo_root,
+        allowed_feature_names=allowed_feature_names,
+    )
+    return {
+        dependency_name: package.package_dir
+        for dependency_name, package in packages.items()
+    }
 
 
 def _discover_environment_feature_names(
@@ -308,6 +333,23 @@ def _copy_dist_config(dist_dir: Path) -> Path | None:
     return dist_config_root
 
 
+def _bundle_unitymods_assets(dist_dir: Path, *, build_assets: bool = True) -> Path | None:
+    if os.name != "nt":
+        return None
+    output_dir = dist_dir / "unitymods"
+    command = [
+        sys.executable,
+        str(REPO_ROOT / "scripts" / "unitymods_ci.py"),
+        "bundle",
+        "--output",
+        str(output_dir),
+    ]
+    if not build_assets:
+        command.append("--skip-build")
+    _run(command)
+    return output_dir
+
+
 def _build_python_wheels(wheels_dir: Path, dependency_to_package_dir: dict[str, str]) -> dict[str, str]:
     if wheels_dir.exists():
         shutil.rmtree(wheels_dir)
@@ -412,23 +454,30 @@ def _filter_dist_feature_sections(pixi_text: str, runtime_feature_names: list[st
     return "".join(filtered_sections)
 
 
+def _remove_dist_pixi_build_preview(pixi_text: str) -> str:
+    pattern = re.compile(
+        r'(?m)^preview\s*=\s*\[\s*["\']pixi-build["\']\s*\]\s*(?:\r?\n|$)'
+    )
+    return pattern.sub("", pixi_text, count=1)
+
+
 def _render_dist_pixi_toml(
     dependency_to_wheel: dict[str, str],
     runtime_environment_names: list[str],
     runtime_feature_names: list[str],
 ) -> str:
     pixi_text = PIXI_TOML_PATH.read_text(encoding="utf-8")
-    for dependency_name, wheel_rel_path in dependency_to_wheel.items():
+    for dependency_name in dependency_to_wheel:
         pattern = re.compile(
             rf'^{re.escape(dependency_name)}\s*=\s*\{{\s*path\s*=\s*"[^"]+"\s*,\s*editable\s*=\s*true\s*\}}\s*$',
             flags=re.MULTILINE,
         )
-        replacement = f'{dependency_name} = {{ path = "{wheel_rel_path}" }}'
-        pixi_text, replacement_count = pattern.subn(replacement, pixi_text, count=1)
+        pixi_text, replacement_count = pattern.subn("", pixi_text, count=1)
         if replacement_count != 1:
             raise ValueError(
                 f"Expected exactly one editable path dependency entry for '{dependency_name}' in pixi.toml"
             )
+    pixi_text = _remove_dist_pixi_build_preview(pixi_text)
     pixi_text = _filter_dist_environments(pixi_text, runtime_environment_names)
     return _filter_dist_feature_sections(pixi_text, runtime_feature_names)
 
@@ -445,31 +494,107 @@ def _env_install_script_name() -> str:
     return "install_env.sh"
 
 
-def _env_install_script_text(runtime_environment_names: list[str]) -> str:
+def _runtime_environment_wheels(
+    *,
+    runtime_environment_names: list[str],
+    packages: dict[str, LocalEditablePackage],
+    dependency_to_wheel: dict[str, str],
+    pixi_toml_path: Path = PIXI_TOML_PATH,
+) -> dict[str, list[str]]:
+    with pixi_toml_path.open("rb") as pixi_file:
+        manifest = tomllib.load(pixi_file)
+    environments_table = manifest.get("environments")
+    if not isinstance(environments_table, dict):
+        raise ValueError(f"Expected [environments] table in {pixi_toml_path}")
+
+    environment_to_wheels: dict[str, list[str]] = {}
+    installed_dependencies: set[str] = set()
+    for environment_name in runtime_environment_names:
+        environment_spec = environments_table.get(environment_name)
+        if not isinstance(environment_spec, dict):
+            raise ValueError(f"Environment '{environment_name}' was not found in {pixi_toml_path}")
+        feature_names = environment_spec.get("features")
+        if not isinstance(feature_names, list) or not all(
+            isinstance(feature_name, str) for feature_name in feature_names
+        ):
+            raise ValueError(
+                f"Environment '{environment_name}' must define string features in {pixi_toml_path}"
+            )
+
+        feature_name_set = set(feature_names)
+        wheel_paths: list[str] = []
+        for dependency_name, package in packages.items():
+            if package.feature_name not in feature_name_set:
+                continue
+            wheel_path = dependency_to_wheel.get(dependency_name)
+            if wheel_path is None:
+                raise ValueError(f"Wheel mapping is missing dependency '{dependency_name}'")
+            wheel_paths.append(wheel_path)
+            installed_dependencies.add(dependency_name)
+        environment_to_wheels[environment_name] = wheel_paths
+
+    missing_dependencies = sorted(set(packages) - installed_dependencies)
+    if missing_dependencies:
+        raise ValueError(
+            "Local packages are not assigned to a runtime environment: "
+            + ", ".join(missing_dependencies)
+        )
+    return environment_to_wheels
+
+
+def _env_install_script_text(
+    runtime_environment_names: list[str],
+    environment_to_wheels: dict[str, list[str]] | None = None,
+) -> str:
     install_command_parts = ["pixi", "install"]
     for environment_name in runtime_environment_names:
         install_command_parts.extend(["-e", environment_name])
     install_command = " ".join(install_command_parts)
+    wheel_install_commands: list[str] = []
+    for environment_name in runtime_environment_names:
+        wheel_paths = (environment_to_wheels or {}).get(environment_name, [])
+        if not wheel_paths:
+            continue
+        quoted_wheel_paths = " ".join(f'"{wheel_path}"' for wheel_path in wheel_paths)
+        wheel_install_commands.append(
+            "pixi run -e "
+            + environment_name
+            + " python -m pip install --no-deps --no-index "
+            + quoted_wheel_paths
+        )
 
     if os.name == "nt":
         return (
             "@echo off\r\n"
             "setlocal\r\n"
             "cd /d \"%~dp0\"\r\n"
-            f"{install_command}\r\n"
+            + install_command
+            + "\r\n"
+            + "\r\n".join(wheel_install_commands)
+            + ("\r\n" if wheel_install_commands else "")
         )
-    return (
+    script_text = (
         "#!/usr/bin/env sh\n"
         "set -eu\n"
         "SCRIPT_DIR=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\n"
         "cd \"$SCRIPT_DIR\"\n"
         f"{install_command}\n"
     )
+    if wheel_install_commands:
+        script_text += "\n".join(wheel_install_commands) + "\n"
+    return script_text
 
 
-def _write_env_install_script(dist_dir: Path, runtime_environment_names: list[str]) -> Path:
+def _write_env_install_script(
+    dist_dir: Path,
+    runtime_environment_names: list[str],
+    environment_to_wheels: dict[str, list[str]],
+) -> Path:
     script_path = dist_dir / _env_install_script_name()
-    script_path.write_text(_env_install_script_text(runtime_environment_names), encoding="utf-8")
+    script_path.write_text(
+        _env_install_script_text(runtime_environment_names, environment_to_wheels),
+        encoding="utf-8",
+    )
     if os.name != "nt":
         script_path.chmod(0o755)
     return script_path
@@ -553,6 +678,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Also emit compressed archive in build/dist (zip on Windows, tar.gz on Linux).",
     )
+    parser.add_argument(
+        "--reuse-unitymods-assets",
+        action="store_true",
+        help="Bundle previously built f8unitymods dist assets instead of rebuilding them.",
+    )
     return parser
 
 
@@ -574,14 +704,27 @@ def main() -> int:
     shutil.copytree(REPO_ROOT / "services", dist_dir / "services", dirs_exist_ok=True)
     _rewrite_dist_service_entries(dist_dir / "services")
     _copy_dist_config(dist_dir)
+    _bundle_unitymods_assets(
+        dist_dir,
+        build_assets=not bool(args.reuse_unitymods_assets),
+    )
 
     wheels_dir = dist_dir / "wheels"
     runtime_environment_names = _discover_launcher_runtime_environments()
     runtime_feature_names = _discover_environment_feature_names(environment_names=runtime_environment_names)
-    dependency_to_package_dir = _discover_local_editable_package_dirs(
+    local_packages = _discover_local_editable_packages(
         allowed_feature_names=set(runtime_feature_names),
     )
+    dependency_to_package_dir = {
+        dependency_name: package.package_dir
+        for dependency_name, package in local_packages.items()
+    }
     dependency_to_wheel = _build_python_wheels(wheels_dir, dependency_to_package_dir)
+    environment_to_wheels = _runtime_environment_wheels(
+        runtime_environment_names=runtime_environment_names,
+        packages=local_packages,
+        dependency_to_wheel=dependency_to_wheel,
+    )
     dist_pixi_text = _render_dist_pixi_toml(
         dependency_to_wheel,
         runtime_environment_names,
@@ -590,9 +733,17 @@ def main() -> int:
     dist_manifest_path = dist_dir / "pixi.toml"
     dist_manifest_path.write_text(dist_pixi_text, encoding="utf-8")
 
+    source_lock_path = REPO_ROOT / "pixi.lock"
+    if not source_lock_path.is_file():
+        raise FileNotFoundError(f"Root Pixi lockfile was not found: {source_lock_path}")
+    shutil.copy2(source_lock_path, dist_dir / "pixi.lock")
     _run(["pixi", "lock", "--manifest-path", str(dist_manifest_path), "--no-install"])
     _bundle_studio_launcher(dist_dir)
-    env_install_script_path = _write_env_install_script(dist_dir, runtime_environment_names)
+    env_install_script_path = _write_env_install_script(
+        dist_dir,
+        runtime_environment_names,
+        environment_to_wheels,
+    )
 
     readme_text = (
         "# f8 Runtime Dist\n\n"
@@ -600,6 +751,7 @@ def main() -> int:
         "- pixi.toml + pixi.lock\n"
         "- services/**\n"
         "- Python wheels for local non-editable install\n\n"
+        "- Windows Unity modding installer/exporter assets under unitymods/\n\n"
         "- Studio launcher executable at dist root\n\n"
         "Bootstrap:\n"
         "1. Install Pixi.\n"

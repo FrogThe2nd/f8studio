@@ -167,6 +167,28 @@ class DistCiDiscoveryTest(unittest.TestCase):
 
         self.assertEqual(discovered_wheel, wheel_path)
 
+    def test_root_manifest_discovers_and_rewrites_unitymods_package(self) -> None:
+        runtime_environment_names = self.module._discover_launcher_runtime_environments()
+        runtime_feature_names = self.module._discover_environment_feature_names(
+            environment_names=runtime_environment_names
+        )
+        dependencies = self.module._discover_local_editable_package_dirs(
+            allowed_feature_names=set(runtime_feature_names)
+        )
+
+        self.assertEqual(dependencies["f8unitymods-setup"], "external/f8unitymods")
+
+        rendered = self.module._render_dist_pixi_toml(
+            {"f8unitymods-setup": "wheels/f8unitymods_setup-0.2.0-py3-none-any.whl"},
+            runtime_environment_names,
+            runtime_feature_names,
+        )
+        self.assertNotIn(
+            'f8unitymods-setup = { path = "external/f8unitymods", editable = true }',
+            rendered,
+        )
+        self.assertNotIn("f8unitymods-setup =", rendered)
+
     def test_discover_launcher_runtime_environments_from_marker_feature(self) -> None:
         pixi_toml_path = self.root / "pixi.toml"
         pixi_toml_path.write_text(
@@ -221,6 +243,69 @@ class DistCiDiscoveryTest(unittest.TestCase):
 
         self.assertIn("pixi install -e studio-runtime -e onnx", script_text)
         self.assertNotIn("pixi install -a", script_text)
+
+    def test_env_install_script_installs_local_wheels_in_owned_environments(self) -> None:
+        script_text = self.module._env_install_script_text(
+            ["studio-runtime", "onnx"],
+            {
+                "studio-runtime": [
+                    "wheels/f8pystudio-0.4.0-py3-none-any.whl",
+                    "wheels/f8unitymods_setup-0.2.0-py3-none-any.whl",
+                ],
+                "onnx": ["wheels/f8pydl-0.1.0-py3-none-any.whl"],
+            },
+        )
+
+        self.assertIn(
+            'pixi run -e studio-runtime python -m pip install --no-deps --no-index '
+            '"wheels/f8pystudio-0.4.0-py3-none-any.whl" '
+            '"wheels/f8unitymods_setup-0.2.0-py3-none-any.whl"',
+            script_text,
+        )
+        self.assertIn(
+            'pixi run -e onnx python -m pip install --no-deps --no-index '
+            '"wheels/f8pydl-0.1.0-py3-none-any.whl"',
+            script_text,
+        )
+
+    def test_runtime_environment_wheels_follow_feature_ownership(self) -> None:
+        pixi_toml_path = self.root / "pixi.toml"
+        pixi_toml_path.write_text(
+            "[environments]\n"
+            'studio-runtime = { features = ["sdk", "studio"] }\n'
+            'onnx = { features = ["sdk", "onnx"] }\n',
+            encoding="utf-8",
+        )
+        packages = {
+            "f8pysdk": self.module.LocalEditablePackage("packages/f8pysdk", "sdk"),
+            "f8pystudio": self.module.LocalEditablePackage("packages/f8pystudio", "studio"),
+            "f8unitymods-setup": self.module.LocalEditablePackage("external/f8unitymods", "studio"),
+            "f8pydl": self.module.LocalEditablePackage("packages/f8pydl", "onnx"),
+        }
+        dependency_to_wheel = {
+            dependency_name: f"wheels/{dependency_name}.whl"
+            for dependency_name in packages
+        }
+
+        environment_to_wheels = self.module._runtime_environment_wheels(
+            runtime_environment_names=["studio-runtime", "onnx"],
+            packages=packages,
+            dependency_to_wheel=dependency_to_wheel,
+            pixi_toml_path=pixi_toml_path,
+        )
+
+        self.assertEqual(
+            environment_to_wheels["studio-runtime"],
+            [
+                "wheels/f8pysdk.whl",
+                "wheels/f8pystudio.whl",
+                "wheels/f8unitymods-setup.whl",
+            ],
+        )
+        self.assertEqual(
+            environment_to_wheels["onnx"],
+            ["wheels/f8pysdk.whl", "wheels/f8pydl.whl"],
+        )
 
     def test_filter_dist_environments_keeps_only_runtime_environments(self) -> None:
         pixi_text = (
@@ -285,6 +370,20 @@ class DistCiDiscoveryTest(unittest.TestCase):
         self.assertIn("[feature.launcher-runtime]", filtered)
         self.assertNotIn("[feature.test.dependencies]", filtered)
         self.assertNotIn("[feature.ci.tasks]", filtered)
+
+    def test_remove_dist_pixi_build_preview_keeps_other_workspace_fields(self) -> None:
+        pixi_text = (
+            "[workspace]\n"
+            'name = "demo"\n'
+            'preview = ["pixi-build"]\n'
+            'platforms = ["win-64"]\n'
+        )
+
+        filtered = self.module._remove_dist_pixi_build_preview(pixi_text)
+
+        self.assertNotIn('preview = ["pixi-build"]', filtered)
+        self.assertIn('name = "demo"', filtered)
+        self.assertIn('platforms = ["win-64"]', filtered)
 
     def test_rewrite_service_entry_environment_args_swaps_default_for_dist_runtime(self) -> None:
         service_text = (
@@ -499,6 +598,65 @@ class DistCiLauncherIsolationTest(unittest.TestCase):
         self.assertTrue((self.dist_dir / self.launcher_name).is_file())
 
 
+class DistCiUnityModsBundleTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.module = _load_dist_ci_module()
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp_dir.name)
+        self.dist_dir = self.root / "bundle"
+        self.dist_dir.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def test_bundle_unitymods_assets_runs_bundle_command_on_windows(self) -> None:
+        with (
+            mock.patch.object(self.module.os, "name", "nt"),
+            mock.patch.object(self.module, "REPO_ROOT", self.root),
+            mock.patch.object(self.module, "_run") as run_mock,
+        ):
+            output_dir = self.module._bundle_unitymods_assets(self.dist_dir)
+
+        self.assertEqual(output_dir, self.dist_dir / "unitymods")
+        run_mock.assert_called_once_with(
+            [
+                sys.executable,
+                str(self.root / "scripts" / "unitymods_ci.py"),
+                "bundle",
+                "--output",
+                str(self.dist_dir / "unitymods"),
+            ]
+        )
+
+    def test_bundle_unitymods_assets_is_disabled_off_windows(self) -> None:
+        with (
+            mock.patch.object(self.module.os, "name", "posix"),
+            mock.patch.object(self.module, "_run") as run_mock,
+        ):
+            output_dir = self.module._bundle_unitymods_assets(self.dist_dir)
+
+        self.assertIsNone(output_dir)
+        run_mock.assert_not_called()
+
+    def test_bundle_unitymods_assets_can_reuse_prebuilt_assets(self) -> None:
+        with (
+            mock.patch.object(self.module.os, "name", "nt"),
+            mock.patch.object(self.module, "REPO_ROOT", self.root),
+            mock.patch.object(self.module, "_run") as run_mock,
+        ):
+            self.module._bundle_unitymods_assets(self.dist_dir, build_assets=False)
+
+        run_mock.assert_called_once_with(
+            [
+                sys.executable,
+                str(self.root / "scripts" / "unitymods_ci.py"),
+                "bundle",
+                "--output",
+                str(self.dist_dir / "unitymods"),
+                "--skip-build",
+            ]
+        )
+
 class DistCiManifestValidationTest(unittest.TestCase):
     def setUp(self) -> None:
         self.module = _load_dist_ci_module()
@@ -513,27 +671,30 @@ class DistCiManifestValidationTest(unittest.TestCase):
         runtime_feature_names = self.module._discover_environment_feature_names(
             environment_names=runtime_environment_names
         )
-        dist_pixi_text = self.module._render_dist_pixi_toml(
-            {},
-            runtime_environment_names,
-            runtime_feature_names,
-        )
         dependency_to_package_dir = self.module._discover_local_editable_package_dirs(
             allowed_feature_names=set(runtime_feature_names)
         )
-        for relative_path in dependency_to_package_dir.values():
-            absolute_path = (Path.cwd() / relative_path).resolve()
-            dist_pixi_text = dist_pixi_text.replace(
-                f'path = "{relative_path}"',
-                f'path = "{absolute_path.as_posix()}"',
-            )
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            manifest_path = Path(temp_dir) / "pixi.toml"
+        test_temp_root = Path("build") / "test-tmp"
+        test_temp_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=test_temp_root) as temp_dir:
+            temp_root = Path(temp_dir)
+            dependency_to_wheel = {
+                dependency_name: f"wheels/{dependency_name}.whl"
+                for dependency_name in dependency_to_package_dir
+            }
+            dist_pixi_text = self.module._render_dist_pixi_toml(
+                dependency_to_wheel,
+                runtime_environment_names,
+                runtime_feature_names,
+            )
+            self.assertNotIn('preview = ["pixi-build"]', dist_pixi_text)
+            manifest_path = temp_root / "pixi.toml"
             manifest_path.write_text(dist_pixi_text, encoding="utf-8")
+            shutil.copy2(Path("pixi.lock"), temp_root / "pixi.lock")
             completed = subprocess.run(
                 ["pixi", "lock", "--manifest-path", os.fspath(manifest_path), "--no-install"],
-                cwd=Path(temp_dir),
+                cwd=temp_root,
                 capture_output=True,
                 text=True,
                 check=False,
@@ -546,7 +707,6 @@ class DistCiManifestValidationTest(unittest.TestCase):
         self.assertNotIn("feature 'ci' is defined but not used", combined_output)
         self.assertNotIn("feature 'launcher' is defined but not used", combined_output)
         self.assertNotIn("feature 'test' is defined but not used", combined_output)
-
 
 if __name__ == "__main__":
     unittest.main()

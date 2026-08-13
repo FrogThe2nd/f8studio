@@ -15,6 +15,7 @@ nav:
       - Install on Windows: getting-started/install-deploy.md
       - First Launch and Sample Graphs: for-users/first-launch-and-sample-graphs.md
       - Studio Quickstart: getting-started/studio.md
+      - Unity Game Modding: for-users/unity-game-modding.md
   - For Graph Authors:
       - Overview: graph-authors/index.md
       - Studio (GUI): getting-started/studio.md
@@ -30,6 +31,7 @@ nav:
   - For Developers:
       - Overview: developers/index.md
       - Build from Source: developers/build-from-source.md
+      - Unity Modding Architecture: developers/unity-modding-architecture.md
       - Service Development: developers/service-development.md
       - Output Node Development: developers/output-node-development.md
       - Component Authoring: developers/component-authoring.md

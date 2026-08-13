@@ -316,7 +316,11 @@ class MainWindowProjectMixin:
     def _on_game_modding_action(self) -> None:
         from ...ui.dialogs.game_modding_dialog import GameModdingDialog
 
-        dialog = GameModdingDialog(parent=self)
+        dialog = GameModdingDialog(
+            parent=self,
+            studio_graph=self.studio_graph,
+            on_graph_applied=self._schedule_studio_runtime_sync,
+        )
         dialog.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
         dialog.show()
         dialog.raise_()
