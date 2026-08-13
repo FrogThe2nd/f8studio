@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import ctypes
 import os
 import sys
 from dataclasses import dataclass
@@ -36,6 +37,17 @@ class _Node:
     execOutPorts: list[str] | None = None
 
 
+class _FailingWinMM:
+    @staticmethod
+    def timeBeginPeriod(_period_ms: int) -> None:
+        raise OSError("timer resolution unavailable")
+
+
+@dataclass(frozen=True)
+class _FailingWindll:
+    winmm: _FailingWinMM = _FailingWinMM()
+
+
 def test_print_runtime_decodes_bytes_with_replacement(capsys) -> None:
     node = PrintRuntimeNode(
         node_id="printer",
@@ -54,6 +66,7 @@ def test_tick_timer_resolution_failure_is_logged(monkeypatch, caplog) -> None:
     node = TickRuntimeNode(node_id="tick", node=_Node(execOutPorts=["exec"]), initial_state={})
 
     monkeypatch.setattr("f8pyengine.operators.tick.sys.platform", "win32")
+    monkeypatch.setattr(ctypes, "windll", _FailingWindll(), raising=False)
     caplog.set_level("DEBUG", logger="f8pyengine.operators.tick")
     node._apply_windows_timer_resolution(True)
 

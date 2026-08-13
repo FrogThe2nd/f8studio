@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 
 from .model_config import ModelSpec
 from .vision_utils import LetterboxResult, letterbox_bgr, nms_xyxy
@@ -542,7 +542,7 @@ class OnnxYoloDetectorRuntime:
         except _CV2_IMPORT_ERRORS:
             logger.debug("OpenCV is unavailable while decoding OBB polygons", exc_info=True)
             return None
-        return cv2
+        return cast(_Cv2Module, cv2)
 
     @staticmethod
     def _cv2_box_points(

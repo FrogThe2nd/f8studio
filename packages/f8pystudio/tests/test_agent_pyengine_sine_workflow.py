@@ -57,7 +57,7 @@ def _pyengine_sine_0_100_plan_payload(node_ids: _PyEngineSineGraphNodeIds) -> di
                 "nodeId": node_ids.phase,
                 "name": "1 Hz Phase",
                 "role": "Generate a 1 Hz phase signal.",
-                "stateValues": {"hz": 1.0},
+                "stateValues": {"svcId": node_ids.service, "hz": 1.0},
                 "position": [40.0, 80.0],
             },
             {
@@ -65,7 +65,12 @@ def _pyengine_sine_0_100_plan_payload(node_ids: _PyEngineSineGraphNodeIds) -> di
                 "nodeId": node_ids.sine,
                 "name": "Sine Transform",
                 "role": "Convert phase into a sine-like -1..1 signal.",
-                "stateValues": {"amp": 1.0, "dc": 0.0, "phaseOffset": 0.75},
+                "stateValues": {
+                    "svcId": node_ids.service,
+                    "amp": 1.0,
+                    "dc": 0.0,
+                    "phaseOffset": 0.75,
+                },
                 "position": [280.0, 80.0],
             },
             {
@@ -74,6 +79,7 @@ def _pyengine_sine_0_100_plan_payload(node_ids: _PyEngineSineGraphNodeIds) -> di
                 "name": "Sine 0-100",
                 "role": "Map the signal from -1..1 into 0..100.",
                 "stateValues": {
+                    "svcId": node_ids.service,
                     "inMin": -1.0,
                     "inMax": 1.0,
                     "outMin": 0.0,
@@ -155,10 +161,20 @@ def test_typed_pyengine_sine_patch_matches_catalog_and_payload() -> None:
 
     patch_payload = graph_patch_to_dict(patch)
     assert patch_payload["label"] == "agent graph build: Use PyEngine to output a 1 Hz sine wave mapped from 0-100."
-    assert patch_payload["ops"][0]["nodeType"] == PYENGINE_SERVICE_NODE_TYPE
-    assert patch_payload["ops"][1]["nodeType"] == PHASE_NODE_TYPE
-    assert patch_payload["ops"][3]["nodeType"] == COSINE_NODE_TYPE
-    assert patch_payload["ops"][7]["nodeType"] == RANGE_MAP_NODE_TYPE
+    create_node_types = [op["nodeType"] for op in patch_payload["ops"] if op["op"] == "createNode"]
+    assert create_node_types == [
+        PYENGINE_SERVICE_NODE_TYPE,
+        PHASE_NODE_TYPE,
+        COSINE_NODE_TYPE,
+        RANGE_MAP_NODE_TYPE,
+    ]
+    for operator_node_id in (node_ids.phase, node_ids.sine, node_ids.range_map):
+        assert {
+            "op": "setNodeState",
+            "nodeId": operator_node_id,
+            "field": "svcId",
+            "value": node_ids.service,
+        } in patch_payload["ops"]
     assert {"op": "setNodeState", "nodeId": node_ids.phase, "field": "hz", "value": 1.0} in patch_payload["ops"]
     assert {"op": "setNodeState", "nodeId": node_ids.sine, "field": "phaseOffset", "value": 0.75} in patch_payload["ops"]
     assert _pyengine_sine_sample_port(node_ids) == (node_ids.range_map, "value")

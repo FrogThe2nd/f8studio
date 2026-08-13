@@ -161,6 +161,10 @@ def test_load_service_entry_logs_platform_candidate_path_failure(
         return original_resolve(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "resolve", _failing_resolve)
+    monkeypatch.setattr(
+        "f8pysdk.service_runtime_tools.inventory.entry._platform_service_yml_names",
+        lambda: ["service.linux.yml"],
+    )
 
     caplog.set_level("DEBUG", logger="f8pysdk.service_runtime_tools.inventory.entry")
     entry = load_service_entry(service_dir)

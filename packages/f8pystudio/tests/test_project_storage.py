@@ -24,6 +24,7 @@ from f8pystudio.assets.components.component_models import (
     F8ComponentSourceKind,
     F8ComponentVisibility,
 )
+from f8pystudio.assets.components.official_components import bundled_official_component_entries
 from f8pystudio.assets.projects.project_storage import ProjectStorageService
 
 
@@ -701,15 +702,16 @@ def test_component_catalog_hides_uninstalled_remote_entries_until_installed(tmp_
     service.upsert_local_entry(local_entry)
     service.replace_remote_entries([remote_entry])
 
+    bundled_component_ids = {entry.record.componentId for entry in bundled_official_component_entries()}
     visible_before_install = {entry.record.componentId for entry in service.list_entries(include_uninstalled=False)}
-    assert visible_before_install == {"local-1"}
+    assert visible_before_install == bundled_component_ids | {"local-1"}
     assert service.entry("remote-1", include_uninstalled=False) is None
 
     installed = service.install_remote_entry(remote_entry)
     assert installed.installed is True
 
     visible_after_install = {entry.record.componentId for entry in service.list_entries(include_uninstalled=False)}
-    assert visible_after_install == {"local-1", "remote-1"}
+    assert visible_after_install == bundled_component_ids | {"local-1", "remote-1"}
     installed_entry = service.entry("remote-1", include_uninstalled=False)
     assert installed_entry is not None
     assert installed_entry.downloadedAt is not None
