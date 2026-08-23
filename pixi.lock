@@ -585,6 +585,7 @@ environments:
       - pypi: ./packages/f8proclauncher
       - pypi: ./packages/f8pyaudiofeat
       - pypi: ./packages/f8pyengine
+      - pypi: ./packages/f8pyfallendoll
       - pypi: ./packages/f8pyscript
       - pypi: ./packages/f8pysdk
       - pypi: ./packages/f8pystudio
@@ -769,6 +770,7 @@ environments:
       - pypi: ./packages/f8proclauncher
       - pypi: ./packages/f8pyaudiofeat
       - pypi: ./packages/f8pyengine
+      - pypi: ./packages/f8pyfallendoll
       - pypi: ./packages/f8pyscript
       - pypi: ./packages/f8pysdk
       - pypi: ./packages/f8pystudio
@@ -1349,6 +1351,7 @@ environments:
       - pypi: ./packages/f8proclauncher
       - pypi: ./packages/f8pyaudiofeat
       - pypi: ./packages/f8pyengine
+      - pypi: ./packages/f8pyfallendoll
       - pypi: ./packages/f8pyscript
       - pypi: ./packages/f8pysdk
       - pypi: ./packages/f8pystudio
@@ -1524,6 +1527,7 @@ environments:
       - pypi: ./packages/f8proclauncher
       - pypi: ./packages/f8pyaudiofeat
       - pypi: ./packages/f8pyengine
+      - pypi: ./packages/f8pyfallendoll
       - pypi: ./packages/f8pyscript
       - pypi: ./packages/f8pysdk
       - pypi: ./packages/f8pystudio
@@ -2760,6 +2764,13 @@ packages:
   - numpy>=1.26.0
   - scipy>=1.14.0
   - pyserial>=3.5
+  requires_python: '>=3.10'
+- pypi: ./packages/f8pyfallendoll
+  name: f8pyfallendoll
+  version: 0.1.0
+  sha256: 81cd6a57eebdeaeb4be85692d0d0f079b8c91f976c2836824ac64e9e69615977
+  requires_dist:
+  - f8pysdk
   requires_python: '>=3.10'
 - pypi: ./packages/f8pymppose
   name: f8pymppose
