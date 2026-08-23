@@ -1,5 +1,5 @@
 schemaVersion: f8serviceEntry/1
-serviceClass: f8.fallen_doll
+serviceClass: f8.fallendoll
 label: Fallen Doll Source
 version: 0.1.0
 launch:

@@ -1,4 +1,4 @@
-SERVICE_CLASS = "f8.fallen_doll"
+SERVICE_CLASS = "f8.fallendoll"
 SERVICE_VERSION = "0.1.0"
 
 DEFAULT_POLL_INTERVAL_MS = 20
