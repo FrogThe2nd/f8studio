@@ -369,7 +369,7 @@ class ServiceBusControlHandlers:
             return
         req_id = self._req_id(payload.reqId)
         node_id_s = str(payload.args.nodeId or "").strip()
-        field_s = str(payload.args.field or "").strip()
+        field_s = str(payload.args.field_ or "").strip()
         value = payload.args.value
         if not node_id_s or not field_s:
             await req.respond(
@@ -438,7 +438,7 @@ class ServiceBusControlHandlers:
                 F8SetStateReply(
                     reqId=req_id,
                     ok=True,
-                    result=F8SetStateReplyResult(nodeId=node_id_s, field=field_s),
+                    result=F8SetStateReplyResult(nodeId=node_id_s, field_=field_s),
                     error=None,
                 )
             )

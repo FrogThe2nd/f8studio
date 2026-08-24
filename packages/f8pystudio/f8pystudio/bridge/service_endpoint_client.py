@@ -239,7 +239,7 @@ async def request_set_remote_state(
     payload = encode_obj(
         F8SetStateRequest(
             reqId=new_id(),
-            args=F8SetStateArgs(nodeId=nid, field=state_field, value=value),
+            args=F8SetStateArgs(nodeId=nid, field_=state_field, value=value),
             meta={"actor": "studio", "source": "ui"},
         )
     )

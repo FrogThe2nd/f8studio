@@ -287,7 +287,7 @@ def test_two_python_service_buses_roundtrip_over_zenoh() -> None:
                 endpoint="set_state",
                 payload=F8SetStateRequest(
                     reqId="set-state-b",
-                    args=F8SetStateArgs(nodeId="sink", field="input", value="endpoint"),
+                    args=F8SetStateArgs(nodeId="sink", field_="input", value="endpoint"),
                     meta={"source": "test"},
                 ),
                 reply_type=F8SetStateReply,
