@@ -183,6 +183,11 @@ async def test_contact_pose_axes_maps_orthogonal_reference_frame() -> None:
     assert await node.compute_output("R1", ctx_id=1) == pytest.approx(0.5)
     assert await node.compute_output("R2", ctx_id=1) == pytest.approx(0.5)
 
+    frame = await node.compute_output("frame", ctx_id=1)
+    assert frame["axes"]["L0"] == pytest.approx(0.25)
+    assert frame["axes"]["L1"] == pytest.approx(0.6)
+    assert frame["status"]["valid"] is True
+
 
 async def test_contact_pose_axes_uses_target_supplied_hand_basis() -> None:
     bus, node = await _build_node(ContactPoseAxesRuntimeNode, register_contact_pose_axes, {})

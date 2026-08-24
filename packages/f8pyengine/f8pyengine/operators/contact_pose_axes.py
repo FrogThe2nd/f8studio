@@ -72,6 +72,15 @@ def _status_schema():
     )
 
 
+def _frame_schema():
+    return complex_object_schema(
+        properties={
+            "axes": complex_object_schema(properties={axis: number_schema() for axis in AXIS_NAMES}),
+            "status": _status_schema(),
+        }
+    )
+
+
 class ContactPoseAxesRuntimeNode(OperatorNode):
     def __init__(self, *, node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any] | None = None) -> None:
         super().__init__(
@@ -176,7 +185,7 @@ class ContactPoseAxesRuntimeNode(OperatorNode):
 
     async def compute_output(self, port: str, ctx_id: str | int | None = None) -> Any:
         port_name = str(port or "").strip()
-        if port_name not in {*AXIS_NAMES, "status"}:
+        if port_name not in {*AXIS_NAMES, "status", "frame"}:
             return None
         result = await self._result_for_context(ctx_id)
         if result is None:
@@ -184,9 +193,14 @@ class ContactPoseAxesRuntimeNode(OperatorNode):
                 return {"valid": False, "contactValid": False, "reason": "missing_or_invalid_input"}
             return None
         if self._require_contact and not bool(result.status["contactValid"]):
+            status = {**result.status, "valid": False, "reason": "outside_contact_radius"}
             if port_name == "status":
-                return {**result.status, "valid": False, "reason": "outside_contact_radius"}
+                return status
+            if port_name == "frame":
+                return {"axes": dict(result.axes), "status": status}
             return None
+        if port_name == "frame":
+            return {"axes": dict(result.axes), "status": dict(result.status)}
         return result.status if port_name == "status" else result.axes[port_name]
 
     async def _result_for_context(self, ctx_id: str | int | None) -> ContactResult | None:
@@ -326,7 +340,7 @@ ContactPoseAxesRuntimeNode.SPEC = F8OperatorSpec(
     serviceClass=SERVICE_CLASS,
     paletteCategory=f"{SERVICE_CLASS}.motion",
     operatorClass=OPERATOR_CLASS,
-    version="0.1.0",
+    version="0.2.0",
     label="Contact Pose Axes",
     description="Build a multi-bone contact frame and emit normalized SR6 L0/L1/L2/R0/R1/R2 axes.",
     tags=["skeleton", "contact", "geometry", "multibone", "sr6", "tcode"],
@@ -339,6 +353,11 @@ ContactPoseAxesRuntimeNode.SPEC = F8OperatorSpec(
         F8DataPortSpec(name="targetBone", description="Selected target functional bone.", valueSchema=_bone_schema()),
     ],
     dataOutPorts=[
+        F8DataPortSpec(
+            name="frame",
+            description="Atomic SR6 axes and contact diagnostics for one geometry sample.",
+            valueSchema=_frame_schema(),
+        ),
         *[
             F8DataPortSpec(
                 name=axis,
