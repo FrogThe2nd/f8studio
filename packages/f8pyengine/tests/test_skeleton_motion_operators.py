@@ -52,6 +52,25 @@ async def _build_node(runtime_type: type, register: Callable[[Registry], Registr
     return bus, node
 
 
+class _CountingContactPoseAxesRuntimeNode(ContactPoseAxesRuntimeNode):
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.pull_count = 0
+
+    async def pull(self, port: str, *, ctx_id: str | int | None = None) -> Any:
+        self.pull_count += 1
+        return await super().pull(port, ctx_id=ctx_id)
+
+
+def _register_counting_contact_pose_axes(registry: Registry) -> Registry:
+    registry.register_operator(
+        ContactPoseAxesRuntimeNode.SPEC,
+        _CountingContactPoseAxesRuntimeNode,
+        overwrite=True,
+    )
+    return registry
+
+
 def _skeleton(*, profile_id: str, role: str, role_index: int, model_name: str) -> dict[str, Any]:
     stable_key = f"{profile_id}:{role.lower()}:{role_index}"
     return {
@@ -179,6 +198,37 @@ async def test_contact_pose_axes_uses_signed_twist_around_reference_axis() -> No
     assert await node.compute_output("R0", ctx_id=1) == pytest.approx(0.75)
     status = await node.compute_output("status", ctx_id=1)
     assert status["twistDegrees"] == pytest.approx(45.0)
+
+
+async def test_contact_pose_axes_calculates_once_per_context() -> None:
+    bus, node = await _build_node(
+        _CountingContactPoseAxesRuntimeNode,
+        _register_counting_contact_pose_axes,
+        _contact_state(),
+    )
+    target = {"name": "R_Hand", "pos": [0.0, 0.0, 0.5], "rot": [1.0, 0.0, 0.0, 0.0]}
+    buffer_input(bus, "node1", "referenceSkeleton", _contact_reference_skeleton(), ts_ms=1, edge=None, ctx_id=1)
+    buffer_input(bus, "node1", "targetBone", target, ts_ms=1, edge=None, ctx_id=1)
+
+    for port in ("L0", "L1", "L2", "R0", "R1", "R2", "status"):
+        assert await node.compute_output(port, ctx_id=1) is not None
+    assert node.pull_count == 2
+
+    buffer_input(bus, "node1", "referenceSkeleton", _contact_reference_skeleton(), ts_ms=2, edge=None, ctx_id=2)
+    buffer_input(bus, "node1", "targetBone", target, ts_ms=2, edge=None, ctx_id=2)
+    assert await node.compute_output("L0", ctx_id=2) == pytest.approx(0.5)
+    assert node.pull_count == 4
+
+
+async def test_contact_pose_axes_state_change_invalidates_context_cache() -> None:
+    bus, node = await _build_node(ContactPoseAxesRuntimeNode, register_contact_pose_axes, _contact_state())
+    target = {"name": "R_Hand", "pos": [0.0, 0.0, 0.25], "rot": [1.0, 0.0, 0.0, 0.0]}
+    buffer_input(bus, "node1", "referenceSkeleton", _contact_reference_skeleton(), ts_ms=1, edge=None, ctx_id=1)
+    buffer_input(bus, "node1", "targetBone", target, ts_ms=1, edge=None, ctx_id=1)
+
+    assert await node.compute_output("L0", ctx_id=1) == pytest.approx(0.25)
+    await node.on_state("invertL0", True)
+    assert await node.compute_output("L0", ctx_id=1) == pytest.approx(0.75)
 
 
 async def test_contact_pose_axes_requires_extended_tip_and_support_bones() -> None:
