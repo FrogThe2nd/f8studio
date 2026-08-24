@@ -233,17 +233,28 @@ async def test_contact_pose_axes_uses_bilateral_center_without_false_tilt() -> N
 
 async def test_contact_pose_axes_uses_signed_twist_around_reference_axis() -> None:
     bus, node = await _build_node(ContactPoseAxesRuntimeNode, register_contact_pose_axes, _contact_state())
-    half_angle = math.radians(45.0) / 2.0
-    target = {
-        "name": "R_Hand",
-        "pos": [0.0, 0.0, 0.5],
-        "rot": [math.cos(half_angle), 0.0, 0.0, math.sin(half_angle)],
-    }
-    buffer_input(bus, "node1", "referenceSkeleton", _contact_reference_skeleton(), ts_ms=1, edge=None, ctx_id=1)
-    buffer_input(bus, "node1", "targetBone", target, ts_ms=1, edge=None, ctx_id=1)
+    def target_at(degrees: float) -> dict[str, Any]:
+        half_angle = math.radians(degrees) / 2.0
+        return {
+            "name": "R_Hand",
+            "pos": [0.0, 0.0, 0.5],
+            "rot": [math.cos(half_angle), 0.0, 0.0, math.sin(half_angle)],
+        }
 
-    assert await node.compute_output("R0", ctx_id=1) == pytest.approx(0.75)
-    status = await node.compute_output("status", ctx_id=1)
+    buffer_input(bus, "node1", "referenceSkeleton", _contact_reference_skeleton(), ts_ms=1, edge=None, ctx_id=1)
+    buffer_input(bus, "node1", "targetBone", target_at(30.0), ts_ms=1, edge=None, ctx_id=1)
+
+    initial = await node.compute_output("status", ctx_id=1)
+    assert initial["R0"] == pytest.approx(0.5)
+    assert initial["rawTwistDegrees"] == pytest.approx(30.0)
+    assert initial["twistBaselineDegrees"] == pytest.approx(30.0)
+    assert initial["twistDegrees"] == pytest.approx(0.0)
+
+    buffer_input(bus, "node1", "referenceSkeleton", _contact_reference_skeleton(), ts_ms=2, edge=None, ctx_id=2)
+    buffer_input(bus, "node1", "targetBone", target_at(75.0), ts_ms=2, edge=None, ctx_id=2)
+
+    assert await node.compute_output("R0", ctx_id=2) == pytest.approx(0.75)
+    status = await node.compute_output("status", ctx_id=2)
     assert status["twistDegrees"] == pytest.approx(45.0)
 
 
@@ -267,10 +278,48 @@ async def test_contact_pose_axes_unwraps_rotation_across_signed_angle_seam() -> 
     buffer_input(bus, "node1", "targetBone", target_at(-179.0), ts_ms=2, edge=None, ctx_id=2)
     second = await node.compute_output("status", ctx_id=2)
 
-    assert first["twistDegrees"] == pytest.approx(179.0)
-    assert second["twistDegrees"] == pytest.approx(181.0)
-    assert first["R0"] == pytest.approx(1.0)
-    assert second["R0"] == pytest.approx(1.0)
+    assert first["rawTwistDegrees"] == pytest.approx(179.0)
+    assert second["rawTwistDegrees"] == pytest.approx(181.0)
+    assert first["twistDegrees"] == pytest.approx(0.0)
+    assert second["twistDegrees"] == pytest.approx(2.0)
+    assert first["R0"] == pytest.approx(0.5)
+    assert second["R0"] == pytest.approx(0.5 + 2.0 / 180.0)
+
+
+async def test_contact_pose_axes_reacquires_twist_baseline_when_binding_changes() -> None:
+    bus, node = await _build_node(ContactPoseAxesRuntimeNode, register_contact_pose_axes, _contact_state())
+
+    def reference_for(pose_id: str) -> dict[str, Any]:
+        reference = _contact_reference_skeleton()
+        reference["stableKey"] = "fallen-doll:male:0"
+        reference["trailer"] = {"poseId": pose_id, "bindingGeneration": 1}
+        return reference
+
+    def target_at(degrees: float) -> dict[str, Any]:
+        half_angle = math.radians(degrees) / 2.0
+        return {
+            "name": "M_Gen",
+            "pos": [0.0, 0.0, 0.5],
+            "rot": [math.cos(half_angle), 0.0, 0.0, math.sin(half_angle)],
+        }
+
+    buffer_input(bus, "node1", "referenceSkeleton", reference_for("PoseA"), ts_ms=1, edge=None, ctx_id=1)
+    buffer_input(bus, "node1", "targetBone", target_at(30.0), ts_ms=1, edge=None, ctx_id=1)
+    first = await node.compute_output("status", ctx_id=1)
+
+    buffer_input(bus, "node1", "referenceSkeleton", reference_for("PoseA"), ts_ms=2, edge=None, ctx_id=2)
+    buffer_input(bus, "node1", "targetBone", target_at(60.0), ts_ms=2, edge=None, ctx_id=2)
+    moved = await node.compute_output("status", ctx_id=2)
+
+    buffer_input(bus, "node1", "referenceSkeleton", reference_for("PoseB"), ts_ms=3, edge=None, ctx_id=3)
+    buffer_input(bus, "node1", "targetBone", target_at(80.0), ts_ms=3, edge=None, ctx_id=3)
+    rebound = await node.compute_output("status", ctx_id=3)
+
+    assert first["twistDegrees"] == pytest.approx(0.0)
+    assert moved["twistDegrees"] == pytest.approx(30.0)
+    assert moved["twistBaselineDegrees"] == pytest.approx(30.0)
+    assert rebound["twistDegrees"] == pytest.approx(0.0)
+    assert rebound["twistBaselineDegrees"] == pytest.approx(80.0)
 
 
 async def test_contact_pose_axes_calculates_once_per_context() -> None:

@@ -13,6 +13,12 @@ _GAME_ID = "fallen-doll"
 _SPOOL_NAME = "fd-skeleton.ndjson"
 _TARGET_BASIS_BY_BONE = {
     "R_Hand": {"up": "+local_z", "right": "-local_y"},
+    # Both ankle bones use local Z along the foot/contact direction and
+    # local -Y across it.  The generic target basis treats local Z as the
+    # Twist vector, which turns ordinary foot flexion into a 180-degree R0
+    # swing and leaves R1/R2 pinned at their limits.
+    "R_Foot": {"up": "+local_z", "right": "-local_y"},
+    "L_Foot": {"up": "+local_z", "right": "-local_y"},
     # Fallen Doll mouth bones use a different local frame from the hands.
     # Mapping them through the generic fallback places the neutral pose close
     # to the signed-angle +/-180 degree seam and makes R0/R1 flip end-to-end.
@@ -155,7 +161,14 @@ def select_frame(
     reference = _select_participant(skeletons, role=reference_role, enabled_keys=enabled_reference_participants)
     target = _select_participant(skeletons, role=target_role, enabled_keys=enabled_target_participants)
     reference_bone = _select_bone(reference, enabled_reference_bones)
-    target_bone = _with_target_basis(_select_target_bone(target, enabled_target_bones))
+    target_bone = _with_target_basis(
+        _select_target_bone(
+            target,
+            enabled_target_bones,
+            reference_skeleton=reference,
+            reference_bone=reference_bone,
+        )
+    )
     valid = reference_bone is not None and target_bone is not None
     reason = "ok"
     if reference is None:
@@ -301,7 +314,13 @@ def _select_bone(skeleton: dict[str, Any] | None, enabled_bones: list[str]) -> d
     return None
 
 
-def _select_target_bone(skeleton: dict[str, Any] | None, enabled_bones: list[str]) -> dict[str, Any] | None:
+def _select_target_bone(
+    skeleton: dict[str, Any] | None,
+    enabled_bones: list[str],
+    *,
+    reference_skeleton: dict[str, Any] | None,
+    reference_bone: dict[str, Any] | None,
+) -> dict[str, Any] | None:
     if skeleton is None:
         return None
     trailer = _trailer(skeleton)
@@ -322,8 +341,102 @@ def _select_target_bone(skeleton: dict[str, Any] | None, enabled_bones: list[str
         right = by_name.get(pair_names[0]) if pair_names[0] in enabled else None
         left = by_name.get(pair_names[1]) if pair_names[1] in enabled else None
         if right is not None and left is not None:
+            if category == "foot" and not _bilateral_foot_contact_is_plausible(
+                right,
+                left,
+                reference_skeleton=reference_skeleton,
+                reference_bone=reference_bone,
+            ):
+                return _nearest_foot_to_reference(
+                    right,
+                    left,
+                    reference_skeleton=reference_skeleton,
+                    reference_bone=reference_bone,
+                )
             return _bilateral_target(right, left)
     return _select_bone(skeleton, enabled_bones)
+
+
+def _bilateral_foot_contact_is_plausible(
+    right: dict[str, Any],
+    left: dict[str, Any],
+    *,
+    reference_skeleton: dict[str, Any] | None,
+    reference_bone: dict[str, Any] | None,
+) -> bool:
+    segment = _reference_segment(reference_skeleton, reference_bone)
+    if segment is None:
+        # Preserve the old behavior when the source does not expose enough
+        # Reference geometry to make a reliable decision.
+        return True
+    origin, tip = segment
+    midpoint = tuple((float(a) + float(b)) / 2.0 for a, b in zip(right["pos"], left["pos"], strict=True))
+    length = _distance(origin, tip)
+    if length <= 1e-8:
+        return True
+    axis = tuple((tip[index] - origin[index]) / length for index in range(3))
+    delta = tuple(midpoint[index] - origin[index] for index in range(3))
+    axial_ratio = _dot3(delta, axis) / length
+    projected = tuple(origin[index] + axis[index] * _dot3(delta, axis) for index in range(3))
+    radial = _distance(midpoint, projected)
+    return -0.25 <= axial_ratio <= 1.25 and radial <= max(0.05, length * 0.75)
+
+
+def _nearest_foot_to_reference(
+    right: dict[str, Any],
+    left: dict[str, Any],
+    *,
+    reference_skeleton: dict[str, Any] | None,
+    reference_bone: dict[str, Any] | None,
+) -> dict[str, Any]:
+    segment = _reference_segment(reference_skeleton, reference_bone)
+    if segment is None:
+        return right
+    origin, tip = segment
+    right_distance = _distance_to_segment(tuple(float(value) for value in right["pos"]), origin, tip)
+    left_distance = _distance_to_segment(tuple(float(value) for value in left["pos"]), origin, tip)
+    return right if right_distance <= left_distance else left
+
+
+def _reference_segment(
+    skeleton: dict[str, Any] | None,
+    origin_bone: dict[str, Any] | None,
+) -> tuple[tuple[float, float, float], tuple[float, float, float]] | None:
+    if skeleton is None or origin_bone is None:
+        return None
+    origin = tuple(float(value) for value in origin_bone["pos"])
+    by_name = {
+        str(bone["name"]): bone
+        for raw_bone in skeleton.get("bones", [])
+        if (bone := _validated_bone(raw_bone)) is not None
+    }
+    tip = by_name.get("Penis09") or by_name.get("Penis02")
+    if tip is None:
+        return None
+    return origin, tuple(float(value) for value in tip["pos"])
+
+
+def _distance_to_segment(
+    point: tuple[float, float, float],
+    start: tuple[float, float, float],
+    end: tuple[float, float, float],
+) -> float:
+    segment = tuple(end[index] - start[index] for index in range(3))
+    length_squared = _dot3(segment, segment)
+    if length_squared <= 1e-16:
+        return _distance(point, start)
+    delta = tuple(point[index] - start[index] for index in range(3))
+    amount = max(0.0, min(1.0, _dot3(delta, segment) / length_squared))
+    closest = tuple(start[index] + segment[index] * amount for index in range(3))
+    return _distance(point, closest)
+
+
+def _distance(left: tuple[float, float, float], right: tuple[float, float, float]) -> float:
+    return math.sqrt(sum((left[index] - right[index]) ** 2 for index in range(3)))
+
+
+def _dot3(left: tuple[float, float, float], right: tuple[float, float, float]) -> float:
+    return sum(left[index] * right[index] for index in range(3))
 
 
 def _bilateral_target(right: dict[str, Any], left: dict[str, Any]) -> dict[str, Any]:

@@ -35,7 +35,7 @@ AXIS_DESCRIPTIONS = {
     "L0": "Stroke / 主轴往返：Target 沿 Reference 接触主轴的归一化深度。",
     "L1": "Surge / 局部前后平移：Target 偏离主轴的局部前后距离。",
     "L2": "Sway / 局部左右平移：Target 偏离主轴的局部左右距离。",
-    "R0": "Twist / 轴向扭转：Target 绕 Reference 主轴的旋转。",
+    "R0": "Twist / 轴向扭转：Target 相对当前接触绑定初始姿态绕 Reference 主轴的旋转。",
     "R1": "Roll / 左右倾斜：Target 绕 Reference 局部前后轴的旋转。",
     "R2": "Pitch / 前后俯仰：Target 绕 Reference 局部左右轴的旋转。",
 }
@@ -75,6 +75,8 @@ def _status_schema():
             "radialMeters": number_schema(),
             "lateralForwardMeters": number_schema(),
             "lateralRightMeters": number_schema(),
+            "rawTwistDegrees": number_schema(),
+            "twistBaselineDegrees": number_schema(),
             "twistDegrees": number_schema(),
             "rollDegrees": number_schema(),
             "pitchDegrees": number_schema(),
@@ -122,6 +124,7 @@ class ContactPoseAxesRuntimeNode(OperatorNode):
         self._cache_valid = False
         self._angle_binding_key: tuple[str, ...] | None = None
         self._continuous_angles: dict[str, float] = {}
+        self._twist_baseline_degrees: float | None = None
 
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
         del ts_ms
@@ -270,6 +273,7 @@ class ContactPoseAxesRuntimeNode(OperatorNode):
         self._cache_valid = False
         self._angle_binding_key = None
         self._continuous_angles.clear()
+        self._twist_baseline_degrees = None
 
     def _stabilize_rotation_angles(
         self,
@@ -293,8 +297,15 @@ class ContactPoseAxesRuntimeNode(OperatorNode):
             previous = None if binding_changed else self._continuous_angles.get(status_name)
             continuous = wrapped if previous is None else _unwrap_degrees_near(wrapped, previous)
             next_angles[status_name] = continuous
-            axes[axis_name] = _symmetric01(continuous, angle_range)
-            status[status_name] = continuous
+            output_angle = continuous
+            if axis_name == "R0":
+                if binding_changed or self._twist_baseline_degrees is None:
+                    self._twist_baseline_degrees = continuous
+                output_angle = continuous - self._twist_baseline_degrees
+                status["rawTwistDegrees"] = continuous
+                status["twistBaselineDegrees"] = self._twist_baseline_degrees
+            axes[axis_name] = _symmetric01(output_angle, angle_range)
+            status[status_name] = output_angle
             status[axis_name] = axes[axis_name]
         self._angle_binding_key = binding_key
         self._continuous_angles = next_angles
@@ -426,12 +437,13 @@ ContactPoseAxesRuntimeNode.SPEC = F8OperatorSpec(
     serviceClass=SERVICE_CLASS,
     paletteCategory=f"{SERVICE_CLASS}.motion",
     operatorClass=OPERATOR_CLASS,
-    version="0.2.0",
+    version="0.3.0",
     label="Contact Pose Axes",
     description=(
         "Build a local contact frame and emit normalized SR6 axes. "
         "L0=主轴往返，L1=前后平移，L2=左右平移，R0=轴向扭转，R1=左右倾斜，R2=前后俯仰。 "
-        "All directions are local to the Reference contact axis, not screen or world coordinates."
+        "All directions are local to the Reference contact axis, not screen or world coordinates. "
+        "R0 is zeroed when the current pose/contact binding is acquired."
     ),
     tags=["skeleton", "contact", "geometry", "multibone", "sr6", "tcode"],
     dataInPorts=[
@@ -520,7 +532,7 @@ ContactPoseAxesRuntimeNode.SPEC = F8OperatorSpec(
         _state(
             "twistRangeDegrees",
             "Twist Range",
-            "Symmetric R0 angle range.",
+            "Symmetric R0 angle range around the acquired binding baseline.",
             number_schema(default=90.0, minimum=1.0, maximum=179.0),
         ),
         _state(

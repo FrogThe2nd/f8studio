@@ -207,6 +207,87 @@ def test_select_frame_builds_bilateral_target_when_pose_has_no_primary_foot() ->
     assert selected.target_bone["pairPositions"] == [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
 
 
+def test_select_frame_uses_nearest_single_foot_when_pair_is_not_near_reference() -> None:
+    male = _payload(
+        timestamp_ms=120,
+        role="male",
+        role_index=0,
+        priority=0,
+        preferred_bones=["Penis01"],
+        bones=[
+            {"name": "Penis01", "pos": [0.0, 0.0, 0.0], "rot": [1.0, 0.0, 0.0, 0.0]},
+            {"name": "Penis09", "pos": [0.0, 0.0, 1.0], "rot": [1.0, 0.0, 0.0, 0.0]},
+        ],
+    )
+    female = _payload(
+        timestamp_ms=120,
+        role="female",
+        role_index=0,
+        priority=0,
+        preferred_bones=[],
+        bones=[
+            {"name": "R_Foot", "pos": [2.0, 0.0, 0.5], "rot": [1.0, 0.0, 0.0, 0.0]},
+            {"name": "L_Foot", "pos": [0.1, 0.0, 0.5], "rot": [1.0, 0.0, 0.0, 0.0]},
+        ],
+    )
+    female["trailer"]["hanimeCategory"] = "foot"
+
+    selected = select_frame(
+        [male, female],
+        reference_role="male",
+        target_role="female",
+        enabled_reference_participants=["fallen-doll:male:0"],
+        enabled_target_participants=["fallen-doll:female:0"],
+        enabled_reference_bones=["Penis01"],
+        enabled_target_bones=["R_Foot", "L_Foot"],
+    )
+
+    assert selected.target_bone is not None
+    assert selected.target_bone["name"] == "L_Foot"
+    assert "targetMode" not in selected.target_bone
+    assert selected.target_bone["basis"] == {"up": "+local_z", "right": "-local_y"}
+
+
+def test_select_frame_keeps_bilateral_feet_when_pair_midpoint_tracks_reference() -> None:
+    male = _payload(
+        timestamp_ms=120,
+        role="male",
+        role_index=0,
+        priority=0,
+        preferred_bones=["Penis01"],
+        bones=[
+            {"name": "Penis01", "pos": [0.0, 0.0, 0.0], "rot": [1.0, 0.0, 0.0, 0.0]},
+            {"name": "Penis09", "pos": [0.0, 0.0, 1.0], "rot": [1.0, 0.0, 0.0, 0.0]},
+        ],
+    )
+    female = _payload(
+        timestamp_ms=120,
+        role="female",
+        role_index=0,
+        priority=0,
+        preferred_bones=[],
+        bones=[
+            {"name": "R_Foot", "pos": [0.1, 0.0, 0.5], "rot": [1.0, 0.0, 0.0, 0.0]},
+            {"name": "L_Foot", "pos": [-0.1, 0.0, 0.5], "rot": [1.0, 0.0, 0.0, 0.0]},
+        ],
+    )
+    female["trailer"]["hanimeCategory"] = "foot"
+
+    selected = select_frame(
+        [male, female],
+        reference_role="male",
+        target_role="female",
+        enabled_reference_participants=["fallen-doll:male:0"],
+        enabled_target_participants=["fallen-doll:female:0"],
+        enabled_reference_bones=["Penis01"],
+        enabled_target_bones=["R_Foot", "L_Foot"],
+    )
+
+    assert selected.target_bone is not None
+    assert selected.target_bone["name"] == "R_Foot+L_Foot"
+    assert selected.target_bone["targetMode"] == "bilateral_reference_axis"
+
+
 def test_select_frame_builds_bilateral_target_for_breast_contact() -> None:
     male = _payload(
         timestamp_ms=120,
