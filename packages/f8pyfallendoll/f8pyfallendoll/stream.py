@@ -11,6 +11,9 @@ from .constants import DEFAULT_MAX_READ_BYTES
 
 _GAME_ID = "fallen-doll"
 _SPOOL_NAME = "fd-skeleton.ndjson"
+_TARGET_BASIS_BY_BONE = {
+    "R_Hand": {"up": "+local_z", "right": "-local_y"},
+}
 
 
 @dataclass(frozen=True)
@@ -101,7 +104,9 @@ def parse_latest_frame(lines: list[str], *, arrival_timestamp_ms: int) -> Parsed
             continue
         valid_payloads.append(payload)
 
-    timestamps = [timestamp for payload in valid_payloads if (timestamp := _integer(payload.get("timestampMs"))) is not None]
+    timestamps = [
+        timestamp for payload in valid_payloads if (timestamp := _integer(payload.get("timestampMs"))) is not None
+    ]
     newest_timestamp = max(timestamps) if timestamps else None
     latest_by_key: dict[str, dict[str, Any]] = {}
     dropped = 0
@@ -143,7 +148,7 @@ def select_frame(
     reference = _select_participant(skeletons, role=reference_role, enabled_keys=enabled_reference_participants)
     target = _select_participant(skeletons, role=target_role, enabled_keys=enabled_target_participants)
     reference_bone = _select_bone(reference, enabled_reference_bones)
-    target_bone = _select_bone(target, enabled_target_bones)
+    target_bone = _with_target_basis(_select_bone(target, enabled_target_bones))
     valid = reference_bone is not None and target_bone is not None
     reason = "ok"
     if reference is None:
@@ -295,6 +300,13 @@ def _validated_bone(value: Any) -> dict[str, Any] | None:
         return None
     finite = [float(item) for item in numbers if item is not None]
     return {"name": name, "pos": finite[:3], "rot": finite[3:]}
+
+
+def _with_target_basis(bone: dict[str, Any] | None) -> dict[str, Any] | None:
+    if bone is None:
+        return None
+    basis = _TARGET_BASIS_BY_BONE.get(str(bone.get("name") or ""))
+    return dict(bone) if basis is None else {**bone, "basis": dict(basis)}
 
 
 def _finite_float(value: Any) -> float | None:

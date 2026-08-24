@@ -107,6 +107,7 @@ def test_poll_emits_selected_frame_then_one_stale_frame(tmp_path: Path) -> None:
         assert node.states["connected"] is True
         assert outputs["referenceBone"]["name"] == "Penis02"
         assert outputs["targetBone"]["name"] == "R_Hand"
+        assert outputs["targetBone"]["basis"] == {"up": "+local_z", "right": "-local_y"}
         assert outputs["status"]["valid"] is True
 
         emitted_before_stale = len(node.emitted)

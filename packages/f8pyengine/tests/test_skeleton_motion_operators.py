@@ -184,6 +184,23 @@ async def test_contact_pose_axes_maps_orthogonal_reference_frame() -> None:
     assert await node.compute_output("R2", ctx_id=1) == pytest.approx(0.5)
 
 
+async def test_contact_pose_axes_uses_target_supplied_hand_basis() -> None:
+    bus, node = await _build_node(ContactPoseAxesRuntimeNode, register_contact_pose_axes, {})
+    target = {
+        "name": "R_Hand",
+        "pos": [0.0, 0.0, 0.15],
+        "rot": [1.0, 0.0, 0.0, 0.0],
+        "basis": {"up": "+local_z", "right": "-local_y"},
+    }
+    buffer_input(bus, "node1", "referenceSkeleton", _contact_reference_skeleton(), ts_ms=1, edge=None, ctx_id=1)
+    buffer_input(bus, "node1", "targetBone", target, ts_ms=1, edge=None, ctx_id=1)
+
+    status = await node.compute_output("status", ctx_id=1)
+    assert status["pitchDegrees"] == pytest.approx(0.0)
+    assert status["rollDegrees"] == pytest.approx(0.0)
+    assert status["R2"] == pytest.approx(0.5)
+
+
 async def test_contact_pose_axes_uses_signed_twist_around_reference_axis() -> None:
     bus, node = await _build_node(ContactPoseAxesRuntimeNode, register_contact_pose_axes, _contact_state())
     half_angle = math.radians(45.0) / 2.0

@@ -38,6 +38,12 @@ def _bone_schema():
             "name": string_schema(),
             "pos": array_schema(items=number_schema()),
             "rot": array_schema(items=number_schema()),
+            "basis": complex_object_schema(
+                properties={
+                    "up": string_schema(enum=list(LOCAL_AXIS_NAMES)),
+                    "right": string_schema(enum=list(LOCAL_AXIS_NAMES)),
+                }
+            ),
         }
     )
 
@@ -189,6 +195,11 @@ class ContactPoseAxesRuntimeNode(OperatorNode):
 
         reference_raw = await self.pull("referenceSkeleton", ctx_id=ctx_id)
         target_raw = await self.pull("targetBone", ctx_id=ctx_id)
+        target_up_axis, target_right_axis = _target_basis_or_default(
+            target_raw,
+            up_default=self._target_up_axis,
+            right_default=self._target_right_axis,
+        )
         result = calculate_contact_axes(
             reference_raw,
             target_raw,
@@ -199,8 +210,8 @@ class ContactPoseAxesRuntimeNode(OperatorNode):
                 support_bone=self._support_bone,
                 support_right_axis=self._support_right_axis,
                 support_up_axis=self._support_up_axis,
-                target_up_axis=self._target_up_axis,
-                target_right_axis=self._target_right_axis,
+                target_up_axis=target_up_axis,
+                target_right_axis=target_right_axis,
                 l0_min=self._l0_min,
                 l0_max=self._l0_max,
                 lateral_range=self._lateral_range,
@@ -240,6 +251,21 @@ def _text_or_default(value: Any, default: str) -> str:
 def _local_axis_or_default(value: Any, default: str) -> str:
     result = str(value or "").strip().lower()
     return result if result in LOCAL_AXIS_NAMES else default
+
+
+def _target_basis_or_default(
+    target: Any,
+    *,
+    up_default: str,
+    right_default: str,
+) -> tuple[str, str]:
+    basis = target.get("basis") if isinstance(target, dict) else None
+    if not isinstance(basis, dict):
+        return up_default, right_default
+    return (
+        _local_axis_or_default(basis.get("up"), up_default),
+        _local_axis_or_default(basis.get("right"), right_default),
+    )
 
 
 def _positive_or_default(value: Any, default: float, *, allow_zero: bool = False) -> float:
