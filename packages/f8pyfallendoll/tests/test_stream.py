@@ -139,6 +139,142 @@ def test_select_frame_uses_participant_priority_and_preferred_bone_order() -> No
     assert selected.target_bone is not None and selected.target_bone["name"] == "R_Hand"
 
 
+def test_select_frame_adds_mouth_specific_target_basis() -> None:
+    male = _payload(
+        timestamp_ms=120,
+        role="male",
+        role_index=0,
+        priority=0,
+        preferred_bones=["Penis01"],
+        bones=[_bone("Penis01")],
+    )
+    female = _payload(
+        timestamp_ms=120,
+        role="female",
+        role_index=0,
+        priority=0,
+        preferred_bones=["M_Jaw"],
+        bones=[_bone("M_Jaw")],
+    )
+
+    selected = select_frame(
+        [male, female],
+        reference_role="male",
+        target_role="female",
+        enabled_reference_participants=["fallen-doll:male:0"],
+        enabled_target_participants=["fallen-doll:female:0"],
+        enabled_reference_bones=["Penis01"],
+        enabled_target_bones=["M_Jaw"],
+    )
+
+    assert selected.target_bone is not None
+    assert selected.target_bone["basis"] == {"up": "+local_y", "right": "-local_z"}
+
+
+def test_select_frame_builds_bilateral_target_when_pose_has_no_primary_foot() -> None:
+    male = _payload(
+        timestamp_ms=120,
+        role="male",
+        role_index=0,
+        priority=0,
+        preferred_bones=["Penis01"],
+        bones=[_bone("Penis01")],
+    )
+    female = _payload(
+        timestamp_ms=120,
+        role="female",
+        role_index=0,
+        priority=0,
+        preferred_bones=[],
+        bones=[_bone("R_Foot"), _bone("L_Foot")],
+    )
+    female["trailer"]["hanimeCategory"] = "foot"
+
+    selected = select_frame(
+        [male, female],
+        reference_role="male",
+        target_role="female",
+        enabled_reference_participants=["fallen-doll:male:0"],
+        enabled_target_participants=["fallen-doll:female:0"],
+        enabled_reference_bones=["Penis01"],
+        enabled_target_bones=["R_Foot", "L_Foot"],
+    )
+
+    assert selected.status["valid"] is True
+    assert selected.target_bone is not None
+    assert selected.target_bone["name"] == "R_Foot+L_Foot"
+    assert selected.target_bone["targetMode"] == "bilateral_reference_axis"
+    assert selected.target_bone["pairPositions"] == [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+
+
+def test_select_frame_builds_bilateral_target_for_breast_contact() -> None:
+    male = _payload(
+        timestamp_ms=120,
+        role="male",
+        role_index=0,
+        priority=0,
+        preferred_bones=["Penis01"],
+        bones=[_bone("Penis01")],
+    )
+    female = _payload(
+        timestamp_ms=120,
+        role="female",
+        role_index=0,
+        priority=0,
+        preferred_bones=[],
+        bones=[_bone("R_Breast_Nipple"), _bone("L_Breast_Nipple")],
+    )
+    female["trailer"]["hanimeCategory"] = "breast"
+
+    selected = select_frame(
+        [male, female],
+        reference_role="male",
+        target_role="female",
+        enabled_reference_participants=["fallen-doll:male:0"],
+        enabled_target_participants=["fallen-doll:female:0"],
+        enabled_reference_bones=["Penis01"],
+        enabled_target_bones=["R_Breast_Nipple", "L_Breast_Nipple"],
+    )
+
+    assert selected.status["valid"] is True
+    assert selected.target_bone is not None
+    assert selected.target_bone["name"] == "R_Breast_Nipple+L_Breast_Nipple"
+    assert selected.target_bone["targetMode"] == "bilateral_reference_axis"
+
+
+def test_select_frame_uses_enabled_fallback_when_preferred_side_is_disabled() -> None:
+    male = _payload(
+        timestamp_ms=120,
+        role="male",
+        role_index=0,
+        priority=0,
+        preferred_bones=["Penis01"],
+        bones=[_bone("Penis01")],
+    )
+    female = _payload(
+        timestamp_ms=120,
+        role="female",
+        role_index=0,
+        priority=0,
+        preferred_bones=["R_Hand"],
+        bones=[_bone("R_Hand"), _bone("L_Hand")],
+    )
+
+    selected = select_frame(
+        [male, female],
+        reference_role="male",
+        target_role="female",
+        enabled_reference_participants=["fallen-doll:male:0"],
+        enabled_target_participants=["fallen-doll:female:0"],
+        enabled_reference_bones=["Penis01"],
+        enabled_target_bones=["L_Hand"],
+    )
+
+    assert selected.status["valid"] is True
+    assert selected.target_bone is not None
+    assert selected.target_bone["name"] == "L_Hand"
+
+
 def test_read_appended_detects_truncation(tmp_path: Path) -> None:
     spool = tmp_path / "fd-skeleton.ndjson"
     spool.write_bytes(b"first\nsecond\n")

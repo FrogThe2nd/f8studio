@@ -13,6 +13,13 @@ _GAME_ID = "fallen-doll"
 _SPOOL_NAME = "fd-skeleton.ndjson"
 _TARGET_BASIS_BY_BONE = {
     "R_Hand": {"up": "+local_z", "right": "-local_y"},
+    # Fallen Doll mouth bones use a different local frame from the hands.
+    # Mapping them through the generic fallback places the neutral pose close
+    # to the signed-angle +/-180 degree seam and makes R0/R1 flip end-to-end.
+    "M_Jaw": {"up": "+local_y", "right": "-local_z"},
+    "M_Jaw_master": {"up": "+local_y", "right": "-local_z"},
+    "Jaw_master": {"up": "+local_y", "right": "-local_z"},
+    "M_TongueRoot": {"up": "+local_y", "right": "-local_z"},
 }
 
 
@@ -148,7 +155,7 @@ def select_frame(
     reference = _select_participant(skeletons, role=reference_role, enabled_keys=enabled_reference_participants)
     target = _select_participant(skeletons, role=target_role, enabled_keys=enabled_target_participants)
     reference_bone = _select_bone(reference, enabled_reference_bones)
-    target_bone = _with_target_basis(_select_bone(target, enabled_target_bones))
+    target_bone = _with_target_basis(_select_target_bone(target, enabled_target_bones))
     valid = reference_bone is not None and target_bone is not None
     reason = "ok"
     if reference is None:
@@ -284,7 +291,53 @@ def _select_bone(skeleton: dict[str, Any] | None, enabled_bones: list[str]) -> d
     for name in preferred:
         if name in enabled and name in by_name:
             return by_name[name]
+    # Some HAnime families expose both candidate hands or feet but do not
+    # declare one side as primary.  User-enabled bone order is the explicit
+    # fallback in that case.  It also lets users disable a declared primary
+    # bone and intentionally fall back to the other active side.
+    for name in enabled_bones:
+        if name in by_name:
+            return by_name[name]
     return None
+
+
+def _select_target_bone(skeleton: dict[str, Any] | None, enabled_bones: list[str]) -> dict[str, Any] | None:
+    if skeleton is None:
+        return None
+    trailer = _trailer(skeleton)
+    preferred = _string_list(trailer.get("preferredBones"))
+    category = str(trailer.get("hanimeCategory") or "").strip().lower()
+    if not preferred and category in {"foot", "breast"}:
+        by_name = {
+            str(bone["name"]): bone
+            for raw_bone in skeleton.get("bones", [])
+            if (bone := _validated_bone(raw_bone)) is not None
+        }
+        enabled = set(enabled_bones)
+        pair_names = (
+            ("R_Foot", "L_Foot")
+            if category == "foot"
+            else ("R_Breast_Nipple", "L_Breast_Nipple")
+        )
+        right = by_name.get(pair_names[0]) if pair_names[0] in enabled else None
+        left = by_name.get(pair_names[1]) if pair_names[1] in enabled else None
+        if right is not None and left is not None:
+            return _bilateral_target(right, left)
+    return _select_bone(skeleton, enabled_bones)
+
+
+def _bilateral_target(right: dict[str, Any], left: dict[str, Any]) -> dict[str, Any]:
+    positions = [list(right["pos"]), list(left["pos"])]
+    return {
+        "name": f"{right['name']}+{left['name']}",
+        "pos": [sum(values) / 2.0 for values in zip(*positions, strict=True)],
+        # Rotation remains schema-compatible, but paired contact geometry uses
+        # the two positions and the Reference axis instead of either ankle's
+        # anatomical rotation.
+        "rot": list(right["rot"]),
+        "targetMode": "bilateral_reference_axis",
+        "pairPositions": positions,
+    }
 
 
 def _validated_bone(value: Any) -> dict[str, Any] | None:

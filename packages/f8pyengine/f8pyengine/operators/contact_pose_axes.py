@@ -31,6 +31,15 @@ from .contact_geometry import (
 
 OPERATOR_CLASS = "f8.contact_pose_axes"
 
+AXIS_DESCRIPTIONS = {
+    "L0": "Stroke / 主轴往返：Target 沿 Reference 接触主轴的归一化深度。",
+    "L1": "Surge / 局部前后平移：Target 偏离主轴的局部前后距离。",
+    "L2": "Sway / 局部左右平移：Target 偏离主轴的局部左右距离。",
+    "R0": "Twist / 轴向扭转：Target 绕 Reference 主轴的旋转。",
+    "R1": "Roll / 左右倾斜：Target 绕 Reference 局部前后轴的旋转。",
+    "R2": "Pitch / 前后俯仰：Target 绕 Reference 局部左右轴的旋转。",
+}
+
 
 def _bone_schema():
     return complex_object_schema(
@@ -44,6 +53,8 @@ def _bone_schema():
                     "right": string_schema(enum=list(LOCAL_AXIS_NAMES)),
                 }
             ),
+            "targetMode": string_schema(),
+            "pairPositions": array_schema(items=array_schema(items=number_schema())),
         }
     )
 
@@ -109,6 +120,8 @@ class ContactPoseAxesRuntimeNode(OperatorNode):
         self._cached_ctx_id: str | int | None = None
         self._cached_result: ContactResult | None = None
         self._cache_valid = False
+        self._angle_binding_key: tuple[str, ...] | None = None
+        self._continuous_angles: dict[str, float] = {}
 
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
         del ts_ms
@@ -235,6 +248,16 @@ class ContactPoseAxesRuntimeNode(OperatorNode):
                 invert_l0=self._invert_l0,
             ),
         )
+        if result is not None:
+            result = self._stabilize_rotation_angles(
+                result,
+                binding_key=_contact_binding_key(
+                    reference_raw,
+                    target_raw,
+                    target_up_axis=target_up_axis,
+                    target_right_axis=target_right_axis,
+                ),
+            )
         if ctx_id is not None:
             self._cached_ctx_id = ctx_id
             self._cached_result = result
@@ -245,6 +268,37 @@ class ContactPoseAxesRuntimeNode(OperatorNode):
         self._cached_ctx_id = None
         self._cached_result = None
         self._cache_valid = False
+        self._angle_binding_key = None
+        self._continuous_angles.clear()
+
+    def _stabilize_rotation_angles(
+        self,
+        result: ContactResult,
+        *,
+        binding_key: tuple[str, ...],
+    ) -> ContactResult:
+        angle_fields = {
+            "R0": ("twistDegrees", self._twist_range),
+            "R1": ("rollDegrees", self._tilt_range),
+            "R2": ("pitchDegrees", self._tilt_range),
+        }
+        binding_changed = binding_key != self._angle_binding_key
+        axes = dict(result.axes)
+        status = dict(result.status)
+        next_angles: dict[str, float] = {}
+        for axis_name, (status_name, angle_range) in angle_fields.items():
+            wrapped = _finite_float(status.get(status_name))
+            if wrapped is None:
+                continue
+            previous = None if binding_changed else self._continuous_angles.get(status_name)
+            continuous = wrapped if previous is None else _unwrap_degrees_near(wrapped, previous)
+            next_angles[status_name] = continuous
+            axes[axis_name] = _symmetric01(continuous, angle_range)
+            status[status_name] = continuous
+            status[axis_name] = axes[axis_name]
+        self._angle_binding_key = binding_key
+        self._continuous_angles = next_angles
+        return ContactResult(axes=axes, status=status)
 
 
 def _finite_float(value: Any) -> float | None:
@@ -280,6 +334,38 @@ def _target_basis_or_default(
         _local_axis_or_default(basis.get("up"), up_default),
         _local_axis_or_default(basis.get("right"), right_default),
     )
+
+
+def _contact_binding_key(
+    reference: Any,
+    target: Any,
+    *,
+    target_up_axis: str,
+    target_right_axis: str,
+) -> tuple[str, ...]:
+    reference_mapping = reference if isinstance(reference, dict) else {}
+    trailer = reference_mapping.get("trailer")
+    trailer_mapping = trailer if isinstance(trailer, dict) else {}
+    target_mapping = target if isinstance(target, dict) else {}
+    return (
+        str(reference_mapping.get("stableKey") or reference_mapping.get("modelName") or ""),
+        str(trailer_mapping.get("bindingGeneration") or ""),
+        str(trailer_mapping.get("poseId") or trailer_mapping.get("hanimeId") or ""),
+        str(target_mapping.get("name") or ""),
+        target_up_axis,
+        target_right_axis,
+    )
+
+
+def _unwrap_degrees_near(wrapped: float, previous: float) -> float:
+    """Return the equivalent angle nearest the previous continuous value."""
+    return wrapped + 360.0 * round((previous - wrapped) / 360.0)
+
+
+def _symmetric01(value: float, maximum: float) -> float:
+    if maximum <= 0.0:
+        return 0.5
+    return max(0.0, min(1.0, 0.5 + value / (2.0 * maximum)))
 
 
 def _positive_or_default(value: Any, default: float, *, allow_zero: bool = False) -> float:
@@ -342,7 +428,11 @@ ContactPoseAxesRuntimeNode.SPEC = F8OperatorSpec(
     operatorClass=OPERATOR_CLASS,
     version="0.2.0",
     label="Contact Pose Axes",
-    description="Build a multi-bone contact frame and emit normalized SR6 L0/L1/L2/R0/R1/R2 axes.",
+    description=(
+        "Build a local contact frame and emit normalized SR6 axes. "
+        "L0=主轴往返，L1=前后平移，L2=左右平移，R0=轴向扭转，R1=左右倾斜，R2=前后俯仰。 "
+        "All directions are local to the Reference contact axis, not screen or world coordinates."
+    ),
     tags=["skeleton", "contact", "geometry", "multibone", "sr6", "tcode"],
     dataInPorts=[
         F8DataPortSpec(
@@ -361,7 +451,7 @@ ContactPoseAxesRuntimeNode.SPEC = F8OperatorSpec(
         *[
             F8DataPortSpec(
                 name=axis,
-                description=f"Normalized {axis} contact axis (0..1).",
+                description=f"{AXIS_DESCRIPTIONS[axis]} Normalized 0..1; 0.5 is center.",
                 valueSchema=number_schema(minimum=0.0, maximum=1.0),
             )
             for axis in AXIS_NAMES

@@ -78,8 +78,21 @@ def calculate_contact_axes(
     if reference_forward is None:
         return None
 
-    target_up = _normalize(_axis_from_rotation(target.rotation, config.target_up_axis))
-    target_right = _normalize(_axis_from_rotation(target.rotation, config.target_right_axis))
+    pair_positions = _parse_pair_positions(target_raw)
+    if pair_positions is not None:
+        # A bilateral hand/foot contact acts like a sleeve around the
+        # Reference.  Either ankle's anatomical rotation would create a large
+        # false tilt, so use the Reference axis as target up and the line
+        # between both contacts for twist around that axis.
+        target_up = axis
+        target_right = _normalize(
+            _project_on_plane(_subtract(pair_positions[0], pair_positions[1]), axis)
+        )
+        if target_right is None:
+            target_right = reference_right
+    else:
+        target_up = _normalize(_axis_from_rotation(target.rotation, config.target_up_axis))
+        target_right = _normalize(_axis_from_rotation(target.rotation, config.target_right_axis))
     if target_up is None or target_right is None:
         return None
 
@@ -107,7 +120,14 @@ def calculate_contact_axes(
     roll = -_signed_angle_degrees(axis, target_up_on_forward_plane, reference_forward)
     pitch = _signed_angle_degrees(axis, target_up_on_right_plane, reference_right)
 
-    l0 = _range01(axial, config.l0_min, config.l0_max)
+    # Bone pivots for paired feet/hands sit outside the shaft contact surface.
+    # Their meaningful stroke coordinate is depth along the live Reference,
+    # independent of the single-contact meter calibration.
+    l0 = (
+        _range01(axial, 0.0, reference_length)
+        if pair_positions is not None
+        else _range01(axial, config.l0_min, config.l0_max)
+    )
     if config.invert_l0:
         l0 = 1.0 - l0
     axes = {
@@ -133,6 +153,7 @@ def calculate_contact_axes(
             "twistDegrees": twist,
             "rollDegrees": roll,
             "pitchDegrees": pitch,
+            "targetMode": "bilateral_reference_axis" if pair_positions is not None else "single_bone",
             **axes,
         },
     )
@@ -174,6 +195,23 @@ def _parse_pose(value: Any) -> _Pose | None:
     if normalized_rotation is None:
         return None
     return _Pose(name=name, position=(px, py, pz), rotation=normalized_rotation)
+
+
+def _parse_pair_positions(value: Any) -> tuple[Vector3, Vector3] | None:
+    if not isinstance(value, dict) or value.get("targetMode") != "bilateral_reference_axis":
+        return None
+    raw_positions = value.get("pairPositions")
+    if not isinstance(raw_positions, list) or len(raw_positions) != 2:
+        return None
+    parsed: list[Vector3] = []
+    for raw in raw_positions:
+        if not isinstance(raw, list) or len(raw) != 3:
+            return None
+        values = tuple(_finite_float(item) for item in raw)
+        if any(item is None for item in values):
+            return None
+        parsed.append((float(values[0]), float(values[1]), float(values[2])))
+    return parsed[0], parsed[1]
 
 
 def _axis_from_rotation(rotation: Quaternion, axis_name: str) -> Vector3:
