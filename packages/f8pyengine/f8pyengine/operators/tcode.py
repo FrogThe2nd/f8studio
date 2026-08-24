@@ -105,7 +105,7 @@ TCodeRuntimeNode.SPEC = F8OperatorSpec(
                 name=axis,
                 description=f"Axis {axis} (0..1).",
                 valueSchema=number_schema(minimum=0.0, maximum=1.0),
-                showOnNode=True if i == 0 else False,
+                showOnNode=i < 6,
             )
             for i, axis in enumerate(AXES)
         ],
