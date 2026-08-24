@@ -11,6 +11,7 @@ DEFAULT_FUNCTIONAL_BONES = [
     "Penis01",
     "Penis02",
     "Penis09",
+    "M_Hips",
     "R_Hand",
     "L_Hand",
     "R_Foot",
