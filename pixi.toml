@@ -4,14 +4,8 @@ channels = ["conda-forge"]
 name = "feel8-build"
 version = "0.4.0"
 description = "Feel8 meta package"
-platforms = ["win-64", "linux-64"]
+platforms = ["win-64", { name = "linux-glibc-2-34", platform = "linux-64", glibc = "2.34" }]
 preview = ["pixi-build"]
-
-[system-requirements]
-# Pixi uses `system-requirements` to determine the compatible manylinux tag for PyPI wheels on linux.
-# PySide6 6.10.1 wheels are published as `manylinux_2_34_x86_64`, so we must require glibc >= 2.34
-# for the linux environment solve to succeed.
-libc = { family = "glibc", version = "2.34" }
 
 [feature.python.dependencies]
 python = ">=3.14.3,<3.15"
