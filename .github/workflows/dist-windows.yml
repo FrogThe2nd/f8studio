@@ -157,6 +157,9 @@ jobs:
             conan-Windows-${{ hashFiles('conanfile.py', 'conan_recipes/**', 'conan.lock') }}-
             conan-Windows-
 
+      - name: Check pixi lockfile
+        run: pixi lock --check
+
       - name: Validate pinned Unity modding submodule
         run: pixi run --frozen -e studio-runtime unitymods_validate
 
